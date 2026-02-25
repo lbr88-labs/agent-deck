@@ -3276,19 +3276,47 @@ func ClearStatusLeft(sessionName string) error {
 	return cmd.Run()
 }
 
+// savedStatusLeft holds the original global status-left value before agent-deck overwrites it.
+// This allows ClearStatusLeftGlobal to restore the user's theme/plugin value (e.g., Oasis, Catppuccin)
+// instead of unsetting it, which would fall back to tmux's built-in default "[#{session_name}]".
+var savedStatusLeft struct {
+	sync.Once
+	value    string
+	captured bool
+}
+
+// captureOriginalStatusLeft reads and stores the current global status-left value.
+// Called once on first SetStatusLeftGlobal to preserve the user's existing value.
+func captureOriginalStatusLeft() {
+	out, err := exec.Command("tmux", "show-option", "-gv", "status-left").Output()
+	if err == nil {
+		savedStatusLeft.value = strings.TrimRight(string(out), "\n")
+		savedStatusLeft.captured = true
+	}
+}
+
 // SetStatusLeftGlobal sets the left side of tmux status bar globally.
 // This is a MAJOR performance optimization: ONE tmux call instead of 100+.
 // All agentdeck sessions inherit this global setting.
+// On first call, captures the existing status-left so ClearStatusLeftGlobal can restore it.
 func SetStatusLeftGlobal(text string) error {
+	savedStatusLeft.Do(captureOriginalStatusLeft)
 	escaped := strings.ReplaceAll(text, "'", "'\\''")
 	cmd := exec.Command("tmux", "set-option", "-g", "status-left", escaped)
 	return cmd.Run()
 }
 
-// ClearStatusLeftGlobal resets status-left to default globally.
+// ClearStatusLeftGlobal restores the original global status-left value.
+// If the original value was captured, it is restored so the user's theme/plugin
+// (e.g., tmux-oasis) is preserved. Falls back to unsetting the option only if
+// no original value was captured.
 func ClearStatusLeftGlobal() error {
-	cmd := exec.Command("tmux", "set-option", "-gu", "status-left")
-	return cmd.Run()
+	if savedStatusLeft.captured {
+		escaped := strings.ReplaceAll(savedStatusLeft.value, "'", "'\\''")
+		return exec.Command("tmux", "set-option", "-g", "status-left", escaped).Run()
+	}
+	// No saved value — fall back to unset (original behavior)
+	return exec.Command("tmux", "set-option", "-gu", "status-left").Run()
 }
 
 // InitializeStatusBarOptions sets optimal status bar options for agent-deck.
