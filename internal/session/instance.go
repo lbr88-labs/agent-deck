@@ -1503,7 +1503,7 @@ func (i *Instance) sendMessageWhenReady(message string) error {
 		alreadyReady := readyCount >= 10 && attempt >= 15 // At least 3s elapsed
 		if (sawActive && (status == "waiting" || status == "idle")) || alreadyReady {
 			if i.Tool == "claude" {
-				if content, captureErr := i.tmuxSession.CapturePaneFresh(); captureErr == nil && !hasCurrentComposerPrompt(content) {
+				if rawContent, captureErr := i.tmuxSession.CapturePaneFresh(); captureErr == nil && !hasCurrentComposerPrompt(tmux.StripANSI(rawContent)) {
 					// Claude can report waiting before the interactive prompt is visible.
 					// Keep polling until the prompt line is present.
 					continue
@@ -1535,7 +1535,8 @@ func (i *Instance) sendMessageWhenReady(message string) error {
 				time.Sleep(verifyDelay)
 
 				unsentPromptDetected := false
-				if content, captureErr := i.tmuxSession.CapturePaneFresh(); captureErr == nil {
+				if rawContent, captureErr := i.tmuxSession.CapturePaneFresh(); captureErr == nil {
+					content := tmux.StripANSI(rawContent)
 					unsentPromptDetected = hasUnsentPastedPrompt(content) || hasUnsentComposerPrompt(content, message)
 				}
 				verifiedStatus, statusErr := i.tmuxSession.GetStatus()
@@ -2940,6 +2941,7 @@ func (i *Instance) getTerminalLastResponse() (*ResponseOutput, error) {
 
 // parseGeminiOutput parses Gemini CLI output to extract the last response
 func parseGeminiOutput(content string) (*ResponseOutput, error) {
+	content = tmux.StripANSI(content)
 	lines := strings.Split(content, "\n")
 
 	// Gemini typically shows responses after "▸" prompt and before the next ">"
@@ -2981,9 +2983,6 @@ func parseGeminiOutput(content string) (*ResponseOutput, error) {
 
 	// Clean up the response
 	response := strings.TrimSpace(strings.Join(responseLines, "\n"))
-	// Remove ANSI codes
-	ansiRegex := regexp.MustCompile(`\x1b\[[0-9;]*m`)
-	response = ansiRegex.ReplaceAllString(response, "")
 
 	return &ResponseOutput{
 		Tool:    "gemini",
@@ -3000,6 +2999,7 @@ func parseCodexOutput(content string) (*ResponseOutput, error) {
 
 // parseGenericOutput is a fallback parser for unknown tools
 func parseGenericOutput(content, tool string) (*ResponseOutput, error) {
+	content = tmux.StripANSI(content)
 	lines := strings.Split(content, "\n")
 
 	// Look for the last substantial block of text (more than 2 lines)
@@ -3040,8 +3040,6 @@ func parseGenericOutput(content, tool string) (*ResponseOutput, error) {
 
 	// Clean up
 	response := strings.TrimSpace(strings.Join(responseLines, "\n"))
-	ansiRegex := regexp.MustCompile(`\x1b\[[0-9;]*m`)
-	response = ansiRegex.ReplaceAllString(response, "")
 
 	return &ResponseOutput{
 		Tool:    tool,

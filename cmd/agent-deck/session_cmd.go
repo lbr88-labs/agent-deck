@@ -1641,7 +1641,8 @@ func sendWithRetryTarget(target sendRetryTarget, message string, skipVerify bool
 		time.Sleep(opts.checkDelay)
 
 		unsentPromptDetected := false
-		if content, captureErr := target.CapturePaneFresh(); captureErr == nil {
+		if rawContent, captureErr := target.CapturePaneFresh(); captureErr == nil {
+			content := tmux.StripANSI(rawContent)
 			unsentPromptDetected = hasUnsentPastedPrompt(content) || hasUnsentComposerPrompt(content, message)
 		}
 		status, err := target.GetStatus()
@@ -1726,7 +1727,7 @@ func waitForAgentReady(tmuxSess *tmux.Session, tool string) error {
 		alreadyReady := readyCount >= 10 && attempt >= 15 // At least 3s elapsed
 		if (sawActive && (status == "waiting" || status == "idle")) || alreadyReady {
 			if tool == "claude" {
-				if content, captureErr := tmuxSess.CapturePaneFresh(); captureErr == nil && !hasCurrentComposerPrompt(content) {
+				if rawContent, captureErr := tmuxSess.CapturePaneFresh(); captureErr == nil && !hasCurrentComposerPrompt(tmux.StripANSI(rawContent)) {
 					// Claude can report waiting before the interactive prompt is visible.
 					// Keep polling until the prompt line is present.
 					continue

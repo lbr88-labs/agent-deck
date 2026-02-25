@@ -1413,10 +1413,10 @@ func (s *Session) CapturePane() (string, error) {
 			statusLog.Debug("capture_pane_subprocess_fallback", slog.String("session", s.Name))
 		}
 
-		// Subprocess fallback: -J joins wrapped lines, 3s timeout
+		// Subprocess fallback: 3s timeout
 		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 		defer cancel()
-		cmd := exec.CommandContext(ctx, "tmux", "capture-pane", "-t", s.Name, "-p", "-J")
+		cmd := exec.CommandContext(ctx, "tmux", "capture-pane", "-t", s.Name, "-p", "-e")
 		output, err := cmd.Output()
 		if err != nil {
 			if ctx.Err() == context.DeadlineExceeded {
@@ -1449,7 +1449,7 @@ func (s *Session) CapturePaneFresh() (string, error) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, "tmux", "capture-pane", "-t", s.Name, "-p", "-J")
+	cmd := exec.CommandContext(ctx, "tmux", "capture-pane", "-t", s.Name, "-p", "-e")
 	output, err := cmd.Output()
 	if err != nil {
 		if ctx.Err() == context.DeadlineExceeded {
@@ -1470,8 +1470,7 @@ func (s *Session) CapturePaneFresh() (string, error) {
 func (s *Session) CaptureFullHistory() (string, error) {
 	// Limit to last 2000 lines to balance content availability with memory usage
 	// AI agent conversations can be long - 2000 lines captures ~40-80 screens of content
-	// -J joins wrapped lines and trims trailing spaces so hashes don't change on resize
-	cmd := exec.Command("tmux", "capture-pane", "-t", s.Name, "-p", "-J", "-S", "-2000")
+	cmd := exec.Command("tmux", "capture-pane", "-t", s.Name, "-p", "-e", "-S", "-2000")
 	output, err := cmd.Output()
 	if err != nil {
 		return "", fmt.Errorf("failed to capture history: %w", err)
@@ -1727,8 +1726,13 @@ func (s *Session) GetStatus() (string, error) {
 	if needsBusyCheck {
 		// Release lock for slow CapturePane operation
 		s.mu.Unlock()
-		content, err := s.CapturePane()
+		rawContent, err := s.CapturePane()
 		s.mu.Lock()
+
+		// Strip ANSI escape sequences for pattern matching.
+		// CapturePane now returns ANSI-rich content (via -e flag) for display,
+		// but status detection needs plain text for reliable string matching.
+		content := StripANSI(rawContent)
 
 		if errors.Is(err, ErrCaptureTimeout) {
 			// Timeout: preserve previous state to avoid false RED flashing
@@ -2065,7 +2069,7 @@ func (s *Session) getStatusFallback() (string, error) {
 		shortName = shortName[:12]
 	}
 
-	content, err := s.CapturePane()
+	rawContent, err := s.CapturePane()
 	if err != nil {
 		if errors.Is(err, ErrCaptureTimeout) {
 			// Timeout: preserve previous state instead of going inactive
@@ -2083,6 +2087,9 @@ func (s *Session) getStatusFallback() (string, error) {
 		statusLog.Debug("fallback_inactive", slog.String("session", shortName), slog.String("error", err.Error()))
 		return "inactive", nil
 	}
+
+	// Strip ANSI for reliable pattern matching (CapturePane now returns ANSI-rich content)
+	content := StripANSI(rawContent)
 
 	// Keep precedence aligned with the main path:
 	// 1) busy (authoritative), 2) prompt, 3) waiting/idle.
@@ -2693,7 +2700,7 @@ func (s *Session) normalizeContent(content string) string {
 	result = timePattern.ReplaceAllString(result, "HH:MM:SS")
 
 	// Normalize trailing whitespace per line (fixes resize false positives)
-	// tmux capture-pane -J can add trailing spaces when terminal is resized
+	// tmux capture-pane can include trailing spaces
 	lines := strings.Split(result, "\n")
 	for i, line := range lines {
 		lines[i] = strings.TrimRight(line, " \t")
@@ -2857,6 +2864,7 @@ func (s *Session) WaitForShellPrompt(timeout time.Duration) bool {
 			time.Sleep(pollInterval)
 			continue
 		}
+		content = StripANSI(content)
 
 		// Get the last non-empty line
 		lines := strings.Split(strings.TrimSpace(content), "\n")
@@ -2903,6 +2911,7 @@ func (s *Session) WaitForReady(timeout time.Duration) bool {
 			time.Sleep(pollInterval)
 			continue
 		}
+		content = StripANSI(content)
 
 		busy := s.hasBusyIndicator(content)
 		prompt := hasPrompt(content)
@@ -2926,6 +2935,7 @@ func (s *Session) WaitForReady(timeout time.Duration) bool {
 
 // hasPrompt checks for input prompts (Claude, shell, other agents)
 func hasPrompt(content string) bool {
+	content = StripANSI(content)
 	lines := strings.Split(content, "\n")
 	if len(lines) == 0 {
 		return false

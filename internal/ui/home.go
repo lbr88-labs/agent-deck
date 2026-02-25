@@ -19,6 +19,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/charmbracelet/x/ansi"
 	"github.com/mattn/go-runewidth"
 
 	"github.com/asheshgoplani/agent-deck/internal/clipboard"
@@ -1453,22 +1454,25 @@ func (h *Home) hasActiveAnimation(sessionID string) bool {
 	previewContent := h.previewCache[sessionID]
 	h.previewCacheMu.RUnlock()
 
+	// Strip ANSI for reliable pattern matching (preview cache now contains ANSI-rich content)
+	plainPreview := ansi.Strip(previewContent)
+
 	if animTool == "claude" || animTool == "gemini" {
 		// Claude ready indicators
-		agentReady := strings.Contains(previewContent, "ctrl+c to interrupt") ||
-			strings.Contains(previewContent, "No, and tell Claude what to do differently") ||
-			strings.Contains(previewContent, "\n> ") ||
-			strings.Contains(previewContent, "> \n") ||
-			strings.Contains(previewContent, "esc to interrupt") ||
-			strings.Contains(previewContent, "⠋") || strings.Contains(previewContent, "⠙") ||
-			strings.Contains(previewContent, "Thinking") ||
-			strings.Contains(previewContent, "╭─") // Claude UI border
+		agentReady := strings.Contains(plainPreview, "ctrl+c to interrupt") ||
+			strings.Contains(plainPreview, "No, and tell Claude what to do differently") ||
+			strings.Contains(plainPreview, "\n> ") ||
+			strings.Contains(plainPreview, "> \n") ||
+			strings.Contains(plainPreview, "esc to interrupt") ||
+			strings.Contains(plainPreview, "⠋") || strings.Contains(plainPreview, "⠙") ||
+			strings.Contains(plainPreview, "Thinking") ||
+			strings.Contains(plainPreview, "╭─") // Claude UI border
 
 		// Gemini prompts
 		if animTool == "gemini" {
 			agentReady = agentReady ||
-				strings.Contains(previewContent, "▸") ||
-				strings.Contains(previewContent, "gemini>")
+				strings.Contains(plainPreview, "▸") ||
+				strings.Contains(plainPreview, "gemini>")
 		}
 
 		if agentReady {
@@ -1476,7 +1480,7 @@ func (h *Home) hasActiveAnimation(sessionID string) bool {
 		}
 	} else {
 		// Non-Claude/Gemini: ready if any substantial content (>50 chars)
-		if len(strings.TrimSpace(previewContent)) > 50 {
+		if len(strings.TrimSpace(plainPreview)) > 50 {
 			return false
 		}
 	}
@@ -8087,21 +8091,24 @@ func (h *Home) renderPreviewPane(width, height int) string {
 				previewContent := h.previewCache[selected.ID]
 				h.previewCacheMu.RUnlock()
 
+				// Strip ANSI for reliable pattern matching
+				plainPreview := ansi.Strip(previewContent)
+
 				if selected.Tool == "claude" || selected.Tool == "gemini" {
 					// Claude/Gemini ready indicators
-					agentReady := strings.Contains(previewContent, "ctrl+c to interrupt") ||
-						strings.Contains(previewContent, "No, and tell Claude what to do differently") ||
-						strings.Contains(previewContent, "\n> ") ||
-						strings.Contains(previewContent, "> \n") ||
-						strings.Contains(previewContent, "esc to interrupt") ||
-						strings.Contains(previewContent, "⠋") || strings.Contains(previewContent, "⠙") ||
-						strings.Contains(previewContent, "Thinking") ||
-						strings.Contains(previewContent, "╭─")
+					agentReady := strings.Contains(plainPreview, "ctrl+c to interrupt") ||
+						strings.Contains(plainPreview, "No, and tell Claude what to do differently") ||
+						strings.Contains(plainPreview, "\n> ") ||
+						strings.Contains(plainPreview, "> \n") ||
+						strings.Contains(plainPreview, "esc to interrupt") ||
+						strings.Contains(plainPreview, "⠋") || strings.Contains(plainPreview, "⠙") ||
+						strings.Contains(plainPreview, "Thinking") ||
+						strings.Contains(plainPreview, "╭─")
 
 					if selected.Tool == "gemini" {
 						agentReady = agentReady ||
-							strings.Contains(previewContent, "▸") ||
-							strings.Contains(previewContent, "gemini>")
+							strings.Contains(plainPreview, "▸") ||
+							strings.Contains(plainPreview, "gemini>")
 					}
 
 					if !agentReady {
@@ -8113,7 +8120,7 @@ func (h *Home) renderPreviewPane(width, height int) string {
 					}
 				} else {
 					// Non-Claude/Gemini: ready if substantial content
-					if len(strings.TrimSpace(previewContent)) <= 50 {
+					if len(strings.TrimSpace(plainPreview)) <= 50 {
 						if isMcpLoading {
 							showMcpLoadingAnimation = true
 						} else {
@@ -8197,7 +8204,6 @@ func (h *Home) renderPreviewPane(width, height int) string {
 			lines = lines[len(lines)-maxLines:]
 		}
 
-		previewStyle := lipgloss.NewStyle().Foreground(ColorText)
 		maxWidth := width - 4
 		if maxWidth < 10 {
 			maxWidth = 10
@@ -8218,17 +8224,14 @@ func (h *Home) renderPreviewPane(width, height int) string {
 		const maxConsecutiveEmpty = 2 // Allow up to 2 consecutive empty lines
 
 		for _, line := range lines {
-			// Strip ANSI codes for accurate width measurement
-			cleanLine := tmux.StripANSI(line)
+			// Strip dangerous control characters (\r, \b, etc.) but preserve
+			// ANSI escape sequences (ESC = 0x1b) so colors and formatting
+			// from the captured terminal output pass through to display.
+			safeLine := stripControlCharsPreserveANSI(line)
 
-			// Strip control characters (\r, \b, etc.) that can corrupt terminal
-			// rendering. tmux capture-pane output may contain carriage returns
-			// which, inside JoinHorizontal, move the cursor to column 0 and
-			// overwrite the left panel content on that line.
-			cleanLine = stripControlChars(cleanLine)
-
-			// Handle empty lines - preserve some for readability
-			trimmed := strings.TrimSpace(cleanLine)
+			// Check if visually empty (strip ANSI for this check)
+			stripped := ansi.Strip(safeLine)
+			trimmed := strings.TrimSpace(stripped)
 			if trimmed == "" {
 				consecutiveEmpty++
 				if consecutiveEmpty <= maxConsecutiveEmpty {
@@ -8238,13 +8241,15 @@ func (h *Home) renderPreviewPane(width, height int) string {
 			}
 			consecutiveEmpty = 0 // Reset counter on non-empty line
 
-			// Truncate based on display width (handles CJK, emoji correctly)
-			displayWidth := runewidth.StringWidth(cleanLine)
+			// Truncate based on display width using ANSI-aware measurement
+			// ansi.StringWidth ignores escape sequences for accurate width
+			displayWidth := ansi.StringWidth(safeLine)
 			if displayWidth > maxWidth {
-				cleanLine = runewidth.Truncate(cleanLine, maxWidth-3, "...")
+				// ansi.Truncate preserves ANSI codes while truncating visible content
+				safeLine = ansi.Truncate(safeLine, maxWidth-3, "...")
 			}
 
-			b.WriteString(previewStyle.Render(cleanLine))
+			b.WriteString(safeLine)
 			b.WriteString("\n")
 		}
 	}
@@ -8261,13 +8266,11 @@ func (h *Home) renderPreviewPane(width, height int) string {
 	lines := strings.Split(result, "\n")
 	var truncatedLines []string
 	for _, line := range lines {
-		// Strip ANSI codes for accurate measurement
-		cleanLine := tmux.StripANSI(line)
-		displayWidth := runewidth.StringWidth(cleanLine)
+		// Use ANSI-aware width measurement to handle lines with escape codes
+		displayWidth := ansi.StringWidth(line)
 		if displayWidth > maxWidth {
-			// Truncate the clean version, then re-apply basic styling
-			// Note: This loses original styling but prevents layout corruption
-			truncated := runewidth.Truncate(cleanLine, maxWidth-3, "...")
+			// ANSI-aware truncation preserves escape codes while trimming visible content
+			truncated := ansi.Truncate(line, maxWidth-3, "...")
 			truncatedLines = append(truncatedLines, truncated)
 		} else {
 			truncatedLines = append(truncatedLines, line)
@@ -8284,6 +8287,19 @@ func (h *Home) renderPreviewPane(width, height int) string {
 func stripControlChars(s string) string {
 	return strings.Map(func(r rune) rune {
 		if r < 0x20 && r != '\n' && r != '\t' {
+			return -1 // Drop the character
+		}
+		return r
+	}, s)
+}
+
+// stripControlCharsPreserveANSI removes dangerous C0 control characters while
+// preserving ANSI escape sequences (ESC = 0x1b). This allows terminal colors
+// and formatting from capture-pane -e output to pass through to display, while
+// still stripping \r, \b, and other control chars that corrupt TUI layout.
+func stripControlCharsPreserveANSI(s string) string {
+	return strings.Map(func(r rune) rune {
+		if r < 0x20 && r != '\n' && r != '\t' && r != '\x1b' {
 			return -1 // Drop the character
 		}
 		return r
