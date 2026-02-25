@@ -1385,7 +1385,7 @@ func TestSetupConductorCreatesLearnings(t *testing.T) {
 	t.Setenv("HOME", tmpHome)
 
 	name := "learnings-test"
-	if err := SetupConductor(name, "default", true, "", "", ""); err != nil {
+	if err := SetupConductor(name, "default", true, true, "", "", ""); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
@@ -1410,7 +1410,7 @@ func TestSetupConductorPreservesExistingLearnings(t *testing.T) {
 
 	name := "learnings-preserve"
 	// First setup creates the file
-	if err := SetupConductor(name, "default", true, "", "", ""); err != nil {
+	if err := SetupConductor(name, "default", true, true, "", "", ""); err != nil {
 		t.Fatalf("first setup failed: %v", err)
 	}
 
@@ -1423,7 +1423,7 @@ func TestSetupConductorPreservesExistingLearnings(t *testing.T) {
 	}
 
 	// Re-running setup should NOT overwrite
-	if err := SetupConductor(name, "default", true, "", "", ""); err != nil {
+	if err := SetupConductor(name, "default", true, true, "", "", ""); err != nil {
 		t.Fatalf("second setup failed: %v", err)
 	}
 
