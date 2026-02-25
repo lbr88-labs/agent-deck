@@ -1807,7 +1807,7 @@ func (h *Home) backgroundStatusUpdate() {
 				conductorName := strings.TrimPrefix(inst.Title, "conductor-")
 				go func() {
 					time.Sleep(500 * time.Millisecond)
-					tmuxSess.SendKeysAndEnter("/clear")
+					_ = tmuxSess.SendKeysAndEnter("/clear")
 					// After /clear wipes context, immediately send heartbeat to restore orientation
 					time.Sleep(3 * time.Second)
 					profile := session.DefaultProfile
@@ -1815,7 +1815,7 @@ func (h *Home) backgroundStatusUpdate() {
 						profile = meta.Profile
 					}
 					msg := fmt.Sprintf("Heartbeat: Check all sessions in the %s profile. List any waiting sessions, auto-respond where safe, and report what needs my attention.", profile)
-					tmuxSess.SendKeysAndEnter(msg)
+					_ = tmuxSess.SendKeysAndEnter(msg)
 				}()
 			}
 		}
@@ -8283,19 +8283,6 @@ func (h *Home) renderPreviewPane(width, height int) string {
 	}
 
 	return strings.Join(truncatedLines, "\n")
-}
-
-// stripControlChars removes C0 control characters (except \n and \t) from a string.
-// tmux capture-pane output may include \r, \b, and other control characters that
-// corrupt terminal rendering when embedded inside styled TUI output (e.g. \r moves
-// the cursor to column 0, overwriting the left panel in a JoinHorizontal layout).
-func stripControlChars(s string) string {
-	return strings.Map(func(r rune) rune {
-		if r < 0x20 && r != '\n' && r != '\t' {
-			return -1 // Drop the character
-		}
-		return r
-	}, s)
 }
 
 // stripControlCharsPreserveANSI removes dangerous C0 control characters while
