@@ -5,17 +5,15 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"sort"
 	"strings"
 	"sync"
 	"time"
 )
 
 const (
-	transitionDeliverySent         = "sent"
-	transitionDeliveryFallbackSent = "fallback_sent"
-	transitionDeliveryFailed       = "failed"
-	transitionDeliveryDropped      = "dropped_no_target"
+	transitionDeliverySent    = "sent"
+	transitionDeliveryFailed  = "failed"
+	transitionDeliveryDropped = "dropped_no_target"
 )
 
 type TransitionNotificationEvent struct {
@@ -142,38 +140,22 @@ func (n *TransitionNotifier) dispatch(event TransitionNotificationEvent) Transit
 		return event
 	}
 
-	parentID := strings.TrimSpace(child.ParentSessionID)
-	if parentID != "" && parentID != child.ID {
-		if parent := byID[parentID]; parent != nil {
-			if err := SendSessionMessageReliable(event.Profile, parent.ID, buildTransitionMessage(event)); err == nil {
-				event.TargetSessionID = parent.ID
-				event.TargetKind = "parent"
-				event.DeliveryResult = transitionDeliverySent
-				return event
-			}
-		}
-	}
-
-	conductor := selectFallbackConductor(event.Profile, instances)
-	if conductor == nil || conductor.ID == child.ID {
+	parent := resolveParentNotificationTarget(child, byID)
+	if parent == nil {
 		event.DeliveryResult = transitionDeliveryDropped
 		return event
 	}
 
-	if err := SendSessionMessageReliable(event.Profile, conductor.ID, buildTransitionMessage(event)); err != nil {
-		event.TargetSessionID = conductor.ID
-		event.TargetKind = "conductor"
+	if err := SendSessionMessageReliable(event.Profile, parent.ID, buildTransitionMessage(event)); err != nil {
+		event.TargetSessionID = parent.ID
+		event.TargetKind = "parent"
 		event.DeliveryResult = transitionDeliveryFailed
 		return event
 	}
 
-	event.TargetSessionID = conductor.ID
-	event.TargetKind = "conductor"
-	if parentID != "" {
-		event.DeliveryResult = transitionDeliveryFallbackSent
-	} else {
-		event.DeliveryResult = transitionDeliverySent
-	}
+	event.TargetSessionID = parent.ID
+	event.TargetKind = "parent"
+	event.DeliveryResult = transitionDeliverySent
 	return event
 }
 
@@ -188,48 +170,28 @@ func buildTransitionMessage(event TransitionNotificationEvent) string {
 	)
 }
 
-func selectFallbackConductor(profile string, instances []*Instance) *Instance {
-	metas, err := ListConductorsForProfile(profile)
-	if err != nil || len(metas) == 0 {
+func resolveParentNotificationTarget(child *Instance, byID map[string]*Instance) *Instance {
+	if child == nil {
 		return nil
 	}
-
-	sort.Slice(metas, func(i, j int) bool {
-		return strings.ToLower(metas[i].Name) < strings.ToLower(metas[j].Name)
-	})
-
-	byTitle := make(map[string]*Instance, len(instances))
-	for _, inst := range instances {
-		byTitle[inst.Title] = inst
+	parentID := strings.TrimSpace(child.ParentSessionID)
+	if parentID == "" || parentID == child.ID {
+		return nil
 	}
-
-	hb := make([]*Instance, 0)
-	other := make([]*Instance, 0)
-
-	for _, meta := range metas {
-		title := ConductorSessionTitle(meta.Name)
-		inst := byTitle[title]
-		if inst == nil {
-			continue
-		}
-		_ = inst.UpdateStatus()
-		if !isLiveSessionStatus(inst.Status) {
-			continue
-		}
-		if meta.HeartbeatEnabled {
-			hb = append(hb, inst)
-		} else {
-			other = append(other, inst)
+	parent := byID[parentID]
+	if parent == nil {
+		return nil
+	}
+	if parent.ID == child.ID {
+		return nil
+	}
+	if isConductorSessionTitle(parent.Title) {
+		_ = parent.UpdateStatus()
+		if !isLiveSessionStatus(parent.Status) {
+			return nil
 		}
 	}
-
-	if len(hb) > 0 {
-		return hb[0]
-	}
-	if len(other) > 0 {
-		return other[0]
-	}
-	return nil
+	return parent
 }
 
 func isLiveSessionStatus(status Status) bool {

@@ -164,6 +164,7 @@ For any other text, treat it as a conversational message from the user. They mig
 - You cannot directly access other sessions' files. Use ` + "`" + `session output` + "`" + ` to read their latest response.
 - Prefer ` + "`" + `launch ... -m "prompt"` + "`" + ` over separate ` + "`" + `add` + "`" + ` + ` + "`" + `session start` + "`" + ` + ` + "`" + `session send` + "`" + ` when creating a new task session.
 - Keep parent linkage for event routing; if you need a specific group, pass ` + "`" + `-g <group>` + "`" + ` explicitly (it overrides inherited parent group).
+- Transition notifications are parent-linked. If ` + "`" + `parent_session_id` + "`" + ` is empty or points elsewhere, this conductor will not receive child completion events.
 - ` + "`" + `session send` + "`" + ` waits up to ~80 seconds for the agent to be ready. If the session is running (busy), the send will wait.
 - For periodic nudges/heartbeats where blocking is harmful, prefer ` + "`" + `session send --no-wait -q` + "`" + `.
 - The bridge sends with ` + "`" + `session send --wait -q` + "`" + ` and waits in a single CLI call. Reply promptly.

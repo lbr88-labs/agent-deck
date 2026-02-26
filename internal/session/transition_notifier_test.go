@@ -41,6 +41,35 @@ func TestChoosePollInterval(t *testing.T) {
 	}
 }
 
+func TestResolveParentNotificationTargetMissingParentID(t *testing.T) {
+	child := &Instance{ID: "child", Title: "task", ParentSessionID: ""}
+	got := resolveParentNotificationTarget(child, map[string]*Instance{"child": child})
+	if got != nil {
+		t.Fatalf("expected nil for missing parent, got %#v", got)
+	}
+}
+
+func TestResolveParentNotificationTargetParentNotFound(t *testing.T) {
+	child := &Instance{ID: "child", Title: "task", ParentSessionID: "parent"}
+	got := resolveParentNotificationTarget(child, map[string]*Instance{"child": child})
+	if got != nil {
+		t.Fatalf("expected nil for missing parent instance, got %#v", got)
+	}
+}
+
+func TestResolveParentNotificationTargetReturnsParent(t *testing.T) {
+	child := &Instance{ID: "child", Title: "task", ParentSessionID: "parent"}
+	parent := &Instance{ID: "parent", Title: "manager", Status: StatusWaiting}
+	byID := map[string]*Instance{
+		"child":  child,
+		"parent": parent,
+	}
+	got := resolveParentNotificationTarget(child, byID)
+	if got == nil || got.ID != "parent" {
+		t.Fatalf("expected parent target, got %#v", got)
+	}
+}
+
 func TestTerminalHookTransitionCandidate(t *testing.T) {
 	now := time.Now()
 

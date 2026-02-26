@@ -1359,10 +1359,14 @@ func handleSessionSend(profile string, args []string) {
 	}
 
 	// Send message atomically (text + Enter in single tmux invocation).
-	// --no-wait: fire-and-forget, skip retry/verification overhead entirely.
-	// Otherwise: retry Enter if the agent doesn't start processing promptly.
+	// --no-wait: skip readiness waiting, but still do a short retry/verification
+	// loop to avoid silent "pasted but not submitted" races.
+	// default mode: full retry budget after readiness check.
 	if *noWait {
-		if err := tmuxSess.SendKeysAndEnter(message); err != nil {
+		if err := sendWithRetryTarget(tmuxSess, message, false, sendRetryOptions{
+			maxRetries: 8,
+			checkDelay: 150 * time.Millisecond,
+		}); err != nil {
 			out.Error(fmt.Sprintf("failed to send message: %v", err), ErrCodeInvalidOperation)
 			os.Exit(1)
 		}

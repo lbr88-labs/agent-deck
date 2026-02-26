@@ -342,12 +342,18 @@ func handleLaunch(profile string, args []string) {
 
 	// Send message only for --no-wait mode.
 	// Non --no-wait mode already sent via StartWithMessage above.
+	// Even in no-wait mode, run a short send-verification loop so Enter-loss
+	// races don't silently drop the initial prompt.
 	if initialMessage != "" && *noWait {
 		tmuxSess := newInstance.GetTmuxSession()
 		if tmuxSess != nil {
-			// Wait briefly for agent to initialize, then send without retry
-			time.Sleep(500 * time.Millisecond)
-			_ = tmuxSess.SendKeysAndEnter(initialMessage)
+			if err := sendWithRetryTarget(tmuxSess, initialMessage, false, sendRetryOptions{
+				maxRetries: 8,
+				checkDelay: 150 * time.Millisecond,
+			}); err != nil {
+				out.Error(fmt.Sprintf("failed to send initial message: %v", err), ErrCodeInvalidOperation)
+				os.Exit(1)
+			}
 		}
 	}
 
