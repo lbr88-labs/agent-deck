@@ -28,7 +28,7 @@ type GroupDialog struct {
 	height        int
 	groupPath     string   // Current group being edited (for rename) or parent path (for create subgroup)
 	parentName    string   // Display name of parent group (for subgroup creation)
-	groupNames    []string // Available groups (for move)
+	groupPaths    []string // Available target group paths (for move)
 	selected      int      // Selected group index (for move)
 	sessionID     string   // Session ID being renamed (for rename session)
 	validationErr string   // Inline validation error displayed inside the dialog
@@ -47,7 +47,7 @@ func NewGroupDialog() *GroupDialog {
 
 	return &GroupDialog{
 		nameInput:  ti,
-		groupNames: []string{},
+		groupPaths: []string{},
 	}
 }
 
@@ -146,12 +146,12 @@ func (g *GroupDialog) ShowRename(currentPath, currentName string) {
 	g.nameInput.Focus()
 }
 
-// ShowMove shows the dialog for moving a session to a group
-func (g *GroupDialog) ShowMove(groups []string) {
+// ShowMove shows the dialog for moving a session to a group path.
+func (g *GroupDialog) ShowMove(groupPaths []string) {
 	g.visible = true
 	g.mode = GroupDialogMove
 	g.validationErr = ""
-	g.groupNames = groups
+	g.groupPaths = groupPaths
 	g.selected = 0
 }
 
@@ -249,8 +249,8 @@ func (g *GroupDialog) HasParent() bool {
 
 // GetSelectedGroup returns the selected group for move mode
 func (g *GroupDialog) GetSelectedGroup() string {
-	if g.selected >= 0 && g.selected < len(g.groupNames) {
-		return g.groupNames[g.selected]
+	if g.selected >= 0 && g.selected < len(g.groupPaths) {
+		return g.groupPaths[g.selected]
 	}
 	return ""
 }
@@ -270,7 +270,7 @@ func (g *GroupDialog) Update(msg tea.KeyMsg) (*GroupDialog, tea.Cmd) {
 				g.selected--
 			}
 		case "down", "j":
-			if g.selected < len(g.groupNames)-1 {
+			if g.selected < len(g.groupPaths)-1 {
 				g.selected++
 			}
 		}
@@ -333,19 +333,19 @@ func (g *GroupDialog) View() string {
 	case GroupDialogMove:
 		title = "Move to Group"
 		var items []string
-		for i, name := range g.groupNames {
+		for i, groupPath := range g.groupPaths {
 			if i == g.selected {
 				items = append(items, lipgloss.NewStyle().
 					Foreground(ColorBg).
 					Background(ColorAccent).
 					Bold(true).
 					Padding(0, 1).
-					Render(name))
+					Render(groupPath))
 			} else {
 				items = append(items, lipgloss.NewStyle().
 					Foreground(ColorText).
 					Padding(0, 1).
-					Render(name))
+					Render(groupPath))
 			}
 		}
 		content = strings.Join(items, "\n")

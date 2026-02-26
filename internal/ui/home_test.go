@@ -266,6 +266,80 @@ func TestHomeRenameSessionComplete(t *testing.T) {
 	}
 }
 
+func TestHomeMoveSessionWithDuplicateGroupNamesUsesSelectedPath(t *testing.T) {
+	home := NewHome()
+	home.width = 100
+	home.height = 30
+
+	inst := &session.Instance{
+		ID:          "sess-1",
+		Title:       "session-1",
+		ProjectPath: "/tmp/project",
+		GroupPath:   "work/frontend",
+	}
+
+	tree := session.NewGroupTree([]*session.Instance{})
+	tree.CreateGroup("work")
+	tree.CreateSubgroup("work", "frontend")
+	tree.CreateGroup("play")
+	tree.CreateSubgroup("play", "frontend")
+	tree.AddSession(inst)
+
+	home.instancesMu.Lock()
+	home.instances = []*session.Instance{inst}
+	home.instanceByID[inst.ID] = inst
+	home.instancesMu.Unlock()
+	home.groupTree = tree
+	home.rebuildFlatItems()
+
+	sessionIdx := -1
+	for i, item := range home.flatItems {
+		if item.Type == session.ItemTypeSession && item.Session != nil && item.Session.ID == inst.ID {
+			sessionIdx = i
+			break
+		}
+	}
+	if sessionIdx == -1 {
+		t.Fatal("session item not found in flatItems")
+	}
+	home.cursor = sessionIdx
+
+	model, _ := home.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'M'}})
+	h, ok := model.(*Home)
+	if !ok {
+		t.Fatal("Update should return *Home")
+	}
+	if !h.groupDialog.IsVisible() || h.groupDialog.Mode() != GroupDialogMove {
+		t.Fatal("move dialog should be visible after pressing M on a session")
+	}
+
+	targetIdx := -1
+	for i, path := range h.groupDialog.groupPaths {
+		if path == "play/frontend" {
+			targetIdx = i
+			break
+		}
+	}
+	if targetIdx == -1 {
+		t.Fatalf("target group path not found in move dialog: %v", h.groupDialog.groupPaths)
+	}
+	h.groupDialog.selected = targetIdx
+
+	model, _ = h.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	h2, ok := model.(*Home)
+	if !ok {
+		t.Fatal("Update should return *Home")
+	}
+
+	moved := h2.getInstanceByID(inst.ID)
+	if moved == nil {
+		t.Fatal("moved instance not found by ID")
+	}
+	if moved.GroupPath != "play/frontend" {
+		t.Fatalf("GroupPath = %q, want %q", moved.GroupPath, "play/frontend")
+	}
+}
+
 func TestHomeEnterDuringLaunchingDoesNotShowStartingError(t *testing.T) {
 	home := NewHome()
 	home.width = 100
