@@ -233,9 +233,6 @@ func TestPromptDetector(t *testing.T) {
 }
 
 func TestBusyIndicatorDetection(t *testing.T) {
-	sess := NewSession("test", "/tmp")
-	sess.Command = "claude"
-
 	// Busy detection should recognize explicit interrupt lines and spinner activity.
 	tests := []struct {
 		name     string
@@ -282,6 +279,49 @@ func TestBusyIndicatorDetection(t *testing.T) {
 			result := s.hasBusyIndicator(tt.content)
 			if result != tt.expected {
 				t.Errorf("hasBusyIndicator(%q) = %v, want %v", tt.name, result, tt.expected)
+			}
+		})
+	}
+}
+
+func TestBusyIndicatorDetection_OpenCode(t *testing.T) {
+	tests := []struct {
+		name     string
+		content  string
+		expected bool
+	}{
+		{
+			name: "pulse spinner with task text",
+			content: `┃ Conversation
+█ Thinking...
+┃ Ask anything`,
+			expected: true,
+		},
+		{
+			name: "esc to exit busy hint",
+			content: `Build  Plan
+press esc to exit cancel`,
+			expected: true,
+		},
+		{
+			name:     "waiting for tool response task text",
+			content:  `Waiting for tool response...`,
+			expected: true,
+		},
+		{
+			name: "idle prompt only",
+			content: `┃ Ask anything
+press enter to send the message`,
+			expected: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			s := NewSession("test-opencode-"+tt.name, "/tmp")
+			s.Command = "opencode"
+			if got := s.hasBusyIndicator(tt.content); got != tt.expected {
+				t.Errorf("hasBusyIndicator(opencode %q) = %v, want %v", tt.name, got, tt.expected)
 			}
 		})
 	}
@@ -423,6 +463,64 @@ func TestDetectTool(t *testing.T) {
 	tool := sess.DetectTool()
 	if tool != "shell" {
 		t.Logf("DetectTool returned %s (expected shell for non-existent session)", tool)
+	}
+}
+
+func TestDetectToolFromCommand(t *testing.T) {
+	tests := []struct {
+		name    string
+		command string
+		want    string
+	}{
+		{name: "claude", command: "claude", want: "claude"},
+		{name: "gemini", command: "gemini --yolo", want: "gemini"},
+		{name: "opencode", command: "open-code --continue", want: "opencode"},
+		{name: "codex", command: "codex --dangerously-bypass-approvals-and-sandbox", want: "codex"},
+		{name: "shell command", command: "npm run dev", want: ""},
+		{name: "empty", command: "", want: ""},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := detectToolFromCommand(tt.command); got != tt.want {
+				t.Fatalf("detectToolFromCommand(%q) = %q, want %q", tt.command, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestDetectToolFromContentClaudeRegression(t *testing.T) {
+	tests := []struct {
+		name    string
+		content string
+		want    string
+	}{
+		{
+			name: "path containing claude should stay shell",
+			content: `user@host:/Users/test/claude-deck$ 
+$ `,
+			want: "shell",
+		},
+		{
+			name: "claude banner detects claude",
+			content: `Welcome to Claude Code!
+Do you trust the files in this folder?`,
+			want: "claude",
+		},
+		{
+			name: "claude permission prompt detects claude",
+			content: `No, and tell Claude what to do differently
+Yes, allow once`,
+			want: "claude",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := detectToolFromContent(tt.content); got != tt.want {
+				t.Fatalf("detectToolFromContent(%q) = %q, want %q", tt.name, got, tt.want)
+			}
+		})
 	}
 }
 

@@ -5,6 +5,15 @@ All notable changes to Agent Deck will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.19.16] - 2026-02-26
+
+### Fixed
+
+- Restore OpenCode/Codex status detection for active output by matching both `status_details` and `status` fields in tmux JSON pane formats.
+- Eliminate a worktree creation TOCTOU race in `add` by creating/checking candidate worktree paths in one flow and retrying with suffixed names when collisions happen.
+- Avoid false Claude tool detection for shell wrappers by validating shell executables exactly and only classifying wrappers as Claude when `claude` appears as a command token.
+- Resolve duplicate group-name move failures in the TUI by moving sessions using canonical group paths while preserving user-facing group labels.
+
 ## [0.19.15] - 2026-02-25
 
 ### Added

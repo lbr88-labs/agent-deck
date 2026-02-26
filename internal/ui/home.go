@@ -4010,7 +4010,7 @@ func (h *Home) handleMainKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if h.cursor < len(h.flatItems) {
 			item := h.flatItems[h.cursor]
 			if item.Type == session.ItemTypeSession {
-				h.groupDialog.ShowMove(h.groupTree.GetGroupNames())
+				h.groupDialog.ShowMove(h.groupTree.GetGroupPaths())
 			}
 		}
 		return h, nil
@@ -4770,22 +4770,16 @@ func (h *Home) handleGroupDialogKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				h.saveInstances()
 			}
 		case GroupDialogMove:
-			groupName := h.groupDialog.GetSelectedGroup()
-			if groupName != "" && h.cursor < len(h.flatItems) {
+			targetGroupPath := h.groupDialog.GetSelectedGroup()
+			if targetGroupPath != "" && h.cursor < len(h.flatItems) {
 				item := h.flatItems[h.cursor]
 				if item.Type == session.ItemTypeSession {
-					// Find the group path from name
-					for _, g := range h.groupTree.GroupList {
-						if g.Name == groupName {
-							h.groupTree.MoveSessionToGroup(item.Session, g.Path)
-							h.instancesMu.Lock()
-							h.instances = h.groupTree.GetAllInstances()
-							h.instancesMu.Unlock()
-							h.rebuildFlatItems()
-							h.saveInstances()
-							break
-						}
-					}
+					h.groupTree.MoveSessionToGroup(item.Session, targetGroupPath)
+					h.instancesMu.Lock()
+					h.instances = h.groupTree.GetAllInstances()
+					h.instancesMu.Unlock()
+					h.rebuildFlatItems()
+					h.saveInstances()
 				}
 			}
 		case GroupDialogRenameSession:
