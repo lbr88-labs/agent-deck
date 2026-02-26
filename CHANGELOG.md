@@ -5,6 +5,18 @@ All notable changes to Agent Deck will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.19.17] - 2026-02-26
+
+### Added
+
+- Add Docker sandbox mode for sessions (TUI + CLI), including per-session containers, hardened container defaults, and sandbox docs/config references.
+
+### Fixed
+
+- Preserve non-sandbox tmux startup behavior while keeping sandbox dead-pane restart support.
+- Strengthen `session send --no-wait` / launch no-wait initial-message delivery with retry+verification to reduce dropped prompt submits.
+- Route transition notifications through explicit parent linkage only (no conductor fallback), and align conductor/README guidance with parent-linked routing.
+
 ## [0.19.16] - 2026-02-26
 
 ### Fixed
