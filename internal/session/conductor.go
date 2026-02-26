@@ -8,7 +8,6 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
-	"slices"
 	"strings"
 	"time"
 
@@ -466,22 +465,85 @@ func RemoveHeartbeatPlist(name string) error {
 
 // findAgentDeck looks for agent-deck in common locations
 func findAgentDeck() string {
+	if p := agentDeckPathFromArg0(); p != "" {
+		return p
+	}
+
+	if p, err := exec.LookPath("agent-deck"); err == nil {
+		if normalized := normalizeExecutablePath(p); isExecutablePath(normalized) {
+			return normalized
+		}
+	}
+
 	paths := []string{
-		"/usr/local/bin/agent-deck",
 		"/opt/homebrew/bin/agent-deck",
+		"/usr/local/bin/agent-deck",
 	}
 	for _, p := range paths {
-		if _, err := os.Stat(p); err == nil {
+		if isExecutablePath(p) {
 			return p
 		}
 	}
 	for _, dir := range filepath.SplitList(os.Getenv("PATH")) {
 		p := filepath.Join(dir, "agent-deck")
-		if _, err := os.Stat(p); err == nil {
+		if isExecutablePath(p) {
 			return p
 		}
 	}
 	return ""
+}
+
+func agentDeckPathFromArg0() string {
+	arg0 := strings.TrimSpace(os.Args[0])
+	if arg0 == "" {
+		return ""
+	}
+
+	var candidate string
+	if strings.ContainsRune(arg0, os.PathSeparator) {
+		candidate = arg0
+	} else if p, err := exec.LookPath(arg0); err == nil {
+		candidate = p
+	}
+
+	candidate = normalizeExecutablePath(candidate)
+	if candidate == "" {
+		return ""
+	}
+	// Ignore go test binaries when running unit tests.
+	if strings.HasSuffix(strings.ToLower(filepath.Base(candidate)), ".test") {
+		return ""
+	}
+	if !isExecutablePath(candidate) {
+		return ""
+	}
+	return candidate
+}
+
+func normalizeExecutablePath(path string) string {
+	path = strings.TrimSpace(path)
+	if path == "" {
+		return ""
+	}
+	if !filepath.IsAbs(path) {
+		abs, err := filepath.Abs(path)
+		if err != nil {
+			return ""
+		}
+		path = abs
+	}
+	return filepath.Clean(path)
+}
+
+func isExecutablePath(path string) bool {
+	if path == "" {
+		return false
+	}
+	info, err := os.Stat(path)
+	if err != nil || info.IsDir() {
+		return false
+	}
+	return true
 }
 
 // buildDaemonPath returns a PATH string suitable for daemon environments.
@@ -489,16 +551,33 @@ func findAgentDeck() string {
 // processes (launchd, systemd) that don't inherit the user's shell PATH can
 // still find the agent-deck binary.
 func buildDaemonPath(agentDeckPath string) string {
-	base := "/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin"
-	if agentDeckPath == "" {
-		return base
+	baseEntries := []string{"/usr/local/bin", "/opt/homebrew/bin", "/usr/bin", "/bin", "/usr/sbin", "/sbin"}
+	ordered := make([]string, 0, len(baseEntries)+1)
+	seen := map[string]struct{}{}
+
+	appendUnique := func(dir string) {
+		dir = strings.TrimSpace(dir)
+		if dir == "" {
+			return
+		}
+		if _, ok := seen[dir]; ok {
+			return
+		}
+		seen[dir] = struct{}{}
+		ordered = append(ordered, dir)
 	}
-	dir := filepath.Dir(agentDeckPath)
-	// Avoid duplicating a directory already in base
-	if slices.Contains(strings.Split(base, ":"), dir) {
-		return base
+
+	if normalized := normalizeExecutablePath(agentDeckPath); normalized != "" {
+		appendUnique(filepath.Dir(normalized))
 	}
-	return dir + ":" + base
+	for _, dir := range baseEntries {
+		appendUnique(dir)
+	}
+
+	if len(ordered) == 0 {
+		return ""
+	}
+	return strings.Join(ordered, ":")
 }
 
 // conductorHeartbeatScript is the shell script that sends a heartbeat to a conductor session

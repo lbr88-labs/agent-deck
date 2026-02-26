@@ -238,6 +238,8 @@ Both Telegram and Slack can run simultaneously — the bridge daemon handles bot
 
 **Heartbeat-driven monitoring**: heartbeats still run on the configured interval (default 15 minutes) as a secondary safety net. If a conductor response includes `NEED:`, the bridge forwards that alert to Telegram and/or Slack.
 
+**Permission prompts during automation**: if a conductor keeps pausing on permission requests, set `[claude].allow_dangerous_mode = true` (or `dangerous_mode = true`) in `~/.agent-deck/config.toml`, then run `agent-deck session restart conductor-<name>`. See [Troubleshooting](skills/agent-deck/references/troubleshooting.md#conductor-keeps-asking-for-permissions).
+
 **Legacy external watcher scripts**: optional only. `~/.agent-deck/events/` is not required for notification routing.
 
 **Launching sessions from inside a conductor**:

@@ -3589,7 +3589,7 @@ func (h *Home) handleNewDialogKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		groupPath := h.newDialog.GetSelectedGroup()
 		claudeOpts := h.newDialog.GetClaudeOptions() // Get Claude options if applicable.
 
-		// Handle worktree creation if enabled.
+		// Resolve worktree target if enabled; actual worktree creation runs in async command.
 		var worktreePath, worktreeRepoRoot string
 		if worktreeEnabled && branchName != "" {
 			// Validate path is a git repo
@@ -3614,22 +3614,8 @@ func (h *Home) handleNewDialogKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				Template:  wtSettings.Template(),
 			})
 
-			// Ensure parent directory exists (needed for subdirectory mode)
-			if err := os.MkdirAll(filepath.Dir(worktreePath), 0o755); err != nil {
-				h.newDialog.SetError(fmt.Sprintf("Failed to create parent directory: %v", err))
-				return h, nil
-			}
-
-			// Create worktree
-			if err := git.CreateWorktree(repoRoot, worktreePath, branchName); err != nil {
-				h.newDialog.SetError(fmt.Sprintf("Failed to create worktree: %v", err))
-				return h, nil
-			}
-
 			// Store repo root for later use
 			worktreeRepoRoot = repoRoot
-			// Update path to worktree for session creation
-			path = worktreePath
 		}
 
 		// Build generic toolOptionsJSON from tool-specific options
@@ -3642,10 +3628,13 @@ func (h *Home) handleNewDialogKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			toolOptionsJSON, _ = session.MarshalToolOptions(codexOpts)
 		}
 
-		if _, err := os.Stat(path); os.IsNotExist(err) {
-			h.newDialog.Hide()
-			h.confirmDialog.ShowCreateDirectory(path, name, command, groupPath, toolOptionsJSON)
-			return h, nil
+		// Only non-worktree sessions may need interactive "create directory" confirmation.
+		if !worktreeEnabled {
+			if _, err := os.Stat(path); os.IsNotExist(err) {
+				h.newDialog.Hide()
+				h.confirmDialog.ShowCreateDirectory(path, name, command, groupPath, toolOptionsJSON)
+				return h, nil
+			}
 		}
 
 		h.newDialog.Hide()
@@ -4836,7 +4825,7 @@ func (h *Home) handleForkDialogKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			if item.Type == session.ItemTypeSession && item.Session != nil {
 				source := item.Session
 
-				// Handle worktree creation if enabled
+				// Resolve worktree target if enabled; actual creation runs in async command.
 				if worktreeEnabled && branchName != "" {
 					if !git.IsGitRepo(source.ProjectPath) {
 						h.forkDialog.SetError("Path is not a git repository")
@@ -4856,15 +4845,8 @@ func (h *Home) handleForkDialogKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 						SessionID: git.GeneratePathID(),
 						Template:  wtSettings.Template(),
 					})
-
-					if err := os.MkdirAll(filepath.Dir(worktreePath), 0o755); err != nil {
-						h.forkDialog.SetError(fmt.Sprintf("Failed to create directory: %v", err))
-						return h, nil
-					}
-
-					if err := git.CreateWorktree(repoRoot, worktreePath, branchName); err != nil {
-						h.forkDialog.SetError(fmt.Sprintf("Worktree creation failed: %v", err))
-						return h, nil
+					if opts == nil {
+						opts = &session.ClaudeOptions{}
 					}
 
 					opts.WorkDir = worktreePath
@@ -5126,6 +5108,18 @@ func (h *Home) createSessionInGroupWithWorktreeAndOptions(
 			return sessionCreatedMsg{err: fmt.Errorf("cannot create session: %w", err)}
 		}
 
+		if worktreePath != "" && worktreeRepoRoot != "" && worktreeBranch != "" {
+			// Worktree creation can be slow on large repos; keep it in async cmd path
+			// so the TUI remains responsive.
+			if err := os.MkdirAll(filepath.Dir(worktreePath), 0o755); err != nil {
+				return sessionCreatedMsg{err: fmt.Errorf("failed to create parent directory: %w", err)}
+			}
+			if err := git.CreateWorktree(worktreeRepoRoot, worktreePath, worktreeBranch); err != nil {
+				return sessionCreatedMsg{err: fmt.Errorf("failed to create worktree: %w", err)}
+			}
+			path = worktreePath
+		}
+
 		tool := "shell"
 		switch command {
 		case "claude":
@@ -5361,6 +5355,17 @@ func (h *Home) forkSessionCmdWithOptions(
 		// Check tmux availability before forking
 		if err := tmux.IsTmuxAvailable(); err != nil {
 			return sessionForkedMsg{err: fmt.Errorf("cannot fork session: %w", err), sourceID: sourceID}
+		}
+
+		if opts != nil && opts.WorktreePath != "" && opts.WorktreeRepoRoot != "" && opts.WorktreeBranch != "" {
+			// Worktree creation can be slow on large repos; keep it in async cmd path
+			// so the TUI remains responsive.
+			if err := os.MkdirAll(filepath.Dir(opts.WorktreePath), 0o755); err != nil {
+				return sessionForkedMsg{err: fmt.Errorf("failed to create directory: %w", err), sourceID: sourceID}
+			}
+			if err := git.CreateWorktree(opts.WorktreeRepoRoot, opts.WorktreePath, opts.WorktreeBranch); err != nil {
+				return sessionForkedMsg{err: fmt.Errorf("worktree creation failed: %w", err), sourceID: sourceID}
+			}
 		}
 
 		var inst *session.Instance

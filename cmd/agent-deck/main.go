@@ -29,7 +29,7 @@ import (
 	"github.com/asheshgoplani/agent-deck/internal/web"
 )
 
-const Version = "0.19.17"
+const Version = "0.19.18"
 
 // Table column widths for list command output
 const (
@@ -1938,14 +1938,34 @@ func handleUpdate(args []string) {
 	// Fetch and display changelog
 	displayChangelog(info.CurrentVersion, info.LatestVersion)
 
+	installPath, homebrewUpgradeCmd, homebrewManaged, hbErr := update.DetectHomebrewManagedInstall()
+	if hbErr != nil {
+		// Non-fatal: fall back to direct updater flow.
+		homebrewManaged = false
+	}
+
 	if *checkOnly {
-		fmt.Println("\nRun 'agent-deck update' to install.")
+		if homebrewManaged {
+			fmt.Printf("\nHomebrew-managed install detected at %s\n", installPath)
+			fmt.Printf("Run `%s` to install.\n", homebrewUpgradeCmd)
+		} else {
+			fmt.Println("\nRun 'agent-deck update' to install.")
+		}
 		return
+	}
+
+	if homebrewManaged {
+		fmt.Printf("\nHomebrew-managed install detected at %s\n", installPath)
+		fmt.Printf("Will run: %s\n", homebrewUpgradeCmd)
 	}
 
 	// Confirm update - drain any buffered input first to avoid garbage
 	drainStdin()
-	fmt.Print("\nInstall update? [Y/n] ")
+	if homebrewManaged {
+		fmt.Print("\nInstall update via Homebrew now? [Y/n] ")
+	} else {
+		fmt.Print("\nInstall update? [Y/n] ")
+	}
 	reader := bufio.NewReader(os.Stdin)
 	response, _ := reader.ReadString('\n')
 	response = strings.TrimSpace(response)
@@ -1954,11 +1974,27 @@ func handleUpdate(args []string) {
 		return
 	}
 
-	// Perform update
+	// Perform update (direct binary replacement or Homebrew upgrade)
 	fmt.Println()
-	if err := update.PerformUpdate(info.DownloadURL); err != nil {
-		fmt.Printf("Error installing update: %v\n", err)
-		os.Exit(1)
+	if homebrewManaged {
+		cmdParts := strings.Fields(homebrewUpgradeCmd)
+		if len(cmdParts) == 0 {
+			fmt.Println("Error installing update: empty Homebrew upgrade command")
+			os.Exit(1)
+		}
+		cmd := exec.Command(cmdParts[0], cmdParts[1:]...)
+		cmd.Stdout = os.Stdout
+		cmd.Stderr = os.Stderr
+		cmd.Stdin = os.Stdin
+		if err := cmd.Run(); err != nil {
+			fmt.Printf("Error installing update via Homebrew: %v\n", err)
+			os.Exit(1)
+		}
+	} else {
+		if err := update.PerformUpdate(info.DownloadURL); err != nil {
+			fmt.Printf("Error installing update: %v\n", err)
+			os.Exit(1)
+		}
 	}
 
 	// Update bridge.py if conductor is installed

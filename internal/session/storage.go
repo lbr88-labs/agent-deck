@@ -242,6 +242,10 @@ func (s *Storage) SaveWithGroups(instances []*Instance, groupTree *GroupTree) er
 		return fmt.Errorf("storage database not initialized")
 	}
 
+	// Enforce one Claude conversation owner across persisted sessions.
+	// This protects CLI-only flows as well (the TUI already applies this in-memory).
+	UpdateClaudeSessionsWithDedup(instances)
+
 	// Convert instances to database rows
 	rows := make([]*statedb.InstanceRow, len(instances))
 	for i, inst := range instances {

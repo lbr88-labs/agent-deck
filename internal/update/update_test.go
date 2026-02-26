@@ -223,7 +223,7 @@ func TestHomebrewUpgradeHint(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			hint, ok := homebrewUpgradeHint(tt.path)
+			hint, ok := HomebrewUpgradeHint(tt.path)
 			assert.Equal(t, tt.wantOK, ok)
 			assert.Equal(t, tt.wantHint, hint)
 		})

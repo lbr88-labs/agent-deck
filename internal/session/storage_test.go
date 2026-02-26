@@ -184,3 +184,75 @@ func TestLoadLiteEmptyDB(t *testing.T) {
 		t.Errorf("Expected empty groups, got %d", len(groupData))
 	}
 }
+
+func TestStorageSaveWithGroups_DedupsClaudeSessionIDs(t *testing.T) {
+	s := newTestStorage(t)
+	now := time.Now()
+
+	older := &Instance{
+		ID:               "old",
+		Title:            "Older",
+		ProjectPath:      "/tmp/one",
+		GroupPath:        "grp",
+		Command:          "claude",
+		Tool:             "claude",
+		Status:           StatusIdle,
+		CreatedAt:        now.Add(-2 * time.Minute),
+		ClaudeSessionID:  "shared-session-id",
+		ClaudeDetectedAt: now.Add(-2 * time.Minute),
+	}
+	newer := &Instance{
+		ID:               "new",
+		Title:            "Newer",
+		ProjectPath:      "/tmp/two",
+		GroupPath:        "grp",
+		Command:          "claude",
+		Tool:             "claude",
+		Status:           StatusIdle,
+		CreatedAt:        now.Add(-1 * time.Minute),
+		ClaudeSessionID:  "shared-session-id",
+		ClaudeDetectedAt: now.Add(-1 * time.Minute),
+	}
+	otherTool := &Instance{
+		ID:          "gem",
+		Title:       "Gemini",
+		ProjectPath: "/tmp/gem",
+		GroupPath:   "grp",
+		Command:     "gemini",
+		Tool:        "gemini",
+		Status:      StatusIdle,
+		CreatedAt:   now,
+	}
+
+	// Intentionally unsorted to ensure dedup logic does not rely on caller order.
+	instances := []*Instance{newer, otherTool, older}
+	if err := s.SaveWithGroups(instances, nil); err != nil {
+		t.Fatalf("SaveWithGroups failed: %v", err)
+	}
+
+	if older.ClaudeSessionID != "shared-session-id" {
+		t.Fatalf("older session should keep shared ID, got %q", older.ClaudeSessionID)
+	}
+	if newer.ClaudeSessionID != "" {
+		t.Fatalf("newer duplicate should be cleared, got %q", newer.ClaudeSessionID)
+	}
+
+	loaded, _, err := s.LoadLite()
+	if err != nil {
+		t.Fatalf("LoadLite failed: %v", err)
+	}
+
+	byID := make(map[string]*InstanceData, len(loaded))
+	for _, inst := range loaded {
+		byID[inst.ID] = inst
+	}
+	if byID["old"] == nil || byID["new"] == nil {
+		t.Fatalf("expected old and new instances in DB, got keys: %#v", byID)
+	}
+	if byID["old"].ClaudeSessionID != "shared-session-id" {
+		t.Fatalf("db old session ID = %q, want shared-session-id", byID["old"].ClaudeSessionID)
+	}
+	if byID["new"].ClaudeSessionID != "" {
+		t.Fatalf("db newer session ID = %q, want empty", byID["new"].ClaudeSessionID)
+	}
+}

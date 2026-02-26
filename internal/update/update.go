@@ -271,18 +271,11 @@ func PerformUpdate(downloadURL string) error {
 		return fmt.Errorf("no download URL available for %s/%s", runtime.GOOS, runtime.GOARCH)
 	}
 
-	// Get current executable path
-	execPath, err := os.Executable()
+	execPath, upgradeCmd, managed, err := DetectHomebrewManagedInstall()
 	if err != nil {
-		return fmt.Errorf("failed to get executable path: %w", err)
+		return fmt.Errorf("failed to detect install type: %w", err)
 	}
-
-	// Resolve symlinks to get actual binary location
-	execPath, err = filepath.EvalSymlinks(execPath)
-	if err != nil {
-		return fmt.Errorf("failed to resolve symlinks: %w", err)
-	}
-	if upgradeCmd, ok := homebrewUpgradeHint(execPath); ok {
+	if managed {
 		return fmt.Errorf("homebrew-managed install detected at %s; use `%s`", execPath, upgradeCmd)
 	}
 
@@ -349,7 +342,9 @@ func PerformUpdate(downloadURL string) error {
 	return nil
 }
 
-func homebrewUpgradeHint(execPath string) (string, bool) {
+// HomebrewUpgradeHint returns the recommended Homebrew upgrade command when the
+// binary path points into a known Homebrew Cellar location.
+func HomebrewUpgradeHint(execPath string) (string, bool) {
 	clean := filepath.Clean(execPath)
 	// Homebrew-managed binaries resolve to Cellar paths. Self-overwriting these
 	// can leave installs in a bad state; prefer brew-managed upgrades.
@@ -364,6 +359,21 @@ func homebrewUpgradeHint(execPath string) (string, bool) {
 		}
 	}
 	return "", false
+}
+
+// DetectHomebrewManagedInstall resolves the current executable path and reports
+// whether it is managed by Homebrew.
+func DetectHomebrewManagedInstall() (execPath string, upgradeCmd string, managed bool, err error) {
+	execPath, err = os.Executable()
+	if err != nil {
+		return "", "", false, err
+	}
+	execPath, err = filepath.EvalSymlinks(execPath)
+	if err != nil {
+		return "", "", false, err
+	}
+	upgradeCmd, managed = HomebrewUpgradeHint(execPath)
+	return execPath, upgradeCmd, managed, nil
 }
 
 // ChangelogEntry represents a single version's changelog

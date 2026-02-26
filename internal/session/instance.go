@@ -4574,14 +4574,18 @@ func randomString(length int) string {
 // With tmux env being authoritative, duplicates shouldn't occur in normal use,
 // but we handle them defensively for loaded/migrated sessions.
 func UpdateClaudeSessionsWithDedup(instances []*Instance) {
-	// Sort instances by CreatedAt (older first get priority for keeping IDs)
-	sort.Slice(instances, func(i, j int) bool {
-		return instances[i].CreatedAt.Before(instances[j].CreatedAt)
+	// Work on a copy so callers don't observe order mutation as a side effect.
+	ordered := make([]*Instance, len(instances))
+	copy(ordered, instances)
+
+	// Sort instances by CreatedAt (older first get priority for keeping IDs).
+	sort.SliceStable(ordered, func(i, j int) bool {
+		return ordered[i].CreatedAt.Before(ordered[j].CreatedAt)
 	})
 
 	// Find and clear duplicate IDs (keep only the oldest session's claim)
 	idOwner := make(map[string]*Instance)
-	for _, inst := range instances {
+	for _, inst := range ordered {
 		if inst.Tool != "claude" || inst.ClaudeSessionID == "" {
 			continue
 		}

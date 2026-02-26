@@ -1155,6 +1155,36 @@ func TestInstance_GeminiSessionFields(t *testing.T) {
 	}
 }
 
+func TestUpdateClaudeSessionsWithDedup_DoesNotReorderInput(t *testing.T) {
+	now := time.Now()
+	newer := &Instance{
+		ID:              "newer",
+		Tool:            "claude",
+		CreatedAt:       now,
+		ClaudeSessionID: "shared-id",
+	}
+	older := &Instance{
+		ID:              "older",
+		Tool:            "claude",
+		CreatedAt:       now.Add(-1 * time.Minute),
+		ClaudeSessionID: "shared-id",
+	}
+	input := []*Instance{newer, older}
+
+	UpdateClaudeSessionsWithDedup(input)
+
+	// Dedup should clear the newer duplicate but preserve caller order.
+	if input[0].ID != "newer" || input[1].ID != "older" {
+		t.Fatalf("input order was mutated: got [%s, %s]", input[0].ID, input[1].ID)
+	}
+	if older.ClaudeSessionID != "shared-id" {
+		t.Fatalf("older should keep shared ID, got %q", older.ClaudeSessionID)
+	}
+	if newer.ClaudeSessionID != "" {
+		t.Fatalf("newer duplicate should be cleared, got %q", newer.ClaudeSessionID)
+	}
+}
+
 func TestInstance_UpdateGeminiSession(t *testing.T) {
 	inst := NewInstanceWithTool("test", "/tmp/test", "gemini")
 	inst.CreatedAt = time.Now()

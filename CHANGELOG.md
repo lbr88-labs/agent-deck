@@ -5,6 +5,19 @@ All notable changes to Agent Deck will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.19.18] - 2026-02-26
+
+### Fixed
+
+- Make `agent-deck update` Homebrew-aware end-to-end: `--check` now shows the correct `brew upgrade` command and interactive install can execute the Homebrew upgrade path directly instead of failing after confirmation.
+- Harden conductor/daemon binary resolution to prefer the active executable path and robust PATH ordering, avoiding stale `/usr/local/bin` picks that could drop parent transition notifications.
+- Prevent TUI freezes during create/fork worktree flows by moving worktree creation into async command execution instead of blocking the Enter key handler.
+- Enforce Claude conversation ID deduplication on storage saves (CLI + TUI paths) so duplicate `claude_session_id` ownership does not persist, with deterministic older-session retention.
+
+### Changed
+
+- Add conductor permission-loop troubleshooting guidance (`allow_dangerous_mode` / `dangerous_mode`) in README and troubleshooting docs.
+
 ## [0.19.17] - 2026-02-26
 
 ### Added

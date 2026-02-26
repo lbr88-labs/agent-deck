@@ -1038,9 +1038,9 @@ func TestBuildDaemonPath(t *testing.T) {
 			wantContains:  "/usr/local/bin",
 		},
 		{
-			name:          "homebrew path not duplicated",
+			name:          "homebrew path prioritized",
 			agentDeckPath: "/opt/homebrew/bin/agent-deck",
-			wantPrefix:    "/usr/local/bin",
+			wantPrefix:    "/opt/homebrew/bin",
 			wantContains:  "/usr/bin:/bin",
 		},
 		{

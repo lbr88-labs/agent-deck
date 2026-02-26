@@ -43,6 +43,33 @@ agent-deck session show <name> --json | jq '.claude_session_id'
 
 If null, restart session and interact with Claude.
 
+### Conductor Keeps Asking for Permissions
+
+If a conductor repeatedly pauses on permission prompts, set Claude permission mode
+explicitly in `~/.agent-deck/config.toml` and restart the conductor session:
+
+```toml
+[claude]
+# Safer default for automation-heavy conductors:
+allow_dangerous_mode = true
+
+# Or fully non-interactive (least safe):
+# dangerous_mode = true
+```
+
+Then restart the conductor:
+
+```bash
+agent-deck session restart conductor-<name>
+```
+
+If you use multiple profiles, set the same under the profile override:
+
+```toml
+[profiles.work.claude]
+allow_dangerous_mode = true
+```
+
 ### High CPU Usage
 
 **With many sessions:** Normal if batched updates. Check:
