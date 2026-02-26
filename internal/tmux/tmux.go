@@ -320,10 +320,14 @@ func SupportsHyperlinks() bool {
 }
 
 // Tool detection patterns (used by DetectTool for initial tool identification)
+var toolDetectionOrder = []string{"claude", "gemini", "opencode", "codex"}
+
 var toolDetectionPatterns = map[string][]*regexp.Regexp{
 	"claude": {
-		regexp.MustCompile(`(?i)claude`),
-		regexp.MustCompile(`(?i)anthropic`),
+		// Avoid matching bare words like "claude-deck" in shell prompts/paths.
+		regexp.MustCompile(`(?i)\bclaude\s+code\b`),
+		regexp.MustCompile(`(?i)\bno,\s*and\s*tell\s+claude\s+what\s+to\s+do\s+differently\b`),
+		regexp.MustCompile(`(?i)\bdo you trust the files in this folder\??`),
 	},
 	"gemini": {
 		regexp.MustCompile(`(?i)gemini`),
@@ -337,6 +341,37 @@ var toolDetectionPatterns = map[string][]*regexp.Regexp{
 		regexp.MustCompile(`(?i)codex`),
 		regexp.MustCompile(`(?i)openai`),
 	},
+}
+
+func detectToolFromCommand(command string) string {
+	cmdLower := strings.ToLower(strings.TrimSpace(command))
+	switch {
+	case strings.Contains(cmdLower, "claude"):
+		return "claude"
+	case strings.Contains(cmdLower, "gemini"):
+		return "gemini"
+	case strings.Contains(cmdLower, "opencode") || strings.Contains(cmdLower, "open code") || strings.Contains(cmdLower, "open-code"):
+		return "opencode"
+	case strings.Contains(cmdLower, "codex"):
+		return "codex"
+	default:
+		return ""
+	}
+}
+
+func detectToolFromContent(cleanContent string) string {
+	for _, tool := range toolDetectionOrder {
+		patterns, ok := toolDetectionPatterns[tool]
+		if !ok {
+			continue
+		}
+		for _, pattern := range patterns {
+			if pattern.MatchString(cleanContent) {
+				return tool
+			}
+		}
+	}
+	return "shell"
 }
 
 // StateTracker tracks content changes for notification-style status detection
@@ -1535,25 +1570,12 @@ func (s *Session) DetectTool() string {
 	s.mu.Unlock()
 
 	// Detect tool from command first (most reliable)
-	if s.Command != "" {
-		cmdLower := strings.ToLower(s.Command)
-		var tool string
-		if strings.Contains(cmdLower, "claude") {
-			tool = "claude"
-		} else if strings.Contains(cmdLower, "gemini") {
-			tool = "gemini"
-		} else if strings.Contains(cmdLower, "opencode") || strings.Contains(cmdLower, "open code") {
-			tool = "opencode"
-		} else if strings.Contains(cmdLower, "codex") {
-			tool = "codex"
-		}
-		if tool != "" {
-			s.mu.Lock()
-			s.detectedTool = tool
-			s.toolDetectedAt = time.Now()
-			s.mu.Unlock()
-			return tool
-		}
+	if tool := detectToolFromCommand(s.Command); tool != "" {
+		s.mu.Lock()
+		s.detectedTool = tool
+		s.toolDetectedAt = time.Now()
+		s.mu.Unlock()
+		return tool
 	}
 
 	// Fallback to content detection
@@ -1569,19 +1591,7 @@ func (s *Session) DetectTool() string {
 	// Strip ANSI codes for accurate matching
 	cleanContent := StripANSI(content)
 
-	// Check using pre-compiled patterns
-	detectedTool := "shell"
-	for tool, patterns := range toolDetectionPatterns {
-		for _, pattern := range patterns {
-			if pattern.MatchString(cleanContent) {
-				detectedTool = tool
-				break
-			}
-		}
-		if detectedTool != "shell" {
-			break
-		}
-	}
+	detectedTool := detectToolFromContent(cleanContent)
 
 	s.mu.Lock()
 	s.detectedTool = detectedTool
@@ -2317,19 +2327,7 @@ func inferToolFromSessionFields(detected, custom, command string) string {
 	if custom != "" {
 		return strings.ToLower(custom)
 	}
-	cmd := strings.ToLower(command)
-	switch {
-	case strings.Contains(cmd, "claude"):
-		return "claude"
-	case strings.Contains(cmd, "gemini"):
-		return "gemini"
-	case strings.Contains(cmd, "opencode"), strings.Contains(cmd, "open code"):
-		return "opencode"
-	case strings.Contains(cmd, "codex"):
-		return "codex"
-	default:
-		return ""
-	}
+	return detectToolFromCommand(command)
 }
 
 func defaultResolvedPatternsForTool(tool string) *ResolvedPatterns {
