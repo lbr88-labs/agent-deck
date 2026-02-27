@@ -155,7 +155,7 @@ func (c *ConfirmDialog) View() string {
 
 	switch c.confirmType {
 	case ConfirmDeleteSession:
-		title = "⚠️  Delete Session?"
+		title = "⚠  Delete Session?"
 		warning = fmt.Sprintf("This will permanently delete the session:\n\n  \"%s\"", c.targetName)
 		details = "• The tmux session will be terminated\n• Any running processes will be killed\n• Terminal history will be lost"
 		if c.sandboxed {
@@ -182,7 +182,7 @@ func (c *ConfirmDialog) View() string {
 		buttons = lipgloss.JoinHorizontal(lipgloss.Center, buttonYes, "  ", buttonNo, "  ", escHint)
 
 	case ConfirmDeleteGroup:
-		title = "⚠️  Delete Group?"
+		title = "⚠  Delete Group?"
 		warning = fmt.Sprintf("This will delete the group:\n\n  \"%s\"", c.targetName)
 		details = "• All sessions will be MOVED to 'default' group\n• Sessions will NOT be killed\n• The group structure will be lost"
 		borderColor = ColorRed
