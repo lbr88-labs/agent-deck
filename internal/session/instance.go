@@ -16,6 +16,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"sort"
 	"strconv"
 	"strings"
@@ -51,8 +52,8 @@ const (
 	codexHookWaitingFastPathWindow = 2 * time.Minute
 	codexBootstrapScanInterval     = 2 * time.Second
 	codexRotationScanInterval      = 30 * time.Second
-	codexLsofScanInterval          = 2 * time.Second
-	codexLsofMissingSentinel       = "__AGENT_DECK_MISSING_LSOF__"
+	codexProbeScanInterval         = 2 * time.Second
+	codexProbeMissingSentinel      = "__AGENT_DECK_MISSING_TOOL__"
 )
 
 // Instance represents a single agent/shell session
@@ -94,11 +95,11 @@ type Instance struct {
 	OpenCodeStartedAt  int64     `json:"-"` // Unix millis when we started OpenCode (for session matching, not persisted)
 
 	// Codex CLI integration
-	CodexSessionID  string    `json:"codex_session_id,omitempty"`
-	CodexDetectedAt time.Time `json:"codex_detected_at,omitempty"`
-	CodexStartedAt  int64     `json:"-"` // Unix millis when we started Codex (for session matching, not persisted)
-	lastCodexScanAt time.Time // Rate-limits expensive ~/.codex/sessions scans
-	lastCodexLsofAt time.Time // Rate-limits expensive lsof checks
+	CodexSessionID   string    `json:"codex_session_id,omitempty"`
+	CodexDetectedAt  time.Time `json:"codex_detected_at,omitempty"`
+	CodexStartedAt   int64     `json:"-"` // Unix millis when we started Codex (for session matching, not persisted)
+	lastCodexScanAt  time.Time // Rate-limits expensive ~/.codex/sessions scans
+	lastCodexProbeAt time.Time // Rate-limits expensive Codex process-file probes
 	// pendingCodexRestartWarning is consumed by UI/CLI after Restart() succeeds.
 	// It is intentionally transient and never persisted.
 	pendingCodexRestartWarning string `json:"-"`
@@ -938,7 +939,7 @@ func (i *Instance) detectCodexSessionAsync() {
 			time.Sleep(delay)
 		}
 
-		sessionID, _ := i.queryCodexSessionFromLsof()
+		sessionID, _ := i.queryCodexSessionFromProcessFiles()
 		if sessionID == "" {
 			sessionID = i.queryCodexSession(i.collectOtherCodexSessionIDs(), true)
 		}
@@ -1196,19 +1197,19 @@ func (i *Instance) shouldScanCodexSession(allowUnscoped bool) bool {
 	return true
 }
 
-// shouldRunCodexLsof returns whether we should run an lsof-based Codex
-// process/file probe right now.
-func (i *Instance) shouldRunCodexLsof(force bool) bool {
+// shouldRunCodexProcessProbe returns whether we should run Codex process/file
+// probing right now.
+func (i *Instance) shouldRunCodexProcessProbe(force bool) bool {
 	if force {
-		i.lastCodexLsofAt = time.Now()
+		i.lastCodexProbeAt = time.Now()
 		return true
 	}
 
-	if !i.lastCodexLsofAt.IsZero() && time.Since(i.lastCodexLsofAt) < codexLsofScanInterval {
+	if !i.lastCodexProbeAt.IsZero() && time.Since(i.lastCodexProbeAt) < codexProbeScanInterval {
 		return false
 	}
 
-	i.lastCodexLsofAt = time.Now()
+	i.lastCodexProbeAt = time.Now()
 	return true
 }
 
@@ -1266,56 +1267,86 @@ func isLikelyCodexProcessPID(pid int) bool {
 	return strings.Contains(strings.ToLower(strings.TrimSpace(string(argsOut))), "codex")
 }
 
-func extractCodexSessionIDFromLsofOutput(output []byte) string {
+func extractCodexSessionIDFromPath(path string) string {
+	normalized := strings.TrimSpace(path)
+	normalized = strings.TrimSuffix(normalized, " (deleted)")
+	if !strings.Contains(normalized, "/.codex/sessions/") ||
+		!strings.Contains(normalized, "rollout-") ||
+		!strings.Contains(normalized, ".jsonl") {
+		return ""
+	}
+
 	uuidPattern := regexp.MustCompile(`[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}`)
+	return uuidPattern.FindString(normalized)
+}
+
+func extractCodexSessionIDFromLsofOutput(output []byte) string {
 	scanner := bufio.NewScanner(bytes.NewReader(output))
 	for scanner.Scan() {
-		line := scanner.Text()
-		if !strings.Contains(line, "/.codex/sessions/") ||
-			!strings.Contains(line, "rollout-") ||
-			!strings.Contains(line, ".jsonl") {
-			continue
-		}
-		if sessionID := uuidPattern.FindString(line); sessionID != "" {
+		if sessionID := extractCodexSessionIDFromPath(scanner.Text()); sessionID != "" {
 			return sessionID
 		}
 	}
 	return ""
 }
 
-func (i *Instance) queryCodexSessionFromDockerLsof() (string, bool) {
+func extractCodexSessionIDFromProcFD(pid int) string {
+	fdDir := filepath.Join("/proc", strconv.Itoa(pid), "fd")
+	entries, err := os.ReadDir(fdDir)
+	if err != nil {
+		return ""
+	}
+
+	for _, entry := range entries {
+		targetPath := filepath.Join(fdDir, entry.Name())
+		target, err := os.Readlink(targetPath)
+		if err != nil {
+			continue
+		}
+		if sessionID := extractCodexSessionIDFromPath(target); sessionID != "" {
+			return sessionID
+		}
+	}
+	return ""
+}
+
+func (i *Instance) queryCodexSessionFromHostProcFD() string {
+	for _, pid := range i.collectTmuxPaneProcessTreePIDs() {
+		if !isLikelyCodexProcessPID(pid) {
+			continue
+		}
+		if sessionID := extractCodexSessionIDFromProcFD(pid); sessionID != "" {
+			return sessionID
+		}
+	}
+	return ""
+}
+
+func (i *Instance) queryCodexSessionFromDockerProcFD() (string, string) {
 	if strings.TrimSpace(i.SandboxContainer) == "" {
-		return "", false
+		return "", ""
 	}
 
 	script := fmt.Sprintf(
-		`command -v lsof >/dev/null 2>&1 || { echo %q; exit 0; }; lsof -c codex 2>/dev/null`,
-		codexLsofMissingSentinel,
+		`command -v readlink >/dev/null 2>&1 || { echo %q; exit 0; }; for f in /proc/[0-9]*/fd/*; do t=$(readlink "$f" 2>/dev/null || true); case "$t" in */.codex/sessions/*rollout-*.jsonl*) printf '%%s\n' "$t";; esac; done`,
+		codexProbeMissingSentinel,
 	)
 	out, err := exec.Command("docker", "exec", i.SandboxContainer, "sh", "-lc", script).Output()
 	if err != nil {
-		return "", false
+		return "", ""
 	}
-	if bytes.Contains(out, []byte(codexLsofMissingSentinel)) {
-		return "", true
+	if bytes.Contains(out, []byte(codexProbeMissingSentinel)) {
+		return "", "readlink"
 	}
 	if sessionID := extractCodexSessionIDFromLsofOutput(out); sessionID != "" {
-		return sessionID, false
+		return sessionID, ""
 	}
-	return "", false
+	return "", ""
 }
 
-// queryCodexSessionFromLsof inspects live Codex processes and returns the active
-// session UUID inferred from open rollout JSONL files.
-// The second return value indicates whether lsof itself is unavailable.
-func (i *Instance) queryCodexSessionFromLsof() (string, bool) {
-	// Sandboxed sessions run Codex inside Docker; probe from inside container.
-	if i.IsSandboxed() {
-		return i.queryCodexSessionFromDockerLsof()
-	}
-
+func (i *Instance) queryCodexSessionFromHostLsof() (string, string) {
 	if _, err := exec.LookPath("lsof"); err != nil {
-		return "", true
+		return "", "lsof"
 	}
 
 	for _, pid := range i.collectTmuxPaneProcessTreePIDs() {
@@ -1327,17 +1358,38 @@ func (i *Instance) queryCodexSessionFromLsof() (string, bool) {
 		if err != nil {
 			var execErr *exec.Error
 			if errors.As(err, &execErr) && execErr.Err == exec.ErrNotFound {
-				return "", true
+				return "", "lsof"
 			}
 			continue
 		}
 
 		if sessionID := extractCodexSessionIDFromLsofOutput(out); sessionID != "" {
-			return sessionID, false
+			return sessionID, ""
 		}
 	}
 
-	return "", false
+	return "", ""
+}
+
+// queryCodexSessionFromProcessFiles inspects live Codex processes and returns
+// the active session UUID inferred from open rollout JSONL files.
+// The second return value is the missing dependency name (if any).
+func (i *Instance) queryCodexSessionFromProcessFiles() (string, string) {
+	// Sandboxed sessions run Codex inside Docker; probe container /proc.
+	if i.IsSandboxed() {
+		return i.queryCodexSessionFromDockerProcFD()
+	}
+
+	// Linux/WSL: pure in-process /proc scanning (no lsof dependency).
+	if runtime.GOOS == "linux" {
+		if sessionID := i.queryCodexSessionFromHostProcFD(); sessionID != "" {
+			return sessionID, ""
+		}
+		return "", ""
+	}
+
+	// Non-Linux (e.g. macOS): fallback to lsof compatibility path.
+	return i.queryCodexSessionFromHostLsof()
 }
 
 // ConsumeCodexRestartWarning returns and clears any pending Codex restart warning.
@@ -1347,6 +1399,14 @@ func (i *Instance) ConsumeCodexRestartWarning() string {
 	return warning
 }
 
+func codexProbeMissingWarning(missingDep string) string {
+	missingDep = strings.TrimSpace(missingDep)
+	if missingDep == "" {
+		return ""
+	}
+	return fmt.Sprintf("Codex session detection fallback: %s is not available", missingDep)
+}
+
 // UpdateCodexSession updates the Codex session ID.
 // Primary source: tmux environment.
 // Fallback: project-aware filesystem scan.
@@ -1354,11 +1414,11 @@ func (i *Instance) UpdateCodexSession(excludeIDs map[string]bool) {
 	i.updateCodexSession(excludeIDs, false)
 }
 
-// updateCodexSession refreshes Codex session ID from env/lsof/disk.
-// Returns true when lsof is unavailable.
-func (i *Instance) updateCodexSession(excludeIDs map[string]bool, forceLsof bool) bool {
+// updateCodexSession refreshes Codex session ID from env/process-files/disk.
+// Returns missing dependency name when probe prerequisites are unavailable.
+func (i *Instance) updateCodexSession(excludeIDs map[string]bool, forceProbe bool) string {
 	if i.Tool != "codex" {
-		return false
+		return ""
 	}
 
 	envSessionID := ""
@@ -1374,14 +1434,14 @@ func (i *Instance) updateCodexSession(excludeIDs map[string]bool, forceLsof bool
 		}
 	}
 
-	// 2. Prefer live-process detection via lsof.
-	lsofMissing := false
-	if i.shouldRunCodexLsof(forceLsof) {
-		if sessionID, missing := i.queryCodexSessionFromLsof(); sessionID != "" {
+	// 2. Prefer live-process file detection (Linux /proc, macOS lsof fallback).
+	missingProbeDep := ""
+	if i.shouldRunCodexProcessProbe(forceProbe) {
+		if sessionID, missingDep := i.queryCodexSessionFromProcessFiles(); sessionID != "" {
 			changed := sessionID != i.CodexSessionID
 			if changed {
 				sessionLog.Debug(
-					"codex_session_update_from_lsof",
+					"codex_session_update_from_probe",
 					slog.String("old_id", i.CodexSessionID),
 					slog.String("new_id", sessionID),
 				)
@@ -1391,9 +1451,9 @@ func (i *Instance) updateCodexSession(excludeIDs map[string]bool, forceLsof bool
 			if i.tmuxSession != nil && i.tmuxSession.Exists() && (changed || envSessionID == "") {
 				_ = i.tmuxSession.SetEnvironment("CODEX_SESSION_ID", i.CodexSessionID)
 			}
-			return false
-		} else if missing {
-			lsofMissing = true
+			return ""
+		} else if missingDep != "" {
+			missingProbeDep = missingDep
 		}
 	}
 
@@ -1401,7 +1461,7 @@ func (i *Instance) updateCodexSession(excludeIDs map[string]bool, forceLsof bool
 	// Only allow unscoped fallback when we don't have a known session ID yet.
 	allowUnscoped := envSessionID == "" && i.CodexSessionID == "" && i.CodexStartedAt > 0
 	if !i.shouldScanCodexSession(allowUnscoped) {
-		return lsofMissing
+		return missingProbeDep
 	}
 
 	if sessionID := i.queryCodexSession(excludeIDs, allowUnscoped); sessionID != "" {
@@ -1422,7 +1482,7 @@ func (i *Instance) updateCodexSession(excludeIDs map[string]bool, forceLsof bool
 			_ = i.tmuxSession.SetEnvironment("CODEX_SESSION_ID", i.CodexSessionID)
 		}
 	}
-	return lsofMissing
+	return missingProbeDep
 }
 
 // buildGenericCommand builds commands for custom tools defined in [tools.*]
@@ -3545,9 +3605,9 @@ func (i *Instance) Restart() error {
 	// Krudony fix: don't skip when we already have an ID - the user may have started a NEW session
 	if i.Tool == "codex" {
 		i.pendingCodexRestartWarning = ""
-		if i.updateCodexSession(nil, true) {
-			i.pendingCodexRestartWarning = "Codex session detection fallback: lsof is not available"
-			sessionLog.Warn("codex_lsof_missing_for_restart")
+		if missingDep := i.updateCodexSession(nil, true); missingDep != "" {
+			i.pendingCodexRestartWarning = codexProbeMissingWarning(missingDep)
+			sessionLog.Warn("codex_probe_dep_missing_for_restart", slog.String("dependency", missingDep))
 		}
 	}
 

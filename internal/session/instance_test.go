@@ -2455,6 +2455,25 @@ func TestExtractCodexSessionIDFromLsofOutput_DockerStyleLine(t *testing.T) {
 	}
 }
 
+func TestExtractCodexSessionIDFromPath_DeletedSuffix(t *testing.T) {
+	path := "/home/user/.codex/sessions/2026/02/28/rollout-2026-02-28T00-42-18-019c9ffa-c9d6-7be1-9e1c-527080e68951.jsonl (deleted)"
+	got := extractCodexSessionIDFromPath(path)
+	want := "019c9ffa-c9d6-7be1-9e1c-527080e68951"
+	if got != want {
+		t.Fatalf("extractCodexSessionIDFromPath() = %q, want %q", got, want)
+	}
+}
+
+func TestCodexProbeMissingWarning(t *testing.T) {
+	if got := codexProbeMissingWarning(""); got != "" {
+		t.Fatalf("codexProbeMissingWarning(\"\") = %q, want empty", got)
+	}
+	want := "Codex session detection fallback: readlink is not available"
+	if got := codexProbeMissingWarning("readlink"); got != want {
+		t.Fatalf("codexProbeMissingWarning(\"readlink\") = %q, want %q", got, want)
+	}
+}
+
 func TestInstance_ConsumeCodexRestartWarning(t *testing.T) {
 	inst := NewInstanceWithTool("codex-warning", "/tmp/test", "codex")
 	inst.pendingCodexRestartWarning = "Codex session detection fallback: lsof is not available"
