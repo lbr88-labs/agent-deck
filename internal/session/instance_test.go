@@ -2433,6 +2433,29 @@ func writeCodexSessionFile(t *testing.T, codexHome, sessionID, cwd string) strin
 	return filePath
 }
 
+func TestExtractCodexSessionIDFromLsofOutput(t *testing.T) {
+	lsofOutput := []byte(`codex 12345 user 45w REG 254,1 654264 5176218 /home/user/.codex/sessions/2026/02/28/rollout-2026-02-28T00-42-18-019c9ffa-c9d6-7be1-9e1c-527080e68951.jsonl
+`)
+
+	got := extractCodexSessionIDFromLsofOutput(lsofOutput)
+	want := "019c9ffa-c9d6-7be1-9e1c-527080e68951"
+	if got != want {
+		t.Fatalf("extractCodexSessionIDFromLsofOutput() = %q, want %q", got, want)
+	}
+}
+
+func TestInstance_ConsumeCodexRestartWarning(t *testing.T) {
+	inst := NewInstanceWithTool("codex-warning", "/tmp/test", "codex")
+	inst.pendingCodexRestartWarning = "Codex session detection fallback: lsof is not available"
+
+	if got := inst.ConsumeCodexRestartWarning(); got == "" {
+		t.Fatalf("ConsumeCodexRestartWarning() returned empty warning")
+	}
+	if got := inst.ConsumeCodexRestartWarning(); got != "" {
+		t.Fatalf("second ConsumeCodexRestartWarning() = %q, want empty", got)
+	}
+}
+
 // TestInstance_UpdateHookStatus tests the UpdateHookStatus method.
 func TestInstance_UpdateHookStatus(t *testing.T) {
 	inst := NewInstanceWithTool("hook-update-test", "/tmp/test", "claude")

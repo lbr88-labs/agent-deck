@@ -2687,7 +2687,11 @@ func (h *Home) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		// Use forceSave to bypass mtime check - restore MUST persist
 		h.forceSaveInstances()
-		h.setError(fmt.Errorf("restored '%s'", msg.instance.Title))
+		if msg.warning != "" {
+			h.setError(fmt.Errorf("restored '%s' (%s)", msg.instance.Title, msg.warning))
+		} else {
+			h.setError(fmt.Errorf("restored '%s'", msg.instance.Title))
+		}
 		return h, h.fetchPreview(msg.instance)
 
 	case openCodeDetectionCompleteMsg:
@@ -2733,6 +2737,9 @@ func (h *Home) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			h.invalidatePreviewCache(msg.sessionID)
 			// Save the updated session state (new tmux session name)
 			h.saveInstances()
+			if msg.warning != "" {
+				h.setError(fmt.Errorf("%s", msg.warning))
+			}
 		}
 		// Clear animation so ENTER can attach immediately.
 		delete(h.resumingSessions, msg.sessionID)
@@ -4363,7 +4370,11 @@ func (h *Home) handleMainKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		inst := entry.instance
 		return h, func() tea.Msg {
 			err := inst.Restart()
-			return sessionRestoredMsg{instance: inst, err: err}
+			return sessionRestoredMsg{
+				instance: inst,
+				err:      err,
+				warning:  inst.ConsumeCodexRestartWarning(),
+			}
 		}
 
 	case "ctrl+r":
@@ -5425,6 +5436,7 @@ type sessionDeletedMsg struct {
 type sessionRestoredMsg struct {
 	instance *session.Instance
 	err      error
+	warning  string
 }
 
 // deleteSession deletes a session
@@ -5447,6 +5459,7 @@ func (h *Home) deleteSession(inst *session.Instance) tea.Cmd {
 type sessionRestartedMsg struct {
 	sessionID string
 	err       error
+	warning   string
 }
 
 // mcpRestartedMsg signals that an MCP-triggered restart completed and should auto-attach
@@ -5480,7 +5493,11 @@ func (h *Home) restartSession(inst *session.Instance) tea.Cmd {
 
 		err := current.Restart()
 		mcpUILog.Debug("restart_session_result", slog.String("id", id), slog.Any("error", err))
-		return sessionRestartedMsg{sessionID: id, err: err}
+		return sessionRestartedMsg{
+			sessionID: id,
+			err:       err,
+			warning:   current.ConsumeCodexRestartWarning(),
+		}
 	}
 }
 
