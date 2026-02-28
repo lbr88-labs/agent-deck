@@ -52,6 +52,7 @@ const (
 	codexBootstrapScanInterval     = 2 * time.Second
 	codexRotationScanInterval      = 30 * time.Second
 	codexLsofScanInterval          = 2 * time.Second
+	codexLsofMissingSentinel       = "__AGENT_DECK_MISSING_LSOF__"
 )
 
 // Instance represents a single agent/shell session
@@ -1282,10 +1283,37 @@ func extractCodexSessionIDFromLsofOutput(output []byte) string {
 	return ""
 }
 
+func (i *Instance) queryCodexSessionFromDockerLsof() (string, bool) {
+	if strings.TrimSpace(i.SandboxContainer) == "" {
+		return "", false
+	}
+
+	script := fmt.Sprintf(
+		`command -v lsof >/dev/null 2>&1 || { echo %q; exit 0; }; lsof -c codex 2>/dev/null`,
+		codexLsofMissingSentinel,
+	)
+	out, err := exec.Command("docker", "exec", i.SandboxContainer, "sh", "-lc", script).Output()
+	if err != nil {
+		return "", false
+	}
+	if bytes.Contains(out, []byte(codexLsofMissingSentinel)) {
+		return "", true
+	}
+	if sessionID := extractCodexSessionIDFromLsofOutput(out); sessionID != "" {
+		return sessionID, false
+	}
+	return "", false
+}
+
 // queryCodexSessionFromLsof inspects live Codex processes and returns the active
 // session UUID inferred from open rollout JSONL files.
 // The second return value indicates whether lsof itself is unavailable.
 func (i *Instance) queryCodexSessionFromLsof() (string, bool) {
+	// Sandboxed sessions run Codex inside Docker; probe from inside container.
+	if i.IsSandboxed() {
+		return i.queryCodexSessionFromDockerLsof()
+	}
+
 	if _, err := exec.LookPath("lsof"); err != nil {
 		return "", true
 	}

@@ -2444,6 +2444,17 @@ func TestExtractCodexSessionIDFromLsofOutput(t *testing.T) {
 	}
 }
 
+func TestExtractCodexSessionIDFromLsofOutput_DockerStyleLine(t *testing.T) {
+	lsofOutput := []byte(`codex 44 root 36w REG 0,608 3392413 5176210 /root/.codex/sessions/2026/02/23/rollout-2026-02-23T18-37-01-019c8a12-e903-7670-bd12-709c6a4c5451.jsonl
+`)
+
+	got := extractCodexSessionIDFromLsofOutput(lsofOutput)
+	want := "019c8a12-e903-7670-bd12-709c6a4c5451"
+	if got != want {
+		t.Fatalf("extractCodexSessionIDFromLsofOutput() docker line = %q, want %q", got, want)
+	}
+}
+
 func TestInstance_ConsumeCodexRestartWarning(t *testing.T) {
 	inst := NewInstanceWithTool("codex-warning", "/tmp/test", "codex")
 	inst.pendingCodexRestartWarning = "Codex session detection fallback: lsof is not available"
