@@ -5,6 +5,24 @@ All notable changes to Agent Deck will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.20.0] - 2026-03-01
+
+### Added
+
+- Add remote SSH session support with two workflows:
+  - `agent-deck add --ssh <user@host> [--remote-path <path>]` to launch/manage sessions on remote hosts.
+  - `agent-deck remote add/list/sessions/attach/rename` to manage and interact with remote agent-deck instances.
+- Add remote sessions to the TUI under `remotes/<name>`, with keyboard attach (`Enter`) and rename (`r`) support.
+- Add JSON session fields `ssh_host` and `ssh_remote_path` in `agent-deck list --json` output.
+
+### Fixed
+
+- Recover repository state after the broken PR #260 merge and re-apply the feature cleanly on `main`.
+- Harden SSH command handling by shell-quoting remote command parts and SSH host/path values.
+- Prevent remote name parsing collisions by rejecting `:` in remote names.
+- Preserve full multi-word titles in `agent-deck remote rename`.
+- Stabilize remote session rendering order and snapshot-copy remote data during TUI rebuilds for safer async updates.
+
 ## [0.19.19] - 2026-02-26
 
 ### Fixed
