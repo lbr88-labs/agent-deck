@@ -4357,7 +4357,7 @@ func (i *Instance) wrapForSSH(command string) string {
 
 	return fmt.Sprintf(
 		"ssh -t -o ControlMaster=auto -o ControlPath=/tmp/agent-deck-ssh/%%r@%%h:%%p -o ControlPersist=600 %s %s",
-		i.SSHHost,
+		shellQuote(i.SSHHost),
 		shellQuote(remoteCmd),
 	)
 }

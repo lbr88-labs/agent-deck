@@ -59,6 +59,10 @@ func printRemoteUsage() {
 	fmt.Println("  agent-deck remote rename dev my-session new-name")
 }
 
+func isValidRemoteName(name string) bool {
+	return name != "" && !strings.ContainsAny(name, " /\\.:")
+}
+
 func handleRemoteAdd(args []string) {
 	fs := flag.NewFlagSet("remote add", flag.ExitOnError)
 	agentDeckPath := fs.String("agent-deck-path", "", "Path to agent-deck on the remote (default: agent-deck)")
@@ -87,9 +91,10 @@ func handleRemoteAdd(args []string) {
 	name := remaining[0]
 	host := remaining[1]
 
-	// Validate name (no spaces, slashes, or dots)
-	if strings.ContainsAny(name, " /\\.") {
-		fmt.Println("Error: remote name must not contain spaces, slashes, or dots")
+	// Validate name (no spaces, slashes, dots, or colons).
+	// Colon is reserved by the UI's internal remote session identifier format.
+	if !isValidRemoteName(name) {
+		fmt.Println("Error: remote name must not contain spaces, slashes, dots, or colons")
 		os.Exit(1)
 	}
 
@@ -178,7 +183,7 @@ func handleRemoteList(args []string) {
 		os.Exit(1)
 	}
 
-	if config.Remotes == nil || len(config.Remotes) == 0 {
+	if len(config.Remotes) == 0 {
 		fmt.Println("No remotes configured.")
 		fmt.Println("\nAdd one with: agent-deck remote add <name> <user@host>")
 		return
@@ -230,7 +235,7 @@ func handleRemoteSessions(args []string) {
 		os.Exit(1)
 	}
 
-	if config.Remotes == nil || len(config.Remotes) == 0 {
+	if len(config.Remotes) == 0 {
 		fmt.Println("No remotes configured.")
 		return
 	}
@@ -366,7 +371,7 @@ func handleRemoteRename(args []string) {
 
 	remoteName := args[0]
 	sessionRef := args[1]
-	newTitle := args[2]
+	newTitle := strings.Join(args[2:], " ")
 
 	config, err := session.LoadUserConfig()
 	if err != nil {
