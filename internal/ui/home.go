@@ -957,10 +957,17 @@ func (h *Home) rebuildFlatItems() {
 
 	// Append remote sessions as selectable items
 	h.remoteSessionsMu.RLock()
-	remotes := h.remoteSessions
+	remoteNames := make([]string, 0, len(h.remoteSessions))
+	remotes := make(map[string][]session.RemoteSessionInfo, len(h.remoteSessions))
+	for name, sessions := range h.remoteSessions {
+		remoteNames = append(remoteNames, name)
+		remotes[name] = append([]session.RemoteSessionInfo(nil), sessions...)
+	}
 	h.remoteSessionsMu.RUnlock()
+	sort.Strings(remoteNames)
 	if len(remotes) > 0 {
-		for remoteName, sessions := range remotes {
+		for _, remoteName := range remoteNames {
+			sessions := remotes[remoteName]
 			// Add remote group header
 			h.flatItems = append(h.flatItems, session.Item{
 				Type:       session.ItemTypeRemoteGroup,

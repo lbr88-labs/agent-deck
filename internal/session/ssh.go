@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"strings"
 	"time"
 )
 
@@ -33,14 +34,7 @@ func NewSSHRunner(name string, rc RemoteConfig) *SSHRunner {
 func (r *SSHRunner) Run(ctx context.Context, args ...string) ([]byte, error) {
 	_ = os.MkdirAll(sshControlDir, 0700)
 
-	// Build remote command: agent-deck -p <profile> <args...>
-	remoteCmd := r.AgentDeckPath
-	if r.Profile != "default" {
-		remoteCmd += " -p " + r.Profile
-	}
-	for _, arg := range args {
-		remoteCmd += " " + arg
-	}
+	remoteCmd := r.buildRemoteCommand(args...)
 
 	// Build SSH command with ControlMaster and timeout
 	timeoutCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
@@ -73,11 +67,7 @@ func (r *SSHRunner) Run(ctx context.Context, args ...string) ([]byte, error) {
 func (r *SSHRunner) Attach(sessionID string) error {
 	_ = os.MkdirAll(sshControlDir, 0700)
 
-	remoteCmd := r.AgentDeckPath
-	if r.Profile != "default" {
-		remoteCmd += " -p " + r.Profile
-	}
-	remoteCmd += " session attach " + sessionID
+	remoteCmd := r.buildRemoteCommand("session", "attach", sessionID)
 
 	sshArgs := []string{
 		"-t",
@@ -99,6 +89,18 @@ func (r *SSHRunner) Attach(sessionID string) error {
 // RunCommand executes an arbitrary agent-deck command on the remote.
 func (r *SSHRunner) RunCommand(ctx context.Context, args ...string) ([]byte, error) {
 	return r.Run(ctx, args...)
+}
+
+// buildRemoteCommand safely quotes each argument for execution through the remote shell.
+func (r *SSHRunner) buildRemoteCommand(args ...string) string {
+	parts := []string{shellQuote(r.AgentDeckPath)}
+	if r.Profile != "" && r.Profile != "default" {
+		parts = append(parts, "-p", shellQuote(r.Profile))
+	}
+	for _, arg := range args {
+		parts = append(parts, shellQuote(arg))
+	}
+	return strings.Join(parts, " ")
 }
 
 // FetchSessions retrieves the session list from the remote agent-deck instance.
