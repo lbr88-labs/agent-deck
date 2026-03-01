@@ -32,6 +32,9 @@ type ConductorSettings struct {
 
 	// Slack defines Slack bot integration settings
 	Slack SlackSettings `toml:"slack"`
+
+	// Discord defines Discord bot integration settings
+	Discord DiscordSettings `toml:"discord"`
 }
 
 // TelegramSettings defines Telegram bot configuration for the conductor bridge
@@ -62,6 +65,21 @@ type SlackSettings struct {
 	// If empty, all users are allowed (backward compatible).
 	// Get user ID from Slack: Right-click user → View profile → More → Copy member ID
 	AllowedUserIDs []string `toml:"allowed_user_ids"`
+}
+
+// DiscordSettings defines Discord bot configuration for the conductor bridge
+type DiscordSettings struct {
+	// BotToken is the Discord bot token from the Developer Portal
+	BotToken string `toml:"bot_token"`
+
+	// GuildID is the Discord server (guild) where the bot operates
+	GuildID int64 `toml:"guild_id"`
+
+	// ChannelID is the Discord channel where the bot listens and posts
+	ChannelID int64 `toml:"channel_id"`
+
+	// UserID is the authorized Discord user ID
+	UserID int64 `toml:"user_id"`
 }
 
 // ConductorMeta holds metadata for a named conductor instance

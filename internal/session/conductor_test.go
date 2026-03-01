@@ -1722,6 +1722,94 @@ func TestConductorMeta_GetClearOnCompact(t *testing.T) {
 	}
 }
 
+// --- Discord bridge template tests ---
+
+func TestBridgeTemplate_ContainsDiscordBot(t *testing.T) {
+	template := conductorBridgePy
+	patterns := []string{
+		"HAS_DISCORD",
+		"create_discord_bot",
+		"DISCORD_MAX_LENGTH",
+		"class ConductorBot(discord.Client):",
+	}
+	for _, pattern := range patterns {
+		if !strings.Contains(template, pattern) {
+			t.Errorf("template should contain Discord pattern: %q", pattern)
+		}
+	}
+}
+
+func TestBridgeTemplate_ContainsDiscordAuthorization(t *testing.T) {
+	template := conductorBridgePy
+
+	// Check for authorization function
+	if !strings.Contains(template, "def is_authorized(user_id: int) -> bool:") {
+		t.Error("template should contain is_authorized function for Discord")
+	}
+
+	// Check for unauthorized message logging
+	if !strings.Contains(template, "Unauthorized Discord message from user") {
+		t.Error("template should log unauthorized Discord messages")
+	}
+}
+
+func TestBridgeTemplate_DiscordConfigLoading(t *testing.T) {
+	template := conductorBridgePy
+	patterns := []string{
+		`dc = conductor_cfg.get("discord", {})`,
+		`dc_bot_token = dc.get("bot_token", "")`,
+		`dc_guild_id = dc.get("guild_id", 0)`,
+		`dc_channel_id = dc.get("channel_id", 0)`,
+		`dc_user_id = dc.get("user_id", 0)`,
+		`"discord":`,
+	}
+	for _, pattern := range patterns {
+		if !strings.Contains(template, pattern) {
+			t.Errorf("template should contain Discord config pattern: %q", pattern)
+		}
+	}
+}
+
+func TestBridgeTemplate_DiscordSlashCommands(t *testing.T) {
+	template := conductorBridgePy
+	commands := []string{
+		`name="ad-status"`,
+		`name="ad-sessions"`,
+		`name="ad-restart"`,
+		`name="ad-help"`,
+	}
+	for _, cmd := range commands {
+		if !strings.Contains(template, cmd) {
+			t.Errorf("template should contain Discord slash command: %q", cmd)
+		}
+	}
+}
+
+func TestBridgeTemplate_DiscordHeartbeatNotification(t *testing.T) {
+	template := conductorBridgePy
+	if !strings.Contains(template, "discord_bot=None, discord_channel_id=None") {
+		t.Error("heartbeat_loop should accept discord_bot and discord_channel_id params")
+	}
+	if !strings.Contains(template, "Failed to send Discord notification") {
+		t.Error("heartbeat should handle Discord notification errors")
+	}
+}
+
+func TestBridgeTemplate_DiscordInMain(t *testing.T) {
+	template := conductorBridgePy
+	patterns := []string{
+		`dc_ok = config["discord"]["configured"] and HAS_DISCORD`,
+		"create_discord_bot(config)",
+		`discord_bot.start(config["discord"]["bot_token"])`,
+		"discord_bot.close()",
+	}
+	for _, pattern := range patterns {
+		if !strings.Contains(template, pattern) {
+			t.Errorf("main() should contain Discord pattern: %q", pattern)
+		}
+	}
+}
+
 func TestConductorClearOnCompact(t *testing.T) {
 	// Override HOME so LoadConductorMeta reads from our temp dir
 	tmpHome := t.TempDir()
