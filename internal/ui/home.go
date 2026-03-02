@@ -55,6 +55,11 @@ const (
 	// At 2s: 2-5 CapturePane() calls/sec = minimal CPU overhead
 	tickInterval = 2 * time.Second
 
+	// logOutputDebounce limits how often a single session can trigger
+	// UpdateStatus() from tmux %output events.
+	// A higher value avoids expensive status parsing loops for very chatty sessions
+	logOutputDebounce = 2 * time.Second
+
 	// Launch animation minimum durations.
 	// Claude/Gemini get longer feedback because startup UI is richer and may settle asynchronously.
 	minLaunchAnimationDurationDefault = 500 * time.Millisecond
@@ -610,7 +615,7 @@ func NewHomeWithProfileAndMode(profile string) *Home {
 			if inst.GetTmuxSession() != nil && inst.GetTmuxSession().Name == sessionName {
 				h.logActivityMu.Lock()
 				lastUpdate := h.lastLogActivity[inst.ID]
-				if time.Since(lastUpdate) < 500*time.Millisecond {
+				if time.Since(lastUpdate) < logOutputDebounce {
 					h.logActivityMu.Unlock()
 					break
 				}
