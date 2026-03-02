@@ -5,6 +5,20 @@ All notable changes to Agent Deck will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.20.1] - 2026-03-03
+
+### Added
+
+- Add Discord bot support to the conductor bridge with setup flow and config support (`[conductor.discord]`), including slash commands (`/ad-status`, `/ad-sessions`, `/ad-restart`, `/ad-help`) and heartbeat alert delivery to Discord.
+
+### Changed
+
+- Reduce tmux `%output`-driven status update frequency for chatty sessions to lower parsing overhead and smooth CPU usage under heavy output.
+
+### Fixed
+
+- Restrict Discord slash commands to the configured Discord channel so conductor control stays channel-scoped.
+
 ## [0.20.0] - 2026-03-01
 
 ### Added
