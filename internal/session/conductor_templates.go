@@ -1408,6 +1408,16 @@ def create_discord_bot(config: dict):
     def is_authorized(user_id: int) -> bool:
         return user_id == authorized_user
 
+    async def ensure_discord_channel(interaction: discord.Interaction) -> bool:
+        """Restrict slash commands to the configured channel."""
+        if interaction.channel_id != channel_id:
+            await interaction.response.send_message(
+                "This command is only available in the configured channel.",
+                ephemeral=True,
+            )
+            return False
+        return True
+
     def get_default_conductor() -> dict | None:
         conductors = discover_conductors()
         return conductors[0] if conductors else None
@@ -1425,6 +1435,8 @@ def create_discord_bot(config: dict):
             await interaction.response.send_message(
                 "Unauthorized.", ephemeral=True,
             )
+            return
+        if not await ensure_discord_channel(interaction):
             return
 
         profiles = get_unique_profiles()
@@ -1460,6 +1472,8 @@ def create_discord_bot(config: dict):
             await interaction.response.send_message(
                 "Unauthorized.", ephemeral=True,
             )
+            return
+        if not await ensure_discord_channel(interaction):
             return
 
         profiles = get_unique_profiles()
@@ -1504,6 +1518,8 @@ def create_discord_bot(config: dict):
                 "Unauthorized.", ephemeral=True,
             )
             return
+        if not await ensure_discord_channel(interaction):
+            return
 
         conductor_names = get_conductor_names()
         target = None
@@ -1547,6 +1563,8 @@ def create_discord_bot(config: dict):
             await interaction.response.send_message(
                 "Unauthorized.", ephemeral=True,
             )
+            return
+        if not await ensure_discord_channel(interaction):
             return
 
         conductors = discover_conductors()

@@ -1785,6 +1785,21 @@ func TestBridgeTemplate_DiscordSlashCommands(t *testing.T) {
 	}
 }
 
+func TestBridgeTemplate_DiscordSlashCommandsChannelRestriction(t *testing.T) {
+	template := conductorBridgePy
+	patterns := []string{
+		"async def ensure_discord_channel(interaction: discord.Interaction) -> bool:",
+		`if interaction.channel_id != channel_id:`,
+		`"This command is only available in the configured channel."`,
+		"if not await ensure_discord_channel(interaction):",
+	}
+	for _, pattern := range patterns {
+		if !strings.Contains(template, pattern) {
+			t.Errorf("template should contain Discord channel restriction pattern: %q", pattern)
+		}
+	}
+}
+
 func TestBridgeTemplate_DiscordHeartbeatNotification(t *testing.T) {
 	template := conductorBridgePy
 	if !strings.Contains(template, "discord_bot=None, discord_channel_id=None") {
