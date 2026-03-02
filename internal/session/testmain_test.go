@@ -5,6 +5,8 @@ import (
 	"os/exec"
 	"strings"
 	"testing"
+
+	"github.com/asheshgoplani/agent-deck/internal/testutil"
 )
 
 // skipIfNoTmuxServer skips the test if tmux binary is missing or server isn't running.
@@ -21,6 +23,10 @@ func skipIfNoTmuxServer(t *testing.T) {
 }
 
 func TestMain(m *testing.M) {
+	// Git hooks export GIT_DIR/GIT_WORK_TREE; clear them so test subprocess git
+	// commands operate on their temp repos instead of the real repository.
+	testutil.UnsetGitRepoEnv()
+
 	// Force test profile to prevent production data corruption
 	// See CLAUDE.md: "2025-12-11 Incident: Tests with AGENTDECK_PROFILE=work overwrote ALL 36 production sessions"
 	os.Setenv("AGENTDECK_PROFILE", "_test")
