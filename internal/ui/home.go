@@ -215,8 +215,10 @@ type Home struct {
 
 	// Background status worker (Priority 1C optimization)
 	// Moves status updates to a separate goroutine, completely decoupling from UI
-	statusTrigger    chan statusUpdateRequest // Triggers background status update
-	statusWorkerDone chan struct{}            // Signals worker has stopped
+	statusTrigger       chan statusUpdateRequest // Triggers background status update
+	statusWorkerDone    chan struct{}            // Signals worker has stopped
+	lastFullStatusSweep atomic.Int64             // UnixNano timestamp of last full background status sweep
+	lastPersistedStatus map[string]string        // instanceID -> last status written to SQLite
 
 	// PERFORMANCE: Worker pool for output-driven status updates (Priority 2)
 	// Caps the number of goroutines spawned for %output events from control pipes
@@ -582,6 +584,7 @@ func NewHomeWithProfileAndMode(profile string) *Home {
 		worktreeDirtyCacheTs: make(map[string]time.Time),
 		statusTrigger:        make(chan statusUpdateRequest, 1), // Buffered to avoid blocking
 		statusWorkerDone:     make(chan struct{}),
+		lastPersistedStatus:  make(map[string]string),
 		logUpdateChan:        make(chan *session.Instance, 100), // Buffered to absorb bursts
 		boundKeys:            make(map[string]string),
 		undoStack:            make([]deletedSessionEntry, 0, 10),
@@ -1772,6 +1775,11 @@ func (h *Home) statusWorker() {
 		case <-ticker.C:
 			// Self-triggered update - runs even when TUI is paused
 			h.backgroundStatusUpdate()
+			// Coalesce a queued immediate request after full sweep.
+			select {
+			case <-h.statusTrigger:
+			default:
+			}
 
 		case req := <-h.statusTrigger:
 			// Explicit trigger from TUI (for immediate updates)
@@ -2004,9 +2012,21 @@ func (h *Home) backgroundStatusUpdate() {
 			h.lastDeadInstanceCleanup = time.Now()
 		}
 
-		// Write current status for each instance so other TUI instances stay in sync
+		// Write statuses only when changed to reduce SQLite write pressure.
+		currentIDs := make(map[string]struct{}, len(instances))
 		for _, inst := range instances {
-			_ = db.WriteStatus(inst.ID, string(inst.GetStatusThreadSafe()), inst.Tool)
+			currentIDs[inst.ID] = struct{}{}
+			status := string(inst.GetStatusThreadSafe())
+			if prev, ok := h.lastPersistedStatus[inst.ID]; ok && prev == status {
+				continue
+			}
+			_ = db.WriteStatus(inst.ID, status, inst.Tool)
+			h.lastPersistedStatus[inst.ID] = status
+		}
+		for id := range h.lastPersistedStatus {
+			if _, ok := currentIDs[id]; !ok {
+				delete(h.lastPersistedStatus, id)
+			}
 		}
 
 		// Read acknowledgments from SQLite (picks up acks from other instances)
@@ -2035,6 +2055,7 @@ func (h *Home) backgroundStatusUpdate() {
 			slog.Duration("refresh", refreshDur),
 			slog.Int("sessions", len(instances)))
 	}
+	h.lastFullStatusSweep.Store(time.Now().UnixNano())
 }
 
 // syncNotificationsBackground updates the tmux notification bar directly
@@ -2241,6 +2262,12 @@ func (h *Home) triggerStatusUpdate() {
 // With batching (3 visible + 2 non-visible per tick), we keep each tick under 100ms.
 func (h *Home) processStatusUpdate(req statusUpdateRequest) {
 	const batchSize = 2 // Reduced from 5 to 2 - fewer CapturePane() calls per tick
+	if last := h.lastFullStatusSweep.Load(); last > 0 {
+		if time.Since(time.Unix(0, last)) < 1500*time.Millisecond {
+			// A full all-session sweep just ran; skip redundant incremental update.
+			return
+		}
+	}
 
 	// CRITICAL FIX: Refresh session cache in background worker, NOT main goroutine
 	// This prevents UI freezing when subprocess spawning is slow (high system load)
@@ -3926,7 +3953,6 @@ func (h *Home) handleMainKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 						}
 						return h, nil
 					}
-					h.isAttaching.Store(true) // Prevent View() output during transition (atomic)
 					return h, h.attachSession(item.Session)
 				}
 				// Session exited (tmux session gone) — auto-restart it.
@@ -5640,40 +5666,10 @@ func (h *Home) attachSession(inst *session.Instance) tea.Cmd {
 	// (Deferred from load time for performance)
 	inst.SyncSessionIDsToTmux()
 
-	// Mark session as accessed (for recency-sorted path suggestions)
+	// Mark session as accessed (for recency-sorted path suggestions).
+	// Do not synchronously save here; saving on attach blocks transition and causes
+	// visible blank-screen delay before tmux attach starts.
 	inst.MarkAccessed()
-
-	// Skip saving during reload to avoid overwriting external changes
-	// THREAD-SAFE: Read isReloading under mutex
-	h.reloadMu.Lock()
-	reloading := h.isReloading
-	h.reloadMu.Unlock()
-	if !reloading && h.storage != nil {
-		// Take snapshot under lock for defensive programming
-		h.instancesMu.RLock()
-		instancesCopy := make([]*session.Instance, len(h.instances))
-		copy(instancesCopy, h.instances)
-		instanceCount := len(h.instances)
-		h.instancesMu.RUnlock()
-
-		// DEFENSIVE: Never save empty instances if storage has data
-		if instanceCount == 0 {
-			if info, err := os.Stat(h.storage.Path()); err == nil && info.Size() > 100 {
-				uiLog.Warn("save_attach_refusing_empty_overwrite", slog.Int64("file_bytes", info.Size()))
-				goto skipSave
-			}
-		}
-
-		groupTreeCopy := h.groupTree.ShallowCopyForSave()
-
-		// CRITICAL FIX: NotifySave MUST be called immediately before SaveWithGroups
-		// Previously it was called 18 lines earlier, creating a race window
-		if h.storageWatcher != nil {
-			h.storageWatcher.NotifySave()
-		}
-		_ = h.storage.SaveWithGroups(instancesCopy, groupTreeCopy)
-	}
-skipSave:
 
 	// Acknowledge on ATTACH (not detach) - but ONLY if session is waiting (yellow)
 	// This ensures:
@@ -5692,6 +5688,7 @@ skipSave:
 	// Use tea.Exec with a custom command that runs our Attach method
 	// On return, immediately update all session statuses (don't reload from storage
 	// which would lose the tmux session state)
+	h.isAttaching.Store(true) // Prevent View() output only during actual attach transition
 	return tea.Exec(attachCmd{session: tmuxSess}, func(err error) tea.Msg {
 		// CRITICAL: Set isAttaching to false BEFORE returning the message
 		// This prevents a race condition where View() could be called with

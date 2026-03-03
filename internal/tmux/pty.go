@@ -4,6 +4,7 @@
 package tmux
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"io"
@@ -133,8 +134,19 @@ func (s *Session) Attach(ctx context.Context) error {
 				continue
 			}
 
-			// Check for Ctrl+Q (ASCII 17) - single byte
-			if n == 1 && buf[0] == 17 {
+			// Check for Ctrl+Q (ASCII 17) anywhere in the input chunk.
+			// Some terminals coalesce reads, so detach must not require a single-byte read.
+			if idx := bytes.IndexByte(buf[:n], 17); idx >= 0 {
+				// Forward any bytes before Ctrl+Q, then detach.
+				if idx > 0 {
+					if _, err := ptmx.Write(buf[:idx]); err != nil {
+						select {
+						case ioErrors <- fmt.Errorf("PTY write error: %w", err):
+						default:
+						}
+						return
+					}
+				}
 				close(detachCh)
 				cancel()
 				return
