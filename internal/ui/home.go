@@ -6655,6 +6655,9 @@ func (h *Home) renderDualColumnLayout(contentHeight int) string {
 	// Build right panel (preview) with styled title
 	rightTitle := h.renderPanelTitle("PREVIEW", rightWidth)
 	rightContent := h.renderPreviewPane(rightWidth, panelContentHeight)
+	if h.shouldDeferPreviewPane() {
+		rightContent = h.renderDeferredPreview(rightWidth, panelContentHeight)
+	}
 	// CRITICAL: Ensure right content has exactly panelContentHeight lines
 	rightContent = ensureExactHeight(rightContent, panelContentHeight)
 	rightPanel := rightTitle + "\n" + rightContent
@@ -6723,12 +6726,31 @@ func (h *Home) renderStackedLayout(totalHeight int) string {
 	// Preview (full width)
 	previewTitle := h.renderPanelTitle("PREVIEW", h.width)
 	previewContent := h.renderPreviewPane(h.width, previewHeight-2) // -2 for title
+	if h.shouldDeferPreviewPane() {
+		previewContent = h.renderDeferredPreview(h.width, previewHeight-2)
+	}
 	previewContent = ensureExactHeight(previewContent, previewHeight-2)
 	b.WriteString(previewTitle)
 	b.WriteString("\n")
 	b.WriteString(previewContent)
 
 	return b.String()
+}
+
+// shouldDeferPreviewPane reports whether preview pane rendering should be temporarily
+// deferred to prioritize navigation responsiveness.
+func (h *Home) shouldDeferPreviewPane() bool {
+	if h.isNavigating {
+		return true
+	}
+	return time.Since(h.lastNavigationTime) < 450*time.Millisecond
+}
+
+// renderDeferredPreview renders a lightweight placeholder while navigation is active.
+func (h *Home) renderDeferredPreview(width, height int) string {
+	style := lipgloss.NewStyle().Foreground(ColorText).Italic(true)
+	content := style.Render("Preview paused while navigating...")
+	return ensureExactHeight(content, height)
 }
 
 // renderSingleColumnLayout renders list only for narrow terminals (<50 cols)
@@ -7275,8 +7297,6 @@ func (h *Home) renderSessionList(width, height int) string {
 	if maxVisible < 1 {
 		maxVisible = 1
 	}
-	fastMode := time.Since(h.lastNavigationTime) < 180*time.Millisecond ||
-		(!h.lastAttachReturn.IsZero() && time.Since(h.lastAttachReturn) < 400*time.Millisecond)
 
 	// Show "more above" indicator if scrolled down
 	if h.viewOffset > 0 {
@@ -7287,11 +7307,7 @@ func (h *Home) renderSessionList(width, height int) string {
 
 	for i := h.viewOffset; i < len(h.flatItems) && visibleCount < maxVisible; i++ {
 		item := h.flatItems[i]
-		if fastMode {
-			h.renderItemFast(&b, item, i == h.cursor)
-		} else {
-			h.renderItem(&b, item, i == h.cursor, i)
-		}
+		h.renderItem(&b, item, i == h.cursor, i)
 		visibleCount++
 	}
 
@@ -7303,57 +7319,6 @@ func (h *Home) renderSessionList(width, height int) string {
 
 	// Height padding is handled by ensureExactHeight() in View() for consistency
 	return b.String()
-}
-
-// renderItemFast renders a minimal row used during rapid interaction bursts.
-// It avoids expensive per-row formatting and recursive group status aggregation.
-func (h *Home) renderItemFast(b *strings.Builder, item session.Item, selected bool) {
-	prefix := " "
-	if selected {
-		prefix = "▶"
-	}
-	switch item.Type {
-	case session.ItemTypeGroup:
-		indent := strings.Repeat(" ", max(0, item.Level))
-		icon := "▸"
-		if item.Group != nil && item.Group.Expanded {
-			icon = "▾"
-		}
-		name := "group"
-		if item.Group != nil {
-			name = item.Group.Name
-		}
-		b.WriteString(fmt.Sprintf("%s%s%s %s\n", prefix, indent, icon, name))
-	case session.ItemTypeSession:
-		indent := strings.Repeat(" ", max(0, item.Level))
-		inst := item.Session
-		if inst == nil {
-			b.WriteString(fmt.Sprintf("%s%s○ (session)\n", prefix, indent))
-			return
-		}
-		statusIcon := "○"
-		switch inst.GetStatusThreadSafe() {
-		case session.StatusRunning:
-			statusIcon = "●"
-		case session.StatusWaiting:
-			statusIcon = "◐"
-		case session.StatusError:
-			statusIcon = "✕"
-		}
-		b.WriteString(fmt.Sprintf("%s%s%s %s\n", prefix, indent, statusIcon, inst.Title))
-	case session.ItemTypeRemoteGroup:
-		name := item.RemoteName
-		if name == "" {
-			name = "remote"
-		}
-		b.WriteString(fmt.Sprintf("%s▾ remotes/%s\n", prefix, name))
-	case session.ItemTypeRemoteSession:
-		title := "remote-session"
-		if item.RemoteSession != nil && item.RemoteSession.Title != "" {
-			title = item.RemoteSession.Title
-		}
-		b.WriteString(fmt.Sprintf("%s  ○ %s\n", prefix, title))
-	}
 }
 
 // renderItem renders a single item (group or session) for the left panel
