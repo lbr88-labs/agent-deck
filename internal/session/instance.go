@@ -29,8 +29,9 @@ import (
 )
 
 var (
-	sessionLog = logging.ForComponent(logging.CompSession)
-	mcpLog     = logging.ForComponent(logging.CompMCP)
+	sessionLog                  = logging.ForComponent(logging.CompSession)
+	mcpLog                      = logging.ForComponent(logging.CompMCP)
+	codexSessionIDPathPatternRE = regexp.MustCompile(`/.codex/sessions/\S*/rollout-\S*-([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\.jsonl`)
 )
 
 // Status represents the current state of a session
@@ -52,8 +53,10 @@ const (
 	codexHookWaitingFastPathWindow = 2 * time.Minute
 	codexBootstrapScanInterval     = 2 * time.Second
 	codexRotationScanInterval      = 30 * time.Second
-	codexProbeScanInterval         = 2 * time.Second
-	codexProbeMissingSentinel      = "__AGENT_DECK_MISSING_TOOL__"
+	// codexProbeScanInterval rate-limits process-file probing to avoid
+	// repeated /proc and lsof scans on every status tick.
+	codexProbeScanInterval    = 2 * time.Second
+	codexProbeMissingSentinel = "__AGENT_DECK_MISSING_TOOL__"
 )
 
 // Instance represents a single agent/shell session
@@ -1234,9 +1237,69 @@ func (i *Instance) collectTmuxPaneProcessTreePIDs() []int {
 		return nil
 	}
 
+	// Single snapshot of the process table is substantially cheaper than
+	// spawning pgrep once per node in deep process trees.
+	procTable, err := exec.Command("ps", "-eo", "pid=,ppid=").Output()
+	if err == nil {
+		if allPIDs := collectProcessTreePIDsFromTable(panePID, procTable); len(allPIDs) > 0 {
+			return allPIDs
+		}
+	}
+
+	// Fallback path for environments where ps output is unavailable/unexpected.
+	return collectProcessTreePIDsViaPgrep(panePID)
+}
+
+func collectProcessTreePIDsFromTable(rootPID int, procTable []byte) []int {
+	childrenByParent := parsePSParentChildMap(procTable)
+	if len(childrenByParent) == 0 {
+		return []int{rootPID}
+	}
+
 	var allPIDs []int
-	seen := map[int]bool{panePID: true}
-	queue := []int{panePID}
+	seen := map[int]bool{rootPID: true}
+	queue := []int{rootPID}
+	for len(queue) > 0 {
+		parent := queue[0]
+		queue = queue[1:]
+		allPIDs = append(allPIDs, parent)
+
+		for _, childPID := range childrenByParent[parent] {
+			if childPID <= 0 || seen[childPID] {
+				continue
+			}
+			seen[childPID] = true
+			queue = append(queue, childPID)
+		}
+	}
+	return allPIDs
+}
+
+func parsePSParentChildMap(procTable []byte) map[int][]int {
+	childrenByParent := make(map[int][]int)
+	scanner := bufio.NewScanner(bytes.NewReader(procTable))
+	for scanner.Scan() {
+		fields := strings.Fields(scanner.Text())
+		if len(fields) != 2 {
+			continue
+		}
+		pid, err := strconv.Atoi(fields[0])
+		if err != nil || pid <= 0 {
+			continue
+		}
+		ppid, err := strconv.Atoi(fields[1])
+		if err != nil || ppid <= 0 {
+			continue
+		}
+		childrenByParent[ppid] = append(childrenByParent[ppid], pid)
+	}
+	return childrenByParent
+}
+
+func collectProcessTreePIDsViaPgrep(rootPID int) []int {
+	var allPIDs []int
+	seen := map[int]bool{rootPID: true}
+	queue := []int{rootPID}
 	for len(queue) > 0 {
 		parent := queue[0]
 		queue = queue[1:]
@@ -1255,7 +1318,6 @@ func (i *Instance) collectTmuxPaneProcessTreePIDs() []int {
 			queue = append(queue, childPID)
 		}
 	}
-
 	return allPIDs
 }
 
@@ -1270,14 +1332,11 @@ func isLikelyCodexProcessPID(pid int) bool {
 func extractCodexSessionIDFromPath(path string) string {
 	normalized := strings.TrimSpace(path)
 	normalized = strings.TrimSuffix(normalized, " (deleted)")
-	if !strings.Contains(normalized, "/.codex/sessions/") ||
-		!strings.Contains(normalized, "rollout-") ||
-		!strings.Contains(normalized, ".jsonl") {
+	matches := codexSessionIDPathPatternRE.FindStringSubmatch(normalized)
+	if len(matches) < 2 {
 		return ""
 	}
-
-	uuidPattern := regexp.MustCompile(`[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}`)
-	return uuidPattern.FindString(normalized)
+	return matches[1]
 }
 
 func extractCodexSessionIDFromLsofOutput(output []byte) string {
@@ -1328,7 +1387,18 @@ func (i *Instance) queryCodexSessionFromDockerProcFD() (string, string) {
 	}
 
 	script := fmt.Sprintf(
-		`command -v readlink >/dev/null 2>&1 || { echo %q; exit 0; }; for f in /proc/[0-9]*/fd/*; do t=$(readlink "$f" 2>/dev/null || true); case "$t" in */.codex/sessions/*rollout-*.jsonl*) printf '%%s\n' "$t";; esac; done`,
+		`command -v readlink >/dev/null 2>&1 || {
+	echo %q
+	exit 0
+}
+for f in /proc/[0-9]*/fd/*; do
+	t=$(readlink "$f" 2>/dev/null || true)
+	case "$t" in
+		*/.codex/sessions/*rollout-*.jsonl*)
+			printf '%%s\n' "$t"
+			;;
+	esac
+done`,
 		codexProbeMissingSentinel,
 	)
 	out, err := exec.Command("docker", "exec", i.SandboxContainer, "sh", "-lc", script).Output()
@@ -1360,6 +1430,7 @@ func (i *Instance) queryCodexSessionFromHostLsof() (string, string) {
 			if errors.As(err, &execErr) && execErr.Err == exec.ErrNotFound {
 				return "", "lsof"
 			}
+			sessionLog.Debug("codex_lsof_probe_failed", slog.Int("pid", pid), slog.Any("error", err))
 			continue
 		}
 
@@ -1394,6 +1465,8 @@ func (i *Instance) queryCodexSessionFromProcessFiles() (string, string) {
 
 // ConsumeCodexRestartWarning returns and clears any pending Codex restart warning.
 func (i *Instance) ConsumeCodexRestartWarning() string {
+	i.mu.Lock()
+	defer i.mu.Unlock()
 	warning := strings.TrimSpace(i.pendingCodexRestartWarning)
 	i.pendingCodexRestartWarning = ""
 	return warning
@@ -3604,9 +3677,13 @@ func (i *Instance) Restart() error {
 	// For Codex: ALWAYS update session to get the most recent one
 	// Krudony fix: don't skip when we already have an ID - the user may have started a NEW session
 	if i.Tool == "codex" {
+		i.mu.Lock()
 		i.pendingCodexRestartWarning = ""
+		i.mu.Unlock()
 		if missingDep := i.updateCodexSession(nil, true); missingDep != "" {
+			i.mu.Lock()
 			i.pendingCodexRestartWarning = codexProbeMissingWarning(missingDep)
+			i.mu.Unlock()
 			sessionLog.Warn("codex_probe_dep_missing_for_restart", slog.String("dependency", missingDep))
 		}
 	}

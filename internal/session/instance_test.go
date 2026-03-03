@@ -5,7 +5,9 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -2464,6 +2466,29 @@ func TestExtractCodexSessionIDFromPath_DeletedSuffix(t *testing.T) {
 	}
 }
 
+func TestParsePSParentChildMap(t *testing.T) {
+	procTable := []byte("100 1\n101 100\n102 100\n103 101\nbad-line\n104 invalid\n105 0\n")
+	got := parsePSParentChildMap(procTable)
+
+	want := map[int][]int{
+		1:   {100},
+		100: {101, 102},
+		101: {103},
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("parsePSParentChildMap() = %#v, want %#v", got, want)
+	}
+}
+
+func TestCollectProcessTreePIDsFromTable(t *testing.T) {
+	procTable := []byte("100 1\n101 100\n102 100\n103 101\n104 999\n")
+	got := collectProcessTreePIDsFromTable(100, procTable)
+	want := []int{100, 101, 102, 103}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("collectProcessTreePIDsFromTable() = %#v, want %#v", got, want)
+	}
+}
+
 func TestCodexProbeMissingWarning(t *testing.T) {
 	if got := codexProbeMissingWarning(""); got != "" {
 		t.Fatalf("codexProbeMissingWarning(\"\") = %q, want empty", got)
@@ -2483,6 +2508,34 @@ func TestInstance_ConsumeCodexRestartWarning(t *testing.T) {
 	}
 	if got := inst.ConsumeCodexRestartWarning(); got != "" {
 		t.Fatalf("second ConsumeCodexRestartWarning() = %q, want empty", got)
+	}
+}
+
+func TestInstance_ConsumeCodexRestartWarning_Concurrent(t *testing.T) {
+	inst := NewInstanceWithTool("codex-warning-concurrent", "/tmp/test", "codex")
+	inst.pendingCodexRestartWarning = "Codex session detection fallback: readlink is not available"
+
+	const workers = 16
+	var wg sync.WaitGroup
+	results := make(chan string, workers)
+	for i := 0; i < workers; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			results <- inst.ConsumeCodexRestartWarning()
+		}()
+	}
+	wg.Wait()
+	close(results)
+
+	nonEmpty := 0
+	for r := range results {
+		if r != "" {
+			nonEmpty++
+		}
+	}
+	if nonEmpty != 1 {
+		t.Fatalf("non-empty warnings = %d, want 1", nonEmpty)
 	}
 }
 
