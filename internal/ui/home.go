@@ -8069,6 +8069,14 @@ func (h *Home) renderPreviewPane(width, height int) string {
 	// Session preview
 	selected := item.Session
 
+	// Navigation-first fast path: while user is moving quickly, defer expensive preview
+	// rendering and show a lightweight placeholder instead. This keeps j/k responsive
+	// even when the selected session has large/expensive preview content.
+	if time.Since(h.lastNavigationTime) < 120*time.Millisecond {
+		quickStyle := lipgloss.NewStyle().Foreground(ColorText).Italic(true)
+		return quickStyle.Render("Moving... preview updating")
+	}
+
 	// Session info header box
 	statusIcon := "○"
 	statusColor := ColorTextDim
