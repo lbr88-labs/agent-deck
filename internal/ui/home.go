@@ -297,6 +297,8 @@ type Home struct {
 	isNavigating       bool      // True if user is rapidly navigating
 	lastAttachReturn   time.Time // When we returned from tea.Exec attach/detach
 	navigationHotUntil atomic.Int64
+	// Snapshot of status/tool used by render path to avoid per-row lock contention.
+	sessionRenderSnapshot atomic.Value // map[string]sessionRenderState
 
 	// Cached status counts (invalidated on instance changes)
 	cachedStatusCounts struct {
@@ -593,6 +595,7 @@ func NewHomeWithProfileAndMode(profile string) *Home {
 		undoStack:            make([]deletedSessionEntry, 0, 10),
 		pendingTitleChanges:  make(map[string]string),
 	}
+	h.sessionRenderSnapshot.Store(make(map[string]sessionRenderState))
 
 	// Keep settings panel profile-aware so profile overrides (e.g., Claude config dir)
 	// are displayed and edited in the correct scope.
@@ -1726,13 +1729,64 @@ func (h *Home) getSelectedSession() *session.Instance {
 	return nil
 }
 
+type sessionRenderState struct {
+	status session.Status
+	tool   string
+}
+
+func (h *Home) getSessionRenderSnapshot() map[string]sessionRenderState {
+	if snap := h.sessionRenderSnapshot.Load(); snap != nil {
+		if typed, ok := snap.(map[string]sessionRenderState); ok {
+			return typed
+		}
+	}
+	return nil
+}
+
+func (h *Home) refreshSessionRenderSnapshot(instances []*session.Instance) {
+	if instances == nil {
+		h.instancesMu.RLock()
+		instances = make([]*session.Instance, len(h.instances))
+		copy(instances, h.instances)
+		h.instancesMu.RUnlock()
+	}
+
+	snap := make(map[string]sessionRenderState, len(instances))
+	for _, inst := range instances {
+		if inst == nil {
+			continue
+		}
+		snap[inst.ID] = sessionRenderState{
+			status: inst.GetStatusThreadSafe(),
+			tool:   inst.GetToolThreadSafe(),
+		}
+	}
+	h.sessionRenderSnapshot.Store(snap)
+}
+
+func (h *Home) getSessionRenderState(inst *session.Instance) sessionRenderState {
+	if inst == nil {
+		return sessionRenderState{}
+	}
+	if snap := h.getSessionRenderSnapshot(); snap != nil {
+		if state, ok := snap[inst.ID]; ok {
+			return state
+		}
+	}
+	// Fallback for newly-added sessions before snapshot refresh.
+	return sessionRenderState{
+		status: inst.GetStatusThreadSafe(),
+		tool:   inst.GetToolThreadSafe(),
+	}
+}
+
 // markNavigationActivity records a short "hot" window where background workers
 // should avoid heavy refresh work to keep key navigation responsive.
 func (h *Home) markNavigationActivity() {
 	now := time.Now()
 	h.lastNavigationTime = now
 	h.isNavigating = true
-	h.navigationHotUntil.Store(now.Add(500 * time.Millisecond).UnixNano())
+	h.navigationHotUntil.Store(now.Add(900 * time.Millisecond).UnixNano())
 }
 
 // getInstanceByID returns the instance with the given ID using O(1) map lookup
@@ -2018,6 +2072,7 @@ func (h *Home) backgroundStatusUpdate() {
 		h.cachedStatusCounts.valid.Store(false)
 		h.publishWebSessionStates(instances)
 	}
+	h.refreshSessionRenderSnapshot(instances)
 
 	// SQLite sync: heartbeat, status writes, ack reads (enables multi-instance coordination)
 	if db := statedb.GetGlobal(); db != nil {
@@ -2367,6 +2422,7 @@ func (h *Home) processStatusUpdate(req statusUpdateRequest) {
 		h.cachedStatusCounts.valid.Store(false)
 		h.publishWebSessionStates(instancesCopy)
 	}
+	h.refreshSessionRenderSnapshot(instancesCopy)
 }
 
 // Update handles messages
@@ -2455,14 +2511,15 @@ func (h *Home) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// Collect OpenCode detection commands for restored sessions without IDs
 			// Using tea.Cmd pattern ensures save is triggered after detection completes
 			var detectionCmds []tea.Cmd
-			for _, inst := range h.instances {
-				if inst.Tool == "opencode" && inst.OpenCodeSessionID == "" {
-					detectionCmds = append(detectionCmds, h.detectOpenCodeSessionCmd(inst))
+				for _, inst := range h.instances {
+					if inst.Tool == "opencode" && inst.OpenCodeSessionID == "" {
+						detectionCmds = append(detectionCmds, h.detectOpenCodeSessionCmd(inst))
+					}
 				}
-			}
-			h.instancesMu.Unlock()
-			// Invalidate status counts cache
-			h.cachedStatusCounts.valid.Store(false)
+				h.instancesMu.Unlock()
+				h.refreshSessionRenderSnapshot(msg.instances)
+				// Invalidate status counts cache
+				h.cachedStatusCounts.valid.Store(false)
 			// Sync group tree with loaded data
 			if h.groupTree.GroupCount() == 0 {
 				// Initial load - use stored groups if available
@@ -3060,7 +3117,7 @@ func (h *Home) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case previewDebounceMsg:
 		// Debounce timer fired; either reschedule while user is still navigating,
 		// or consume the latest pending preview request.
-		const navigationSettleTime = 120 * time.Millisecond
+			const navigationSettleTime = 250 * time.Millisecond
 		h.previewDebounceMu.Lock()
 		pendingID := h.pendingPreviewID
 		if pendingID == "" {
@@ -3326,9 +3383,9 @@ func (h *Home) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			h.clearError()
 		}
 
-		// PERFORMANCE: Detect when navigation has settled (300ms since last up/down)
-		// This allows background updates to resume after rapid navigation stops
-		const navigationSettleTime = 300 * time.Millisecond
+			// PERFORMANCE: Detect when navigation has settled before re-enabling sync work.
+			// This allows background updates to resume after rapid navigation stops
+			const navigationSettleTime = 700 * time.Millisecond
 		if h.isNavigating && time.Since(h.lastNavigationTime) > navigationSettleTime {
 			h.isNavigating = false
 		}
@@ -5824,9 +5881,13 @@ func (h *Home) countSessionStatuses() (running, waiting, idle, errored int) {
 	}
 
 	// Compute counts
-	h.instancesMu.RLock()
-	for _, inst := range h.instances {
-		switch inst.GetStatusThreadSafe() {
+	snapshot := h.getSessionRenderSnapshot()
+	if snapshot == nil {
+		h.refreshSessionRenderSnapshot(nil)
+		snapshot = h.getSessionRenderSnapshot()
+	}
+	for _, state := range snapshot {
+		switch state.status {
 		case session.StatusRunning:
 			running++
 		case session.StatusWaiting:
@@ -5837,7 +5898,6 @@ func (h *Home) countSessionStatuses() (running, waiting, idle, errored int) {
 			errored++
 		}
 	}
-	h.instancesMu.RUnlock()
 
 	// Cache results with timestamp
 	h.cachedStatusCounts.running = running
@@ -7312,10 +7372,11 @@ func (h *Home) renderSessionList(width, height int) string {
 		maxVisible-- // Account for the indicator line
 	}
 
-	groupStats := h.buildGroupRenderStats()
+	snapshot := h.getSessionRenderSnapshot()
+	groupStats := h.buildGroupRenderStats(snapshot)
 	for i := h.viewOffset; i < len(h.flatItems) && visibleCount < maxVisible; i++ {
 		item := h.flatItems[i]
-		h.renderItem(&b, item, i == h.cursor, i, groupStats)
+		h.renderItem(&b, item, i == h.cursor, i, groupStats, snapshot)
 		visibleCount++
 	}
 
@@ -7335,7 +7396,7 @@ type groupRenderStats struct {
 	waiting      int
 }
 
-func (h *Home) buildGroupRenderStats() map[string]groupRenderStats {
+func (h *Home) buildGroupRenderStats(snapshot map[string]sessionRenderState) map[string]groupRenderStats {
 	stats := make(map[string]groupRenderStats)
 	if h.groupTree == nil {
 		return stats
@@ -7350,7 +7411,12 @@ func (h *Home) buildGroupRenderStats() map[string]groupRenderStats {
 		directRunning := 0
 		directWaiting := 0
 		for _, sess := range g.Sessions {
-			switch sess.Status {
+			state, ok := snapshot[sess.ID]
+			status := sess.Status
+			if ok {
+				status = state.status
+			}
+			switch status {
 			case session.StatusRunning:
 				directRunning++
 			case session.StatusWaiting:
@@ -7386,12 +7452,13 @@ func (h *Home) renderItem(
 	selected bool,
 	itemIndex int,
 	groupStats map[string]groupRenderStats,
+	snapshot map[string]sessionRenderState,
 ) {
 	switch item.Type {
 	case session.ItemTypeGroup:
 		h.renderGroupItem(b, item, selected, itemIndex, groupStats)
 	case session.ItemTypeSession:
-		h.renderSessionItem(b, item, selected)
+		h.renderSessionItem(b, item, selected, snapshot)
 	case session.ItemTypeRemoteGroup:
 		h.renderRemoteGroupItem(b, item, selected)
 	case session.ItemTypeRemoteSession:
@@ -7486,12 +7553,21 @@ const (
 
 // renderSessionItem renders a single session item for the left panel
 // PERFORMANCE: Uses cached styles from styles.go to avoid allocations
-func (h *Home) renderSessionItem(b *strings.Builder, item session.Item, selected bool) {
+func (h *Home) renderSessionItem(
+	b *strings.Builder,
+	item session.Item,
+	selected bool,
+	snapshot map[string]sessionRenderState,
+) {
 	inst := item.Session
 
-	// Snapshot status and tool under read lock to avoid races with background worker
-	instStatus := inst.GetStatusThreadSafe()
-	instTool := inst.GetToolThreadSafe()
+	// Read status/tool from snapshot so render path stays lock-light during key-repeat.
+	instState, ok := snapshot[inst.ID]
+	if !ok {
+		instState = h.getSessionRenderState(inst)
+	}
+	instStatus := instState.status
+	instTool := instState.tool
 
 	// Tree style for connectors - Use ColorText for clear visibility of box-drawing characters
 	treeStyle := TreeConnectorStyle
@@ -8152,9 +8228,8 @@ func (h *Home) renderPreviewPane(width, height int) string {
 	// Session preview
 	selected := item.Session
 
-	// Attach-return fast path: right after Ctrl+Q detach, prioritize immediate TUI
-	// repaint and defer expensive preview composition for a brief window.
-	if !h.lastAttachReturn.IsZero() && time.Since(h.lastAttachReturn) < 350*time.Millisecond {
+	// Attach-return fast path: prioritize immediate list navigation and defer preview work.
+	if !h.lastAttachReturn.IsZero() && time.Since(h.lastAttachReturn) < 900*time.Millisecond {
 		quickStyle := lipgloss.NewStyle().Foreground(ColorText).Italic(true)
 		return quickStyle.Render("Returned from session... refreshing preview")
 	}
@@ -8162,7 +8237,7 @@ func (h *Home) renderPreviewPane(width, height int) string {
 	// Navigation-first fast path: while user is moving quickly, defer expensive preview
 	// rendering and show a lightweight placeholder instead. This keeps j/k responsive
 	// even when the selected session has large/expensive preview content.
-	if time.Since(h.lastNavigationTime) < 120*time.Millisecond {
+	if hotUntil := h.navigationHotUntil.Load(); hotUntil > 0 && time.Now().UnixNano() < hotUntil {
 		quickStyle := lipgloss.NewStyle().Foreground(ColorText).Italic(true)
 		return quickStyle.Render("Moving... preview updating")
 	}
