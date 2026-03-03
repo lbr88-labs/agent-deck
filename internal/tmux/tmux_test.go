@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -102,6 +103,65 @@ func TestSessionPrefix(t *testing.T) {
 	if SessionPrefix != "agentdeck_" {
 		t.Errorf("SessionPrefix = %s, want agentdeck_", SessionPrefix)
 	}
+}
+
+func TestShouldRecoverFromTmuxStartError(t *testing.T) {
+	tests := []struct {
+		name   string
+		output string
+		want   bool
+	}{
+		{
+			name:   "server exited unexpectedly",
+			output: "server exited unexpectedly",
+			want:   true,
+		},
+		{
+			name:   "lost server",
+			output: "lost server",
+			want:   true,
+		},
+		{
+			name:   "other tmux failure",
+			output: "duplicate session: foo",
+			want:   false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := shouldRecoverFromTmuxStartError(tt.output)
+			if got != tt.want {
+				t.Fatalf("shouldRecoverFromTmuxStartError(%q) = %v, want %v", tt.output, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestDefaultTmuxSocketCandidatesIncludesTmuxEnvPath(t *testing.T) {
+	t.Setenv("TMUX", "/private/tmp/tmux-501/default,1234,0")
+	candidates := defaultTmuxSocketCandidates()
+	assert.Contains(t, candidates, "/private/tmp/tmux-501/default")
+}
+
+func TestDefaultTmuxSocketCandidatesDedupe(t *testing.T) {
+	uid := os.Getuid()
+	if uid < 0 {
+		t.Skip("os.Getuid unavailable")
+	}
+
+	defaultPath := filepath.Join("/tmp", fmt.Sprintf("tmux-%d", uid), "default")
+	t.Setenv("TMUX", defaultPath+",999,0")
+	t.Setenv("TMUX_TMPDIR", "/tmp")
+
+	candidates := defaultTmuxSocketCandidates()
+	count := 0
+	for _, candidate := range candidates {
+		if candidate == defaultPath {
+			count++
+		}
+	}
+	assert.Equal(t, 1, count, "expected default socket path to be deduplicated")
 }
 
 func TestPromptDetector(t *testing.T) {
