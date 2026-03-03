@@ -988,6 +988,20 @@ func ClearUserConfigCache() {
 	userConfigCacheMu.Unlock()
 }
 
+// IsClaudeCompatible returns true if the tool is "claude" or a custom tool
+// whose underlying command is "claude". Use this for capability gates
+// (session tracking, MCP, skills, hooks, etc.) where custom tools wrapping
+// Claude should get full Claude functionality.
+func IsClaudeCompatible(toolName string) bool {
+	if toolName == "claude" {
+		return true
+	}
+	if def := GetToolDef(toolName); def != nil {
+		return def.Command == "claude"
+	}
+	return false
+}
+
 // GetToolDef returns a tool definition from user config
 // Returns nil if tool is not defined
 func GetToolDef(toolName string) *ToolDef {

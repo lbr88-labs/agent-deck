@@ -308,7 +308,7 @@ func handleSkillAttach(profile string, args []string) {
 		os.Exit(2)
 		return
 	}
-	if inst.Tool != "claude" {
+	if !session.IsClaudeCompatible(inst.Tool) {
 		out.Error("skills are currently supported for Claude sessions only", ErrCodeInvalidOperation)
 		os.Exit(1)
 	}
@@ -335,7 +335,7 @@ func handleSkillAttach(profile string, args []string) {
 	}
 
 	restarted := false
-	if *restart && inst.Tool == "claude" {
+	if *restart && session.IsClaudeCompatible(inst.Tool) {
 		if err := inst.Restart(); err != nil {
 			if !*jsonOutput && !quietMode {
 				fmt.Fprintf(os.Stderr, "Warning: failed to restart session: %v\n", err)
@@ -420,7 +420,7 @@ func handleSkillDetach(profile string, args []string) {
 		os.Exit(2)
 		return
 	}
-	if inst.Tool != "claude" {
+	if !session.IsClaudeCompatible(inst.Tool) {
 		out.Error("skills are currently supported for Claude sessions only", ErrCodeInvalidOperation)
 		os.Exit(1)
 	}
@@ -441,7 +441,7 @@ func handleSkillDetach(profile string, args []string) {
 	}
 
 	restarted := false
-	if *restart && inst.Tool == "claude" {
+	if *restart && session.IsClaudeCompatible(inst.Tool) {
 		if err := inst.Restart(); err != nil {
 			if !*jsonOutput && !quietMode {
 				fmt.Fprintf(os.Stderr, "Warning: failed to restart session: %v\n", err)

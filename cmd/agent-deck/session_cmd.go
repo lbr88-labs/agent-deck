@@ -331,7 +331,7 @@ func handleSessionRestart(profile string, args []string) {
 	}
 
 	// If restart created a fresh session (no prior ID), capture the new ID
-	if inst.Tool == "claude" && inst.ClaudeSessionID == "" {
+	if session.IsClaudeCompatible(inst.Tool) && inst.ClaudeSessionID == "" {
 		inst.PostStartSync(3 * time.Second)
 	}
 
@@ -413,7 +413,7 @@ func handleSessionFork(profile string, args []string) {
 	}
 
 	// Verify it's a Claude session
-	if inst.Tool != "claude" {
+	if !session.IsClaudeCompatible(inst.Tool) {
 		out.Error(
 			fmt.Sprintf("session '%s' is not a Claude session (tool: %s)", inst.Title, inst.Tool),
 			ErrCodeInvalidOperation,
@@ -674,7 +674,7 @@ func handleSessionShow(profile string, args []string) {
 
 	// Get MCP info if Claude session
 	var mcpInfo *session.MCPInfo
-	if inst.Tool == "claude" {
+	if session.IsClaudeCompatible(inst.Tool) {
 		mcpInfo = inst.GetMCPInfo()
 	}
 
@@ -696,7 +696,7 @@ func handleSessionShow(profile string, args []string) {
 		jsonData["command"] = inst.Command
 	}
 
-	if inst.Tool == "claude" {
+	if session.IsClaudeCompatible(inst.Tool) {
 		jsonData["claude_session_id"] = inst.ClaudeSessionID
 		jsonData["can_fork"] = inst.CanFork()
 		jsonData["can_restart"] = inst.CanRestart()
@@ -732,7 +732,7 @@ func handleSessionShow(profile string, args []string) {
 		sb.WriteString(fmt.Sprintf("Command: %s\n", inst.Command))
 	}
 
-	if inst.Tool == "claude" {
+	if session.IsClaudeCompatible(inst.Tool) {
 		if inst.ClaudeSessionID != "" {
 			truncatedID := inst.ClaudeSessionID
 			if len(truncatedID) > 36 {
@@ -1396,7 +1396,7 @@ func handleSessionSend(profile string, args []string) {
 		// so the ClaudeSessionID may be stale (e.g., PostStartSync timed out,
 		// TUI updated it during the wait, or /clear created a new session).
 		// First try tmux env (fast), then fall back to reloading from DB.
-		if inst.Tool == "claude" {
+		if session.IsClaudeCompatible(inst.Tool) {
 			if freshID := inst.GetSessionIDFromTmux(); freshID != "" {
 				inst.ClaudeSessionID = freshID
 				inst.ClaudeDetectedAt = time.Now()
