@@ -180,7 +180,7 @@ func (s *Session) Attach(ctx context.Context) error {
 		_ = ptmx.Close()
 		select {
 		case <-outputDone:
-		case <-time.After(100 * time.Millisecond):
+		case <-time.After(20 * time.Millisecond):
 		}
 		// Reset OSC-8 hyperlink state + SGR attributes before Bubble Tea redraws.
 		_, _ = os.Stdout.WriteString(terminalStyleReset)

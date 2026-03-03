@@ -295,6 +295,7 @@ type Home struct {
 	// Navigation tracking (PERFORMANCE: suspend background updates during rapid navigation)
 	lastNavigationTime time.Time // When user last navigated (up/down/j/k)
 	isNavigating       bool      // True if user is rapidly navigating
+	lastAttachReturn   time.Time // When we returned from tea.Exec attach/detach
 
 	// Cached status counts (invalidated on instance changes)
 	cachedStatusCounts struct {
@@ -402,6 +403,7 @@ type sessionForkedMsg struct {
 type refreshMsg struct{}
 
 type statusUpdateMsg struct{} // Triggers immediate status update without reloading
+type deferredAttachRefreshMsg struct{}
 
 // storageChangedMsg signals that state.db was modified externally
 type storageChangedMsg struct{}
@@ -2976,11 +2978,13 @@ func (h *Home) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case statusUpdateMsg:
 		// Clear attach flag - we've returned from the attached session
 		h.isAttaching.Store(false) // Atomic store for thread safety
+		h.lastAttachReturn = time.Now()
 
-		// Trigger status update on attach return to reflect current state
-		// Acknowledgment was already done on attach (if session was waiting),
-		// so this just refreshes the display with current busy indicator state.
-		h.triggerStatusUpdate()
+		// Defer heavy status refresh slightly so TUI redraws immediately after detach.
+		// This prioritizes fast visual return over instant preview/status freshness.
+		deferRefresh := tea.Tick(200*time.Millisecond, func(_ time.Time) tea.Msg {
+			return deferredAttachRefreshMsg{}
+		})
 
 		// Cursor sync: if user switched sessions via notification bar during attach,
 		// move cursor to the session they were last viewing
@@ -3023,7 +3027,7 @@ func (h *Home) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		reloading := h.isReloading
 		h.reloadMu.Unlock()
 		if reloading {
-			return h, nil
+			return h, deferRefresh
 		}
 
 		// PERFORMANCE FIX: Skip save on attach return for 10 seconds
@@ -3031,6 +3035,10 @@ func (h *Home) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Combine with periodic save instead of saving on every attach/detach.
 		// We'll let the next tickMsg handle background save if needed.
 
+		return h, deferRefresh
+
+	case deferredAttachRefreshMsg:
+		h.triggerStatusUpdate()
 		return h, nil
 
 	case previewDebounceMsg:
@@ -8068,6 +8076,13 @@ func (h *Home) renderPreviewPane(width, height int) string {
 
 	// Session preview
 	selected := item.Session
+
+	// Attach-return fast path: right after Ctrl+Q detach, prioritize immediate TUI
+	// repaint and defer expensive preview composition for a brief window.
+	if !h.lastAttachReturn.IsZero() && time.Since(h.lastAttachReturn) < 350*time.Millisecond {
+		quickStyle := lipgloss.NewStyle().Foreground(ColorText).Italic(true)
+		return quickStyle.Render("Returned from session... refreshing preview")
+	}
 
 	// Navigation-first fast path: while user is moving quickly, defer expensive preview
 	// rendering and show a lightweight placeholder instead. This keeps j/k responsive
