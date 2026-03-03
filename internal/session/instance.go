@@ -452,8 +452,8 @@ func (i *Instance) buildClaudeCommandWithMessage(baseCommand, message string) st
 				// This handles the case where session was started but no message was sent
 				bashExportPrefix := i.buildBashExportPrefix()
 				return fmt.Sprintf(
-					`tmux set-environment CLAUDE_SESSION_ID "%s"; %sclaude --session-id "%s"%s`,
-					opts.ResumeSessionID, bashExportPrefix, opts.ResumeSessionID, extraFlags)
+					`tmux set-environment CLAUDE_SESSION_ID "%s"; %s%s --session-id "%s"%s`,
+					opts.ResumeSessionID, bashExportPrefix, claudeCmd, opts.ResumeSessionID, extraFlags)
 			}
 			// No session ID provided - use -r flag for interactive picker
 			return fmt.Sprintf(`%s%s -r%s`, configDirPrefix, claudeCmd, extraFlags)
@@ -465,10 +465,8 @@ func (i *Instance) buildClaudeCommandWithMessage(baseCommand, message string) st
 		// 3. Resumes that session interactively
 		// Fallback ensures Claude starts (without fork/restart support) rather than failing completely
 		//
-		// IMPORTANT: For capture-resume commands (which contain $(...) syntax), we MUST use
-		// "claude" binary + CLAUDE_CONFIG_DIR, NOT a custom command alias like "cdw".
-		// Reason: Commands with $(...) get wrapped in `bash -c` for fish compatibility (#47),
-		// and shell aliases are not available in non-interactive bash shells.
+		// NOTE: These commands get wrapped in `bash -c` for fish compatibility (#47),
+		// so shell aliases won't work — but real binaries/scripts are fine.
 		//
 		bashExportPrefix := i.buildBashExportPrefix()
 
@@ -478,8 +476,8 @@ func (i *Instance) buildClaudeCommandWithMessage(baseCommand, message string) st
 		baseCmd = fmt.Sprintf(
 			`session_id=$(uuidgen | tr '[:upper:]' '[:lower:]'); `+
 				`tmux set-environment CLAUDE_SESSION_ID "$session_id"; `+
-				`%sclaude --session-id "$session_id"%s`,
-			bashExportPrefix, extraFlags)
+				`%s%s --session-id "$session_id"%s`,
+			bashExportPrefix, claudeCmd, extraFlags)
 
 		// If message provided, append wait-and-send logic
 		if message != "" {
@@ -493,9 +491,9 @@ func (i *Instance) buildClaudeCommandWithMessage(baseCommand, message string) st
 					`(sleep 2; SESSION_NAME=$(tmux display-message -p '#S'); `+
 					`while ! tmux capture-pane -p -t "$SESSION_NAME" | tail -5 | grep -qE "^>"; do sleep 0.2; done; `+
 					`tmux send-keys -l -t "$SESSION_NAME" -- '%s' \\; send-keys -t "$SESSION_NAME" Enter) & `+
-					`%sclaude --session-id "$session_id"%s`,
+					`%s%s --session-id "$session_id"%s`,
 				escapedMsg,
-				bashExportPrefix, extraFlags)
+				bashExportPrefix, claudeCmd, extraFlags)
 		}
 
 		return baseCmd

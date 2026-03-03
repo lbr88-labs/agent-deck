@@ -411,10 +411,7 @@ func TestBuildClaudeCommand_ExplicitConfig(t *testing.T) {
 	}
 }
 
-// TestBuildClaudeCommand_CustomAlias tests that capture-resume commands always use
-// "claude" binary + CLAUDE_CONFIG_DIR, NOT the custom alias (aliases don't work in bash -c)
 func TestBuildClaudeCommand_CustomAlias(t *testing.T) {
-	// Create temp config with custom command
 	origHome := os.Getenv("HOME")
 	tmpDir := t.TempDir()
 	os.Setenv("HOME", tmpDir)
@@ -441,11 +438,8 @@ config_dir = "~/.claude-work"
 	inst := NewInstanceWithTool("test", "/tmp/test", "claude")
 	cmd := inst.buildClaudeCommand("claude")
 
-	// Should use "claude" binary (NOT "cdw" alias) for capture-resume commands
-	// Reason: Commands with $(...) get wrapped in `bash -c` for fish compatibility (#47),
-	// and shell aliases are not available in non-interactive bash shells
-	if strings.Contains(cmd, "cdw") {
-		t.Errorf("Should NOT use alias 'cdw' in capture-resume command (aliases don't work in bash -c), got: %s", cmd)
+	if !strings.Contains(cmd, "cdw") {
+		t.Errorf("Should use custom command 'cdw' from config, got: %s", cmd)
 	}
 
 	// Should include CLAUDE_CONFIG_DIR since config_dir is explicitly set
