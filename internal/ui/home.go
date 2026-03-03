@@ -1600,10 +1600,9 @@ func (h *Home) fetchPreviewDebounced(sessionID string) tea.Cmd {
 	h.pendingPreviewID = sessionID
 	h.previewDebounceMu.Unlock()
 
-	return func() tea.Msg {
-		time.Sleep(debounceDelay)
+	return tea.Tick(debounceDelay, func(_ time.Time) tea.Msg {
 		return previewDebounceMsg{sessionID: sessionID}
-	}
+	})
 }
 
 // detectOpenCodeSessionCmd returns a command that asynchronously detects
