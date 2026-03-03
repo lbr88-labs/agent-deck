@@ -204,9 +204,10 @@ type Home struct {
 	previewFetchingID string               // ID currently being fetched (prevents duplicate fetches)
 
 	// Preview debouncing (PERFORMANCE: prevents subprocess spawn on every keystroke)
-	// During rapid navigation, we delay preview fetch by 150ms to let navigation settle
-	pendingPreviewID  string     // Session ID waiting for debounced fetch
-	previewDebounceMu sync.Mutex // Protects pendingPreviewID
+	// During rapid navigation, we coalesce to a single timer so j/k stays responsive.
+	pendingPreviewID    string     // Session ID waiting for debounced fetch
+	previewDebounceArmed bool      // True when a debounce timer is already scheduled
+	previewDebounceMu   sync.Mutex // Protects debounce state
 
 	// Round-robin status updates (Priority 1A optimization)
 	// Instead of updating ALL sessions every tick, we update batches of 5-10 sessions
@@ -431,7 +432,6 @@ type previewFetchedMsg struct {
 // previewDebounceMsg signals debounce period elapsed for preview fetch
 // PERFORMANCE: Delays preview fetch during rapid navigation
 type previewDebounceMsg struct {
-	sessionID string
 }
 
 // analyticsFetchedMsg is sent when async analytics parsing is complete
@@ -1590,18 +1590,22 @@ func (h *Home) fetchPreview(inst *session.Instance) tea.Cmd {
 	}
 }
 
-// fetchPreviewDebounced returns a command that triggers preview fetch after debounce delay
-// PERFORMANCE: Prevents rapid subprocess spawning during keyboard navigation
-// The 150ms delay allows navigation to settle before spawning tmux capture-pane
+// fetchPreviewDebounced coalesces preview fetch requests during rapid navigation.
+// It arms at most one short timer; subsequent j/k updates only replace pendingPreviewID.
 func (h *Home) fetchPreviewDebounced(sessionID string) tea.Cmd {
-	const debounceDelay = 150 * time.Millisecond
+	const debounceDelay = 75 * time.Millisecond
 
 	h.previewDebounceMu.Lock()
 	h.pendingPreviewID = sessionID
+	if h.previewDebounceArmed {
+		h.previewDebounceMu.Unlock()
+		return nil
+	}
+	h.previewDebounceArmed = true
 	h.previewDebounceMu.Unlock()
 
 	return tea.Tick(debounceDelay, func(_ time.Time) tea.Msg {
-		return previewDebounceMsg{sessionID: sessionID}
+		return previewDebounceMsg{}
 	})
 }
 
@@ -3030,22 +3034,30 @@ func (h *Home) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return h, nil
 
 	case previewDebounceMsg:
-		// PERFORMANCE: Debounce period elapsed - check if this fetch is still relevant
-		// If user continued navigating, pendingPreviewID will have changed
+		// Debounce timer fired; either reschedule while user is still navigating,
+		// or consume the latest pending preview request.
+		const navigationSettleTime = 120 * time.Millisecond
 		h.previewDebounceMu.Lock()
-		isPending := h.pendingPreviewID == msg.sessionID
-		if isPending {
-			h.pendingPreviewID = "" // Clear pending state
+		pendingID := h.pendingPreviewID
+		if pendingID == "" {
+			h.previewDebounceArmed = false
+			h.previewDebounceMu.Unlock()
+			return h, nil
 		}
+		if time.Since(h.lastNavigationTime) < navigationSettleTime {
+			h.previewDebounceArmed = true
+			h.previewDebounceMu.Unlock()
+			return h, tea.Tick(75*time.Millisecond, func(_ time.Time) tea.Msg {
+				return previewDebounceMsg{}
+			})
+		}
+		h.pendingPreviewID = ""
+		h.previewDebounceArmed = false
 		h.previewDebounceMu.Unlock()
-
-		if !isPending {
-			return h, nil // Superseded by newer navigation
-		}
 
 		// Find session and trigger actual fetch
 		h.instancesMu.RLock()
-		inst := h.instanceByID[msg.sessionID]
+		inst := h.instanceByID[pendingID]
 		h.instancesMu.RUnlock()
 
 		if inst != nil {
