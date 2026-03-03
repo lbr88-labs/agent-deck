@@ -5,6 +5,8 @@ import (
 	"os/exec"
 	"path/filepath"
 	"testing"
+
+	"github.com/asheshgoplani/agent-deck/internal/testutil"
 )
 
 // TestMain is in testmain_test.go - sets AGENTDECK_PROFILE=_test
@@ -40,6 +42,7 @@ func TestWorktreeListInGitRepo(t *testing.T) {
 	// Initialize git repo
 	cmd := exec.Command("git", "init")
 	cmd.Dir = tmpDir
+	cmd.Env = testutil.CleanGitEnv(os.Environ())
 	if err := cmd.Run(); err != nil {
 		t.Fatalf("Failed to init git repo: %v", err)
 	}
@@ -47,7 +50,7 @@ func TestWorktreeListInGitRepo(t *testing.T) {
 	// Create initial commit (required for worktree operations)
 	cmd = exec.Command("git", "commit", "--allow-empty", "-m", "init")
 	cmd.Dir = tmpDir
-	cmd.Env = append(os.Environ(),
+	cmd.Env = append(testutil.CleanGitEnv(os.Environ()),
 		"GIT_AUTHOR_NAME=Test",
 		"GIT_AUTHOR_EMAIL=test@test.com",
 		"GIT_COMMITTER_NAME=Test",
@@ -73,6 +76,7 @@ func TestWorktreeListWithWorktrees(t *testing.T) {
 	// Initialize git repo
 	cmd := exec.Command("git", "init")
 	cmd.Dir = tmpDir
+	cmd.Env = testutil.CleanGitEnv(os.Environ())
 	if err := cmd.Run(); err != nil {
 		t.Fatalf("Failed to init git repo: %v", err)
 	}
@@ -80,7 +84,7 @@ func TestWorktreeListWithWorktrees(t *testing.T) {
 	// Create initial commit
 	cmd = exec.Command("git", "commit", "--allow-empty", "-m", "init")
 	cmd.Dir = tmpDir
-	cmd.Env = append(os.Environ(),
+	cmd.Env = append(testutil.CleanGitEnv(os.Environ()),
 		"GIT_AUTHOR_NAME=Test",
 		"GIT_AUTHOR_EMAIL=test@test.com",
 		"GIT_COMMITTER_NAME=Test",
@@ -94,6 +98,7 @@ func TestWorktreeListWithWorktrees(t *testing.T) {
 	worktreePath := filepath.Join(tmpDir, "worktree-feature")
 	cmd = exec.Command("git", "worktree", "add", "-b", "feature-branch", worktreePath)
 	cmd.Dir = tmpDir
+	cmd.Env = testutil.CleanGitEnv(os.Environ())
 	if err := cmd.Run(); err != nil {
 		t.Fatalf("Failed to create worktree: %v", err)
 	}
@@ -106,6 +111,7 @@ func TestWorktreeListWithWorktrees(t *testing.T) {
 	// Verify worktree list command works
 	cmd = exec.Command("git", "worktree", "list")
 	cmd.Dir = tmpDir
+	cmd.Env = testutil.CleanGitEnv(os.Environ())
 	output, err := cmd.Output()
 	if err != nil {
 		t.Fatalf("Failed to list worktrees: %v", err)

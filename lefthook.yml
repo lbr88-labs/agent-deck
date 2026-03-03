@@ -9,13 +9,13 @@ pre-push:
   parallel: true
   commands:
     lint:
-      run: golangci-lint run
+      run: env -u GIT_DIR -u GIT_WORK_TREE -u GIT_COMMON_DIR -u GIT_INDEX_FILE -u GIT_OBJECT_DIRECTORY -u GIT_ALTERNATE_OBJECT_DIRECTORIES -u GIT_PREFIX golangci-lint run
       tags: [quality]
     test:
-      run: go test -race -count=1 ./...
+      run: env -u GIT_DIR -u GIT_WORK_TREE -u GIT_COMMON_DIR -u GIT_INDEX_FILE -u GIT_OBJECT_DIRECTORY -u GIT_ALTERNATE_OBJECT_DIRECTORIES -u GIT_PREFIX go test -race -count=1 ./...
       tags: [test]
     build:
-      run: go build -o /dev/null ./cmd/agent-deck/
+      run: env -u GIT_DIR -u GIT_WORK_TREE -u GIT_COMMON_DIR -u GIT_INDEX_FILE -u GIT_OBJECT_DIRECTORY -u GIT_ALTERNATE_OBJECT_DIRECTORIES -u GIT_PREFIX go build -o /dev/null ./cmd/agent-deck/
       tags: [build]
 
 # Fast pre-commit checks (formatting only, keeps commits snappy)

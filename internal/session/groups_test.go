@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"testing"
 	"time"
+
+	"github.com/asheshgoplani/agent-deck/internal/testutil"
 )
 
 func TestNewGroupTree(t *testing.T) {
@@ -686,6 +688,7 @@ func TestDefaultPathForGroupResolvesWorktreeToRepoRoot(t *testing.T) {
 	run := func(args ...string) {
 		t.Helper()
 		cmd := exec.Command("git", args...)
+		cmd.Env = testutil.CleanGitEnv(os.Environ())
 		out, err := cmd.CombinedOutput()
 		if err != nil {
 			t.Fatalf("git %v failed: %v\n%s", args, err, out)
