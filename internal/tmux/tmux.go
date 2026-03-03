@@ -898,11 +898,13 @@ func (s *Session) InvalidateEnvCache() {
 	s.envCacheMu.Unlock()
 }
 
+// sanitizeNameRe matches characters not allowed in tmux session names.
+var sanitizeNameRe = regexp.MustCompile(`[^a-zA-Z0-9-]+`)
+
 // sanitizeName converts a display name to a valid tmux session name
 func sanitizeName(name string) string {
 	// Replace spaces and special characters with hyphens
-	re := regexp.MustCompile(`[^a-zA-Z0-9-]+`)
-	return re.ReplaceAllString(name, "-")
+	return sanitizeNameRe.ReplaceAllString(name, "-")
 }
 
 // Start creates and starts a tmux session.
