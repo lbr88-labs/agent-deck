@@ -329,6 +329,10 @@ func handleSessionRestart(profile string, args []string) {
 		out.Error(fmt.Sprintf("failed to restart session: %v", err), ErrCodeInvalidOperation)
 		os.Exit(1)
 	}
+	warning := inst.ConsumeCodexRestartWarning()
+	if warning != "" && !*jsonOutput {
+		fmt.Fprintf(os.Stderr, "Warning: %s\n", warning)
+	}
 
 	// If restart created a fresh session (no prior ID), capture the new ID
 	if inst.Tool == "claude" && inst.ClaudeSessionID == "" {
@@ -342,11 +346,15 @@ func handleSessionRestart(profile string, args []string) {
 	}
 
 	// Output success
-	out.Success(fmt.Sprintf("Restarted session: %s", inst.Title), map[string]interface{}{
+	data := map[string]interface{}{
 		"success": true,
 		"id":      inst.ID,
 		"title":   inst.Title,
-	})
+	}
+	if warning != "" {
+		data["warning"] = warning
+	}
+	out.Success(fmt.Sprintf("Restarted session: %s", inst.Title), data)
 }
 
 // handleSessionFork forks a Claude session
