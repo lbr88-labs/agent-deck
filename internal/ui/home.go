@@ -296,6 +296,7 @@ type Home struct {
 	lastNavigationTime time.Time // When user last navigated (up/down/j/k)
 	isNavigating       bool      // True if user is rapidly navigating
 	lastAttachReturn   time.Time // When we returned from tea.Exec attach/detach
+	navigationHotUntil atomic.Int64
 
 	// Cached status counts (invalidated on instance changes)
 	cachedStatusCounts struct {
@@ -1725,6 +1726,15 @@ func (h *Home) getSelectedSession() *session.Instance {
 	return nil
 }
 
+// markNavigationActivity records a short "hot" window where background workers
+// should avoid heavy refresh work to keep key navigation responsive.
+func (h *Home) markNavigationActivity() {
+	now := time.Now()
+	h.lastNavigationTime = now
+	h.isNavigating = true
+	h.navigationHotUntil.Store(now.Add(500 * time.Millisecond).UnixNano())
+}
+
 // getInstanceByID returns the instance with the given ID using O(1) map lookup
 // Returns nil if not found. Caller must hold instancesMu if accessing from background goroutine.
 func (h *Home) getInstanceByID(id string) *session.Instance {
@@ -1846,6 +1856,9 @@ func (h *Home) backgroundStatusUpdate() {
 	}()
 
 	totalStart := time.Now()
+	if hotUntil := h.navigationHotUntil.Load(); hotUntil > 0 && time.Now().UnixNano() < hotUntil {
+		return
+	}
 
 	// Refresh tmux session cache
 	refreshStart := time.Now()
@@ -2267,6 +2280,9 @@ func (h *Home) triggerStatusUpdate() {
 // With batching (3 visible + 2 non-visible per tick), we keep each tick under 100ms.
 func (h *Home) processStatusUpdate(req statusUpdateRequest) {
 	const batchSize = 2 // Reduced from 5 to 2 - fewer CapturePane() calls per tick
+	if hotUntil := h.navigationHotUntil.Load(); hotUntil > 0 && time.Now().UnixNano() < hotUntil {
+		return
+	}
 	if last := h.lastFullStatusSweep.Load(); last > 0 {
 		if time.Since(time.Unix(0, last)) < 1500*time.Millisecond {
 			// A full all-session sweep just ran; skip redundant incremental update.
@@ -3848,9 +3864,7 @@ func (h *Home) handleMainKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if h.cursor > 0 {
 			h.cursor--
 			h.syncViewport()
-			// Track navigation for adaptive background updates
-			h.lastNavigationTime = time.Now()
-			h.isNavigating = true
+			h.markNavigationActivity()
 			// PERFORMANCE: Debounced preview fetch - waits 150ms for navigation to settle
 			// This prevents spawning tmux subprocess on every keystroke
 			if selected := h.getSelectedSession(); selected != nil {
@@ -3863,9 +3877,7 @@ func (h *Home) handleMainKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if h.cursor < len(h.flatItems)-1 {
 			h.cursor++
 			h.syncViewport()
-			// Track navigation for adaptive background updates
-			h.lastNavigationTime = time.Now()
-			h.isNavigating = true
+			h.markNavigationActivity()
 			// PERFORMANCE: Debounced preview fetch - waits 150ms for navigation to settle
 			// This prevents spawning tmux subprocess on every keystroke
 			if selected := h.getSelectedSession(); selected != nil {
@@ -3885,8 +3897,7 @@ func (h *Home) handleMainKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			h.cursor = 0
 		}
 		h.syncViewport()
-		h.lastNavigationTime = time.Now()
-		h.isNavigating = true
+		h.markNavigationActivity()
 		if selected := h.getSelectedSession(); selected != nil {
 			return h, h.fetchPreviewDebounced(selected.ID)
 		}
@@ -3905,8 +3916,7 @@ func (h *Home) handleMainKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			h.cursor = 0
 		}
 		h.syncViewport()
-		h.lastNavigationTime = time.Now()
-		h.isNavigating = true
+		h.markNavigationActivity()
 		if selected := h.getSelectedSession(); selected != nil {
 			return h, h.fetchPreviewDebounced(selected.ID)
 		}
@@ -3922,8 +3932,7 @@ func (h *Home) handleMainKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			h.cursor = 0
 		}
 		h.syncViewport()
-		h.lastNavigationTime = time.Now()
-		h.isNavigating = true
+		h.markNavigationActivity()
 		if selected := h.getSelectedSession(); selected != nil {
 			return h, h.fetchPreviewDebounced(selected.ID)
 		}
@@ -3942,8 +3951,7 @@ func (h *Home) handleMainKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			h.cursor = 0
 		}
 		h.syncViewport()
-		h.lastNavigationTime = time.Now()
-		h.isNavigating = true
+		h.markNavigationActivity()
 		if selected := h.getSelectedSession(); selected != nil {
 			return h, h.fetchPreviewDebounced(selected.ID)
 		}
@@ -4197,8 +4205,7 @@ func (h *Home) handleMainKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			if len(h.flatItems) > 0 {
 				h.cursor = 0
 				h.syncViewport()
-				h.lastNavigationTime = time.Now()
-				h.isNavigating = true
+				h.markNavigationActivity()
 				if selected := h.getSelectedSession(); selected != nil {
 					return h, h.fetchPreviewDebounced(selected.ID)
 				}
