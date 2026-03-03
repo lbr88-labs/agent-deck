@@ -7312,9 +7312,10 @@ func (h *Home) renderSessionList(width, height int) string {
 		maxVisible-- // Account for the indicator line
 	}
 
+	groupStats := h.buildGroupRenderStats()
 	for i := h.viewOffset; i < len(h.flatItems) && visibleCount < maxVisible; i++ {
 		item := h.flatItems[i]
-		h.renderItem(&b, item, i == h.cursor, i)
+		h.renderItem(&b, item, i == h.cursor, i, groupStats)
 		visibleCount++
 	}
 
@@ -7328,11 +7329,67 @@ func (h *Home) renderSessionList(width, height int) string {
 	return b.String()
 }
 
+type groupRenderStats struct {
+	sessionCount int
+	running      int
+	waiting      int
+}
+
+func (h *Home) buildGroupRenderStats() map[string]groupRenderStats {
+	stats := make(map[string]groupRenderStats)
+	if h.groupTree == nil {
+		return stats
+	}
+
+	for path, g := range h.groupTree.Groups {
+		if g == nil {
+			continue
+		}
+
+		directSessions := len(g.Sessions)
+		directRunning := 0
+		directWaiting := 0
+		for _, sess := range g.Sessions {
+			switch sess.Status {
+			case session.StatusRunning:
+				directRunning++
+			case session.StatusWaiting:
+				directWaiting++
+			}
+		}
+
+		// Add direct totals to this group and all ancestors once,
+		// avoiding repeated recursive scans per rendered row.
+		ancestor := path
+		for ancestor != "" {
+			entry := stats[ancestor]
+			entry.sessionCount += directSessions
+			entry.running += directRunning
+			entry.waiting += directWaiting
+			stats[ancestor] = entry
+
+			idx := strings.LastIndex(ancestor, "/")
+			if idx == -1 {
+				break
+			}
+			ancestor = ancestor[:idx]
+		}
+	}
+
+	return stats
+}
+
 // renderItem renders a single item (group or session) for the left panel
-func (h *Home) renderItem(b *strings.Builder, item session.Item, selected bool, itemIndex int) {
+func (h *Home) renderItem(
+	b *strings.Builder,
+	item session.Item,
+	selected bool,
+	itemIndex int,
+	groupStats map[string]groupRenderStats,
+) {
 	switch item.Type {
 	case session.ItemTypeGroup:
-		h.renderGroupItem(b, item, selected, itemIndex)
+		h.renderGroupItem(b, item, selected, itemIndex, groupStats)
 	case session.ItemTypeSession:
 		h.renderSessionItem(b, item, selected)
 	case session.ItemTypeRemoteGroup:
@@ -7344,7 +7401,13 @@ func (h *Home) renderItem(b *strings.Builder, item session.Item, selected bool, 
 
 // renderGroupItem renders a group header
 // PERFORMANCE: Uses cached styles from styles.go to avoid allocations
-func (h *Home) renderGroupItem(b *strings.Builder, item session.Item, selected bool, itemIndex int) {
+func (h *Home) renderGroupItem(
+	b *strings.Builder,
+	item session.Item,
+	selected bool,
+	itemIndex int,
+	groupStats map[string]groupRenderStats,
+) {
 	group := item.Group
 
 	// Calculate indentation based on nesting level (no tree lines, just spaces)
@@ -7384,33 +7447,16 @@ func (h *Home) renderGroupItem(b *strings.Builder, item session.Item, selected b
 		countStyle = GroupCountSelStyle
 	}
 
-	// Use recursive count to include sessions in subgroups (Issue #48)
-	sessionCount := h.groupTree.SessionCountForGroup(group.Path)
-	countStr := countStyle.Render(fmt.Sprintf(" (%d)", sessionCount))
-
-	// Status indicators (compact, on same line) using cached styles
-	// Also count recursively for subgroups
-	running := 0
-	waiting := 0
-	for path, g := range h.groupTree.Groups {
-		if path == group.Path || strings.HasPrefix(path, group.Path+"/") {
-			for _, sess := range g.Sessions {
-				switch sess.Status {
-				case session.StatusRunning:
-					running++
-				case session.StatusWaiting:
-					waiting++
-				}
-			}
-		}
-	}
+	// Use precomputed recursive stats (group + descendants) for this render pass.
+	stats := groupStats[group.Path]
+	countStr := countStyle.Render(fmt.Sprintf(" (%d)", stats.sessionCount))
 
 	statusStr := ""
-	if running > 0 {
-		statusStr += " " + GroupStatusRunning.Render(fmt.Sprintf("● %d", running))
+	if stats.running > 0 {
+		statusStr += " " + GroupStatusRunning.Render(fmt.Sprintf("● %d", stats.running))
 	}
-	if waiting > 0 {
-		statusStr += " " + GroupStatusWaiting.Render(fmt.Sprintf("◐ %d", waiting))
+	if stats.waiting > 0 {
+		statusStr += " " + GroupStatusWaiting.Render(fmt.Sprintf("◐ %d", stats.waiting))
 	}
 
 	// Build the row: [indent][hotkey][expand] [name](count) [status]
