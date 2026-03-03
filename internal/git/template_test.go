@@ -148,6 +148,46 @@ func TestSanitizeBranchForPath(t *testing.T) {
 	}
 }
 
+func TestEscapeBranchForPath(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name     string
+		input    string
+		expected string
+	}{
+		{
+			name:     "branch with slash stays distinct",
+			input:    "feature/new-thing",
+			expected: "feature%2Fnew-thing",
+		},
+		{
+			name:     "branch with dash remains literal",
+			input:    "feature-new-thing",
+			expected: "feature-new-thing",
+		},
+		{
+			name:     "percent is escaped",
+			input:    "feature%2Fnew-thing",
+			expected: "feature%252Fnew-thing",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			result := escapeBranchForPath(tc.input)
+			require.Equal(t, tc.expected, result)
+		})
+	}
+
+	// Collision regression check for the reported branch pair.
+	require.NotEqual(t,
+		escapeBranchForPath("feature/foo"),
+		escapeBranchForPath("feature-foo"),
+	)
+}
+
 func TestResolveTemplate(t *testing.T) {
 	t.Parallel()
 
@@ -216,12 +256,25 @@ func TestResolveTemplate(t *testing.T) {
 			name:     "branch with slash gets sanitized",
 			template: "{repo-root}/.worktrees/{branch}",
 			vars: templateVars{
-				branch:    "feature/new-thing",
-				repoName:  "my-project",
-				repoRoot:  "/Users/me/src/my-project",
-				sessionID: "a1b2c3d4",
+				branch:        "feature/new-thing",
+				branchEscaped: "feature%2Fnew-thing",
+				repoName:      "my-project",
+				repoRoot:      "/Users/me/src/my-project",
+				sessionID:     "a1b2c3d4",
 			},
 			expected: "/Users/me/src/my-project/.worktrees/feature-new-thing",
+		},
+		{
+			name:     "escaped branch variable avoids collisions",
+			template: "{repo-root}/wt/{branch-escaped}",
+			vars: templateVars{
+				branch:        "feature/foo",
+				branchEscaped: "feature%2Ffoo",
+				repoName:      "my-project",
+				repoRoot:      "/Users/me/src/my-project",
+				sessionID:     "a1b2c3d4",
+			},
+			expected: "/Users/me/src/my-project/wt/feature%2Ffoo",
 		},
 		{
 			name:     "all variables used",

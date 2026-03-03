@@ -553,7 +553,10 @@ type WorktreeSettings struct {
 	DefaultLocation string `toml:"default_location"`
 
 	// PathTemplate: custom path template for worktree location.
-	// Variables: {repo-name}, {repo-root}, {branch}, {session-id}
+	// Variables:
+	//   {repo-name}, {repo-root}, {session-id}
+	//   {branch}         -> sanitized (human-friendly, may collide)
+	//   {branch-escaped} -> URL-escaped (collision-resistant, reversible)
 	// Unknown variables like {foo} are left as-is in the path.
 	// If set, overrides DefaultLocation.
 	PathTemplate *string `toml:"path_template"`
@@ -1492,7 +1495,10 @@ default_location = "sibling"
 # Automatically remove worktree when session is deleted
 auto_cleanup = true
 # Custom path template (overrides default_location if set)
-# Variables: {repo-name}, {repo-root}, {branch}, {session-id}
+# Variables:
+#   {repo-name}, {repo-root}, {session-id}
+#   {branch}         -> sanitized (human-friendly, may collide)
+#   {branch-escaped} -> URL-escaped (collision-resistant, reversible)
 # path_template = "../worktrees/{repo-name}/{branch}"
 
 # Default scope for MCP operations: "local", "global", or "user"
