@@ -46,6 +46,7 @@ type Item struct {
 	WindowIndex         int                // Tmux window index (for ItemTypeWindow)
 	WindowName          string             // Tmux window name (for ItemTypeWindow)
 	WindowSessionID     string             // Parent session ID (for ItemTypeWindow)
+	WindowTool          string             // Detected tool in this window (claude, gemini, etc.)
 }
 
 // Group represents a group of sessions

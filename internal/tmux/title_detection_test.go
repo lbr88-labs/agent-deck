@@ -160,7 +160,7 @@ func TestGetCachedPaneInfo_StaleCache(t *testing.T) {
 }
 
 func TestGetCachedWindows(t *testing.T) {
-	// Seed the cache directly
+	// Seed window cache
 	windowCacheMu.Lock()
 	windowCacheData = map[string][]WindowInfo{
 		"agentdeck_test_abc12345": {
@@ -171,11 +171,20 @@ func TestGetCachedWindows(t *testing.T) {
 	windowCacheTime = time.Now()
 	windowCacheMu.Unlock()
 
-	// Hit
+	// Seed tool cache — window 1 has claude
+	windowToolCacheMu.Lock()
+	windowToolCacheData = map[string]map[int]string{
+		"agentdeck_test_abc12345": {1: "claude"},
+	}
+	windowToolCacheMu.Unlock()
+
+	// Hit with tool merge
 	wins := GetCachedWindows("agentdeck_test_abc12345")
 	assert.Len(t, wins, 2)
 	assert.Equal(t, "main", wins[0].Name)
+	assert.Equal(t, "", wins[0].Tool)
 	assert.Equal(t, 1, wins[1].Index)
+	assert.Equal(t, "claude", wins[1].Tool)
 
 	// Miss
 	wins = GetCachedWindows("nonexistent")
@@ -187,4 +196,93 @@ func TestGetCachedWindows(t *testing.T) {
 	windowCacheMu.Unlock()
 	wins = GetCachedWindows("agentdeck_test_abc12345")
 	assert.Nil(t, wins)
+
+	// Cleanup
+	windowToolCacheMu.Lock()
+	windowToolCacheData = nil
+	windowToolCacheMu.Unlock()
+}
+
+func TestGetCachedWindows_ReturnsCopy(t *testing.T) {
+	windowCacheMu.Lock()
+	windowCacheData = map[string][]WindowInfo{
+		"sess": {{Index: 0, Name: "orig", Activity: 100}},
+	}
+	windowCacheTime = time.Now()
+	windowCacheMu.Unlock()
+
+	windowToolCacheMu.Lock()
+	windowToolCacheData = nil
+	windowToolCacheMu.Unlock()
+
+	wins := GetCachedWindows("sess")
+	assert.Len(t, wins, 1)
+
+	// Mutate the returned slice
+	wins[0].Name = "mutated"
+
+	// Original cache must be unchanged
+	windowCacheMu.RLock()
+	assert.Equal(t, "orig", windowCacheData["sess"][0].Name)
+	windowCacheMu.RUnlock()
+}
+
+func TestGetCachedWindows_ToolMergePartial(t *testing.T) {
+	windowCacheMu.Lock()
+	windowCacheData = map[string][]WindowInfo{
+		"s1": {
+			{Index: 0, Name: "a"},
+			{Index: 1, Name: "b"},
+			{Index: 2, Name: "c"},
+		},
+	}
+	windowCacheTime = time.Now()
+	windowCacheMu.Unlock()
+
+	// Only window 2 has a tool
+	windowToolCacheMu.Lock()
+	windowToolCacheData = map[string]map[int]string{
+		"s1": {2: "gemini"},
+	}
+	windowToolCacheMu.Unlock()
+
+	wins := GetCachedWindows("s1")
+	assert.Len(t, wins, 3)
+	assert.Equal(t, "", wins[0].Tool)
+	assert.Equal(t, "", wins[1].Tool)
+	assert.Equal(t, "gemini", wins[2].Tool)
+
+	// Cleanup
+	windowToolCacheMu.Lock()
+	windowToolCacheData = nil
+	windowToolCacheMu.Unlock()
+}
+
+func TestUpdateWindowToolCache(t *testing.T) {
+	// First write
+	data1 := map[string]map[int]string{
+		"s1": {0: "claude", 1: "gemini"},
+	}
+	updateWindowToolCache(data1)
+
+	windowToolCacheMu.RLock()
+	assert.Equal(t, "claude", windowToolCacheData["s1"][0])
+	assert.Equal(t, "gemini", windowToolCacheData["s1"][1])
+	windowToolCacheMu.RUnlock()
+
+	// Full replacement — s1 data is gone
+	data2 := map[string]map[int]string{
+		"s2": {0: "aider"},
+	}
+	updateWindowToolCache(data2)
+
+	windowToolCacheMu.RLock()
+	assert.Nil(t, windowToolCacheData["s1"])
+	assert.Equal(t, "aider", windowToolCacheData["s2"][0])
+	windowToolCacheMu.RUnlock()
+
+	// Cleanup
+	windowToolCacheMu.Lock()
+	windowToolCacheData = nil
+	windowToolCacheMu.Unlock()
 }

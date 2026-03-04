@@ -989,6 +989,7 @@ func (h *Home) rebuildFlatItems() {
 					Type:            session.ItemTypeWindow,
 					WindowIndex:     win.Index,
 					WindowName:      win.Name,
+					WindowTool:      win.Tool,
 					WindowSessionID: item.Session.ID,
 					Level:           item.Level + 1,
 					Path:            item.Path,
@@ -7716,13 +7717,24 @@ func (h *Home) renderWindowItem(b *strings.Builder, item session.Item, selected 
 	winLabel := indexStyle.Render(fmt.Sprintf("[%d]", item.WindowIndex))
 	winName := nameStyle.Render(" " + item.WindowName)
 
+	// Tool badge (if detected)
+	toolBadge := ""
+	if item.WindowTool != "" {
+		toolStyle := GetToolStyle(item.WindowTool)
+		if selected {
+			toolStyle = SessionStatusSelStyle
+		}
+		toolBadge = toolStyle.Render(" " + item.WindowTool)
+	}
+
 	row := fmt.Sprintf(
-		"%s%s%s %s%s",
+		"%s%s%s %s%s%s",
 		baseIndent,
 		selectionPrefix,
 		treeStyle.Render(treeConnector),
 		winLabel,
 		winName,
+		toolBadge,
 	)
 	b.WriteString(row)
 	b.WriteString("\n")

@@ -197,7 +197,8 @@ func (pm *PipeManager) RefreshAllActivities() (map[string]int64, map[string][]Wi
 // RefreshAllPaneInfo sends a single list-panes command through any available
 // pipe to get pane titles and current commands for ALL sessions. This provides
 // the data needed for title-based state detection without subprocess spawns.
-func (pm *PipeManager) RefreshAllPaneInfo() (map[string]PaneInfo, error) {
+// Also returns per-window tool detection data for enriching the window cache.
+func (pm *PipeManager) RefreshAllPaneInfo() (map[string]PaneInfo, map[string]map[int]string, error) {
 	pm.mu.RLock()
 	var pipe *ControlPipe
 	for _, p := range pm.pipes {
@@ -209,15 +210,17 @@ func (pm *PipeManager) RefreshAllPaneInfo() (map[string]PaneInfo, error) {
 	pm.mu.RUnlock()
 
 	if pipe == nil {
-		return nil, fmt.Errorf("no alive pipes available")
+		return nil, nil, fmt.Errorf("no alive pipes available")
 	}
 
 	output, err := pipe.SendCommand(`list-panes -a -F "#{session_name}\t#{pane_title}\t#{pane_current_command}\t#{pane_dead}\t#{window_index}\t#{pane_index}"`)
 	if err != nil {
-		return nil, fmt.Errorf("list-panes via pipe: %w", err)
+		return nil, nil, fmt.Errorf("list-panes via pipe: %w", err)
 	}
 
 	result := make(map[string]PaneInfo)
+	windowTools := make(map[string]map[int]string)
+	seenWindowTool := make(map[string]bool) // "session\twinIdx" -> already processed
 	for _, line := range strings.Split(strings.TrimSpace(output), "\n") {
 		if line == "" {
 			continue
@@ -226,18 +229,36 @@ func (pm *PipeManager) RefreshAllPaneInfo() (map[string]PaneInfo, error) {
 		if len(parts) != 6 {
 			continue
 		}
-		// Only cache the primary pane (window 0, pane 0) per session to ensure
-		// IsPaneDead() checks the correct pane in multi-pane sessions.
-		if parts[4] != "0" || parts[5] != "0" {
-			continue
+		name := parts[0]
+
+		// Collect tool info for the first pane of each window (handles any base-index).
+		windowKey := name + "\t" + parts[4]
+		if !seenWindowTool[windowKey] {
+			seenWindowTool[windowKey] = true
+			var winIdx int
+			_, _ = fmt.Sscanf(parts[4], "%d", &winIdx)
+			tool := detectToolFromCommand(parts[2])
+			if tool == "" {
+				tool = detectToolFromCommand(parts[1])
+			}
+			if tool != "" {
+				if windowTools[name] == nil {
+					windowTools[name] = make(map[int]string)
+				}
+				windowTools[name][winIdx] = tool
+			}
 		}
-		result[parts[0]] = PaneInfo{
-			Title:          parts[1],
-			CurrentCommand: parts[2],
-			Dead:           parts[3] == "1",
+
+		// Cache the first pane seen per session (primary window+pane).
+		if _, seen := result[name]; !seen {
+			result[name] = PaneInfo{
+				Title:          parts[1],
+				CurrentCommand: parts[2],
+				Dead:           parts[3] == "1",
+			}
 		}
 	}
-	return result, nil
+	return result, windowTools, nil
 }
 
 // LastOutputTime returns the last output time for a session from its pipe.

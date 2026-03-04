@@ -1,6 +1,7 @@
 package tmux
 
 import (
+	"fmt"
 	"os/exec"
 	"strings"
 	"sync"
@@ -31,6 +32,7 @@ type WindowInfo struct {
 	Index    int
 	Name     string
 	Activity int64
+	Tool     string // Detected tool (claude, gemini, etc.) or empty
 }
 
 // Pane info cache - one list-panes call per tick instead of per-session queries.
@@ -48,21 +50,57 @@ var (
 	windowCacheTime time.Time
 )
 
-// GetCachedWindows returns cached window info for a session.
+// Separate tool cache - written ONLY by RefreshPaneInfoCache, read by GetCachedWindows.
+// This eliminates the race where RefreshSessionCache overwrites windowCacheData
+// (losing tool info) and RefreshPaneInfoCache tries to add it back.
+var (
+	windowToolCacheMu   sync.RWMutex
+	windowToolCacheData map[string]map[int]string // session -> winIndex -> tool
+)
+
+// GetCachedWindows returns cached window info for a session with tool data merged in.
+// Returns a copy — callers cannot mutate the cache.
 // Returns nil if not found or cache is stale.
 func GetCachedWindows(sessionName string) []WindowInfo {
+	// Read window data
 	windowCacheMu.RLock()
-	defer windowCacheMu.RUnlock()
+	stale := windowCacheData == nil || time.Since(windowCacheTime) > 4*time.Second
+	var src []WindowInfo
+	if !stale {
+		src = windowCacheData[sessionName]
+	}
+	windowCacheMu.RUnlock()
 
-	if windowCacheData == nil || time.Since(windowCacheTime) > 4*time.Second {
+	if stale || src == nil {
 		return nil
 	}
 
-	wins, ok := windowCacheData[sessionName]
-	if !ok {
-		return nil
+	// Copy the slice so callers can't mutate the cache
+	result := make([]WindowInfo, len(src))
+	copy(result, src)
+
+	// Merge tool data from the separate tool cache
+	windowToolCacheMu.RLock()
+	tools := windowToolCacheData[sessionName]
+	windowToolCacheMu.RUnlock()
+
+	if len(tools) > 0 {
+		for i := range result {
+			if tool, ok := tools[result[i].Index]; ok {
+				result[i].Tool = tool
+			}
+		}
 	}
-	return wins
+
+	return result
+}
+
+// updateWindowToolCache replaces the entire tool cache with new data.
+// Called ONLY by RefreshPaneInfoCache — tool detection lives there.
+func updateWindowToolCache(windowTools map[string]map[int]string) {
+	windowToolCacheMu.Lock()
+	windowToolCacheData = windowTools
+	windowToolCacheMu.Unlock()
 }
 
 // RefreshPaneInfoCache updates the cache of pane titles and commands for all sessions.
@@ -70,11 +108,12 @@ func GetCachedWindows(sessionName string) []WindowInfo {
 // to read cached values. Tries PipeManager first, falls back to subprocess.
 func RefreshPaneInfoCache() {
 	if pm := GetPipeManager(); pm != nil {
-		if info, err := pm.RefreshAllPaneInfo(); err == nil && len(info) > 0 {
+		if info, windowTools, err := pm.RefreshAllPaneInfo(); err == nil && len(info) > 0 {
 			paneCacheMu.Lock()
 			paneCacheData = info
 			paneCacheTime = time.Now()
 			paneCacheMu.Unlock()
+			updateWindowToolCache(windowTools)
 			return
 		}
 		statusLog.Debug("pane_cache_subprocess_fallback")
@@ -92,6 +131,8 @@ func RefreshPaneInfoCache() {
 	}
 
 	newCache := make(map[string]PaneInfo)
+	windowTools := make(map[string]map[int]string) // session -> windowIndex -> tool
+	seenWindowTool := make(map[string]bool)         // "session\twinIdx" -> already processed
 	for _, line := range strings.Split(strings.TrimSpace(string(output)), "\n") {
 		if line == "" {
 			continue
@@ -100,16 +141,37 @@ func RefreshPaneInfoCache() {
 		if len(parts) != 6 {
 			continue
 		}
-		// Only cache the primary pane (window 0, pane 0) per session to ensure
-		// IsPaneDead() checks the correct pane in multi-pane sessions.
-		if parts[4] != "0" || parts[5] != "0" {
-			continue
-		}
 		name := parts[0]
-		newCache[name] = PaneInfo{
-			Title:          parts[1],
-			CurrentCommand: parts[2],
-			Dead:           parts[3] == "1",
+
+		// Collect tool info for the first pane of each window (handles any base-index).
+		// list-panes outputs panes sorted by window then pane index, so first hit = primary.
+		windowKey := name + "\t" + parts[4]
+		if !seenWindowTool[windowKey] {
+			seenWindowTool[windowKey] = true
+			var winIdx int
+			_, _ = fmt.Sscanf(parts[4], "%d", &winIdx)
+			// Try pane_current_command first, then pane_title (Claude shows as "bash"
+			// in command but "Claude Code" in title via OSC escape sequences).
+			tool := detectToolFromCommand(parts[2])
+			if tool == "" {
+				tool = detectToolFromCommand(parts[1])
+			}
+			if tool != "" {
+				if windowTools[name] == nil {
+					windowTools[name] = make(map[int]string)
+				}
+				windowTools[name][winIdx] = tool
+			}
+		}
+
+		// Cache the first pane seen per session (primary window+pane).
+		// Handles any base-index config — first entry in sorted list-panes output is primary.
+		if _, seen := newCache[name]; !seen {
+			newCache[name] = PaneInfo{
+				Title:          parts[1],
+				CurrentCommand: parts[2],
+				Dead:           parts[3] == "1",
+			}
 		}
 	}
 
@@ -117,6 +179,8 @@ func RefreshPaneInfoCache() {
 	paneCacheData = newCache
 	paneCacheTime = time.Now()
 	paneCacheMu.Unlock()
+
+	updateWindowToolCache(windowTools)
 }
 
 // GetCachedPaneInfo returns cached pane info for a session.
