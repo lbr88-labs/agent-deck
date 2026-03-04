@@ -986,16 +986,17 @@ func (h *Home) rebuildFlatItems() {
 
 			for winIdx, win := range wins {
 				expanded = append(expanded, session.Item{
-					Type:            session.ItemTypeWindow,
-					WindowIndex:     win.Index,
-					WindowName:      win.Name,
-					WindowTool:      win.Tool,
-					WindowSessionID: item.Session.ID,
-					Level:           item.Level + 1,
-					Path:            item.Path,
-					IsWindow:        true,
-					IsLastWindow:    winIdx == len(wins)-1,
-					IsLastInGroup:   item.IsLastInGroup && winIdx == len(wins)-1,
+					Type:                session.ItemTypeWindow,
+					WindowIndex:         win.Index,
+					WindowName:          win.Name,
+					WindowTool:          win.Tool,
+					WindowSessionID:     item.Session.ID,
+					Level:               item.Level + 1,
+					Path:                item.Path,
+					IsWindow:            true,
+					IsLastWindow:        winIdx == len(wins)-1,
+					IsLastInGroup:       item.IsLastInGroup && winIdx == len(wins)-1,
+					ParentIsLastInGroup: item.IsLastInGroup,
 				})
 			}
 		}
@@ -7689,10 +7690,20 @@ func (h *Home) renderSessionItem(b *strings.Builder, item session.Item, selected
 
 // renderWindowItem renders a single window item (child of a session) for the left panel
 func (h *Home) renderWindowItem(b *strings.Builder, item session.Item, selected bool) {
-	// Base indent — windows are children of sessions
+	treeStyle := TreeConnectorStyle
+
+	// Base indent — windows are children of sessions.
+	// Show │ continuation line at the parent session's level when it's not the
+	// last item in the group. Extra space after │ so window ├─ aligns under
+	// the parent session's ○ status bullet (position 4).
 	baseIndent := ""
 	if item.Level > 1 {
-		baseIndent = strings.Repeat(treeEmpty, item.Level-1)
+		groupIndent := strings.Repeat(treeEmpty, item.Level-2)
+		if item.ParentIsLastInGroup {
+			baseIndent = groupIndent + "   " // No continuation needed
+		} else {
+			baseIndent = groupIndent + " " + treeStyle.Render("│") + " "
+		}
 	}
 
 	// Tree connector
@@ -7700,8 +7711,6 @@ func (h *Home) renderWindowItem(b *strings.Builder, item session.Item, selected 
 	if item.IsLastWindow {
 		treeConnector = subLast
 	}
-
-	treeStyle := TreeConnectorStyle
 
 	// Selection
 	selectionPrefix := " "
@@ -7712,6 +7721,11 @@ func (h *Home) renderWindowItem(b *strings.Builder, item session.Item, selected 
 		nameStyle = SessionTitleSelStyle
 		indexStyle = SessionStatusSelStyle
 		treeStyle = TreeConnectorSelStyle
+		// Rebuild baseIndent with selection styling
+		if item.Level > 1 && !item.ParentIsLastInGroup {
+			groupIndent := strings.Repeat(treeEmpty, max(0, item.Level-2))
+			baseIndent = groupIndent + " " + treeStyle.Render("│") + " "
+		}
 	}
 
 	winLabel := indexStyle.Render(fmt.Sprintf("[%d]", item.WindowIndex))
