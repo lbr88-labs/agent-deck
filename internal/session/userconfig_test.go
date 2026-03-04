@@ -529,6 +529,62 @@ show_analytics = false
 	}
 }
 
+func TestPreviewSettingsNotesOutputSplitDefaultsAndClamp(t *testing.T) {
+	settings := PreviewSettings{}
+	if got := settings.GetNotesOutputSplit(); got != 0.33 {
+		t.Fatalf("GetNotesOutputSplit default = %v, want 0.33", got)
+	}
+
+	settings.NotesOutputSplit = 0.05
+	if got := settings.GetNotesOutputSplit(); got != 0.1 {
+		t.Fatalf("GetNotesOutputSplit low clamp = %v, want 0.1", got)
+	}
+
+	settings.NotesOutputSplit = 0.95
+	if got := settings.GetNotesOutputSplit(); got != 0.9 {
+		t.Fatalf("GetNotesOutputSplit high clamp = %v, want 0.9", got)
+	}
+
+	settings.NotesOutputSplit = 0.4
+	if got := settings.GetNotesOutputSplit(); got != 0.4 {
+		t.Fatalf("GetNotesOutputSplit configured = %v, want 0.4", got)
+	}
+}
+
+func TestInstanceSettingsFollowCwdOnAttach(t *testing.T) {
+	settings := InstanceSettings{}
+	if settings.GetFollowCwdOnAttach() {
+		t.Fatal("GetFollowCwdOnAttach should default to false")
+	}
+
+	enabled := true
+	settings.FollowCwdOnAttach = &enabled
+	if !settings.GetFollowCwdOnAttach() {
+		t.Fatal("GetFollowCwdOnAttach should return explicit true")
+	}
+}
+
+func TestUserConfigParseFollowCwdOnAttach(t *testing.T) {
+	dir := t.TempDir()
+	configPath := filepath.Join(dir, "config.toml")
+	content := `
+[instances]
+follow_cwd_on_attach = true
+`
+	if err := os.WriteFile(configPath, []byte(content), 0644); err != nil {
+		t.Fatalf("Failed to write config file: %v", err)
+	}
+
+	var config UserConfig
+	if _, err := toml.DecodeFile(configPath, &config); err != nil {
+		t.Fatalf("Failed to decode: %v", err)
+	}
+
+	if !config.Instances.GetFollowCwdOnAttach() {
+		t.Fatal("instances.follow_cwd_on_attach should parse as true")
+	}
+}
+
 // ============================================================================
 // Notifications Settings Tests
 // ============================================================================

@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"fmt"
 	"strconv"
 	"strings"
 
@@ -47,7 +48,7 @@ type SettingsPanel struct {
 
 	// Setting values
 	selectedTheme       int // 0=dark, 1=light, 2=system
-	selectedTool        int // 0=claude, 1=gemini, 2=opencode, 3=codex, 4=none
+	selectedTool        int // 0=claude, 1=gemini, 2=opencode, 3=codex, 4=pi, 5=none
 	dangerousMode       bool
 	claudeConfigDir     string
 	claudeConfigIsScope bool // true = profile override, false = global [claude]
@@ -78,8 +79,8 @@ type SettingsPanel struct {
 
 // Tool names for radio selection
 var (
-	toolNames  = []string{"Claude", "Gemini", "OpenCode", "Codex", "None"}
-	toolValues = []string{"claude", "gemini", "opencode", "codex", ""}
+	toolNames  = []string{"Claude", "Gemini", "OpenCode", "Codex", "Pi", "None"}
+	toolValues = []string{"claude", "gemini", "opencode", "codex", "pi", ""}
 )
 
 // Search tier names for radio selection
@@ -164,7 +165,7 @@ func (s *SettingsPanel) LoadConfig(config *session.UserConfig) {
 	}
 
 	// Default tool
-	s.selectedTool = 4 // None by default
+	s.selectedTool = len(toolValues) - 1 // None by default
 	for i, val := range toolValues {
 		if val == config.DefaultTool {
 			s.selectedTool = i
@@ -726,7 +727,13 @@ func (s *SettingsPanel) View() string {
 	content.WriteString("\n")
 	content.WriteString(dimStyle.Render("  Edit ~/.agent-deck/config.toml to configure MCPs and tools."))
 	content.WriteString("\n")
-	content.WriteString(dimStyle.Render("  Press m on any Claude/Gemini session to attach MCPs."))
+	hotkeys := resolveHotkeys(session.GetHotkeyOverrides())
+	mcpKey := actionHotkey(hotkeys, hotkeyMCPManager)
+	mcpHint := "  MCP Manager hotkey is unbound."
+	if mcpKey != "" {
+		mcpHint = fmt.Sprintf("  Press %s on any Claude/Gemini session to attach MCPs.", mcpKey)
+	}
+	content.WriteString(dimStyle.Render(mcpHint))
 	content.WriteString("\n\n")
 
 	// Help bar

@@ -109,6 +109,7 @@ type Instance struct {
 
 	// Latest user input for context (extracted from session files)
 	LatestPrompt      string    `json:"latest_prompt,omitempty"`
+	Notes             string    `json:"notes,omitempty"`
 	lastPromptModTime time.Time // mtime cache for updateGeminiLatestPrompt (not serialized)
 
 	// JSONL tail-read cache: skip re-reading if file hasn't grown

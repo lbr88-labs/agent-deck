@@ -75,6 +75,7 @@ type InstanceData struct {
 
 	// Latest user input for context
 	LatestPrompt string `json:"latest_prompt,omitempty"`
+	Notes        string `json:"notes,omitempty"`
 
 	// Tool-specific launch options (generic for all tools: claude, codex, etc.)
 	ToolOptionsJSON json.RawMessage `json:"tool_options,omitempty"`
@@ -264,7 +265,7 @@ func (s *Storage) SaveWithGroups(instances []*Instance, groupTree *GroupTree) er
 			inst.GeminiYoloMode, inst.GeminiModel,
 			inst.OpenCodeSessionID, inst.OpenCodeDetectedAt,
 			inst.CodexSessionID, inst.CodexDetectedAt,
-			inst.LatestPrompt, inst.LoadedMCPNames,
+			inst.LatestPrompt, inst.Notes, inst.LoadedMCPNames,
 			inst.ToolOptionsJSON,
 			inst.SSHHost, inst.SSHRemotePath,
 		)
@@ -405,7 +406,7 @@ func (s *Storage) LoadLite() ([]*InstanceData, []*GroupData, error) {
 			geminiYolo, geminiModel,
 			opencodeSID, opencodeAt,
 			codexSID, codexAt,
-			latestPrompt, loadedMCPs,
+			latestPrompt, notes, loadedMCPs,
 			toolOpts,
 			sshHost2, sshRemotePath2 := statedb.UnmarshalToolData(r.ToolData)
 
@@ -437,6 +438,7 @@ func (s *Storage) LoadLite() ([]*InstanceData, []*GroupData, error) {
 			CodexSessionID:     codexSID,
 			CodexDetectedAt:    codexAt,
 			LatestPrompt:       latestPrompt,
+			Notes:              notes,
 			ToolOptionsJSON:    toolOpts,
 			LoadedMCPNames:     loadedMCPs,
 			SSHHost:            sshHost2,
@@ -490,7 +492,7 @@ func (s *Storage) LoadWithGroups() ([]*Instance, []*GroupData, error) {
 			geminiYolo, geminiModel,
 			opencodeSID, opencodeAt,
 			codexSID, codexAt,
-			latestPrompt, loadedMCPs,
+			latestPrompt, notes, loadedMCPs,
 			toolOpts,
 			sshHost, sshRemotePath := statedb.UnmarshalToolData(r.ToolData)
 
@@ -522,6 +524,7 @@ func (s *Storage) LoadWithGroups() ([]*Instance, []*GroupData, error) {
 			CodexSessionID:     codexSID,
 			CodexDetectedAt:    codexAt,
 			LatestPrompt:       latestPrompt,
+			Notes:              notes,
 			ToolOptionsJSON:    toolOpts,
 			LoadedMCPNames:     loadedMCPs,
 			SSHHost:            sshHost,
@@ -718,6 +721,7 @@ func (s *Storage) convertToInstances(data *StorageData) ([]*Instance, []*GroupDa
 			CodexDetectedAt:    instData.CodexDetectedAt,
 			ToolOptionsJSON:    instData.ToolOptionsJSON,
 			LatestPrompt:       instData.LatestPrompt,
+			Notes:              instData.Notes,
 			LoadedMCPNames:     instData.LoadedMCPNames,
 			SSHHost:            instData.SSHHost,
 			SSHRemotePath:      instData.SSHRemotePath,

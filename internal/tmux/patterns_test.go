@@ -89,6 +89,19 @@ func TestDefaultRawPatterns_Codex(t *testing.T) {
 	}
 }
 
+func TestDefaultRawPatterns_Pi(t *testing.T) {
+	raw := DefaultRawPatterns("pi")
+	if raw == nil {
+		t.Fatal("expected non-nil for pi")
+	}
+	if len(raw.BusyPatterns) == 0 {
+		t.Error("pi should have busy patterns")
+	}
+	if len(raw.PromptPatterns) == 0 {
+		t.Error("pi should have prompt patterns")
+	}
+}
+
 func TestDefaultRawPatterns_Unknown(t *testing.T) {
 	raw := DefaultRawPatterns("unknowntool")
 	if raw != nil {

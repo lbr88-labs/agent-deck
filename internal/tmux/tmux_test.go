@@ -536,6 +536,7 @@ func TestDetectToolFromCommand(t *testing.T) {
 		{name: "gemini", command: "gemini --yolo", want: "gemini"},
 		{name: "opencode", command: "open-code --continue", want: "opencode"},
 		{name: "codex", command: "codex --dangerously-bypass-approvals-and-sandbox", want: "codex"},
+		{name: "pi", command: "pi --model fast", want: "pi"},
 		{name: "shell command", command: "npm run dev", want: ""},
 		{name: "empty", command: "", want: ""},
 	}
@@ -572,6 +573,12 @@ Do you trust the files in this folder?`,
 			content: `No, and tell Claude what to do differently
 Yes, allow once`,
 			want: "claude",
+		},
+		{
+			name: "pi prompt detects pi",
+			content: `Welcome to Pi CLI
+pi> `,
+			want: "pi",
 		},
 	}
 
