@@ -207,6 +207,20 @@ func (s *Session) Attach(ctx context.Context) error {
 	return attachErr
 }
 
+// AttachWindow attaches to a specific window within this tmux session.
+// Selects the target window first, then uses the standard Attach flow.
+func (s *Session) AttachWindow(ctx context.Context, windowIndex int) error {
+	if !s.Exists() {
+		return fmt.Errorf("session %s does not exist", s.Name)
+	}
+
+	// Select the target window before attaching
+	target := fmt.Sprintf("%s:%d", s.Name, windowIndex)
+	_ = exec.Command("tmux", "select-window", "-t", target).Run()
+
+	return s.Attach(ctx)
+}
+
 // Resize changes the terminal size of the tmux session
 func (s *Session) Resize(cols, rows int) error {
 	// Resize the tmux window

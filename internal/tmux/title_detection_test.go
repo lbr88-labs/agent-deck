@@ -4,6 +4,8 @@ import (
 	"os/exec"
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/assert"
 )
 
 func TestContainsBrailleChar(t *testing.T) {
@@ -155,4 +157,34 @@ func TestGetCachedPaneInfo_StaleCache(t *testing.T) {
 	if ok {
 		t.Error("Expected stale cache to return false")
 	}
+}
+
+func TestGetCachedWindows(t *testing.T) {
+	// Seed the cache directly
+	windowCacheMu.Lock()
+	windowCacheData = map[string][]WindowInfo{
+		"agentdeck_test_abc12345": {
+			{Index: 0, Name: "main", Activity: 100},
+			{Index: 1, Name: "tests", Activity: 200},
+		},
+	}
+	windowCacheTime = time.Now()
+	windowCacheMu.Unlock()
+
+	// Hit
+	wins := GetCachedWindows("agentdeck_test_abc12345")
+	assert.Len(t, wins, 2)
+	assert.Equal(t, "main", wins[0].Name)
+	assert.Equal(t, 1, wins[1].Index)
+
+	// Miss
+	wins = GetCachedWindows("nonexistent")
+	assert.Nil(t, wins)
+
+	// Expired cache
+	windowCacheMu.Lock()
+	windowCacheTime = time.Now().Add(-5 * time.Second)
+	windowCacheMu.Unlock()
+	wins = GetCachedWindows("agentdeck_test_abc12345")
+	assert.Nil(t, wins)
 }

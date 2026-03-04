@@ -26,6 +26,13 @@ type PaneInfo struct {
 	Dead           bool
 }
 
+// WindowInfo holds basic info about a tmux window within a session.
+type WindowInfo struct {
+	Index    int
+	Name     string
+	Activity int64
+}
+
 // Pane info cache - one list-panes call per tick instead of per-session queries.
 // Mirrors the sessionCacheData pattern (tmux.go:38-42).
 var (
@@ -33,6 +40,30 @@ var (
 	paneCacheData map[string]PaneInfo
 	paneCacheTime time.Time
 )
+
+// Window cache - populated alongside session cache from the same list-windows call.
+var (
+	windowCacheMu   sync.RWMutex
+	windowCacheData map[string][]WindowInfo // session_name -> sorted windows
+	windowCacheTime time.Time
+)
+
+// GetCachedWindows returns cached window info for a session.
+// Returns nil if not found or cache is stale.
+func GetCachedWindows(sessionName string) []WindowInfo {
+	windowCacheMu.RLock()
+	defer windowCacheMu.RUnlock()
+
+	if windowCacheData == nil || time.Since(windowCacheTime) > 4*time.Second {
+		return nil
+	}
+
+	wins, ok := windowCacheData[sessionName]
+	if !ok {
+		return nil
+	}
+	return wins
+}
 
 // RefreshPaneInfoCache updates the cache of pane titles and commands for all sessions.
 // Call this ONCE per tick (from backgroundStatusUpdate), then use GetCachedPaneInfo()

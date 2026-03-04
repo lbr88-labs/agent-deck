@@ -960,6 +960,41 @@ func (h *Home) rebuildFlatItems() {
 		h.flatItems = allItems
 	}
 
+	// Inject window items after sessions that have 2+ windows
+	if len(h.flatItems) > 0 {
+		expanded := make([]session.Item, 0, len(h.flatItems)+8)
+		for _, item := range h.flatItems {
+			expanded = append(expanded, item)
+
+			if item.Type != session.ItemTypeSession || item.Session == nil {
+				continue
+			}
+			tmuxSess := item.Session.GetTmuxSession()
+			if tmuxSess == nil {
+				continue
+			}
+			wins := tmux.GetCachedWindows(tmuxSess.Name)
+			if len(wins) < 2 {
+				continue
+			}
+
+			for winIdx, win := range wins {
+				expanded = append(expanded, session.Item{
+					Type:            session.ItemTypeWindow,
+					WindowIndex:     win.Index,
+					WindowName:      win.Name,
+					WindowSessionID: item.Session.ID,
+					Level:           item.Level + 1,
+					Path:            item.Path,
+					IsWindow:        true,
+					IsLastWindow:    winIdx == len(wins)-1,
+					IsLastInGroup:   item.IsLastInGroup && winIdx == len(wins)-1,
+				})
+			}
+		}
+		h.flatItems = expanded
+	}
+
 	// Append remote sessions as selectable items
 	h.remoteSessionsMu.RLock()
 	remoteNames := make([]string, 0, len(h.remoteSessions))
@@ -1713,6 +1748,9 @@ func (h *Home) getSelectedSession() *session.Instance {
 	item := h.flatItems[h.cursor]
 	if item.Type == session.ItemTypeSession {
 		return item.Session
+	}
+	if item.Type == session.ItemTypeWindow {
+		return h.getInstanceByID(item.WindowSessionID)
 	}
 	return nil
 }
@@ -3953,6 +3991,40 @@ func (h *Home) handleMainKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 					}
 				}
 				h.saveGroupState()
+			} else if item.Type == session.ItemTypeWindow {
+				// Find parent session by WindowSessionID
+				var parentInst *session.Instance
+				h.instancesMu.RLock()
+				for _, inst := range h.instances {
+					if inst.ID == item.WindowSessionID {
+						parentInst = inst
+						break
+					}
+				}
+				h.instancesMu.RUnlock()
+
+				if parentInst != nil && parentInst.Exists() {
+					tmuxSess := parentInst.GetTmuxSession()
+					if tmuxSess != nil {
+						tmuxSess.EnsureConfigured()
+						parentInst.SyncSessionIDsToTmux()
+						parentInst.MarkAccessed()
+
+						if parentInst.GetStatusThreadSafe() == session.StatusWaiting {
+							tmuxSess.Acknowledge()
+							if db := statedb.GetGlobal(); db != nil {
+								_ = db.SetAcknowledged(parentInst.ID, true)
+							}
+						}
+
+						h.isAttaching.Store(true)
+						return h, tea.Exec(attachWindowCmd{session: tmuxSess, windowIndex: item.WindowIndex}, func(err error) tea.Msg {
+							h.isAttaching.Store(false)
+							parentInst.MarkAccessed()
+							return statusUpdateMsg{}
+						})
+					}
+				}
 			} else if item.Type == session.ItemTypeRemoteSession && item.RemoteSession != nil {
 				// Attach to remote session via SSH
 				return h, h.attachRemoteSession(item.RemoteName, item.RemoteSession.ID)
@@ -5216,6 +5288,8 @@ func (h *Home) saveUIState() {
 			if item.Session != nil {
 				state.CursorSessionID = item.Session.ID
 			}
+		case session.ItemTypeWindow:
+			state.CursorSessionID = item.WindowSessionID
 		case session.ItemTypeGroup:
 			state.CursorGroupPath = item.Path
 		}
@@ -5747,6 +5821,21 @@ func (a attachCmd) Run() error {
 func (a attachCmd) SetStdin(r io.Reader)  {}
 func (a attachCmd) SetStdout(w io.Writer) {}
 func (a attachCmd) SetStderr(w io.Writer) {}
+
+// attachWindowCmd implements tea.ExecCommand for attaching to a specific tmux window
+type attachWindowCmd struct {
+	session     *tmux.Session
+	windowIndex int
+}
+
+func (a attachWindowCmd) Run() error {
+	ctx := context.Background()
+	return a.session.AttachWindow(ctx, a.windowIndex)
+}
+
+func (a attachWindowCmd) SetStdin(r io.Reader)  {}
+func (a attachWindowCmd) SetStdout(w io.Writer) {}
+func (a attachWindowCmd) SetStderr(w io.Writer) {}
 
 // attachRemoteSession attaches to a remote session via SSH, suspending the TUI.
 func (h *Home) attachRemoteSession(remoteName, sessionID string) tea.Cmd {
@@ -7307,6 +7396,8 @@ func (h *Home) renderItem(b *strings.Builder, item session.Item, selected bool, 
 		h.renderGroupItem(b, item, selected, itemIndex)
 	case session.ItemTypeSession:
 		h.renderSessionItem(b, item, selected)
+	case session.ItemTypeWindow:
+		h.renderWindowItem(b, item, selected)
 	case session.ItemTypeRemoteGroup:
 		h.renderRemoteGroupItem(b, item, selected)
 	case session.ItemTypeRemoteSession:
@@ -7579,6 +7670,48 @@ func (h *Home) renderSessionItem(b *strings.Builder, item session.Item, selected
 		worktreeBadge,
 		sandboxBadge,
 		sshBadge,
+	)
+	b.WriteString(row)
+	b.WriteString("\n")
+}
+
+// renderWindowItem renders a single window item (child of a session) for the left panel
+func (h *Home) renderWindowItem(b *strings.Builder, item session.Item, selected bool) {
+	// Base indent — windows are children of sessions
+	baseIndent := ""
+	if item.Level > 1 {
+		baseIndent = strings.Repeat(treeEmpty, item.Level-1)
+	}
+
+	// Tree connector
+	treeConnector := subBranch
+	if item.IsLastWindow {
+		treeConnector = subLast
+	}
+
+	treeStyle := TreeConnectorStyle
+
+	// Selection
+	selectionPrefix := " "
+	nameStyle := lipgloss.NewStyle().Foreground(ColorTextDim)
+	indexStyle := lipgloss.NewStyle().Foreground(ColorTextDim)
+	if selected {
+		selectionPrefix = SessionSelectionPrefix.Render("▶")
+		nameStyle = SessionTitleSelStyle
+		indexStyle = SessionStatusSelStyle
+		treeStyle = TreeConnectorSelStyle
+	}
+
+	winLabel := indexStyle.Render(fmt.Sprintf("[%d]", item.WindowIndex))
+	winName := nameStyle.Render(" " + item.WindowName)
+
+	row := fmt.Sprintf(
+		"%s%s%s %s%s",
+		baseIndent,
+		selectionPrefix,
+		treeStyle.Render(treeConnector),
+		winLabel,
+		winName,
 	)
 	b.WriteString(row)
 	b.WriteString("\n")
@@ -8073,6 +8206,19 @@ func (h *Home) renderPreviewPane(width, height int) string {
 	// Remote items: show simple preview
 	if item.Type == session.ItemTypeRemoteGroup || item.Type == session.ItemTypeRemoteSession {
 		return h.renderRemotePreview(item, width, height)
+	}
+
+	// Window items: resolve parent session for preview
+	if item.Type == session.ItemTypeWindow {
+		parentInst := h.getInstanceByID(item.WindowSessionID)
+		if parentInst == nil {
+			return renderEmptyStateResponsive(EmptyStateConfig{
+				Icon:     "◇",
+				Title:    fmt.Sprintf("Window %d: %s", item.WindowIndex, item.WindowName),
+				Subtitle: "Parent session not found",
+			}, width, height)
+		}
+		item.Session = parentInst
 	}
 
 	// Session preview

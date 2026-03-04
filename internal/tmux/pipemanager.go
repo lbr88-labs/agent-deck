@@ -165,7 +165,7 @@ func (pm *PipeManager) GetWindowActivity(sessionName string) (int64, error) {
 // RefreshAllActivities sends a single list-windows command through any available
 // pipe to get activity timestamps for ALL sessions. This replaces the subprocess
 // call in RefreshSessionCache.
-func (pm *PipeManager) RefreshAllActivities() (map[string]int64, error) {
+func (pm *PipeManager) RefreshAllActivities() (map[string]int64, map[string][]WindowInfo, error) {
 	pm.mu.RLock()
 	// Find any alive pipe to send the command through
 	var pipe *ControlPipe
@@ -178,33 +178,17 @@ func (pm *PipeManager) RefreshAllActivities() (map[string]int64, error) {
 	pm.mu.RUnlock()
 
 	if pipe == nil {
-		return nil, fmt.Errorf("no alive pipes available")
+		return nil, nil, fmt.Errorf("no alive pipes available")
 	}
 
 	// tmux control mode requires double-quoted format strings containing special chars
-	output, err := pipe.SendCommand(`list-windows -a -F "#{session_name}\t#{window_activity}"`)
+	output, err := pipe.SendCommand(`list-windows -a -F "#{session_name}\t#{window_activity}\t#{window_index}\t#{window_name}"`)
 	if err != nil {
-		return nil, fmt.Errorf("list-windows via pipe: %w", err)
+		return nil, nil, fmt.Errorf("list-windows via pipe: %w", err)
 	}
 
-	result := make(map[string]int64)
-	for _, line := range strings.Split(strings.TrimSpace(output), "\n") {
-		if line == "" {
-			continue
-		}
-		parts := strings.SplitN(line, "\t", 2)
-		if len(parts) != 2 {
-			continue
-		}
-		name := parts[0]
-		var activity int64
-		_, _ = fmt.Sscanf(parts[1], "%d", &activity)
-		// Keep maximum activity if session has multiple windows
-		if existing, ok := result[name]; !ok || activity > existing {
-			result[name] = activity
-		}
-	}
-	return result, nil
+	sessionCache, windowCache := parseListWindowsOutput(output)
+	return sessionCache, windowCache, nil
 }
 
 // RefreshAllPaneInfo sends a single list-panes command through any available
