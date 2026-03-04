@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/asheshgoplani/agent-deck/internal/docker"
 	"github.com/asheshgoplani/agent-deck/internal/openclaw"
 	"github.com/asheshgoplani/agent-deck/internal/session"
 )
@@ -99,7 +100,7 @@ func handleOpenClawSync(profile string, args []string) {
 
 		if existing == nil {
 			// Create new session
-			command := fmt.Sprintf("agent-deck openclaw bridge --agent %s", agent.ID)
+			command := buildOpenClawBridgeCommand(agent.ID)
 			inst := session.NewInstanceWithGroupAndTool(agentDisplayName, os.Getenv("HOME"), groupName, "openclaw")
 			inst.Command = command
 
@@ -151,6 +152,16 @@ func handleOpenClawSync(profile string, args []string) {
 	} else {
 		fmt.Printf("Synced %d agents (%d new, %d updated)\n", len(agentsResult.Agents), created, updated)
 	}
+}
+
+func buildOpenClawBridgeCommand(agentID string) string {
+	return docker.ShellJoinArgs([]string{
+		"agent-deck",
+		"openclaw",
+		"bridge",
+		"--agent",
+		agentID,
+	})
 }
 
 // --- bridge ---
