@@ -95,6 +95,77 @@ command = "test"
 	}
 }
 
+func TestIsClaudeCommand(t *testing.T) {
+	tests := []struct {
+		name    string
+		command string
+		want    bool
+	}{
+		{name: "plain claude", command: "claude", want: true},
+		{name: "absolute path", command: "/opt/homebrew/bin/claude", want: true},
+		{name: "with args", command: "claude --continue", want: true},
+		{name: "env prefix", command: "ANTHROPIC_BASE_URL=https://example.com claude --continue", want: true},
+		{name: "quoted token", command: "'claude' --continue", want: true},
+		{name: "env only", command: "ANTHROPIC_BASE_URL=https://example.com", want: false},
+		{name: "different tool", command: "codex --model gpt-5", want: false},
+		{name: "empty", command: "   ", want: false},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got := isClaudeCommand(tc.command)
+			if got != tc.want {
+				t.Fatalf("isClaudeCommand(%q) = %v, want %v", tc.command, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestIsClaudeCompatible_CustomToolCommands(t *testing.T) {
+	tmpDir := t.TempDir()
+	originalHome := os.Getenv("HOME")
+	os.Setenv("HOME", tmpDir)
+	defer os.Setenv("HOME", originalHome)
+	ClearUserConfigCache()
+
+	agentDeckDir := filepath.Join(tmpDir, ".agent-deck")
+	if err := os.MkdirAll(agentDeckDir, 0o700); err != nil {
+		t.Fatalf("mkdir %s: %v", agentDeckDir, err)
+	}
+
+	cfg := &UserConfig{
+		Tools: map[string]ToolDef{
+			"claude_path": {
+				Command: "/opt/homebrew/bin/claude --resume",
+			},
+			"claude_env": {
+				Command: "ANTHROPIC_BASE_URL=https://example.com claude --continue",
+			},
+			"other": {
+				Command: "codex --model gpt-5",
+			},
+		},
+	}
+
+	if err := SaveUserConfig(cfg); err != nil {
+		t.Fatalf("SaveUserConfig: %v", err)
+	}
+	ClearUserConfigCache()
+
+	if !IsClaudeCompatible("claude") {
+		t.Fatal("built-in claude should be Claude-compatible")
+	}
+	if !IsClaudeCompatible("claude_path") {
+		t.Fatal("custom tool with Claude path should be Claude-compatible")
+	}
+	if !IsClaudeCompatible("claude_env") {
+		t.Fatal("custom tool with env-prefixed Claude command should be Claude-compatible")
+	}
+	if IsClaudeCompatible("other") {
+		t.Fatal("non-Claude custom tool should not be Claude-compatible")
+	}
+}
+
 func TestGlobalSearchConfig(t *testing.T) {
 	// Create temp config with global search settings
 	tmpDir := t.TempDir()

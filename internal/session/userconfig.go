@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 	"sync"
 
 	"github.com/BurntSushi/toml"
@@ -997,9 +998,57 @@ func IsClaudeCompatible(toolName string) bool {
 		return true
 	}
 	if def := GetToolDef(toolName); def != nil {
-		return def.Command == "claude"
+		return isClaudeCommand(def.Command)
 	}
 	return false
+}
+
+func isClaudeCommand(command string) bool {
+	fields := strings.Fields(strings.TrimSpace(command))
+	if len(fields) == 0 {
+		return false
+	}
+
+	cmdToken := ""
+	for _, field := range fields {
+		if isShellEnvAssignment(field) {
+			continue
+		}
+		cmdToken = strings.Trim(field, `"'`)
+		break
+	}
+	if cmdToken == "" {
+		return false
+	}
+
+	base := filepath.Base(cmdToken)
+	base = strings.TrimSuffix(base, ".exe")
+	base = strings.TrimSuffix(base, ".EXE")
+	return strings.EqualFold(base, "claude")
+}
+
+func isShellEnvAssignment(token string) bool {
+	if token == "" {
+		return false
+	}
+	idx := strings.IndexByte(token, '=')
+	if idx <= 0 {
+		return false
+	}
+
+	key := token[:idx]
+	for i, r := range key {
+		if i == 0 {
+			if !((r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || r == '_') {
+				return false
+			}
+			continue
+		}
+		if !((r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || r == '_') {
+			return false
+		}
+	}
+	return true
 }
 
 // GetToolDef returns a tool definition from user config
