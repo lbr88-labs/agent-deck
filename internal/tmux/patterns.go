@@ -79,6 +79,11 @@ func DefaultRawPatterns(toolName string) *RawPatterns {
 		return &RawPatterns{
 			PromptPatterns: []string{"$ ", "# ", "% "},
 		}
+	case "openclaw":
+		return &RawPatterns{
+			BusyPatterns:   []string{"[PROCESSING]", "[CONNECTING]", "[RECONNECTING]"},
+			PromptPatterns: []string{"openclaw> "},
+		}
 	default:
 		return nil
 	}

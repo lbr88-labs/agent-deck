@@ -2386,9 +2386,21 @@ func (i *Instance) UpdateStatus() error {
 		i.Status = StatusError
 	}
 
-	// Update tool detection dynamically (enables fork when Claude starts)
+	// Update tool detection dynamically (enables fork when Claude starts).
+	// Only override for built-in tools — custom tools (openclaw, etc.) must not be
+	// clobbered by the fallback "shell" detection from content sniffing.
 	if detectedTool := i.tmuxSession.DetectTool(); detectedTool != "" {
-		i.Tool = detectedTool
+		switch detectedTool {
+		case "claude", "gemini", "opencode", "codex":
+			i.Tool = detectedTool
+		case "shell":
+			// Only override if current tool is also a built-in (or already shell).
+			// Custom tools should keep their configured identity.
+			switch i.Tool {
+			case "", "shell", "claude", "gemini", "opencode", "codex":
+				i.Tool = detectedTool
+			}
+		}
 	}
 
 	// Update session tracking only for active/waiting sessions (skip idle - nothing changes)

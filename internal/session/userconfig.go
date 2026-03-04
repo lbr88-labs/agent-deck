@@ -111,6 +111,24 @@ type UserConfig struct {
 
 	// Remotes defines named SSH remote agent-deck instances
 	Remotes map[string]RemoteConfig `toml:"remotes"`
+
+	// OpenClaw defines OpenClaw gateway integration settings
+	OpenClaw OpenClawSettings `toml:"openclaw"`
+}
+
+// OpenClawSettings configures the OpenClaw gateway connection.
+type OpenClawSettings struct {
+	// GatewayURL is the WebSocket URL of the OpenClaw gateway (default: "ws://127.0.0.1:31337")
+	GatewayURL string `toml:"gateway_url"`
+
+	// Password is the gateway authentication password
+	Password string `toml:"password"`
+
+	// AutoSync syncs OpenClaw agents as agent-deck sessions on TUI startup
+	AutoSync bool `toml:"auto_sync"`
+
+	// GroupName is the agent-deck group name for OpenClaw sessions (default: "openclaw")
+	GroupName string `toml:"group_name"`
 }
 
 // RemoteConfig defines a remote agent-deck instance accessible via SSH.
