@@ -300,6 +300,21 @@ type AgentParams struct {
 	IdempotencyKey string `json:"idempotencyKey"`
 }
 
+// --- History types ---
+
+// HistoryResponse is the response from chat.history.
+type HistoryResponse struct {
+	SessionKey string           `json:"sessionKey"`
+	Messages   []HistoryMessage `json:"messages"`
+}
+
+// HistoryMessage is a message from chat history.
+type HistoryMessage struct {
+	Role      string          `json:"role"` // "user", "assistant", "system"
+	Timestamp int64           `json:"timestamp"`
+	Content   json.RawMessage `json:"content"` // string or []ContentBlock
+}
+
 // --- Tick event ---
 
 // TickPayload is the payload of a "tick" heartbeat event.

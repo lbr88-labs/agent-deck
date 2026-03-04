@@ -60,6 +60,7 @@ type BridgeModel struct {
 type connectResultMsg struct{ err error }
 type gatewayEventMsg struct{ event *GatewayEvent }
 type sendResultMsg struct{ err error }
+type historyResultMsg struct{ messages []ChatMessage }
 
 // NewBridgeModel creates a new bridge TUI model.
 func NewBridgeModel(gatewayURL, password, agentID, agentName string) *BridgeModel {
@@ -165,8 +166,18 @@ func (m *BridgeModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				Content:   fmt.Sprintf("Connected to gateway (server %s)", m.client.Hello().Server.Version),
 				Direction: "system",
 			})
-			// Start listening for events
+			// Load history and start listening for events
+			cmds = append(cmds, m.loadHistoryCmd())
 			cmds = append(cmds, m.listenEventsCmd())
+		}
+
+	case historyResultMsg:
+		if len(msg.messages) > 0 {
+			// Prepend history before any existing messages (keep system msgs)
+			existing := m.messages
+			m.messages = msg.messages
+			m.messages = append(m.messages, existing...)
+			m.updateViewportContent()
 		}
 
 	case gatewayEventMsg:
@@ -324,6 +335,86 @@ func (m *BridgeModel) sendCmd(message string) tea.Cmd {
 		err := m.client.AgentSend(m.ctx, params)
 		return sendResultMsg{err: err}
 	}
+}
+
+func (m *BridgeModel) loadHistoryCmd() tea.Cmd {
+	return func() tea.Msg {
+		// Each agent has its own session key in "agent:<agentId>:main" format
+		sessionKey := "agent:" + m.agentID + ":main"
+
+		payload, err := m.client.ChatHistory(m.ctx, sessionKey, 50)
+		if err != nil {
+			return historyResultMsg{}
+		}
+
+		var resp HistoryResponse
+		if err := json.Unmarshal(payload, &resp); err != nil {
+			return historyResultMsg{}
+		}
+
+		var messages []ChatMessage
+		for _, msg := range resp.Messages {
+			if msg.Role == "system" {
+				continue
+			}
+
+			content := extractHistoryContent(msg.Content)
+			if content == "" {
+				continue
+			}
+
+			ts := time.UnixMilli(msg.Timestamp)
+			direction := "inbound"
+			sender := m.agentName
+			agentID := m.agentID
+			if msg.Role == "user" {
+				direction = "outbound"
+				sender = "you"
+				agentID = ""
+			}
+
+			messages = append(messages, ChatMessage{
+				Timestamp: ts,
+				Sender:    sender,
+				Content:   content,
+				Direction: direction,
+				AgentID:   agentID,
+			})
+		}
+
+		return historyResultMsg{messages: messages}
+	}
+}
+
+// extractHistoryContent pulls text from a history message content field,
+// which can be a JSON string or an array of content blocks.
+func extractHistoryContent(raw json.RawMessage) string {
+	if len(raw) == 0 {
+		return ""
+	}
+
+	// Try as string first
+	var s string
+	if json.Unmarshal(raw, &s) == nil {
+		return s
+	}
+
+	// Try as array of content blocks
+	var blocks []struct {
+		Type string `json:"type"`
+		Text string `json:"text"`
+	}
+	if json.Unmarshal(raw, &blocks) == nil {
+		var parts []string
+		for _, b := range blocks {
+			if b.Type == "text" && b.Text != "" {
+				parts = append(parts, b.Text)
+			}
+		}
+		return strings.Join(parts, "\n")
+	}
+
+	return ""
 }
 
 func (m *BridgeModel) listenEventsCmd() tea.Cmd {
