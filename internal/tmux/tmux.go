@@ -1705,6 +1705,17 @@ func (s *Session) CaptureFullHistory() (string, error) {
 	return string(output), nil
 }
 
+// CaptureWindowFullHistory captures the scrollback history of a specific window (last 2000 lines).
+func (s *Session) CaptureWindowFullHistory(windowIndex int) (string, error) {
+	target := fmt.Sprintf("%s:%d", s.Name, windowIndex)
+	cmd := exec.Command("tmux", "capture-pane", "-t", target, "-p", "-e", "-S", "-2000")
+	output, err := cmd.Output()
+	if err != nil {
+		return "", fmt.Errorf("failed to capture window %d history: %w", windowIndex, err)
+	}
+	return string(output), nil
+}
+
 // HasUpdated checks if the pane content has changed since last check
 func (s *Session) HasUpdated() (bool, error) {
 	content, err := s.CapturePane()

@@ -205,8 +205,8 @@ type Home struct {
 
 	// Preview debouncing (PERFORMANCE: prevents subprocess spawn on every keystroke)
 	// During rapid navigation, we delay preview fetch by 150ms to let navigation settle
-	pendingPreviewID  string     // Session ID waiting for debounced fetch
-	previewDebounceMu sync.Mutex // Protects pendingPreviewID
+	pendingPreviewKey string     // Preview key waiting for debounced fetch
+	previewDebounceMu sync.Mutex // Protects pendingPreviewKey
 
 	// Round-robin status updates (Priority 1A optimization)
 	// Instead of updating ALL sessions every tick, we update batches of 5-10 sessions
@@ -424,15 +424,17 @@ type (
 
 // previewFetchedMsg is sent when async preview content is ready
 type previewFetchedMsg struct {
-	sessionID string
-	content   string
-	err       error
+	previewKey string // cache key: sessionID or sessionID:windowIndex
+	content    string
+	err        error
 }
 
 // previewDebounceMsg signals debounce period elapsed for preview fetch
 // PERFORMANCE: Delays preview fetch during rapid navigation
 type previewDebounceMsg struct {
-	sessionID string
+	previewKey  string // cache key
+	sessionID   string // parent session ID (for instance lookup)
+	windowIndex int    // -1 for session, >= 0 for specific window
 }
 
 // analyticsFetchedMsg is sent when async analytics parsing is complete
@@ -1639,37 +1641,83 @@ func (h *Home) hasActiveAnimation(sessionID string) bool {
 	return true
 }
 
-// fetchPreview returns a command that asynchronously fetches preview content
-// This keeps View() pure (no blocking I/O) as per Bubble Tea best practices
-func (h *Home) fetchPreview(inst *session.Instance) tea.Cmd {
+// previewCacheKey returns the cache key for a preview: sessionID or sessionID:windowIndex.
+func previewCacheKey(sessionID string, windowIndex int) string {
+	if windowIndex < 0 {
+		return sessionID
+	}
+	return fmt.Sprintf("%s:%d", sessionID, windowIndex)
+}
+
+// fetchPreview returns a command that asynchronously fetches preview content.
+// windowIndex < 0 captures the session's primary pane; >= 0 captures a specific window.
+func (h *Home) fetchPreview(inst *session.Instance, key string, windowIndex int) tea.Cmd {
 	if inst == nil {
 		return nil
 	}
-	sessionID := inst.ID
 	return func() tea.Msg {
-		content, err := inst.PreviewFull()
+		var content string
+		var err error
+		if windowIndex >= 0 {
+			content, err = inst.PreviewWindowFull(windowIndex)
+		} else {
+			content, err = inst.PreviewFull()
+		}
 		return previewFetchedMsg{
-			sessionID: sessionID,
-			content:   content,
-			err:       err,
+			previewKey: key,
+			content:    content,
+			err:        err,
 		}
 	}
 }
 
-// fetchPreviewDebounced returns a command that triggers preview fetch after debounce delay
-// PERFORMANCE: Prevents rapid subprocess spawning during keyboard navigation
-// The 150ms delay allows navigation to settle before spawning tmux capture-pane
-func (h *Home) fetchPreviewDebounced(sessionID string) tea.Cmd {
+// fetchPreviewDebounced returns a command that triggers preview fetch after debounce delay.
+// PERFORMANCE: Prevents rapid subprocess spawning during keyboard navigation.
+func (h *Home) fetchPreviewDebounced(sessionID string, windowIndex int) tea.Cmd {
 	const debounceDelay = 150 * time.Millisecond
 
+	key := previewCacheKey(sessionID, windowIndex)
 	h.previewDebounceMu.Lock()
-	h.pendingPreviewID = sessionID
+	h.pendingPreviewKey = key
 	h.previewDebounceMu.Unlock()
 
 	return func() tea.Msg {
 		time.Sleep(debounceDelay)
-		return previewDebounceMsg{sessionID: sessionID}
+		return previewDebounceMsg{previewKey: key, sessionID: sessionID, windowIndex: windowIndex}
 	}
+}
+
+// selectedPreviewTarget returns the instance, cache key, and window index for the currently
+// selected flat item. windowIndex is -1 for session items.
+func (h *Home) selectedPreviewTarget() (*session.Instance, string, int) {
+	if h.cursor >= len(h.flatItems) {
+		return nil, "", -1
+	}
+	item := h.flatItems[h.cursor]
+	switch item.Type {
+	case session.ItemTypeSession:
+		if item.Session == nil {
+			return nil, "", -1
+		}
+		return item.Session, item.Session.ID, -1
+	case session.ItemTypeWindow:
+		inst := h.getInstanceByID(item.WindowSessionID)
+		if inst == nil {
+			return nil, "", -1
+		}
+		return inst, previewCacheKey(inst.ID, item.WindowIndex), item.WindowIndex
+	}
+	return nil, "", -1
+}
+
+// fetchSelectedPreview debounces a preview fetch for the currently selected item.
+// Handles both session and window items transparently.
+func (h *Home) fetchSelectedPreview() tea.Cmd {
+	inst, _, winIdx := h.selectedPreviewTarget()
+	if inst == nil {
+		return nil
+	}
+	return h.fetchPreviewDebounced(inst.ID, winIdx)
 }
 
 // detectOpenCodeSessionCmd returns a command that asynchronously detects
@@ -2579,7 +2627,7 @@ func (h *Home) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				h.previewFetchingID = selected.ID
 				h.previewCacheMu.Unlock()
 				// Batch preview fetch with any OpenCode detection commands
-				allCmds := append(detectionCmds, h.fetchPreview(selected))
+				allCmds := append(detectionCmds, h.fetchPreview(selected, selected.ID, -1))
 				return h, tea.Batch(allCmds...)
 			}
 			// No selection, but still run detection commands if any
@@ -2649,7 +2697,7 @@ func (h *Home) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			h.forceSaveInstances()
 
 			// Start fetching preview for the new session
-			return h, h.fetchPreview(msg.instance)
+			return h, h.fetchPreview(msg.instance, msg.instance.ID, -1)
 		}
 		return h, nil
 
@@ -2716,7 +2764,7 @@ func (h *Home) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			h.forceSaveInstances()
 
 			// Start fetching preview for the forked session
-			return h, h.fetchPreview(msg.instance)
+			return h, h.fetchPreview(msg.instance, msg.instance.ID, -1)
 		}
 		return h, nil
 
@@ -2841,7 +2889,7 @@ func (h *Home) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		} else {
 			h.setError(fmt.Errorf("restored '%s'", msg.instance.Title))
 		}
-		return h, h.fetchPreview(msg.instance)
+		return h, h.fetchPreview(msg.instance, msg.instance.ID, -1)
 
 	case openCodeDetectionCompleteMsg:
 		// OpenCode session detection completed
@@ -3089,11 +3137,11 @@ func (h *Home) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case previewDebounceMsg:
 		// PERFORMANCE: Debounce period elapsed - check if this fetch is still relevant
-		// If user continued navigating, pendingPreviewID will have changed
+		// If user continued navigating, pendingPreviewKey will have changed
 		h.previewDebounceMu.Lock()
-		isPending := h.pendingPreviewID == msg.sessionID
+		isPending := h.pendingPreviewKey == msg.previewKey
 		if isPending {
-			h.pendingPreviewID = "" // Clear pending state
+			h.pendingPreviewKey = "" // Clear pending state
 		}
 		h.previewDebounceMu.Unlock()
 
@@ -3111,13 +3159,13 @@ func (h *Home) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 			// Preview fetch
 			h.previewCacheMu.Lock()
-			needsPreviewFetch := h.previewFetchingID != inst.ID
+			needsPreviewFetch := h.previewFetchingID != msg.previewKey
 			if needsPreviewFetch {
-				h.previewFetchingID = inst.ID
+				h.previewFetchingID = msg.previewKey
 			}
 			h.previewCacheMu.Unlock()
 			if needsPreviewFetch {
-				cmds = append(cmds, h.fetchPreview(inst))
+				cmds = append(cmds, h.fetchPreview(inst, msg.previewKey, msg.windowIndex))
 			}
 
 			// Analytics fetch (for Claude/Gemini sessions with analytics enabled)
@@ -3204,8 +3252,8 @@ func (h *Home) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		h.previewCacheMu.Lock()
 		h.previewFetchingID = ""
 		if msg.err == nil {
-			h.previewCache[msg.sessionID] = msg.content
-			h.previewCacheTime[msg.sessionID] = time.Now()
+			h.previewCache[msg.previewKey] = msg.content
+			h.previewCacheTime[msg.previewKey] = time.Now()
 		}
 		h.previewCacheMu.Unlock()
 		return h, nil
@@ -3449,21 +3497,19 @@ func (h *Home) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Notification bar sync handled by background worker (syncNotificationsBackground)
 		// which runs even when TUI is paused during tea.Exec
 
-		// Fetch preview for currently selected session (if stale/missing and not fetching)
+		// Fetch preview for currently selected item (if stale/missing and not fetching)
 		// Cache expires after 2 seconds to show live terminal updates without excessive fetching
 		const previewCacheTTL = 2 * time.Second
 		var previewCmd tea.Cmd
-		h.instancesMu.RLock()
-		selected := h.getSelectedSession()
-		h.instancesMu.RUnlock()
-		if selected != nil {
+		selectedInst, selectedKey, selectedWinIdx := h.selectedPreviewTarget()
+		if selectedInst != nil {
 			h.previewCacheMu.Lock()
-			cachedTime, hasCached := h.previewCacheTime[selected.ID]
+			cachedTime, hasCached := h.previewCacheTime[selectedKey]
 			cacheExpired := !hasCached || time.Since(cachedTime) > previewCacheTTL
-			// Only fetch if cache is stale/missing AND not currently fetching this session
-			if cacheExpired && h.previewFetchingID != selected.ID {
-				h.previewFetchingID = selected.ID
-				previewCmd = h.fetchPreview(selected)
+			// Only fetch if cache is stale/missing AND not currently fetching this item
+			if cacheExpired && h.previewFetchingID != selectedKey {
+				h.previewFetchingID = selectedKey
+				previewCmd = h.fetchPreview(selectedInst, selectedKey, selectedWinIdx)
 			}
 			h.previewCacheMu.Unlock()
 		}
@@ -3891,9 +3937,7 @@ func (h *Home) handleMainKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			h.isNavigating = true
 			// PERFORMANCE: Debounced preview fetch - waits 150ms for navigation to settle
 			// This prevents spawning tmux subprocess on every keystroke
-			if selected := h.getSelectedSession(); selected != nil {
-				return h, h.fetchPreviewDebounced(selected.ID)
-			}
+			return h, h.fetchSelectedPreview()
 		}
 		return h, nil
 
@@ -3906,9 +3950,7 @@ func (h *Home) handleMainKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			h.isNavigating = true
 			// PERFORMANCE: Debounced preview fetch - waits 150ms for navigation to settle
 			// This prevents spawning tmux subprocess on every keystroke
-			if selected := h.getSelectedSession(); selected != nil {
-				return h, h.fetchPreviewDebounced(selected.ID)
-			}
+			return h, h.fetchSelectedPreview()
 		}
 		return h, nil
 
@@ -3925,10 +3967,7 @@ func (h *Home) handleMainKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		h.syncViewport()
 		h.lastNavigationTime = time.Now()
 		h.isNavigating = true
-		if selected := h.getSelectedSession(); selected != nil {
-			return h, h.fetchPreviewDebounced(selected.ID)
-		}
-		return h, nil
+		return h, h.fetchSelectedPreview()
 
 	case "ctrl+d": // Half page down
 		pageSize := h.getVisibleHeight() / 2
@@ -3945,10 +3984,7 @@ func (h *Home) handleMainKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		h.syncViewport()
 		h.lastNavigationTime = time.Now()
 		h.isNavigating = true
-		if selected := h.getSelectedSession(); selected != nil {
-			return h, h.fetchPreviewDebounced(selected.ID)
-		}
-		return h, nil
+		return h, h.fetchSelectedPreview()
 
 	case "ctrl+b": // Full page up (backward)
 		pageSize := h.getVisibleHeight()
@@ -3962,10 +3998,7 @@ func (h *Home) handleMainKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		h.syncViewport()
 		h.lastNavigationTime = time.Now()
 		h.isNavigating = true
-		if selected := h.getSelectedSession(); selected != nil {
-			return h, h.fetchPreviewDebounced(selected.ID)
-		}
-		return h, nil
+		return h, h.fetchSelectedPreview()
 
 	case "ctrl+f": // Full page down (forward)
 		pageSize := h.getVisibleHeight()
@@ -3982,10 +4015,7 @@ func (h *Home) handleMainKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		h.syncViewport()
 		h.lastNavigationTime = time.Now()
 		h.isNavigating = true
-		if selected := h.getSelectedSession(); selected != nil {
-			return h, h.fetchPreviewDebounced(selected.ID)
-		}
-		return h, nil
+		return h, h.fetchSelectedPreview()
 
 	case "G": // Open global search (fall back to local search if index not available)
 		if h.globalSearchIndex != nil {
@@ -4288,9 +4318,7 @@ func (h *Home) handleMainKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				h.syncViewport()
 				h.lastNavigationTime = time.Now()
 				h.isNavigating = true
-				if selected := h.getSelectedSession(); selected != nil {
-					return h, h.fetchPreviewDebounced(selected.ID)
-				}
+				return h, h.fetchSelectedPreview()
 			}
 			return h, nil
 		}
@@ -8316,6 +8344,12 @@ func (h *Home) renderPreviewPane(width, height int) string {
 	// Session preview
 	selected := item.Session
 
+	// Compute preview cache key (window-aware)
+	pvKey := selected.ID
+	if item.Type == session.ItemTypeWindow {
+		pvKey = previewCacheKey(selected.ID, item.WindowIndex)
+	}
+
 	// Session info header box
 	statusIcon := "○"
 	statusColor := ColorTextDim
@@ -8943,7 +8977,7 @@ func (h *Home) renderPreviewPane(width, height int) string {
 			if !sessionReady {
 				// Also check content for faster detection
 				h.previewCacheMu.RLock()
-				previewContent := h.previewCache[selected.ID]
+				previewContent := h.previewCache[pvKey]
 				h.previewCacheMu.RUnlock()
 
 				// Strip ANSI for reliable pattern matching
@@ -8990,7 +9024,7 @@ func (h *Home) renderPreviewPane(width, height int) string {
 
 	// Terminal preview - use cached content (async fetching keeps View() pure)
 	h.previewCacheMu.RLock()
-	preview, hasCached := h.previewCache[selected.ID]
+	preview, hasCached := h.previewCache[pvKey]
 	h.previewCacheMu.RUnlock()
 
 	// Show forking animation when fork is in progress (highest priority)
