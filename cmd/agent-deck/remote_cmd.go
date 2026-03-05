@@ -1,10 +1,13 @@
 package main
 
 import (
+	"bufio"
 	"context"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"os"
 	"strings"
 
@@ -514,10 +517,9 @@ func updateRemotesAfterLocalUpdate(newVersion string) {
 	}
 
 	fmt.Printf("\nYou have %d remote(s) configured. Update them too? [Y/n] ", len(config.Remotes))
-	var response string
-	fmt.Scanln(&response)
-	response = strings.TrimSpace(response)
-	if response != "" && response != "y" && response != "Y" {
+	reader := bufio.NewReader(os.Stdin)
+	response, readErr := reader.ReadString('\n')
+	if !shouldProceedWithRemoteUpdate(response, readErr) {
 		return
 	}
 
@@ -544,6 +546,23 @@ func updateRemotesAfterLocalUpdate(newVersion string) {
 			fmt.Printf("  ✓ Installed v%s\n", newVersion)
 		}
 	}
+}
+
+func shouldProceedWithRemoteUpdate(response string, readErr error) bool {
+	normalized := strings.TrimSpace(strings.ToLower(response))
+
+	// If stdin is not interactive and no input was provided, fail closed.
+	if errors.Is(readErr, io.EOF) && normalized == "" {
+		return false
+	}
+	if readErr != nil && !errors.Is(readErr, io.EOF) {
+		return false
+	}
+
+	if normalized == "" || normalized == "y" || normalized == "yes" {
+		return true
+	}
+	return false
 }
 
 // installOnRemote detects the remote platform and deploys the matching agent-deck binary.
