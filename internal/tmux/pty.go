@@ -216,7 +216,9 @@ func (s *Session) AttachWindow(ctx context.Context, windowIndex int) error {
 
 	// Select the target window before attaching
 	target := fmt.Sprintf("%s:%d", s.Name, windowIndex)
-	_ = exec.Command("tmux", "select-window", "-t", target).Run()
+	if err := exec.Command("tmux", "select-window", "-t", target).Run(); err != nil {
+		return fmt.Errorf("failed to select window %s: %w", target, err)
+	}
 
 	return s.Attach(ctx)
 }
