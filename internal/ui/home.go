@@ -4250,6 +4250,14 @@ func (h *Home) handleMainKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return h, nil
 
 	case "n":
+		// Check if cursor is on a remote group/session — create on remote instead
+		if h.cursor >= 0 && h.cursor < len(h.flatItems) {
+			item := h.flatItems[h.cursor]
+			if item.Type == session.ItemTypeRemoteGroup || item.Type == session.ItemTypeRemoteSession {
+				return h, h.createRemoteSession(item.RemoteName)
+			}
+		}
+
 		// Collect unique project paths sorted by most recently accessed
 		type pathInfo struct {
 			path           string
@@ -4335,6 +4343,13 @@ func (h *Home) handleMainKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return h, nil
 
 	case "N":
+		// Check if cursor is on a remote group/session — create on remote instead
+		if h.cursor >= 0 && h.cursor < len(h.flatItems) {
+			item := h.flatItems[h.cursor]
+			if item.Type == session.ItemTypeRemoteGroup || item.Type == session.ItemTypeRemoteSession {
+				return h, h.createRemoteSession(item.RemoteName)
+			}
+		}
 		// Quick create: auto-generated name, smart defaults from group context
 		return h, h.quickCreateSession()
 
@@ -5747,6 +5762,46 @@ func (a attachCmd) Run() error {
 func (a attachCmd) SetStdin(r io.Reader)  {}
 func (a attachCmd) SetStdout(w io.Writer) {}
 func (a attachCmd) SetStderr(w io.Writer) {}
+
+// createRemoteSession creates a new session on a remote and auto-attaches to it.
+func (h *Home) createRemoteSession(remoteName string) tea.Cmd {
+	config, err := session.LoadUserConfig()
+	if err != nil || config == nil || config.Remotes == nil {
+		return func() tea.Msg {
+			return sessionCreatedMsg{err: fmt.Errorf("failed to load remote config")}
+		}
+	}
+	rc, ok := config.Remotes[remoteName]
+	if !ok {
+		return func() tea.Msg {
+			return sessionCreatedMsg{err: fmt.Errorf("remote '%s' not found", remoteName)}
+		}
+	}
+	runner := session.NewSSHRunner(remoteName, rc)
+	h.isAttaching.Store(true)
+	return tea.Exec(remoteCreateAndAttachCmd{runner: runner}, func(err error) tea.Msg {
+		h.isAttaching.Store(false)
+		return statusUpdateMsg{}
+	})
+}
+
+// remoteCreateAndAttachCmd creates a session on the remote, then attaches to it.
+type remoteCreateAndAttachCmd struct {
+	runner *session.SSHRunner
+}
+
+func (r remoteCreateAndAttachCmd) Run() error {
+	ctx := context.Background()
+	sessionID, err := r.runner.CreateSession(ctx)
+	if err != nil {
+		return err
+	}
+	return r.runner.Attach(sessionID)
+}
+
+func (r remoteCreateAndAttachCmd) SetStdin(reader io.Reader)  {}
+func (r remoteCreateAndAttachCmd) SetStdout(writer io.Writer) {}
+func (r remoteCreateAndAttachCmd) SetStderr(writer io.Writer) {}
 
 // attachRemoteSession attaches to a remote session via SSH, suspending the TUI.
 func (h *Home) attachRemoteSession(remoteName, sessionID string) tea.Cmd {
