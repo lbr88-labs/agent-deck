@@ -2048,6 +2048,9 @@ func handleUpdate(args []string) {
 
 	fmt.Printf("\n✓ Updated to v%s\n", info.LatestVersion)
 	fmt.Println("  Restart agent-deck to use the new version.")
+
+	// Offer to update remotes
+	updateRemotesAfterLocalUpdate(info.LatestVersion)
 }
 
 func runHomebrewUpgradeWithRefresh(homebrewUpgradeCmd string) error {
