@@ -293,6 +293,10 @@ type Home struct {
 	lastNavigationTime time.Time // When user last navigated (up/down/j/k)
 	isNavigating       bool      // True if user is rapidly navigating
 
+	// Jump mode (vimium-style hint navigation)
+	jumpMode   bool   // True when jump mode is active
+	jumpBuffer string // Characters typed so far in jump mode
+
 	// Cached status counts (invalidated on instance changes)
 	cachedStatusCounts struct {
 		running, waiting, idle, errored int
@@ -919,6 +923,9 @@ func (h *Home) restoreState(state reloadState) {
 
 // rebuildFlatItems rebuilds the flattened view from group tree
 func (h *Home) rebuildFlatItems() {
+	h.jumpMode = false
+	h.jumpBuffer = ""
+
 	allItems := h.groupTree.Flatten()
 
 	// Apply status filter if active
@@ -3405,6 +3412,11 @@ func (h *Home) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Track user activity for adaptive status updates
 		h.lastUserInputTime = time.Now()
 
+		// Handle jump mode input (before modals)
+		if h.jumpMode {
+			return h.handleJumpKey(msg)
+		}
+
 		// Handle setup wizard first (modal, blocks everything)
 		if h.setupWizard.IsVisible() {
 			var cmd tea.Cmd
@@ -3782,6 +3794,96 @@ func (h *Home) handleNewDialogKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	var cmd tea.Cmd
 	h.newDialog, cmd = h.newDialog.Update(msg)
 	return h, cmd
+}
+
+// overlayJumpHint places a badge-style hint label at the item name position.
+func (h *Home) overlayJumpHint(line string, hint string, buffer string, itemName string) string {
+	if hint == "" {
+		return line
+	}
+
+	offset := findNameOffset(line, itemName)
+	visibleLen := lipgloss.Width(line)
+	if visibleLen < offset+len(hint) {
+		return line
+	}
+
+	var hintRendered string
+	for i, ch := range hint {
+		s := string(ch)
+		if i < len(buffer) {
+			// Already typed: dimmed badge
+			hintRendered += lipgloss.NewStyle().Foreground(ColorBg).Background(ColorComment).Bold(true).Render(s)
+		} else {
+			// Remaining: bright yellow badge
+			hintRendered += lipgloss.NewStyle().Foreground(ColorBg).Background(ColorYellow).Bold(true).Render(s)
+		}
+	}
+
+	return replaceVisibleRange(line, offset, len(hint), hintRendered)
+}
+
+// jumpItemName returns the display name for an item, used to locate hint badge position.
+func jumpItemName(item session.Item) string {
+	switch item.Type {
+	case session.ItemTypeGroup:
+		if item.Group != nil {
+			return item.Group.Name
+		}
+	case session.ItemTypeSession:
+		if item.Session != nil {
+			return item.Session.Title
+		}
+	case session.ItemTypeRemoteGroup:
+		return "remotes/" + item.RemoteName
+	case session.ItemTypeRemoteSession:
+		if item.RemoteSession != nil {
+			return item.RemoteSession.Title
+		}
+	}
+	return ""
+}
+
+// handleJumpKey processes key input during jump mode.
+func (h *Home) handleJumpKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	key := msg.String()
+
+	switch {
+	case key == "esc":
+		h.jumpMode = false
+		h.jumpBuffer = ""
+		return h, nil
+
+	case len(key) == 1 && key[0] >= 'a' && key[0] <= 'z':
+		h.jumpBuffer += key
+		hints := generateJumpHints(len(h.flatItems))
+		result := matchJumpHint(hints, h.jumpBuffer)
+
+		if result.matched {
+			h.cursor = result.index
+			h.syncViewport()
+			h.jumpMode = false
+			h.jumpBuffer = ""
+			// For sessions/windows/remotes: attach directly.
+			// For groups: just move cursor (user can press Enter to toggle).
+			item := h.flatItems[result.index]
+			if item.Type != session.ItemTypeGroup && item.Type != session.ItemTypeRemoteGroup {
+				return h.handleMainKey(tea.KeyMsg{Type: tea.KeyEnter})
+			}
+			return h, nil
+		}
+		if !result.isPrefix {
+			h.jumpMode = false
+			h.jumpBuffer = ""
+		}
+		return h, nil
+
+	default:
+		// Non-letter key — exit jump mode, pass key through
+		h.jumpMode = false
+		h.jumpBuffer = ""
+		return h.handleMainKey(msg)
+	}
 }
 
 // handleMainKey handles keys in main view
@@ -4371,6 +4473,13 @@ func (h *Home) handleMainKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 					h.saveInstances()
 				}
 			}
+		}
+		return h, nil
+
+	case " ":
+		if len(h.flatItems) > 0 {
+			h.jumpMode = true
+			h.jumpBuffer = ""
 		}
 		return h, nil
 
@@ -6934,7 +7043,12 @@ func (h *Home) renderHelpBarTiny() string {
 	border := borderStyle.Render(strings.Repeat("─", max(0, h.width)))
 
 	hintStyle := lipgloss.NewStyle().Foreground(ColorComment)
-	hint := hintStyle.Render("? for help")
+	var hint string
+	if h.jumpMode {
+		hint = lipgloss.NewStyle().Foreground(ColorYellow).Bold(true).Render("Jump: a-z/esc")
+	} else {
+		hint = hintStyle.Render("? for help")
+	}
 
 	// Center the hint
 	padding := (h.width - lipgloss.Width(hint)) / 2
@@ -6961,7 +7075,13 @@ func (h *Home) renderHelpBarMinimal() string {
 
 	// Context-specific keys (left side)
 	var contextKeys string
-	if len(h.flatItems) == 0 {
+	if h.jumpMode {
+		contextKeys = keyStyle.Render("a-z") + " " + keyStyle.Render("esc")
+		if h.jumpBuffer != "" {
+			bufStyle := lipgloss.NewStyle().Foreground(ColorYellow).Bold(true)
+			contextKeys = bufStyle.Render(h.jumpBuffer+"…") + " " + contextKeys
+		}
+	} else if len(h.flatItems) == 0 {
 		contextKeys = keyStyle.Render(
 			"n",
 		) + " " + keyStyle.Render(
@@ -7056,6 +7176,18 @@ func (h *Home) renderHelpBarCompact() string {
 	// Show undo hint when undo stack is non-empty
 	if len(h.undoStack) > 0 {
 		contextHints = append(contextHints, h.helpKeyShort("^Z", "Undo"))
+	}
+
+	// Jump mode overrides all context hints
+	if h.jumpMode {
+		contextHints = []string{
+			h.helpKeyShort("a-z", "Hint"),
+			h.helpKeyShort("esc", "Cancel"),
+		}
+		if h.jumpBuffer != "" {
+			bufStyle := lipgloss.NewStyle().Foreground(ColorYellow).Bold(true)
+			contextHints = append([]string{bufStyle.Render(h.jumpBuffer + "…")}, contextHints...)
+		}
 	}
 
 	// Global hints (abbreviated)
@@ -7172,6 +7304,20 @@ func (h *Home) renderHelpBarFull() string {
 		secondaryHints = append(secondaryHints, h.helpKey("^Z", "Undo"))
 	}
 
+	// Jump mode overrides all context hints
+	if h.jumpMode {
+		contextTitle = "Jump"
+		primaryHints = []string{
+			h.helpKey("a-z", "Type hint"),
+			h.helpKey("esc", "Cancel"),
+		}
+		if h.jumpBuffer != "" {
+			bufStyle := lipgloss.NewStyle().Foreground(ColorYellow).Bold(true)
+			primaryHints = append([]string{bufStyle.Render(h.jumpBuffer + "…")}, primaryHints...)
+		}
+		secondaryHints = nil
+	}
+
 	// Top border
 	borderStyle := lipgloss.NewStyle().Foreground(ColorBorder)
 	border := borderStyle.Render(strings.Repeat("─", max(0, h.width)))
@@ -7284,9 +7430,39 @@ func (h *Home) renderSessionList(width, height int) string {
 		maxVisible-- // Account for the indicator line
 	}
 
+	var jumpHints []string
+	if h.jumpMode {
+		jumpHints = generateJumpHints(len(h.flatItems))
+	}
+
 	for i := h.viewOffset; i < len(h.flatItems) && visibleCount < maxVisible; i++ {
 		item := h.flatItems[i]
-		h.renderItem(&b, item, i == h.cursor, i)
+
+		if h.jumpMode && i < len(jumpHints) {
+			// Render item to temp buffer, then overlay hint badge at name position
+			var itemBuf strings.Builder
+			h.renderItem(&itemBuf, item, i == h.cursor, i)
+			raw := itemBuf.String()
+			hint := jumpHints[i]
+			isMatch := h.jumpBuffer == "" || strings.HasPrefix(hint, h.jumpBuffer)
+
+			if isMatch {
+				// Get the display name for this item type
+				itemName := jumpItemName(item)
+				// Overlay hint on the first line, preserve rest exactly
+				if idx := strings.Index(raw, "\n"); idx >= 0 {
+					b.WriteString(h.overlayJumpHint(raw[:idx], hint, h.jumpBuffer, itemName))
+					b.WriteString(raw[idx:]) // includes \n and any subsequent lines
+				} else {
+					b.WriteString(h.overlayJumpHint(raw, hint, h.jumpBuffer, itemName))
+				}
+			} else {
+				// Non-matching: render normally (no dimming to preserve layout)
+				b.WriteString(raw)
+			}
+		} else {
+			h.renderItem(&b, item, i == h.cursor, i)
+		}
 		visibleCount++
 	}
 
