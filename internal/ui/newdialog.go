@@ -61,7 +61,8 @@ type NewDialog struct {
 	// Worktree support.
 	worktreeEnabled bool
 	branchInput     textinput.Model
-	branchAutoSet   bool // true if branch was auto-derived from session name.
+	branchAutoSet   bool   // true if branch was auto-derived from session name.
+	branchPrefix    string // configured prefix for auto-generated branch names.
 	// Docker sandbox support.
 	sandboxEnabled    bool
 	inheritedExpanded bool             // whether the inherited settings section is expanded.
@@ -180,6 +181,7 @@ func NewNewDialog() *NewDialog {
 		parentGroupPath: "default",
 		parentGroupName: "default",
 		worktreeEnabled: false,
+		branchPrefix:    "feature/",
 	}
 	dlg.updateToolOptions() // Also calls rebuildFocusTargets.
 	return dlg
@@ -213,6 +215,7 @@ func (d *NewDialog) ShowInGroup(groupPath, groupName, defaultPath string) {
 	d.worktreeEnabled = false
 	d.branchInput.SetValue("")
 	d.branchAutoSet = false
+	d.branchPrefix = "feature/" // default; overridden below if config provides one.
 	// Reset sandbox from global config default.
 	d.sandboxEnabled = false
 	d.inheritedExpanded = false
@@ -236,7 +239,9 @@ func (d *NewDialog) ShowInGroup(groupPath, groupName, defaultPath string) {
 		d.claudeOptions.SetDefaults(userConfig)
 		d.sandboxEnabled = userConfig.Docker.DefaultEnabled
 		d.inheritedSettings = buildInheritedSettings(userConfig.Docker)
+		d.branchPrefix = userConfig.Worktree.Prefix()
 	}
+	d.branchInput.Placeholder = d.branchPrefix + "branch-name"
 	d.rebuildFocusTargets()
 }
 
@@ -469,14 +474,14 @@ func (d *NewDialog) ToggleWorktree() {
 	d.rebuildFocusTargets()
 }
 
-// autoBranchFromName sets the branch input to "feature/<session-name>" if the
+// autoBranchFromName sets the branch input to "<prefix><session-name>" if the
 // name field is non-empty and the branch hasn't been manually edited.
 func (d *NewDialog) autoBranchFromName() {
 	name := strings.TrimSpace(d.nameInput.Value())
 	if name == "" {
 		return
 	}
-	branch := "feature/" + name
+	branch := d.branchPrefix + name
 	d.branchInput.SetValue(branch)
 	d.branchAutoSet = true
 }
