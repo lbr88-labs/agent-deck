@@ -149,10 +149,10 @@ func (r *SSHRunner) CreateSession(ctx context.Context) (string, error) {
 	}
 
 	// Step 2: Start the session so it has a tmux process to attach to.
-	// Use title for resolution since it's more reliable across the SSH boundary.
+	// Use ID to avoid ambiguity when titles are duplicated.
 	startCtx, cancel := context.WithTimeout(ctx, 20*time.Second)
 	defer cancel()
-	if _, err := r.run(startCtx, "session", "start", result.Title); err != nil {
+	if _, err := r.run(startCtx, "session", "start", result.ID); err != nil {
 		return "", fmt.Errorf("failed to start remote session: %w", err)
 	}
 

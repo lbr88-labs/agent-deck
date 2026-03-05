@@ -4,11 +4,27 @@ import { test, describe } from "repterm";
 // This validates that CreateSession correctly runs "add --quick --json" + "session start"
 // on the remote, and that the session is created, started, and attachable.
 
+const remoteHost = process.env.AGENTDECK_E2E_REMOTE_HOST;
+const remoteAgentDeckPath = process.env.AGENTDECK_E2E_REMOTE_AGENT_DECK_PATH || "agent-deck";
+const sshBin = process.env.AGENTDECK_E2E_SSH_BIN || "/usr/bin/ssh";
+
+function remoteCmd(agentDeckArgs: string): string {
+  return `${sshBin} ${remoteHost} "${remoteAgentDeckPath} ${agentDeckArgs}"`;
+}
+
+function ensureConfigured(): boolean {
+  if (remoteHost) return true;
+  console.log("Skipping remote e2e test: set AGENTDECK_E2E_REMOTE_HOST to enable");
+  return false;
+}
+
 describe("Remote Session Creation", () => {
   test("add + start creates a running session on remote", async ({ terminal }) => {
+    if (!ensureConfigured()) return;
+
     // Count sessions before
     const before = await terminal.run(
-      `/usr/bin/ssh manjaro "/home/xiangpan/agent-deck list --json 2>/dev/null || echo '[]'"`,
+      remoteCmd(`list --json 2>/dev/null || echo '[]'`),
       { silent: true }
     );
     let initialCount = 0;
@@ -19,7 +35,7 @@ describe("Remote Session Creation", () => {
 
     // Step 1: Create session (same as CreateSession step 1)
     const create = await terminal.run(
-      `/usr/bin/ssh manjaro "/home/xiangpan/agent-deck add --quick --json"`,
+      remoteCmd("add --quick --json"),
     );
     if (create.code !== 0) {
       throw new Error(`add failed (exit ${create.code}): ${create.stderr || create.stdout}`);
@@ -38,7 +54,7 @@ describe("Remote Session Creation", () => {
 
     // Step 2: Start session (same as CreateSession step 2)
     const start = await terminal.run(
-      `/usr/bin/ssh manjaro "/home/xiangpan/agent-deck session start '${sessionTitle}'"`,
+      remoteCmd(`session start '${sessionTitle}'`),
       { timeout: 20000 }
     );
     if (start.code !== 0) {
@@ -47,7 +63,7 @@ describe("Remote Session Creation", () => {
 
     // Verify session exists and is started
     const after = await terminal.run(
-      `/usr/bin/ssh manjaro "/home/xiangpan/agent-deck list --json"`,
+      remoteCmd("list --json"),
       { silent: true }
     );
     let finalCount = 0;
@@ -76,9 +92,11 @@ describe("Remote Session Creation", () => {
   });
 
   test("session is attachable after create+start", async ({ terminal }) => {
+    if (!ensureConfigured()) return;
+
     // Get the latest session
     const list = await terminal.run(
-      `/usr/bin/ssh manjaro "/home/xiangpan/agent-deck list --json"`,
+      remoteCmd("list --json"),
       { silent: true }
     );
     const sessions = JSON.parse(list.stdout);
@@ -86,7 +104,7 @@ describe("Remote Session Creation", () => {
 
     // Verify attach doesn't fail with "not found"
     const attach = await terminal.run(
-      `/usr/bin/ssh -t manjaro "/home/xiangpan/agent-deck session attach ${latest.id}" < /dev/null`,
+      `${sshBin} -t ${remoteHost} "${remoteAgentDeckPath} session attach ${latest.id}" < /dev/null`,
       { timeout: 5000 }
     );
     if (attach.stderr?.includes("not found") || attach.stdout?.includes("not found")) {
