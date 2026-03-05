@@ -227,6 +227,9 @@ type Home struct {
 	lastLogActivity map[string]time.Time // sessionID -> last update time
 	logActivityMu   sync.Mutex           // Protects lastLogActivity map
 
+	// Window toggle state — sessions with collapsed window sub-items
+	windowsCollapsed map[string]bool // sessionID -> true if windows hidden
+
 	// Worktree dirty status cache (lazy, 10s TTL)
 	worktreeDirtyCache   map[string]bool      // sessionID -> isDirty
 	worktreeDirtyCacheTs map[string]time.Time // sessionID -> cache timestamp
@@ -578,6 +581,7 @@ func NewHomeWithProfileAndMode(profile string) *Home {
 		mcpLoadingSessions:   make(map[string]time.Time),
 		forkingSessions:      make(map[string]time.Time),
 		lastLogActivity:      make(map[string]time.Time),
+		windowsCollapsed:     make(map[string]bool),
 		worktreeDirtyCache:   make(map[string]bool),
 		worktreeDirtyCacheTs: make(map[string]time.Time),
 		statusTrigger:        make(chan statusUpdateRequest, 1), // Buffered to avoid blocking
@@ -923,6 +927,28 @@ func (h *Home) restoreState(state reloadState) {
 	}
 }
 
+// sessionHasWindows returns true if the session item has 2+ cached tmux windows.
+func (h *Home) sessionHasWindows(item session.Item) bool {
+	if item.Session == nil {
+		return false
+	}
+	tmuxSess := item.Session.GetTmuxSession()
+	if tmuxSess == nil {
+		return false
+	}
+	return len(tmux.GetCachedWindows(tmuxSess.Name)) >= 2
+}
+
+// moveCursorToSession moves the cursor to the flat item matching the given session ID.
+func (h *Home) moveCursorToSession(sessionID string) {
+	for i, fi := range h.flatItems {
+		if fi.Type == session.ItemTypeSession && fi.Session != nil && fi.Session.ID == sessionID {
+			h.cursor = i
+			return
+		}
+	}
+}
+
 // rebuildFlatItems rebuilds the flattened view from group tree
 func (h *Home) rebuildFlatItems() {
 	allItems := h.groupTree.Flatten()
@@ -980,7 +1006,7 @@ func (h *Home) rebuildFlatItems() {
 				continue
 			}
 			wins := tmux.GetCachedWindows(tmuxSess.Name)
-			if len(wins) < 2 {
+			if len(wins) < 2 || h.windowsCollapsed[item.Session.ID] {
 				continue
 			}
 
@@ -4046,7 +4072,7 @@ func (h *Home) handleMainKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return h, nil
 
 	case "tab", "l", "right":
-		// Expand/collapse group or expand if on session
+		// Expand/collapse group, or toggle session windows
 		if h.cursor < len(h.flatItems) {
 			item := h.flatItems[h.cursor]
 			if item.Type == session.ItemTypeGroup {
@@ -4060,12 +4086,17 @@ func (h *Home) handleMainKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 					}
 				}
 				h.saveGroupState()
+			} else if item.Type == session.ItemTypeSession && h.sessionHasWindows(item) {
+				sid := item.Session.ID
+				h.windowsCollapsed[sid] = !h.windowsCollapsed[sid]
+				h.rebuildFlatItems()
+				h.moveCursorToSession(sid)
 			}
 		}
 		return h, nil
 
 	case "h", "left":
-		// Collapse group
+		// Collapse group, session windows, or navigate up
 		if h.cursor < len(h.flatItems) {
 			item := h.flatItems[h.cursor]
 			collapsed := false
@@ -4080,11 +4111,22 @@ func (h *Home) handleMainKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 					}
 				}
 				collapsed = true
+			} else if item.Type == session.ItemTypeWindow {
+				// Collapse parent session's windows and jump to it
+				sid := item.WindowSessionID
+				h.windowsCollapsed[sid] = true
+				h.rebuildFlatItems()
+				h.moveCursorToSession(sid)
+				collapsed = false // no group state to save
+			} else if item.Type == session.ItemTypeSession && h.sessionHasWindows(item) && !h.windowsCollapsed[item.Session.ID] {
+				// Collapse this session's windows
+				h.windowsCollapsed[item.Session.ID] = true
+				h.rebuildFlatItems()
+				collapsed = false
 			} else if item.Type == session.ItemTypeSession {
 				// Move cursor to parent group
 				h.groupTree.CollapseGroup(item.Path)
 				h.rebuildFlatItems()
-				// Find the group in flatItems
 				for i, fi := range h.flatItems {
 					if fi.Type == session.ItemTypeGroup && fi.Path == item.Path {
 						h.cursor = i
@@ -7668,14 +7710,27 @@ func (h *Home) renderSessionItem(b *strings.Builder, item session.Item, selected
 		sshBadge = sshStyle.Render(" [ssh:" + host + "]")
 	}
 
-	// Build row: [baseIndent][selection][tree][status] [title] [tool] [yolo] [worktree] [sandbox] [ssh]
-	// Format: " ├─ ● session-name tool" or "▶└─ ● session-name tool"
-	// Sub-sessions get extra indent: "   ├─◐ sub-session tool"
+	// Window expand/collapse chevron for sessions with 2+ windows
+	windowChevron := " " // space placeholder to keep status icons aligned
+	if h.sessionHasWindows(item) {
+		chevronChar := "▾"
+		if h.windowsCollapsed[inst.ID] {
+			chevronChar = "▸"
+		}
+		chevronStyle := TreeConnectorStyle
+		if selected {
+			chevronStyle = TreeConnectorSelStyle
+		}
+		windowChevron = chevronStyle.Render(chevronChar)
+	}
+
+	// Build row: [baseIndent][selection][tree][chevron][status] [title] [tool] [yolo] [worktree] [sandbox] [ssh]
 	row := fmt.Sprintf(
-		"%s%s%s %s %s%s%s%s%s%s",
+		"%s%s%s%s%s %s%s%s%s%s%s",
 		baseIndent,
 		selectionPrefix,
 		treeStyle.Render(treeConnector),
+		windowChevron,
 		status,
 		title,
 		tool,
