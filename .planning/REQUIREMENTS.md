@@ -7,10 +7,10 @@
 
 ### Skills Reformatting
 
-- [ ] **SKILL-01**: Agent-deck skill uses official skill-creator format with proper SKILL.md frontmatter, scripts/, and references/ directories
-- [ ] **SKILL-02**: Session-share skill uses official skill-creator format with proper SKILL.md frontmatter and scripts/
+- [x] **SKILL-01**: Agent-deck skill uses official skill-creator format with proper SKILL.md frontmatter, scripts/, and references/ directories
+- [x] **SKILL-02**: Session-share skill uses official skill-creator format with proper SKILL.md frontmatter and scripts/
 - [ ] **SKILL-03**: GSD conductor skill is properly packaged in ~/.agent-deck/skills/pool/gsd-conductor/ with up-to-date content
-- [ ] **SKILL-04**: All skill SKILL.md files have correct frontmatter (name, description, compatibility fields)
+- [x] **SKILL-04**: All skill SKILL.md files have correct frontmatter (name, description, compatibility fields)
 - [ ] **SKILL-05**: Skill script path resolution works correctly from both plugin cache and local development paths
 
 ### Testing
@@ -53,10 +53,10 @@
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| SKILL-01 | Phase 1 | Pending |
-| SKILL-02 | Phase 1 | Pending |
+| SKILL-01 | Phase 1 | Complete |
+| SKILL-02 | Phase 1 | Complete |
 | SKILL-03 | Phase 1 | Pending |
-| SKILL-04 | Phase 1 | Pending |
+| SKILL-04 | Phase 1 | Complete |
 | SKILL-05 | Phase 1 | Pending |
 | TEST-01 | Phase 2 | Pending |
 | TEST-02 | Phase 2 | Pending |
