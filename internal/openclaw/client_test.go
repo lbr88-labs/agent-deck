@@ -62,14 +62,21 @@ func mockGateway(t *testing.T, password string) *httptest.Server {
 					Message: "expected connect method",
 				},
 			}
-			conn.WriteJSON(resp)
+			if err := conn.WriteJSON(resp); err != nil {
+				return
+			}
 			return
 		}
 
 		// Check password
 		var params ConnectParams
-		paramsJSON, _ := json.Marshal(req.Params)
-		json.Unmarshal(paramsJSON, &params)
+		paramsJSON, err := json.Marshal(req.Params)
+		if err != nil {
+			return
+		}
+		if err := json.Unmarshal(paramsJSON, &params); err != nil {
+			return
+		}
 
 		if params.Auth == nil || params.Auth.Password != password {
 			resp := ResponseFrame{
@@ -81,7 +88,9 @@ func mockGateway(t *testing.T, password string) *httptest.Server {
 					Message: "invalid password",
 				},
 			}
-			conn.WriteJSON(resp)
+			if err := conn.WriteJSON(resp); err != nil {
+				return
+			}
 			return
 		}
 
@@ -119,7 +128,9 @@ func mockGateway(t *testing.T, password string) *httptest.Server {
 			OK:      true,
 			Payload: mustMarshal(helloOk),
 		}
-		conn.WriteJSON(resp)
+		if err := conn.WriteJSON(resp); err != nil {
+			return
+		}
 
 		// Step 4: Handle subsequent requests
 		for {
@@ -135,12 +146,14 @@ func mockGateway(t *testing.T, password string) *httptest.Server {
 
 			switch frame.Method {
 			case "health":
-				conn.WriteJSON(ResponseFrame{
+				if err := conn.WriteJSON(ResponseFrame{
 					Type:    FrameTypeResponse,
 					ID:      frame.ID,
 					OK:      true,
 					Payload: mustMarshal(map[string]string{"status": "ok"}),
-				})
+				}); err != nil {
+					return
+				}
 
 			case "agents.list":
 				result := AgentsListResult{
@@ -165,23 +178,27 @@ func mockGateway(t *testing.T, password string) *httptest.Server {
 						},
 					},
 				}
-				conn.WriteJSON(ResponseFrame{
+				if err := conn.WriteJSON(ResponseFrame{
 					Type:    FrameTypeResponse,
 					ID:      frame.ID,
 					OK:      true,
 					Payload: mustMarshal(result),
-				})
+				}); err != nil {
+					return
+				}
 
 			case "chat.send":
-				conn.WriteJSON(ResponseFrame{
+				if err := conn.WriteJSON(ResponseFrame{
 					Type:    FrameTypeResponse,
 					ID:      frame.ID,
 					OK:      true,
 					Payload: mustMarshal(map[string]string{"runId": "test-run-001"}),
-				})
+				}); err != nil {
+					return
+				}
 
 			default:
-				conn.WriteJSON(ResponseFrame{
+				if err := conn.WriteJSON(ResponseFrame{
 					Type: FrameTypeResponse,
 					ID:   frame.ID,
 					OK:   false,
@@ -189,7 +206,9 @@ func mockGateway(t *testing.T, password string) *httptest.Server {
 						Code:    "INVALID_REQUEST",
 						Message: "unknown method: " + frame.Method,
 					},
-				})
+				}); err != nil {
+					return
+				}
 			}
 		}
 	}))

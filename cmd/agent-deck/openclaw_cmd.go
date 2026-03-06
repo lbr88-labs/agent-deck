@@ -61,7 +61,9 @@ func printOpenClawHelp() {
 func handleOpenClawSync(profile string, args []string) {
 	fs := flag.NewFlagSet("openclaw sync", flag.ExitOnError)
 	jsonOutput := fs.Bool("json", false, "Output as JSON")
-	fs.Parse(args)
+	if err := fs.Parse(args); err != nil {
+		os.Exit(2)
+	}
 
 	cfg := loadOpenClawConfig()
 
@@ -148,7 +150,10 @@ func handleOpenClawSync(profile string, args []string) {
 		}
 		enc := json.NewEncoder(os.Stdout)
 		enc.SetIndent("", "  ")
-		enc.Encode(result)
+		if err := enc.Encode(result); err != nil {
+			fmt.Fprintf(os.Stderr, "Failed to write JSON output: %v\n", err)
+			os.Exit(1)
+		}
 	} else {
 		fmt.Printf("Synced %d agents (%d new, %d updated)\n", len(agentsResult.Agents), created, updated)
 	}
@@ -170,7 +175,9 @@ func handleOpenClawBridge(args []string) {
 	fs := flag.NewFlagSet("openclaw bridge", flag.ExitOnError)
 	agentID := fs.String("agent", "", "Agent ID to bridge")
 	agentName := fs.String("name", "", "Agent display name (optional)")
-	fs.Parse(args)
+	if err := fs.Parse(args); err != nil {
+		os.Exit(2)
+	}
 
 	if *agentID == "" {
 		fmt.Fprintln(os.Stderr, "Usage: agent-deck openclaw bridge --agent <id>")
@@ -287,7 +294,9 @@ func handleOpenClawStatus(args []string) {
 func handleOpenClawList(args []string) {
 	fs := flag.NewFlagSet("openclaw list", flag.ExitOnError)
 	jsonOutput := fs.Bool("json", false, "Output as JSON")
-	fs.Parse(args)
+	if err := fs.Parse(args); err != nil {
+		os.Exit(2)
+	}
 
 	cfg := loadOpenClawConfig()
 
@@ -310,7 +319,10 @@ func handleOpenClawList(args []string) {
 	if *jsonOutput {
 		enc := json.NewEncoder(os.Stdout)
 		enc.SetIndent("", "  ")
-		enc.Encode(result)
+		if err := enc.Encode(result); err != nil {
+			fmt.Fprintf(os.Stderr, "Failed to write JSON output: %v\n", err)
+			os.Exit(1)
+		}
 		return
 	}
 
@@ -333,7 +345,9 @@ func handleOpenClawList(args []string) {
 func handleOpenClawSend(args []string) {
 	fs := flag.NewFlagSet("openclaw send", flag.ExitOnError)
 	agentID := fs.String("agent", "", "Agent ID to send to")
-	fs.Parse(args)
+	if err := fs.Parse(args); err != nil {
+		os.Exit(2)
+	}
 
 	if *agentID == "" || fs.NArg() == 0 {
 		fmt.Fprintln(os.Stderr, "Usage: agent-deck openclaw send --agent <id> <message>")

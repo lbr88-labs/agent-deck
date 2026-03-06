@@ -283,12 +283,15 @@ func (c *Client) ChannelsStatus(ctx context.Context) (json.RawMessage, error) {
 // --- Internal methods ---
 
 func (c *Client) waitForChallenge(ctx context.Context) (*ChallengePayload, error) {
-	ctx, cancel := context.WithTimeout(ctx, challengeTimeout)
-	defer cancel()
-
 	// Read a single message expecting connect.challenge
-	c.conn.SetReadDeadline(time.Now().Add(challengeTimeout))
-	defer c.conn.SetReadDeadline(time.Time{})
+	deadline := time.Now().Add(challengeTimeout)
+	if ctxDeadline, ok := ctx.Deadline(); ok && ctxDeadline.Before(deadline) {
+		deadline = ctxDeadline
+	}
+	if err := c.conn.SetReadDeadline(deadline); err != nil {
+		return nil, fmt.Errorf("set challenge read deadline: %w", err)
+	}
+	defer func() { _ = c.conn.SetReadDeadline(time.Time{}) }()
 
 	_, msg, err := c.conn.ReadMessage()
 	if err != nil {
@@ -345,8 +348,14 @@ func (c *Client) sendConnect(ctx context.Context) (*HelloOk, error) {
 	}
 
 	// Read hello-ok response
-	c.conn.SetReadDeadline(time.Now().Add(challengeTimeout))
-	defer c.conn.SetReadDeadline(time.Time{})
+	deadline := time.Now().Add(challengeTimeout)
+	if ctxDeadline, ok := ctx.Deadline(); ok && ctxDeadline.Before(deadline) {
+		deadline = ctxDeadline
+	}
+	if err := c.conn.SetReadDeadline(deadline); err != nil {
+		return nil, fmt.Errorf("set hello read deadline: %w", err)
+	}
+	defer func() { _ = c.conn.SetReadDeadline(time.Time{}) }()
 
 	_, msg, err := c.conn.ReadMessage()
 	if err != nil {
