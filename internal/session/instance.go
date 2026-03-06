@@ -33,6 +33,9 @@ var (
 	sessionLog                  = logging.ForComponent(logging.CompSession)
 	mcpLog                      = logging.ForComponent(logging.CompMCP)
 	codexSessionIDPathPatternRE = regexp.MustCompile(`/.codex/sessions/\S*/rollout-\S*-([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\.jsonl`)
+	uuidPatternRE               = regexp.MustCompile(`[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}`)
+	geminiPromptRE              = regexp.MustCompile(`^(>|>>>|\$|❯|➜|gemini>)\s*$`)
+	shellPromptRE               = regexp.MustCompile(`^[\s]*(>|>>>|\$|❯|➜|#|%)\s*$`)
 )
 
 // Status represents the current state of a session
@@ -1007,7 +1010,7 @@ func (i *Instance) queryCodexSession(excludeIDs map[string]bool, allowUnscoped b
 		return ""
 	}
 
-	uuidPattern := regexp.MustCompile(`[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}`)
+	uuidPattern := uuidPatternRE
 
 	var bestScopedID string
 	var bestScopedTime time.Time
@@ -3319,7 +3322,7 @@ func parseGeminiOutput(content string) (*ResponseOutput, error) {
 
 		// Detect prompt line (end of response when reading backwards)
 		// Common prompts: "> ", ">>> ", "$", "❯", "➜"
-		isPrompt := regexp.MustCompile(`^(>|>>>|\$|❯|➜|gemini>)\s*$`).MatchString(trimmed)
+		isPrompt := geminiPromptRE.MatchString(trimmed)
 
 		if isPrompt && inResponse {
 			// We've found the start of the response block
@@ -3365,7 +3368,7 @@ func parseGenericOutput(content, tool string) (*ResponseOutput, error) {
 	// before a prompt character
 	var responseLines []string
 	inResponse := false
-	promptPattern := regexp.MustCompile(`^[\s]*(>|>>>|\$|❯|➜|#|%)\s*$`)
+	promptPattern := shellPromptRE
 
 	for idx := len(lines) - 1; idx >= 0; idx-- {
 		line := lines[idx]
