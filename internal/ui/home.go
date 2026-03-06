@@ -6903,19 +6903,7 @@ func (h *Home) View() string {
 	// CRITICAL: Use ensureExactHeight for robust, consistent output across all platforms
 	// This is the single source of truth for output height - guarantees exactly h.height lines
 	// regardless of component content, ANSI codes, or terminal differences
-	result := ensureExactHeight(b.String(), h.height)
-
-	// Apply width+height constraint via lipgloss.
-	// CRITICAL: Use MaxWidth (truncate) instead of Width (word-wrap).
-	// Width wraps long lines, which INCREASES the total line count beyond h.height.
-	// When View() returns more lines than the terminal height, Bubble Tea's renderer
-	// loses cursor position tracking, causing all subsequent frames to stack on top of
-	// each other — making the entire view appear duplicated 2-4x.
-	// MaxWidth truncates without adding lines. MaxHeight is a safety net.
-	return lipgloss.NewStyle().
-		MaxWidth(h.width).
-		MaxHeight(h.height).
-		Render(result)
+	return clampViewToViewport(b.String(), h.width, h.height)
 }
 
 // renderPanelTitle creates a styled section title with underline
@@ -7246,6 +7234,32 @@ func ensureExactHeight(content string, n int) string {
 	}
 
 	// Join back - this creates n-1 newlines for n lines
+	return strings.Join(lines, "\n")
+}
+
+// clampViewToViewport hard-clamps the rendered frame to the terminal viewport.
+// This is the final safety net against any component returning an unexpected
+// extra line or a line that still exceeds the viewport width.
+func clampViewToViewport(content string, width, height int) string {
+	if width <= 0 || height <= 0 {
+		return ""
+	}
+
+	lines := strings.Split(content, "\n")
+	if len(lines) > height {
+		lines = lines[:height]
+	} else if len(lines) < height {
+		for len(lines) < height {
+			lines = append(lines, "")
+		}
+	}
+
+	for i, line := range lines {
+		if ansi.StringWidth(line) > width {
+			lines[i] = ansi.Truncate(line, width, "")
+		}
+	}
+
 	return strings.Join(lines, "\n")
 }
 

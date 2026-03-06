@@ -9,6 +9,7 @@ import (
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 
 	"github.com/asheshgoplani/agent-deck/internal/session"
 )
@@ -101,6 +102,59 @@ func TestHomeView(t *testing.T) {
 	if view == "Loading..." {
 		// Initial state is OK
 		return
+	}
+}
+
+func TestHomeView_StaysWithinBoundsWhileNavigating(t *testing.T) {
+	home := NewHome()
+	home.width = 200
+	home.height = 55
+	home.initialLoading = false
+
+	instances := []*session.Instance{
+		session.NewInstanceWithTool("conductor-ryan", "/tmp/conductor", "claude"),
+		session.NewInstanceWithTool("copy from server", "/tmp/social-copy", "claude"),
+		session.NewInstanceWithTool("test", "/tmp/social-test", "claude"),
+		session.NewInstanceWithTool("vscode on linux", "/tmp/linux", "claude"),
+		session.NewInstanceWithTool("about gsd", "/tmp/about-gsd", "claude"),
+		session.NewInstanceWithTool("places to work from", "/tmp/places", "claude"),
+	}
+
+	instances[0].GroupPath = "conductor"
+	for _, inst := range instances[1:] {
+		inst.GroupPath = "Social Monitor"
+	}
+	instances[3].Status = session.StatusError
+
+	home.instancesMu.Lock()
+	home.instances = instances
+	home.instancesMu.Unlock()
+	home.groupTree = session.NewGroupTree(instances)
+	home.rebuildFlatItems()
+
+	if len(home.flatItems) == 0 {
+		t.Fatal("expected flatItems to be populated")
+	}
+
+	for cursor := range home.flatItems {
+		home.cursor = cursor
+		view := home.View()
+		assertViewWithinBounds(t, view, home.width, home.height, fmt.Sprintf("cursor=%d type=%v", cursor, home.flatItems[cursor].Type))
+	}
+}
+
+func assertViewWithinBounds(t *testing.T, view string, width, height int, context string) {
+	t.Helper()
+
+	lines := strings.Split(view, "\n")
+	if len(lines) != height {
+		t.Fatalf("%s: line count = %d, want %d", context, len(lines), height)
+	}
+
+	for i, line := range lines {
+		if got := lipgloss.Width(line); got > width {
+			t.Fatalf("%s: line %d width = %d, want <= %d\nline=%q", context, i, got, width, line)
+		}
 	}
 }
 
