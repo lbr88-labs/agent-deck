@@ -122,7 +122,11 @@ Plans:
   3. Skills are discovered from directory, attached to a session, and trigger conditions are evaluated correctly
   4. Concurrent polling of 10+ sessions returns correct status for each session without data races (verified by -race flag)
   5. A second Storage instance writing to the same SQLite database triggers the storage watcher in the first instance to detect the external change
-**Plans**: TBD
+**Plans:** 2 plans
+
+Plans:
+- [ ] 06-01-PLAN.md -- Conductor heartbeat round-trip and chunked send delivery tests (COND-03, COND-04)
+- [ ] 06-02-PLAN.md -- Edge case tests: skills discover/attach, concurrent polling, cross-instance storage watcher (EDGE-01, EDGE-02, EDGE-03)
 
 ## Progress
 
@@ -136,4 +140,4 @@ Phases execute in numeric order: 4 -> 5 -> 6
 | 3. Stabilization & Release Readiness | v1.0 | 2/2 | Complete | 2026-03-06 |
 | 4. Framework Foundation | v1.1 | 0/2 | Planning | - |
 | 5. Status Detection & Events | v1.1 | 0/2 | Planning | - |
-| 6. Conductor Pipeline & Edge Cases | v1.1 | 0/? | Not started | - |
+| 6. Conductor Pipeline & Edge Cases | v1.1 | 0/2 | Not started | - |
