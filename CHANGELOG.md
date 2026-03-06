@@ -10,7 +10,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [0.22.0] - 2026-03-06
 
 ### Added
-- Add session lifecycle tests covering start, stop, fork, and attach operations with tmux verification.
+- Add integration test framework: TmuxHarness (auto-cleanup real tmux sessions), polling helpers (WaitForCondition, WaitForPaneContent, WaitForStatus), and SQLite fixture helpers (NewTestDB, InstanceBuilder).
+- Add session lifecycle integration tests (start, stop, fork, restart) using real tmux sessions with automatic cleanup.
+- Add session lifecycle unit tests covering start, stop, fork, and attach operations with tmux verification.
 - Add status lifecycle tests for sleep/wake detection and SQLite persistence round-trips.
 - Add skills runtime tests verifying on-demand skill loading, pool skill discovery, and project skill application.
 
