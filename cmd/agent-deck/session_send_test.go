@@ -98,6 +98,45 @@ func TestWaitForCompletion_TransientErrors(t *testing.T) {
 	}
 }
 
+func TestWaitForCompletion_SessionDeath(t *testing.T) {
+	// When GetStatus returns 5+ consecutive errors, the session is dead.
+	// waitForCompletion should return ("error", nil) instead of hanging.
+	mock := &mockStatusChecker{
+		statuses: []string{"", "", "", "", "", "", ""},
+		errors: []error{
+			fmt.Errorf("tmux session not found"),
+			fmt.Errorf("tmux session not found"),
+			fmt.Errorf("tmux session not found"),
+			fmt.Errorf("tmux session not found"),
+			fmt.Errorf("tmux session not found"),
+			fmt.Errorf("tmux session not found"),
+			fmt.Errorf("tmux session not found"),
+		},
+	}
+	status, err := waitForCompletion(mock, 10*time.Second)
+	if err != nil {
+		t.Fatalf("expected nil error (session death detection), got: %v", err)
+	}
+	if status != "error" {
+		t.Errorf("expected status 'error' for session death, got %q", status)
+	}
+}
+
+func TestWaitForCompletion_TransientRecovery(t *testing.T) {
+	// Fewer than 5 consecutive errors should recover when a valid status follows.
+	mock := &mockStatusChecker{
+		statuses: []string{"", "", "", "waiting"},
+		errors:   []error{fmt.Errorf("tmux error"), fmt.Errorf("tmux error"), fmt.Errorf("tmux error"), nil},
+	}
+	status, err := waitForCompletion(mock, 30*time.Second)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if status != "waiting" {
+		t.Errorf("expected status 'waiting' after transient recovery, got %q", status)
+	}
+}
+
 func TestWaitForCompletion_Timeout(t *testing.T) {
 	mock := &mockStatusChecker{
 		statuses: []string{"active"}, // Stays active forever

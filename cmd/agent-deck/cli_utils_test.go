@@ -211,6 +211,44 @@ func TestNormalizeArgsIntegration(t *testing.T) {
 	}
 }
 
+func TestReorderArgsForFlagParsing_CmdAndGroup(t *testing.T) {
+	tests := []struct {
+		name     string
+		args     []string
+		expected []string
+	}{
+		{
+			name:     "flags already before positional",
+			args:     []string{"-c", "claude", "-g", "mygroup", "."},
+			expected: []string{"-c", "claude", "-g", "mygroup", "."},
+		},
+		{
+			name:     "path before flags gets moved to end",
+			args:     []string{".", "-c", "claude", "-g", "mygroup"},
+			expected: []string{"-c", "claude", "-g", "mygroup", "."},
+		},
+		{
+			name:     "mixed flags with --no-parent",
+			args:     []string{"-g", "mygroup", "-c", "claude", "--no-parent", "."},
+			expected: []string{"-g", "mygroup", "-c", "claude", "--no-parent", "."},
+		},
+		{
+			name:     "equals syntax for -c flag",
+			args:     []string{"-c=claude", "-g", "work", "."},
+			expected: []string{"-c=claude", "-g", "work", "."},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := reorderArgsForFlagParsing(tt.args)
+			if !reflect.DeepEqual(result, tt.expected) {
+				t.Errorf("reorderArgsForFlagParsing(%v) = %v, want %v", tt.args, result, tt.expected)
+			}
+		})
+	}
+}
+
 func TestResolveSessionCommand(t *testing.T) {
 	tests := []struct {
 		name            string
