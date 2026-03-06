@@ -3,15 +3,15 @@ gsd_state_version: 1.0
 milestone: v1.2
 milestone_name: Conductor Reliability & Learnings Cleanup
 status: executing
-stopped_at: Completed 09-01-PLAN.md
-last_updated: "2026-03-06T21:02:11.378Z"
-last_activity: "2026-03-07 -- Completed 09-01 exit 137 investigation (root cause: Claude Code, not fixable in agent-deck)"
+stopped_at: Completed 09-02-PLAN.md
+last_updated: "2026-03-06T21:06:25.886Z"
+last_activity: 2026-03-07 -- Completed 09-02 exit 137 mitigation documentation in conductor CLAUDE.md and GSD conductor SKILL.md
 progress:
   total_phases: 10
-  completed_phases: 8
+  completed_phases: 9
   total_plans: 19
-  completed_plans: 18
-  percent: 95
+  completed_plans: 19
+  percent: 100
 ---
 
 # Project State
@@ -21,16 +21,16 @@ progress:
 See: .planning/PROJECT.md (updated 2026-03-07)
 
 **Core value:** Conductor orchestration and cross-session coordination must work reliably in production
-**Current focus:** Phase 9: Process Stability -- IN PROGRESS
+**Current focus:** Phase 10: Learnings Promotion -- PENDING
 
 ## Current Position
 
-Phase: 9 of 10 (Process Stability)
-Plan: 1 of 2 in current phase (09-01 complete, 09-02 pending)
-Status: Phase 9 in progress
-Last activity: 2026-03-07 -- Completed 09-01 exit 137 investigation (root cause: Claude Code, not fixable in agent-deck)
+Phase: 9 of 10 (Process Stability) -- COMPLETE
+Plan: 2 of 2 in current phase (09-01 complete, 09-02 complete)
+Status: Phase 9 complete, Phase 10 pending
+Last activity: 2026-03-07 -- Completed 09-02 exit 137 mitigation documentation in conductor CLAUDE.md and GSD conductor SKILL.md
 
-Progress: [██████████] 95% (phases 1-8 complete, phase 9 in progress, phase 10 pending)
+Progress: [██████████] 100% (phases 1-9 complete, phase 10 pending)
 
 ## Accumulated Context
 
@@ -58,6 +58,9 @@ Progress: [██████████] 95% (phases 1-8 complete, phase 9 in 
 - [Phase 09-01]: Exit 137 root cause: Claude Code kills Bash tool children on new PTY input, not tmux or agent-deck
 - [Phase 09-01]: Not fixable in agent-deck: tmux send-keys (only channel) is indistinguishable from human typing
 - [Phase 09-01]: Primary mitigation (waitForAgentReady status gating) already implemented in Phase 7
+- [Phase 09-02]: Exit 137 mitigation documented in conductor CLAUDE.md (between Heartbeat Protocol and State Management)
+- [Phase 09-02]: GSD-specific exit 137 guidance added to gsd-conductor SKILL.md (before GSD Lifecycle)
+- [Phase 09-02]: Emphasized session output as safe read-only alternative to sending messages to running sessions
 
 ### Pending Todos
 
@@ -69,6 +72,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-03-06T21:02:07.413Z
-Stopped at: Completed 09-01-PLAN.md
+Last session: 2026-03-06T21:04:33Z
+Stopped at: Completed 09-02-PLAN.md
 Resume file: None

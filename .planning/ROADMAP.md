@@ -36,7 +36,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 
 - [ ] **Phase 7: Send Reliability** - Fix Enter key race condition and Codex readiness detection, the two highest-impact send failures
 - [ ] **Phase 8: Heartbeat & CLI Fixes** - Scope heartbeat to conductor groups, honor enabled=false config, and fix CLI flag parsing issues
-- [ ] **Phase 9: Process Stability** - Investigate exit 137 from incoming messages and document mitigation or fix
+- [x] **Phase 9: Process Stability** - Investigate exit 137 from incoming messages and document mitigation or fix
 - [ ] **Phase 10: Learnings Promotion** - Promote validated conductor learnings to shared locations and clean up LEARNINGS.md files
 
 ## Phase Details
@@ -184,8 +184,8 @@ Plans:
 **Plans:** 2 plans
 
 Plans:
-- [ ] 09-01-PLAN.md -- Investigate exit 137 signal chain, reproduce, determine root cause and fixability
-- [ ] 09-02-PLAN.md -- Document mitigation in conductor CLAUDE.md and GSD conductor skill
+- [x] 09-01-PLAN.md -- Investigate exit 137 signal chain, reproduce, determine root cause and fixability
+- [x] 09-02-PLAN.md -- Document mitigation in conductor CLAUDE.md and GSD conductor skill
 
 ### Phase 10: Learnings Promotion
 **Goal**: Validated conductor learnings from six production conductors are promoted to their appropriate shared locations, and the scattered LEARNINGS.md files are cleaned up
@@ -213,5 +213,5 @@ Phases execute in numeric order: 7 -> 8 -> 9 -> 10
 | 6. Conductor Pipeline & Edge Cases | v1.1 | 2/2 | Complete | 2026-03-07 |
 | 7. Send Reliability | v1.2 | 2/2 | Complete | 2026-03-07 |
 | 8. Heartbeat & CLI Fixes | v1.2 | 2/2 | Complete | 2026-03-07 |
-| 9. Process Stability | v1.2 | 1/2 | In Progress | - |
+| 9. Process Stability | v1.2 | 2/2 | Complete | 2026-03-07 |
 | 10. Learnings Promotion | v1.2 | 0/? | Not started | - |
