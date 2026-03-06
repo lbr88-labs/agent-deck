@@ -252,3 +252,186 @@ func TestHookFastPath_ShellIgnoresHooks(t *testing.T) {
 		"shell session should NOT use hook fast path (status should not be running from hook data)")
 	t.Logf("Shell session status from tmux polling: %s", inst.Status)
 }
+
+// =============================================================================
+// Task 2: Status Persistence to SQLite Tests (TEST-07)
+// =============================================================================
+
+// TestStatusPersistence_RoundTrip verifies that saving an instance with a specific
+// status to SQLite and loading it back preserves the status accurately.
+func TestStatusPersistence_RoundTrip(t *testing.T) {
+	s := newTestStorage(t)
+
+	inst := &Instance{
+		ID:          "persist-rt-1",
+		Title:       "Round Trip Test",
+		ProjectPath: "/tmp/test",
+		GroupPath:   "test-group",
+		Command:     "sleep 30",
+		Tool:        "shell",
+		Status:      StatusRunning,
+		CreatedAt:   time.Now(),
+	}
+
+	err := s.SaveWithGroups([]*Instance{inst}, nil)
+	require.NoError(t, err, "SaveWithGroups should succeed")
+
+	loaded, _, err := s.LoadWithGroups()
+	require.NoError(t, err, "LoadWithGroups should succeed")
+	require.Len(t, loaded, 1, "should load 1 instance")
+
+	assert.Equal(t, StatusRunning, loaded[0].Status,
+		"loaded instance should have StatusRunning preserved from save")
+	assert.Equal(t, "persist-rt-1", loaded[0].ID,
+		"loaded instance should have the correct ID")
+}
+
+// TestStatusPersistence_UpdatedStatus verifies that saving an instance, changing
+// its status, saving again, and loading reflects the updated status.
+func TestStatusPersistence_UpdatedStatus(t *testing.T) {
+	s := newTestStorage(t)
+
+	inst := &Instance{
+		ID:          "persist-upd-1",
+		Title:       "Update Status Test",
+		ProjectPath: "/tmp/test",
+		GroupPath:   "test-group",
+		Command:     "claude",
+		Tool:        "claude",
+		Status:      StatusRunning,
+		CreatedAt:   time.Now(),
+	}
+
+	// Save with initial status
+	err := s.SaveWithGroups([]*Instance{inst}, nil)
+	require.NoError(t, err, "first SaveWithGroups should succeed")
+
+	// Change status
+	inst.Status = StatusWaiting
+
+	// Save again with updated status
+	err = s.SaveWithGroups([]*Instance{inst}, nil)
+	require.NoError(t, err, "second SaveWithGroups should succeed")
+
+	// Load and verify updated status
+	loaded, _, err := s.LoadWithGroups()
+	require.NoError(t, err, "LoadWithGroups should succeed")
+	require.Len(t, loaded, 1, "should load 1 instance")
+
+	assert.Equal(t, StatusWaiting, loaded[0].Status,
+		"loaded instance should reflect the updated StatusWaiting")
+}
+
+// TestStatusPersistence_MultipleInstances verifies that multiple instances with
+// different statuses all persist and load correctly.
+func TestStatusPersistence_MultipleInstances(t *testing.T) {
+	s := newTestStorage(t)
+
+	instances := []*Instance{
+		{
+			ID:          "persist-multi-1",
+			Title:       "Running Session",
+			ProjectPath: "/tmp/test1",
+			GroupPath:   "test-group",
+			Command:     "claude",
+			Tool:        "claude",
+			Status:      StatusRunning,
+			CreatedAt:   time.Now(),
+		},
+		{
+			ID:          "persist-multi-2",
+			Title:       "Waiting Session",
+			ProjectPath: "/tmp/test2",
+			GroupPath:   "test-group",
+			Command:     "gemini",
+			Tool:        "gemini",
+			Status:      StatusWaiting,
+			CreatedAt:   time.Now(),
+		},
+		{
+			ID:          "persist-multi-3",
+			Title:       "Idle Session",
+			ProjectPath: "/tmp/test3",
+			GroupPath:   "test-group",
+			Command:     "sleep 30",
+			Tool:        "shell",
+			Status:      StatusIdle,
+			CreatedAt:   time.Now(),
+		},
+	}
+
+	err := s.SaveWithGroups(instances, nil)
+	require.NoError(t, err, "SaveWithGroups should succeed")
+
+	loaded, _, err := s.LoadWithGroups()
+	require.NoError(t, err, "LoadWithGroups should succeed")
+	require.Len(t, loaded, 3, "should load 3 instances")
+
+	// Build lookup map by ID for order-independent comparison
+	byID := make(map[string]*Instance, len(loaded))
+	for _, inst := range loaded {
+		byID[inst.ID] = inst
+	}
+
+	assert.Equal(t, StatusRunning, byID["persist-multi-1"].Status,
+		"instance 1 should be running")
+	assert.Equal(t, StatusWaiting, byID["persist-multi-2"].Status,
+		"instance 2 should be waiting")
+	assert.Equal(t, StatusIdle, byID["persist-multi-3"].Status,
+		"instance 3 should be idle")
+}
+
+// TestStatusPersistence_EndToEnd is a full integration test that creates a real
+// tmux session, gets its status via UpdateStatus(), saves to SQLite, and verifies
+// the loaded status matches. Then kills the session, saves again, and verifies
+// StatusError is persisted.
+func TestStatusPersistence_EndToEnd(t *testing.T) {
+	skipIfNoTmuxServer(t)
+
+	inst := NewInstance("test-persist-e2e", "/tmp")
+	inst.Tool = "shell"
+	inst.Command = "sleep 30"
+
+	err := inst.Start()
+	require.NoError(t, err, "Start() should succeed")
+	defer func() { _ = inst.Kill() }()
+
+	// Wait past grace period
+	time.Sleep(2 * time.Second)
+
+	// Get actual tmux-based status
+	err = inst.UpdateStatus()
+	require.NoError(t, err, "UpdateStatus() should succeed")
+	liveStatus := inst.Status
+	t.Logf("Live status from tmux: %s", liveStatus)
+
+	// Save to SQLite
+	s := newTestStorage(t)
+	err = s.SaveWithGroups([]*Instance{inst}, nil)
+	require.NoError(t, err, "SaveWithGroups should succeed")
+
+	// Load and verify status matches live status
+	loaded, _, err := s.LoadWithGroups()
+	require.NoError(t, err, "LoadWithGroups should succeed")
+	require.Len(t, loaded, 1, "should load 1 instance")
+
+	assert.Equal(t, liveStatus, loaded[0].Status,
+		"loaded status should match the live tmux status")
+
+	// Now kill the session
+	err = inst.Kill()
+	require.NoError(t, err, "Kill() should succeed")
+	assert.Equal(t, StatusError, inst.Status, "status should be error after Kill()")
+
+	// Save again with error status
+	err = s.SaveWithGroups([]*Instance{inst}, nil)
+	require.NoError(t, err, "SaveWithGroups after Kill should succeed")
+
+	// Load and verify error status is persisted
+	loaded2, _, err := s.LoadWithGroups()
+	require.NoError(t, err, "LoadWithGroups after Kill should succeed")
+	require.Len(t, loaded2, 1, "should load 1 instance after Kill")
+
+	assert.Equal(t, StatusError, loaded2[0].Status,
+		"loaded status after Kill should be StatusError")
+}
