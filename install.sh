@@ -277,7 +277,13 @@ install_macos_package() {
     echo -e "Installing $PACKAGE_NAME via $mgr_name..."
     case "$MACOS_PKG_MANAGER" in
         brew) brew install "$PACKAGE_NAME" ;;
-        port) sudo port install "$PACKAGE_NAME" ;;
+        port)
+            if [[ "$SKIP_OPTIONAL_DEPS" == "true" ]]; then
+                sudo -n port install "$PACKAGE_NAME"
+            else
+                sudo port install "$PACKAGE_NAME"
+            fi
+            ;;
     esac
 }
 
@@ -300,10 +306,17 @@ if ! command -v tmux &> /dev/null; then
     if [[ "$OS" == "darwin" ]]; then
         if [[ -n "$MACOS_PKG_MANAGER" ]]; then
             mgr_name="$(macos_pkg_mgr_name "$MACOS_PKG_MANAGER")"
-            read -p "Install tmux via $mgr_name? [Y/n] " -n 1 -r
-            echo
-            if [[ ! $REPLY =~ ^[Nn]$ ]]; then
-                install_macos_package "tmux"
+            if [[ "$SKIP_OPTIONAL_DEPS" == "true" ]]; then
+                echo -e "Installing tmux via $mgr_name (non-interactive)..."
+                if ! install_macos_package "tmux"; then
+                    echo -e "${YELLOW}Warning: automatic tmux install failed in non-interactive mode.${NC}"
+                fi
+            else
+                read -p "Install tmux via $mgr_name? [Y/n] " -n 1 -r
+                echo
+                if [[ ! $REPLY =~ ^[Nn]$ ]]; then
+                    install_macos_package "tmux"
+                fi
             fi
         else
             print_macos_manual_install_help "tmux"
@@ -311,25 +324,46 @@ if ! command -v tmux &> /dev/null; then
     else
         # Linux - try apt, dnf, or pacman
         if command -v apt-get &> /dev/null; then
-            read -p "Install tmux via apt? [Y/n] " -n 1 -r
-            echo
-            if [[ ! $REPLY =~ ^[Nn]$ ]]; then
-                echo -e "Installing tmux..."
-                sudo apt-get update && sudo apt-get install -y tmux
+            if [[ "$SKIP_OPTIONAL_DEPS" == "true" ]]; then
+                echo -e "Installing tmux via apt (non-interactive)..."
+                if ! { sudo -n apt-get update && sudo -n apt-get install -y tmux; }; then
+                    echo -e "${YELLOW}Warning: automatic tmux install via apt failed in non-interactive mode.${NC}"
+                fi
+            else
+                read -p "Install tmux via apt? [Y/n] " -n 1 -r
+                echo
+                if [[ ! $REPLY =~ ^[Nn]$ ]]; then
+                    echo -e "Installing tmux..."
+                    sudo apt-get update && sudo apt-get install -y tmux
+                fi
             fi
         elif command -v dnf &> /dev/null; then
-            read -p "Install tmux via dnf? [Y/n] " -n 1 -r
-            echo
-            if [[ ! $REPLY =~ ^[Nn]$ ]]; then
-                echo -e "Installing tmux..."
-                sudo dnf install -y tmux
+            if [[ "$SKIP_OPTIONAL_DEPS" == "true" ]]; then
+                echo -e "Installing tmux via dnf (non-interactive)..."
+                if ! sudo -n dnf install -y tmux; then
+                    echo -e "${YELLOW}Warning: automatic tmux install via dnf failed in non-interactive mode.${NC}"
+                fi
+            else
+                read -p "Install tmux via dnf? [Y/n] " -n 1 -r
+                echo
+                if [[ ! $REPLY =~ ^[Nn]$ ]]; then
+                    echo -e "Installing tmux..."
+                    sudo dnf install -y tmux
+                fi
             fi
         elif command -v pacman &> /dev/null; then
-            read -p "Install tmux via pacman? [Y/n] " -n 1 -r
-            echo
-            if [[ ! $REPLY =~ ^[Nn]$ ]]; then
-                echo -e "Installing tmux..."
-                sudo pacman -S --noconfirm tmux
+            if [[ "$SKIP_OPTIONAL_DEPS" == "true" ]]; then
+                echo -e "Installing tmux via pacman (non-interactive)..."
+                if ! sudo -n pacman -S --noconfirm tmux; then
+                    echo -e "${YELLOW}Warning: automatic tmux install via pacman failed in non-interactive mode.${NC}"
+                fi
+            else
+                read -p "Install tmux via pacman? [Y/n] " -n 1 -r
+                echo
+                if [[ ! $REPLY =~ ^[Nn]$ ]]; then
+                    echo -e "Installing tmux..."
+                    sudo pacman -S --noconfirm tmux
+                fi
             fi
         else
             echo "Please install tmux manually:"
@@ -341,11 +375,15 @@ if ! command -v tmux &> /dev/null; then
 
     # Check again after attempted install
     if ! command -v tmux &> /dev/null; then
-        echo ""
-        read -p "tmux not found. Continue anyway? [y/N] " -n 1 -r
-        echo
-        if [[ ! $REPLY =~ ^[Yy]$ ]]; then
-            exit 1
+        if [[ "$SKIP_OPTIONAL_DEPS" == "true" ]]; then
+            echo -e "${YELLOW}Warning: tmux not found. Continuing without tmux (non-interactive).${NC}"
+        else
+            echo ""
+            read -p "tmux not found. Continue anyway? [y/N] " -n 1 -r
+            echo
+            if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+                exit 1
+            fi
         fi
     else
         echo -e "${GREEN}tmux installed successfully!${NC}"
