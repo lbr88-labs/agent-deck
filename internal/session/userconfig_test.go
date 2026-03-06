@@ -447,6 +447,54 @@ func TestGetWorktreeSettings_FromConfig(t *testing.T) {
 	}
 }
 
+func TestWorktreeSettings_Prefix_Default(t *testing.T) {
+	settings := WorktreeSettings{}
+	if got := settings.Prefix(); got != "feature/" {
+		t.Errorf("Prefix() with nil BranchPrefix: got %q, want %q", got, "feature/")
+	}
+}
+
+func TestWorktreeSettings_Prefix_Custom(t *testing.T) {
+	strPtr := func(s string) *string { return &s }
+	settings := WorktreeSettings{BranchPrefix: strPtr("dev/")}
+	if got := settings.Prefix(); got != "dev/" {
+		t.Errorf("Prefix() with custom BranchPrefix: got %q, want %q", got, "dev/")
+	}
+}
+
+func TestWorktreeSettings_Prefix_Empty(t *testing.T) {
+	strPtr := func(s string) *string { return &s }
+	settings := WorktreeSettings{BranchPrefix: strPtr("")}
+	if got := settings.Prefix(); got != "" {
+		t.Errorf("Prefix() with empty BranchPrefix: got %q, want %q", got, "")
+	}
+}
+
+func TestGetWorktreeSettings_BranchPrefix(t *testing.T) {
+	tempDir := t.TempDir()
+	originalHome := os.Getenv("HOME")
+	os.Setenv("HOME", tempDir)
+	defer os.Setenv("HOME", originalHome)
+	ClearUserConfigCache()
+
+	// Create config with custom branch_prefix
+	agentDeckDir := filepath.Join(tempDir, ".agent-deck")
+	_ = os.MkdirAll(agentDeckDir, 0700)
+	strPtr := func(s string) *string { return &s }
+	config := &UserConfig{
+		Worktree: WorktreeSettings{
+			BranchPrefix: strPtr("custom/"),
+		},
+	}
+	_ = SaveUserConfig(config)
+	ClearUserConfigCache()
+
+	settings := GetWorktreeSettings()
+	if got := settings.Prefix(); got != "custom/" {
+		t.Errorf("GetWorktreeSettings Prefix(): got %q, want %q", got, "custom/")
+	}
+}
+
 // ============================================================================
 // Preview Settings Tests
 // ============================================================================

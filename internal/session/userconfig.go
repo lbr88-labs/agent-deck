@@ -618,6 +618,12 @@ type WorktreeSettings struct {
 	// Unknown variables like {foo} are left as-is in the path.
 	// If set, overrides DefaultLocation.
 	PathTemplate *string `toml:"path_template"`
+
+	// BranchPrefix is the prefix for auto-generated branch names when creating
+	// worktree sessions. For example, "feature/" produces "feature/my-session".
+	// Set to "" to disable auto-prefixing (just the session name).
+	// Default: "feature/" when not set.
+	BranchPrefix *string `toml:"branch_prefix"`
 }
 
 // Template returns the path template if set, or empty string if nil.
@@ -626,6 +632,14 @@ func (w *WorktreeSettings) Template() string {
 		return ""
 	}
 	return *w.PathTemplate
+}
+
+// Prefix returns the branch prefix if set, or "feature/" if nil.
+func (w *WorktreeSettings) Prefix() string {
+	if w.BranchPrefix == nil {
+		return "feature/"
+	}
+	return *w.BranchPrefix
 }
 
 // GlobalSearchSettings defines global conversation search configuration

@@ -1192,3 +1192,53 @@ func TestNewDialog_FilterPaths_EmptyInput(t *testing.T) {
 		t.Errorf("expected all 3 suggestions for empty input, got %d", len(d.pathSuggestions))
 	}
 }
+
+func TestNewDialog_BranchPrefix_Default(t *testing.T) {
+	d := NewNewDialog()
+	if d.branchPrefix != "feature/" {
+		t.Errorf("expected branchPrefix %q from constructor, got %q", "feature/", d.branchPrefix)
+	}
+}
+
+func TestNewDialog_BranchPrefix_Custom_AutoPopulates(t *testing.T) {
+	d := NewNewDialog()
+	d.branchPrefix = "dev/"
+	d.nameInput.SetValue("my-session")
+	d.autoBranchFromName()
+
+	if got := d.branchInput.Value(); got != "dev/my-session" {
+		t.Errorf("expected branch %q, got %q", "dev/my-session", got)
+	}
+}
+
+func TestNewDialog_BranchPrefix_Empty_NoPrefix(t *testing.T) {
+	d := NewNewDialog()
+	d.branchPrefix = ""
+	d.nameInput.SetValue("my-session")
+	d.autoBranchFromName()
+
+	if got := d.branchInput.Value(); got != "my-session" {
+		t.Errorf("expected branch %q, got %q", "my-session", got)
+	}
+}
+
+func TestNewDialog_BranchPrefix_Placeholder_Updated(t *testing.T) {
+	d := NewNewDialog()
+	d.branchPrefix = "fix/"
+	d.branchInput.Placeholder = d.branchPrefix + "branch-name"
+
+	if d.branchInput.Placeholder != "fix/branch-name" {
+		t.Errorf("expected placeholder %q, got %q", "fix/branch-name", d.branchInput.Placeholder)
+	}
+}
+
+func TestNewDialog_ToggleWorktree_CustomPrefix(t *testing.T) {
+	d := NewNewDialog()
+	d.branchPrefix = "dev/"
+	d.nameInput.SetValue("cool-feature")
+	d.ToggleWorktree()
+
+	if got := d.branchInput.Value(); got != "dev/cool-feature" {
+		t.Errorf("expected branch %q, got %q", "dev/cool-feature", got)
+	}
+}
