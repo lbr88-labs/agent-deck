@@ -250,6 +250,9 @@ func main() {
 		case "conductor":
 			handleConductor(profile, args[1:])
 			return
+		case "openclaw", "oc":
+			handleOpenClaw(profile, args[1:])
+			return
 		case "remote":
 			handleRemote(profile, args[1:])
 			return
