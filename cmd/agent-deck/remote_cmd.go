@@ -1,14 +1,18 @@
 package main
 
 import (
+	"bufio"
 	"context"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"os"
 	"strings"
 
 	"github.com/asheshgoplani/agent-deck/internal/session"
+	"github.com/asheshgoplani/agent-deck/internal/update"
 )
 
 func handleRemote(profile string, args []string) {
@@ -30,6 +34,8 @@ func handleRemote(profile string, args []string) {
 		handleRemoteAttach(args[1:])
 	case "rename":
 		handleRemoteRename(args[1:])
+	case "update":
+		handleRemoteUpdate(args[1:])
 	default:
 		fmt.Printf("Unknown remote command: %s\n", args[0])
 		printRemoteUsage()
@@ -49,6 +55,7 @@ func printRemoteUsage() {
 	fmt.Println("  sessions [name]           Fetch sessions from remote(s)")
 	fmt.Println("  attach <name> <session>   Attach to a remote session")
 	fmt.Println("  rename <name> <session> <new-title>  Rename a remote session")
+	fmt.Println("  update [name]             Install/update agent-deck on remote(s)")
 	fmt.Println()
 	fmt.Println("Examples:")
 	fmt.Println("  agent-deck remote add dev user@dev-box")
@@ -57,6 +64,8 @@ func printRemoteUsage() {
 	fmt.Println("  agent-deck remote sessions dev")
 	fmt.Println("  agent-deck remote attach dev my-session")
 	fmt.Println("  agent-deck remote rename dev my-session new-name")
+	fmt.Println("  agent-deck remote update          # Update all remotes")
+	fmt.Println("  agent-deck remote update dev      # Update specific remote")
 }
 
 func isValidRemoteName(name string) bool {
@@ -131,6 +140,26 @@ func handleRemoteAdd(args []string) {
 	}
 
 	fmt.Printf("Added remote '%s' (%s)\n", name, host)
+
+	// Check if agent-deck is available on the remote
+	runner := session.NewSSHRunner(name, rc)
+	ctx := context.Background()
+	remoteVersion, found := runner.CheckBinary(ctx)
+	if found {
+		fmt.Printf("  Remote agent-deck: v%s\n", remoteVersion)
+		if update.CompareVersions(remoteVersion, Version) < 0 {
+			fmt.Printf("  Note: remote is older than local (v%s). Run 'agent-deck remote update %s' to update.\n", Version, name)
+		}
+	} else {
+		fmt.Printf("  agent-deck not found on remote at '%s'\n", rc.GetAgentDeckPath())
+		fmt.Printf("  Installing v%s...\n", Version)
+		if err := installOnRemote(runner, ctx); err != nil {
+			fmt.Printf("  Warning: auto-install failed: %v\n", err)
+			fmt.Printf("  You can install manually or run: agent-deck remote update %s\n", name)
+		} else {
+			fmt.Printf("  ✓ Installed agent-deck v%s on remote '%s'\n", Version, name)
+		}
+	}
 }
 
 func handleRemoteRemove(args []string) {
@@ -421,6 +450,158 @@ func handleRemoteRename(args []string) {
 	}
 
 	fmt.Printf("Renamed '%s' → '%s' on remote '%s'\n", oldTitle, newTitle, remoteName)
+}
+
+func handleRemoteUpdate(args []string) {
+	config, err := session.LoadUserConfig()
+	if err != nil {
+		fmt.Printf("Error: failed to load config: %v\n", err)
+		os.Exit(1)
+	}
+
+	if len(config.Remotes) == 0 {
+		fmt.Println("No remotes configured.")
+		return
+	}
+
+	// Filter to specific remote if name provided
+	remoteName := ""
+	if len(args) > 0 {
+		remoteName = args[0]
+	}
+
+	ctx := context.Background()
+
+	for name, rc := range config.Remotes {
+		if remoteName != "" && name != remoteName {
+			continue
+		}
+
+		fmt.Printf("\n═══ Remote: %s (%s) ═══\n", name, rc.Host)
+
+		runner := session.NewSSHRunner(name, rc)
+
+		// Check current version
+		remoteVersion, found := runner.CheckBinary(ctx)
+		if found {
+			fmt.Printf("  Current version: v%s\n", remoteVersion)
+			if update.CompareVersions(remoteVersion, Version) >= 0 {
+				fmt.Printf("  ✓ Up to date (local: v%s)\n", Version)
+				continue
+			}
+			fmt.Printf("  Updating to v%s...\n", Version)
+		} else {
+			fmt.Printf("  agent-deck not found, installing v%s...\n", Version)
+		}
+
+		if err := installOnRemote(runner, ctx); err != nil {
+			fmt.Printf("  ✗ Failed: %v\n", err)
+		} else {
+			fmt.Printf("  ✓ Installed v%s\n", Version)
+		}
+	}
+
+	if remoteName != "" {
+		if _, exists := config.Remotes[remoteName]; !exists {
+			fmt.Printf("\nError: remote '%s' not found\n", remoteName)
+			os.Exit(1)
+		}
+	}
+}
+
+// updateRemotesAfterLocalUpdate prompts the user to update remotes after a successful local update.
+func updateRemotesAfterLocalUpdate(newVersion string) {
+	config, err := session.LoadUserConfig()
+	if err != nil || config == nil || len(config.Remotes) == 0 {
+		return
+	}
+
+	fmt.Printf("\nYou have %d remote(s) configured. Update them too? [Y/n] ", len(config.Remotes))
+	reader := bufio.NewReader(os.Stdin)
+	response, readErr := reader.ReadString('\n')
+	if !shouldProceedWithRemoteUpdate(response, readErr) {
+		return
+	}
+
+	ctx := context.Background()
+	for name, rc := range config.Remotes {
+		fmt.Printf("\n═══ Remote: %s (%s) ═══\n", name, rc.Host)
+		runner := session.NewSSHRunner(name, rc)
+
+		remoteVersion, found := runner.CheckBinary(ctx)
+		if found {
+			fmt.Printf("  Current version: v%s\n", remoteVersion)
+			if update.CompareVersions(remoteVersion, newVersion) >= 0 {
+				fmt.Printf("  ✓ Up to date\n")
+				continue
+			}
+			fmt.Printf("  Updating to v%s...\n", newVersion)
+		} else {
+			fmt.Printf("  agent-deck not found, installing v%s...\n", newVersion)
+		}
+
+		if err := installOnRemote(runner, ctx); err != nil {
+			fmt.Printf("  ✗ Failed: %v\n", err)
+		} else {
+			fmt.Printf("  ✓ Installed v%s\n", newVersion)
+		}
+	}
+}
+
+func shouldProceedWithRemoteUpdate(response string, readErr error) bool {
+	normalized := strings.TrimSpace(strings.ToLower(response))
+
+	// If stdin is not interactive and no input was provided, fail closed.
+	if errors.Is(readErr, io.EOF) && normalized == "" {
+		return false
+	}
+	if readErr != nil && !errors.Is(readErr, io.EOF) {
+		return false
+	}
+
+	if normalized == "" || normalized == "y" || normalized == "yes" {
+		return true
+	}
+	return false
+}
+
+// installOnRemote detects the remote platform and deploys the matching agent-deck binary.
+// It first tries to find a matching release on GitHub. If no release is available for the
+// local version, it falls back to downloading the latest release for the remote platform.
+func installOnRemote(runner *session.SSHRunner, ctx context.Context) error {
+	// Detect remote platform
+	goos, goarch, err := runner.DetectPlatform(ctx)
+	if err != nil {
+		return err
+	}
+	fmt.Printf("  Platform: %s/%s\n", goos, goarch)
+
+	// Fetch latest release from GitHub
+	release, err := update.FetchLatestRelease()
+	if err != nil {
+		return fmt.Errorf("failed to fetch release info: %w", err)
+	}
+
+	// Get download URL for the remote's platform
+	downloadURL := update.GetAssetURLForPlatform(release, goos, goarch)
+	if downloadURL == "" {
+		return fmt.Errorf("no release binary available for %s/%s", goos, goarch)
+	}
+
+	// Download and extract the binary
+	fmt.Printf("  Downloading %s/%s binary...\n", goos, goarch)
+	binaryData, err := update.DownloadAndExtractBinary(downloadURL)
+	if err != nil {
+		return fmt.Errorf("download failed: %w", err)
+	}
+
+	// Deploy to remote
+	fmt.Printf("  Deploying to %s...\n", runner.Host)
+	if err := runner.DeployBinary(ctx, binaryData); err != nil {
+		return fmt.Errorf("deploy failed: %w", err)
+	}
+
+	return nil
 }
 
 // reorderRemoteArgs moves flags before positional args for Go's flag package.

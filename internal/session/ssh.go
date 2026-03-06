@@ -124,6 +124,149 @@ func (r *SSHRunner) FetchSessions(ctx context.Context) ([]RemoteSessionInfo, err
 	return sessions, nil
 }
 
+// DetectPlatform returns the remote host's OS and architecture (e.g., "linux", "amd64").
+func (r *SSHRunner) DetectPlatform(ctx context.Context) (goos, goarch string, err error) {
+	_ = os.MkdirAll(sshControlDir, 0700)
+
+	// Run uname on the remote to detect OS and machine architecture
+	sshArgs := r.sshBaseArgs("uname -s -m")
+	timeoutCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+
+	cmd := exec.CommandContext(timeoutCtx, "ssh", sshArgs...)
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		return "", "", fmt.Errorf("failed to detect remote platform: %w: %s", err, stderr.String())
+	}
+
+	parts := strings.Fields(strings.TrimSpace(stdout.String()))
+	if len(parts) != 2 {
+		return "", "", fmt.Errorf("unexpected uname output: %s", stdout.String())
+	}
+
+	// Map uname output to Go's GOOS/GOARCH naming
+	switch strings.ToLower(parts[0]) {
+	case "linux":
+		goos = "linux"
+	case "darwin":
+		goos = "darwin"
+	default:
+		return "", "", fmt.Errorf("unsupported remote OS: %s", parts[0])
+	}
+
+	switch parts[1] {
+	case "x86_64", "amd64":
+		goarch = "amd64"
+	case "aarch64", "arm64":
+		goarch = "arm64"
+	default:
+		return "", "", fmt.Errorf("unsupported remote arch: %s", parts[1])
+	}
+
+	return goos, goarch, nil
+}
+
+// CheckBinary checks if agent-deck exists at the configured path on the remote.
+// Returns the version string if found, or empty string if not found.
+func (r *SSHRunner) CheckBinary(ctx context.Context) (version string, found bool) {
+	_ = os.MkdirAll(sshControlDir, 0700)
+
+	remoteCmd := shellQuote(r.AgentDeckPath) + " version"
+	sshArgs := r.sshBaseArgs(remoteCmd)
+	timeoutCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+
+	cmd := exec.CommandContext(timeoutCtx, "ssh", sshArgs...)
+	var stdout bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = nil
+
+	if err := cmd.Run(); err != nil {
+		return "", false
+	}
+
+	out := strings.TrimSpace(stdout.String())
+	// Output is like "Agent Deck v0.20.2"
+	if idx := strings.LastIndex(out, "v"); idx >= 0 {
+		return strings.TrimSpace(out[idx+1:]), true
+	}
+	return out, true
+}
+
+// DeployBinary uploads a binary to the remote at the configured agent-deck path.
+func (r *SSHRunner) DeployBinary(ctx context.Context, binaryData []byte) error {
+	_ = os.MkdirAll(sshControlDir, 0700)
+
+	// Write binary to temp file locally
+	tmpFile, err := os.CreateTemp("", "agent-deck-remote-*")
+	if err != nil {
+		return fmt.Errorf("failed to create temp file: %w", err)
+	}
+	tmpPath := tmpFile.Name()
+	defer os.Remove(tmpPath)
+
+	if _, err := tmpFile.Write(binaryData); err != nil {
+		tmpFile.Close()
+		return fmt.Errorf("failed to write temp file: %w", err)
+	}
+	tmpFile.Close()
+
+	// Ensure remote directory exists
+	remoteDir := r.AgentDeckPath
+	if idx := strings.LastIndex(remoteDir, "/"); idx > 0 {
+		mkdirCmd := "mkdir -p " + shellQuote(remoteDir[:idx])
+		mkdirArgs := r.sshBaseArgs(mkdirCmd)
+		mkdirCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+		defer cancel()
+		mkCmd := exec.CommandContext(mkdirCtx, "ssh", mkdirArgs...)
+		_ = mkCmd.Run()
+	}
+
+	// SCP the binary to the remote
+	scpArgs := []string{
+		"-o", "ControlMaster=auto",
+		"-o", "ControlPath=" + sshControlDir + "/%r@%h:%p",
+		"-o", "ControlPersist=600",
+		"-o", "ConnectTimeout=10",
+		tmpPath,
+		r.Host + ":" + r.AgentDeckPath,
+	}
+
+	scpCtx, cancel := context.WithTimeout(ctx, 120*time.Second)
+	defer cancel()
+	scpCmd := exec.CommandContext(scpCtx, "scp", scpArgs...)
+	var stderr bytes.Buffer
+	scpCmd.Stderr = &stderr
+	if err := scpCmd.Run(); err != nil {
+		return fmt.Errorf("scp failed: %w: %s", err, stderr.String())
+	}
+
+	// Make executable
+	chmodCmd := "chmod +x " + shellQuote(r.AgentDeckPath)
+	chmodArgs := r.sshBaseArgs(chmodCmd)
+	chmodCtx, cancel2 := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel2()
+	cCmd := exec.CommandContext(chmodCtx, "ssh", chmodArgs...)
+	_ = cCmd.Run()
+
+	return nil
+}
+
+// sshBaseArgs returns common SSH args for running a raw command on the remote.
+func (r *SSHRunner) sshBaseArgs(remoteCmd string) []string {
+	return []string{
+		"-o", "ControlMaster=auto",
+		"-o", "ControlPath=" + sshControlDir + "/%r@%h:%p",
+		"-o", "ControlPersist=600",
+		"-o", "ConnectTimeout=10",
+		"-o", "BatchMode=yes",
+		r.Host,
+		remoteCmd,
+	}
+}
+
 // RemoteSessionInfo represents a session from a remote agent-deck instance.
 type RemoteSessionInfo struct {
 	ID        string `json:"id"`
