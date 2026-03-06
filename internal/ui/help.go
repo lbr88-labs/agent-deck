@@ -163,6 +163,7 @@ func (h *HelpOverlay) View() string {
 				{"h / Left", "Collapse / parent"},
 				{"l / Right", "Expand / toggle"},
 				{"1-9", "Jump to group"},
+				{"Space", "Jump mode"},
 				{"Enter", "Attach / toggle"},
 			},
 		},
