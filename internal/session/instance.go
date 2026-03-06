@@ -396,7 +396,7 @@ func (i *Instance) buildClaudeCommand(baseCommand string) string {
 // buildClaudeCommandWithMessage builds the command with optional initial message
 // Respects ClaudeOptions from instance if set, otherwise falls back to config defaults
 func (i *Instance) buildClaudeCommandWithMessage(baseCommand, message string) string {
-	if i.Tool != "claude" {
+	if !IsClaudeCompatible(i.Tool) {
 		return baseCommand
 	}
 
@@ -1744,18 +1744,18 @@ func (i *Instance) Start() error {
 	}
 
 	// Build command based on tool type
-	// Priority: built-in tools (claude, gemini, opencode, codex) → custom tools from config.toml → raw command
+	// Priority: claude-compatible (built-in + custom wrapping claude) → built-in tools → custom tools → raw command
 	var command string
-	switch i.Tool {
-	case "claude":
+	switch {
+	case IsClaudeCompatible(i.Tool):
 		command = i.buildClaudeCommand(i.Command)
-	case "gemini":
+	case i.Tool == "gemini":
 		command = i.buildGeminiCommand(i.Command)
-	case "opencode":
+	case i.Tool == "opencode":
 		command = i.buildOpenCodeCommand(i.Command)
 		// Record start time for session ID detection (Unix millis)
 		i.OpenCodeStartedAt = time.Now().UnixMilli()
-	case "codex":
+	case i.Tool == "codex":
 		command = i.buildCodexCommand(i.Command)
 		// Record start time for session ID detection (Unix millis)
 		i.CodexStartedAt = time.Now().UnixMilli()
@@ -1836,15 +1836,15 @@ func (i *Instance) StartWithMessage(message string) error {
 	// Start session normally (no embedded message logic)
 	// Priority: built-in tools (claude, gemini, opencode, codex) → custom tools from config.toml → raw command
 	var command string
-	switch i.Tool {
-	case "claude":
+	switch {
+	case IsClaudeCompatible(i.Tool):
 		command = i.buildClaudeCommand(i.Command)
-	case "gemini":
+	case i.Tool == "gemini":
 		command = i.buildGeminiCommand(i.Command)
-	case "opencode":
+	case i.Tool == "opencode":
 		command = i.buildOpenCodeCommand(i.Command)
 		i.OpenCodeStartedAt = time.Now().UnixMilli()
-	case "codex":
+	case i.Tool == "codex":
 		command = i.buildCodexCommand(i.Command)
 		i.CodexStartedAt = time.Now().UnixMilli()
 	default:
@@ -1960,7 +1960,7 @@ func (i *Instance) sendMessageWhenReady(message string) error {
 		//    This handles the race where Claude finishes before we start checking
 		alreadyReady := readyCount >= 10 && attempt >= 15 // At least 3s elapsed
 		if (sawActive && (status == "waiting" || status == "idle")) || alreadyReady {
-			if i.Tool == "claude" {
+			if IsClaudeCompatible(i.Tool) {
 				if rawContent, captureErr := i.tmuxSession.CapturePaneFresh(); captureErr == nil && !hasCurrentComposerPrompt(tmux.StripANSI(rawContent)) {
 					// Claude can report waiting before the interactive prompt is visible.
 					// Keep polling until the prompt line is present.
@@ -2304,7 +2304,7 @@ func (i *Instance) UpdateStatus() error {
 
 	// HOOK FAST PATH: hook-based status for tools that emit lifecycle events.
 	// Freshness is tool- and state-specific (e.g. Codex running vs waiting).
-	if (i.Tool == "claude" || i.Tool == "codex") &&
+	if (IsClaudeCompatible(i.Tool) || i.Tool == "codex") &&
 		i.hookStatus != "" &&
 		time.Since(i.hookLastUpdate) < hookFastPathFreshnessForTool(i.Tool, i.hookStatus) {
 		switch i.hookStatus {
@@ -2339,13 +2339,13 @@ func (i *Instance) UpdateStatus() error {
 			i.Status = StatusError
 		}
 		if i.hookSessionID != "" {
-			switch i.Tool {
-			case "claude":
+			switch {
+			case IsClaudeCompatible(i.Tool):
 				if i.hookSessionID != i.ClaudeSessionID {
 					i.ClaudeSessionID = i.hookSessionID
 					i.ClaudeDetectedAt = time.Now()
 				}
-			case "codex":
+			case i.Tool == "codex":
 				if i.hookSessionID != i.CodexSessionID {
 					i.CodexSessionID = i.hookSessionID
 					i.CodexDetectedAt = time.Now()
@@ -2431,7 +2431,7 @@ func (i *Instance) UpdateStatus() error {
 //
 // No file scanning fallback - we rely on the consistent capture-resume pattern.
 func (i *Instance) UpdateClaudeSession(excludeIDs map[string]bool) {
-	if i.Tool != "claude" {
+	if !IsClaudeCompatible(i.Tool) {
 		return
 	}
 
@@ -2504,7 +2504,7 @@ func (i *Instance) collectOtherClaudeSessionIDs() map[string]bool {
 // This handles the case where /clear in Claude Code creates a new session UUID
 // that the tmux env var doesn't know about yet.
 func (i *Instance) syncClaudeSessionFromDisk() {
-	if i.Tool != "claude" {
+	if !IsClaudeCompatible(i.Tool) {
 		return
 	}
 
@@ -2573,8 +2573,8 @@ func (i *Instance) UpdateHookStatus(status *HookStatus) {
 		return
 	}
 
-	switch i.Tool {
-	case "claude":
+	switch {
+	case IsClaudeCompatible(i.Tool):
 		if status.SessionID == i.ClaudeSessionID {
 			return
 		}
@@ -2594,7 +2594,7 @@ func (i *Instance) UpdateHookStatus(status *HookStatus) {
 				_ = i.tmuxSession.SetEnvironment("CLAUDE_SESSION_ID", status.SessionID)
 			}
 		}
-	case "codex":
+	case i.Tool == "codex":
 		if status.SessionID == i.CodexSessionID {
 			return
 		}
@@ -2785,7 +2785,7 @@ func (i *Instance) updateGeminiLatestPrompt() {
 // The capture-resume pattern sets CLAUDE_SESSION_ID in tmux env, so we poll for that.
 // Returns the detected session ID or empty string after timeout.
 func (i *Instance) WaitForClaudeSession(maxWait time.Duration) string {
-	if i.Tool != "claude" {
+	if !IsClaudeCompatible(i.Tool) {
 		return ""
 	}
 
@@ -2822,10 +2822,10 @@ func (i *Instance) WaitForClaudeSessionWithExclude(maxWait time.Duration, exclud
 // For Gemini: reads session ID from filesystem.
 // For OpenCode/Codex: no-op (async goroutine detection, too slow for sync CLI).
 func (i *Instance) PostStartSync(maxWait time.Duration) {
-	switch i.Tool {
-	case "claude":
+	switch {
+	case IsClaudeCompatible(i.Tool):
 		i.WaitForClaudeSession(maxWait)
-	case "gemini":
+	case i.Tool == "gemini":
 		i.UpdateGeminiSession(nil)
 	}
 	// OpenCode/Codex: async detection already started by Start(), skip here
@@ -2919,7 +2919,7 @@ type ResponseOutput struct {
 // For Gemini: Parses the JSON session file for the last assistant message
 // For Codex/Others: Attempts to parse terminal output
 func (i *Instance) GetLastResponse() (*ResponseOutput, error) {
-	if i.Tool == "claude" {
+	if IsClaudeCompatible(i.Tool) {
 		return i.getClaudeLastResponse()
 	}
 	if i.Tool == "gemini" {
@@ -2945,7 +2945,7 @@ func (i *Instance) GetLastResponseBestEffort() (*ResponseOutput, error) {
 	}
 
 	// Claude-specific recovery path
-	if i.Tool == "claude" {
+	if IsClaudeCompatible(i.Tool) {
 		// Refresh from tmux env (fast path)
 		if sessionID := i.GetSessionIDFromTmux(); sessionID != "" {
 			i.ClaudeSessionID = sessionID
@@ -2972,7 +2972,7 @@ func (i *Instance) GetLastResponseBestEffort() (*ResponseOutput, error) {
 	}
 
 	// For Claude, prefer a graceful empty response instead of a hard error.
-	if i.Tool == "claude" {
+	if IsClaudeCompatible(i.Tool) {
 		return &ResponseOutput{
 			Tool:    "claude",
 			Role:    "assistant",
@@ -2986,7 +2986,7 @@ func (i *Instance) GetLastResponseBestEffort() (*ResponseOutput, error) {
 // GetJSONLPath returns the path to the Claude session JSONL file for analytics
 // Returns empty string if this is not a Claude session or no session ID is available
 func (i *Instance) GetJSONLPath() string {
-	if i.Tool != "claude" || i.ClaudeSessionID == "" {
+	if !IsClaudeCompatible(i.Tool) || i.ClaudeSessionID == "" {
 		return ""
 	}
 
@@ -3580,7 +3580,7 @@ func (i *Instance) Restart() error {
 
 	// Regenerate .mcp.json before restart to use socket pool if available
 	// Skip if MCP dialog just wrote the config (avoids race condition)
-	if i.Tool == "claude" && !skipRegen {
+	if IsClaudeCompatible(i.Tool) && !skipRegen {
 		if err := i.regenerateMCPConfig(); err != nil {
 			mcpLog.Warn("mcp_config_regen_failed", slog.String("error", err.Error()))
 			// Continue with restart - Claude will use existing .mcp.json or defaults
@@ -3590,12 +3590,12 @@ func (i *Instance) Restart() error {
 	}
 
 	// Sync Claude session from disk before restart to pick up /clear session changes
-	if i.Tool == "claude" {
+	if IsClaudeCompatible(i.Tool) {
 		i.syncClaudeSessionFromDisk()
 	}
 
 	// If Claude session with known ID AND tmux session exists, use respawn-pane.
-	if i.Tool == "claude" && i.ClaudeSessionID != "" && i.tmuxSession != nil && i.tmuxSession.Exists() {
+	if IsClaudeCompatible(i.Tool) && i.ClaudeSessionID != "" && i.tmuxSession != nil && i.tmuxSession.Exists() {
 		resumeCmd, containerName, err := i.prepareCommand(i.buildClaudeResumeCommand())
 		if err != nil {
 			return err
@@ -3802,7 +3802,7 @@ func (i *Instance) Restart() error {
 	i.tmuxSession.SetInjectStatusLine(GetTmuxSettings().GetInjectStatusLine())
 
 	var command string
-	if i.Tool == "claude" && i.ClaudeSessionID != "" {
+	if IsClaudeCompatible(i.Tool) && i.ClaudeSessionID != "" {
 		command = i.buildClaudeResumeCommand()
 	} else if i.Tool == "gemini" && i.GeminiSessionID != "" {
 		command = i.buildGeminiCommand("gemini")
@@ -3814,16 +3814,16 @@ func (i *Instance) Restart() error {
 		command = i.buildCodexCommand("codex")
 	} else {
 		// Route to appropriate command builder based on tool
-		switch i.Tool {
-		case "claude":
+		switch {
+		case IsClaudeCompatible(i.Tool):
 			command = i.buildClaudeCommand(i.Command)
-		case "gemini":
+		case i.Tool == "gemini":
 			command = i.buildGeminiCommand(i.Command)
-		case "opencode":
+		case i.Tool == "opencode":
 			command = i.buildOpenCodeCommand(i.Command)
 			// Record start time for async session ID detection
 			i.OpenCodeStartedAt = time.Now().UnixMilli()
-		case "codex":
+		case i.Tool == "codex":
 			command = i.buildCodexCommand(i.Command)
 			// Record start time for async session ID detection
 			i.CodexStartedAt = time.Now().UnixMilli()
@@ -3986,7 +3986,7 @@ func (i *Instance) CanRestart() bool {
 	}
 
 	// Claude sessions with known session ID can always be restarted
-	if i.Tool == "claude" && i.ClaudeSessionID != "" {
+	if IsClaudeCompatible(i.Tool) && i.ClaudeSessionID != "" {
 		return true
 	}
 
@@ -4422,10 +4422,10 @@ func (i *Instance) GetSessionIDFromTmux() string {
 // GetMCPInfo returns MCP server information for this session
 // Returns nil if not a Claude or Gemini session
 func (i *Instance) GetMCPInfo() *MCPInfo {
-	switch i.Tool {
-	case "claude":
+	switch {
+	case IsClaudeCompatible(i.Tool):
 		return GetMCPInfo(i.ProjectPath)
-	case "gemini":
+	case i.Tool == "gemini":
 		return GetGeminiMCPInfo(i.ProjectPath)
 	default:
 		return nil
@@ -4436,7 +4436,7 @@ func (i *Instance) GetMCPInfo() *MCPInfo {
 // This should be called when a session starts or restarts, so we can track
 // which MCPs are actually loaded in the running Claude session vs just configured
 func (i *Instance) CaptureLoadedMCPs() {
-	if i.Tool != "claude" {
+	if !IsClaudeCompatible(i.Tool) {
 		i.LoadedMCPNames = nil
 		return
 	}
@@ -4971,7 +4971,7 @@ func UpdateClaudeSessionsWithDedup(instances []*Instance) {
 	// Find and clear duplicate IDs (keep only the oldest session's claim)
 	idOwner := make(map[string]*Instance)
 	for _, inst := range ordered {
-		if inst.Tool != "claude" || inst.ClaudeSessionID == "" {
+		if !IsClaudeCompatible(inst.Tool) || inst.ClaudeSessionID == "" {
 			continue
 		}
 		if owner, exists := idOwner[inst.ClaudeSessionID]; exists {

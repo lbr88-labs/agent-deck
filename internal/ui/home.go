@@ -1506,7 +1506,7 @@ func (h *Home) cleanupExpiredAnimations(
 		// Use appropriate timeout based on tool
 		// Claude and Gemini use longer timeout (MCP loading can be slow)
 		timeout := defaultTimeout
-		if inst.Tool == "claude" || inst.Tool == "gemini" {
+		if session.IsClaudeCompatible(inst.Tool) || inst.Tool == "gemini" {
 			timeout = claudeTimeout
 		}
 		if time.Since(startTime) > timeout {
@@ -1520,7 +1520,7 @@ func (h *Home) cleanupExpiredAnimations(
 }
 
 func launchAnimationMinDuration(tool string) time.Duration {
-	if tool == "claude" || tool == "gemini" {
+	if session.IsClaudeCompatible(tool) || tool == "gemini" {
 		return minLaunchAnimationDurationClaude
 	}
 	return minLaunchAnimationDurationDefault
@@ -1927,7 +1927,7 @@ func (h *Home) backgroundStatusUpdate() {
 	// Feed hook statuses from watcher to instances (enables hook fast path in UpdateStatus)
 	if h.hookWatcher != nil {
 		for _, inst := range instances {
-			if inst.Tool == "claude" || inst.Tool == "codex" {
+			if session.IsClaudeCompatible(inst.Tool) || inst.Tool == "codex" {
 				if hs := h.hookWatcher.GetHookStatus(inst.ID); hs != nil {
 					inst.UpdateHookStatus(hs)
 				}
@@ -1938,7 +1938,7 @@ func (h *Home) backgroundStatusUpdate() {
 	// Proactive context-% monitoring: send /clear before auto-compact triggers
 	// For conductor sessions with clear_on_compact enabled, check cached analytics
 	for _, inst := range instances {
-		if inst.Tool != "claude" || inst.GroupPath != "conductor" {
+		if !session.IsClaudeCompatible(inst.Tool) || inst.GroupPath != "conductor" {
 			continue
 		}
 		if !inst.ConductorClearOnCompact() {
@@ -4199,7 +4199,7 @@ func (h *Home) handleMainKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if h.cursor < len(h.flatItems) {
 			item := h.flatItems[h.cursor]
 			if item.Type == session.ItemTypeSession && item.Session != nil &&
-				(item.Session.Tool == "claude" || item.Session.Tool == "gemini") {
+				(session.IsClaudeCompatible(item.Session.Tool) || item.Session.Tool == "gemini") {
 				h.mcpDialog.SetSize(h.width, h.height)
 				if err := h.mcpDialog.Show(item.Session.ProjectPath, item.Session.ID, item.Session.Tool); err != nil {
 					h.setError(err)
@@ -4249,7 +4249,7 @@ func (h *Home) handleMainKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if h.cursor < len(h.flatItems) {
 			item := h.flatItems[h.cursor]
 			if item.Type == session.ItemTypeSession && item.Session != nil &&
-				item.Session.Tool == "claude" {
+				session.IsClaudeCompatible(item.Session.Tool) {
 				h.skillDialog.SetSize(h.width, h.height)
 				if err := h.skillDialog.Show(item.Session.ProjectPath, item.Session.ID, item.Session.Tool); err != nil {
 					h.setError(err)
@@ -5008,7 +5008,7 @@ func (h *Home) handleSkillDialogKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 			sessionID := h.skillDialog.GetSessionID()
 			targetInst := h.getInstanceByID(sessionID)
-			if targetInst != nil && targetInst.Tool == "claude" {
+			if targetInst != nil && session.IsClaudeCompatible(targetInst.Tool) {
 				h.skillDialog.Hide()
 				return h, h.restartSession(targetInst)
 			}
@@ -7255,13 +7255,13 @@ func (h *Home) renderHelpBarMinimal() string {
 					contextKeys += " " + forkRendered
 				}
 			}
-			if item.Session != nil && (item.Session.Tool == "claude" || item.Session.Tool == "gemini") {
+			if item.Session != nil && (session.IsClaudeCompatible(item.Session.Tool) || item.Session.Tool == "gemini") {
 				mcpRendered := renderKeys(mcpKey)
 				if mcpRendered != "" {
 					contextKeys += " " + mcpRendered
 				}
 			}
-			if item.Session != nil && item.Session.Tool == "claude" {
+			if item.Session != nil && session.IsClaudeCompatible(item.Session.Tool) {
 				skillsRendered := renderKeys(skillsKey)
 				if skillsRendered != "" {
 					contextKeys += " " + skillsRendered
@@ -7351,7 +7351,7 @@ func (h *Home) renderHelpBarCompact() string {
 					contextHints = append(contextHints, h.helpKeyShort(key, "Fork"))
 				}
 			}
-			if item.Session != nil && (item.Session.Tool == "claude" || item.Session.Tool == "gemini") {
+			if item.Session != nil && (session.IsClaudeCompatible(item.Session.Tool) || item.Session.Tool == "gemini") {
 				if key := h.actionKey(hotkeyMCPManager); key != "" {
 					contextHints = append(contextHints, h.helpKeyShort(key, "MCP"))
 				}
@@ -7359,7 +7359,7 @@ func (h *Home) renderHelpBarCompact() string {
 					contextHints = append(contextHints, h.helpKeyShort(key, h.previewModeShort()))
 				}
 			}
-			if item.Session != nil && item.Session.Tool == "claude" {
+			if item.Session != nil && session.IsClaudeCompatible(item.Session.Tool) {
 				if key := h.actionKey(hotkeySkillsManager); key != "" {
 					contextHints = append(contextHints, h.helpKeyShort(key, "Skills"))
 				}
@@ -7511,7 +7511,7 @@ func (h *Home) renderHelpBarFull() string {
 				}
 			}
 			// Show MCP Manager and preview mode toggle for Claude and Gemini sessions
-			if item.Session != nil && (item.Session.Tool == "claude" || item.Session.Tool == "gemini") {
+			if item.Session != nil && (session.IsClaudeCompatible(item.Session.Tool) || item.Session.Tool == "gemini") {
 				if mcpKey != "" {
 					primaryHints = append(primaryHints, h.helpKey(mcpKey, "MCP"))
 				}
@@ -7519,7 +7519,7 @@ func (h *Home) renderHelpBarFull() string {
 					primaryHints = append(primaryHints, h.helpKey(previewKey, h.previewModeShort()))
 				}
 			}
-			if item.Session != nil && item.Session.Tool == "claude" {
+			if item.Session != nil && session.IsClaudeCompatible(item.Session.Tool) {
 				if skillsKey != "" {
 					primaryHints = append(primaryHints, h.helpKey(skillsKey, "Skills"))
 				}
@@ -8613,7 +8613,7 @@ func (h *Home) renderPreviewPane(width, height int) string {
 	}
 
 	// Claude-specific info (session ID and MCPs)
-	if selected.Tool == "claude" {
+	if session.IsClaudeCompatible(selected.Tool) {
 		// Section divider for Claude info
 		claudeHeader := renderSectionDivider("Claude", width-4)
 		b.WriteString(claudeHeader)
@@ -8915,7 +8915,7 @@ func (h *Home) renderPreviewPane(width, height int) string {
 	}
 
 	// Custom tool info (tools defined in config.toml that aren't built-in)
-	if selected.Tool != "claude" && selected.Tool != "gemini" && selected.Tool != "opencode" &&
+	if !session.IsClaudeCompatible(selected.Tool) && selected.Tool != "gemini" && selected.Tool != "opencode" &&
 		selected.Tool != "codex" {
 		if toolDef := session.GetToolDef(selected.Tool); toolDef != nil {
 			toolName := selected.Tool
@@ -8965,7 +8965,7 @@ func (h *Home) renderPreviewPane(width, height int) string {
 	// Check preview settings for what to show
 	config, _ := session.LoadUserConfig()
 	showAnalytics := config != nil && config.GetShowAnalytics() &&
-		(selected.Tool == "claude" || selected.Tool == "gemini")
+		(session.IsClaudeCompatible(selected.Tool) || selected.Tool == "gemini")
 	showOutput := config == nil || config.GetShowOutput() // Default to true if config fails
 	notesOutputSplit := 0.33
 	if config != nil {
@@ -9160,7 +9160,7 @@ func (h *Home) renderPreviewPane(width, height int) string {
 				// Strip ANSI for reliable pattern matching
 				plainPreview := ansi.Strip(previewContent)
 
-				if selected.Tool == "claude" || selected.Tool == "gemini" {
+				if session.IsClaudeCompatible(selected.Tool) || selected.Tool == "gemini" {
 					// Claude/Gemini ready indicators
 					agentReady := strings.Contains(plainPreview, "ctrl+c to interrupt") ||
 						strings.Contains(plainPreview, "No, and tell Claude what to do differently") ||

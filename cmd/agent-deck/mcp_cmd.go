@@ -453,7 +453,7 @@ func handleMCPAttach(profile string, args []string) {
 
 	// Restart if requested
 	restarted := false
-	if *restart && (inst.Tool == "claude" || inst.Tool == "gemini") {
+	if *restart && (session.IsClaudeCompatible(inst.Tool) || inst.Tool == "gemini") {
 		if err := inst.Restart(); err != nil {
 			// Don't fail the whole operation, just warn
 			if !*jsonOutput && !quietMode {
@@ -605,7 +605,7 @@ func handleMCPDetach(profile string, args []string) {
 
 	// Restart if requested
 	restarted := false
-	if *restart && (inst.Tool == "claude" || inst.Tool == "gemini") {
+	if *restart && (session.IsClaudeCompatible(inst.Tool) || inst.Tool == "gemini") {
 		if err := inst.Restart(); err != nil {
 			// Don't fail the whole operation, just warn
 			if !*jsonOutput && !quietMode {
