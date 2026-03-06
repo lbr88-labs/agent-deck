@@ -23,9 +23,9 @@ Requirements for integration testing milestone. Each maps to roadmap phases.
 
 ### Status Detection
 
-- [ ] **DETECT-01**: Sleep/wait detection correctly identifies patterns for Claude, Gemini, OpenCode, and Codex via simulated output
-- [ ] **DETECT-02**: Multi-tool session creation produces correct commands and detection config per tool type
-- [ ] **DETECT-03**: Status transition cycle (starting -> running -> waiting -> idle) verified with real tmux pane content
+- [x] **DETECT-01**: Sleep/wait detection correctly identifies patterns for Claude, Gemini, OpenCode, and Codex via simulated output
+- [x] **DETECT-02**: Multi-tool session creation produces correct commands and detection config per tool type
+- [x] **DETECT-03**: Status transition cycle (starting -> running -> waiting -> idle) verified with real tmux pane content
 
 ### Conductor Orchestration
 
@@ -73,9 +73,9 @@ Requirements for integration testing milestone. Each maps to roadmap phases.
 | LIFE-02 | Phase 4 | Complete |
 | LIFE-03 | Phase 4 | Complete |
 | LIFE-04 | Phase 4 | Complete |
-| DETECT-01 | Phase 5 | Pending |
-| DETECT-02 | Phase 5 | Pending |
-| DETECT-03 | Phase 5 | Pending |
+| DETECT-01 | Phase 5 | Complete |
+| DETECT-02 | Phase 5 | Complete |
+| DETECT-03 | Phase 5 | Complete |
 | COND-01 | Phase 5 | Complete |
 | COND-02 | Phase 5 | Complete |
 | COND-03 | Phase 6 | Pending |
