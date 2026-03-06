@@ -1,12 +1,25 @@
-# Agent Deck: Skills Reorganization & Stabilization
+# Agent Deck: Integration Testing Framework
 
 ## What This Is
 
-Agent-deck is a terminal session manager for AI coding agents (Go + Bubble Tea TUI managing tmux sessions). This milestone focuses on reorganizing the skills system to use the official Anthropic skill-creator format, packaging the GSD conductor skill for the pool, and stabilizing the codebase through testing and bug fixes. Currently at v0.21.1 on origin/main.
+Agent-deck is a terminal session manager for AI coding agents (Go + Bubble Tea TUI managing tmux sessions). This milestone focuses on building a comprehensive integration testing framework that tests the full conductor orchestration pipeline, multi-tool session behavior, and cross-session event mechanisms. Currently at v0.21.1 on origin/main.
 
 ## Core Value
 
-Skills must load correctly and trigger reliably when sessions start or on demand, ensuring agent-deck's skill ecosystem works seamlessly with Claude Code's plugin system.
+Conductor orchestration and cross-session coordination must be reliably tested end-to-end, catching regressions before they reach users.
+
+## Current Milestone: v1.1 Integration Testing
+
+**Goal:** Build a comprehensive integration testing framework for agent-deck that tests the full conductor orchestration pipeline.
+
+**Target features:**
+- Test framework architecture for integration tests
+- Conductor orchestration pipeline testing (send to child response)
+- Cross-session event notification testing
+- Multi-tool session testing (Claude Code, Gemini CLI, OpenCode, Codex)
+- Sleep/wait detection reliability testing across all tools
+- Skills attachment and triggering tests
+- Session lifecycle integration tests (start, stop, fork, restart with flags)
 
 ## Requirements
 
@@ -21,50 +34,53 @@ Skills must load correctly and trigger reliably when sessions start or on demand
 - Git worktree integration
 - Claude Code and Gemini CLI integration
 - Plugin system with skills loading from cache
+- Skills reformatted to official Anthropic skill-creator structure (v1.0)
+- Sleep/wake detection and status transitions tested (v1.0)
+- Session lifecycle unit tests passing (v1.0)
+- Codebase stabilized, lint clean, all tests passing (v1.0)
 
 ### Active
 
-- [ ] Reformat agent-deck skill to official skill-creator structure (SKILL.md + scripts/ + references/)
-- [ ] Reformat session-share skill to official skill-creator structure
-- [ ] Package gsd-conductor skill properly for the skills pool (~/.agent-deck/skills/pool/)
-- [ ] Test sleep/wake detection and status transitions
-- [ ] Test skills triggering (loading correctly when sessions start or on demand)
-- [ ] Test session lifecycle end-to-end (start, stop, fork, attach, status tracking)
-- [ ] Fix bugs discovered during testing
-- [ ] Clean up dead code, improve linting, remove stale artifacts
-- [ ] Ensure release readiness (all tests pass, lint clean, build succeeds)
+- [ ] Integration test framework architecture
+- [ ] Conductor orchestration pipeline tests
+- [ ] Cross-session event notification tests
+- [ ] Multi-tool session behavior tests
+- [ ] Sleep/wait detection reliability tests
+- [ ] Skills attachment and triggering integration tests
+- [ ] Session lifecycle integration tests with flags
 
 ### Out of Scope
 
-- New features or functionality beyond skills reorganization
-- Version bump decision (deferred until work is assessed)
-- CI/CD pipeline changes
-- Documentation beyond what's needed for skill format changes
+- New features or functionality beyond testing infrastructure
+- UI/TUI testing (Bubble Tea testing requires separate approach)
+- Performance/load testing
+- CI/CD pipeline integration (tests run locally)
 
 ## Context
 
-- **Current skills location (repo):** `skills/agent-deck/` and `skills/session-share/` with SKILL.md + scripts/ + references/
-- **Plugin cache:** Skills get copied to `~/.claude/plugins/cache/agent-deck/agent-deck/<hash>/skills/`
-- **GSD conductor skill:** Already exists at `~/.agent-deck/skills/pool/gsd-conductor/SKILL.md` but may need updates
-- **Pool skills:** On-demand loading via `Read ~/.agent-deck/skills/pool/<name>/SKILL.md`
-- **Anthropic official format:** Uses `init_skill.py` from `example-skills/skill-creator`, produces SKILL.md + optional scripts/, references/, assets/
-- **GSD framework:** Installed locally in `.claude/get-shit-done/` with commands, agents, workflows, templates
-- **Test infrastructure:** TestMain files force `AGENTDECK_PROFILE=_test` for isolation
+- **Previous milestone (v1.0):** Skills Reorganization & Stabilization, 18 requirements completed across 3 phases
+- **Existing test infrastructure:** TestMain files force `AGENTDECK_PROFILE=_test` for isolation, `skipIfNoTmuxServer(t)` for CI graceful skip
+- **Conductor logic:** `internal/session/conductor.go` handles multi-agent orchestration
+- **Multi-tool support:** Claude Code (`claude.go`), Gemini CLI (`gemini.go`), with different sleep/wait patterns
+- **Session management:** `internal/session/instance.go` (struct, status enum), `storage.go` (SQLite), `config.go` (profiles)
+- **tmux layer:** `internal/tmux/` with session cache, pipe manager, pane capture
 
 ## Constraints
 
 - **Tech stack:** Go 1.24+, tmux, Bubble Tea, SQLite (modernc.org/sqlite)
-- **Compatibility:** Skills must work with Claude Code's plugin system and the existing `~/.claude/plugins/cache/` resolution
-- **Safety:** Never run `tmux kill-server` or broad kill patterns targeting agentdeck sessions
-- **Public repo:** No API keys, tokens, or personal data in commits
+- **Test isolation:** All tests must use `AGENTDECK_PROFILE=_test` via TestMain
+- **tmux dependency:** Integration tests require running tmux server; must skip gracefully without one
+- **No production side effects:** Tests must not affect real user sessions or state
+- **Public repo:** No API keys, tokens, or personal data in test fixtures
 
 ## Key Decisions
 
 | Decision | Rationale | Outcome |
 |----------|-----------|---------|
-| Skills stay in repo `skills/` directory | Plugin system copies them to cache on install | -- Pending |
-| GSD conductor goes to pool, not built-in | Only needed in conductor contexts, not every session | -- Pending |
-| Skip codebase mapping | CLAUDE.md already has comprehensive architecture docs | -- Pending |
+| Skills stay in repo `skills/` directory | Plugin system copies them to cache on install | Good |
+| GSD conductor goes to pool, not built-in | Only needed in conductor contexts, not every session | Good |
+| Skip codebase mapping | CLAUDE.md already has comprehensive architecture docs | Good |
+| Architecture first approach for test framework | Need consistent patterns before writing many tests | -- Pending |
 
 ---
-*Last updated: 2026-03-06 after initialization*
+*Last updated: 2026-03-06 after milestone v1.1 initialization*
