@@ -36,9 +36,9 @@ Requirements for integration testing milestone. Each maps to roadmap phases.
 
 ### Edge Cases
 
-- [ ] **EDGE-01**: Skills discovered from directory, attached to session, trigger conditions evaluated correctly
-- [ ] **EDGE-02**: Concurrent polling of 10+ sessions returns correct status for each without races
-- [ ] **EDGE-03**: Storage watcher detects external SQLite changes from a second Storage instance
+- [x] **EDGE-01**: Skills discovered from directory, attached to session, trigger conditions evaluated correctly
+- [x] **EDGE-02**: Concurrent polling of 10+ sessions returns correct status for each without races
+- [x] **EDGE-03**: Storage watcher detects external SQLite changes from a second Storage instance
 
 ## v2 Requirements
 
@@ -80,9 +80,9 @@ Requirements for integration testing milestone. Each maps to roadmap phases.
 | COND-02 | Phase 5 | Complete |
 | COND-03 | Phase 6 | Complete |
 | COND-04 | Phase 6 | Complete |
-| EDGE-01 | Phase 6 | Pending |
-| EDGE-02 | Phase 6 | Pending |
-| EDGE-03 | Phase 6 | Pending |
+| EDGE-01 | Phase 6 | Complete |
+| EDGE-02 | Phase 6 | Complete |
+| EDGE-03 | Phase 6 | Complete |
 
 **Coverage:**
 - v1.1 requirements: 18 total

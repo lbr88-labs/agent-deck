@@ -3,15 +3,15 @@ gsd_state_version: 1.0
 milestone: v1.1
 milestone_name: Integration Testing
 status: executing
-stopped_at: Completed 06-01-PLAN.md (conductor pipeline tests)
-last_updated: "2026-03-06T17:35:32.961Z"
-last_activity: 2026-03-07 -- Completed 06-01 conductor pipeline tests
+stopped_at: Completed 06-02-PLAN.md (edge case integration tests)
+last_updated: "2026-03-06T17:36:10Z"
+last_activity: 2026-03-07 -- Completed 06-02 edge case integration tests
 progress:
   total_phases: 6
-  completed_phases: 5
+  completed_phases: 6
   total_plans: 13
-  completed_plans: 12
-  percent: 92
+  completed_plans: 13
+  percent: 100
 ---
 
 # Project State
@@ -21,23 +21,23 @@ progress:
 See: .planning/PROJECT.md (updated 2026-03-06)
 
 **Core value:** Conductor orchestration and cross-session coordination must be reliably tested end-to-end
-**Current focus:** Phase 6: Conductor Pipeline & Edge Cases
+**Current focus:** Phase 6: Conductor Pipeline & Edge Cases (COMPLETE)
 
 ## Current Position
 
 Phase: 6 of 6 (Conductor Pipeline & Edge Cases)
-Plan: 1 of 2 complete
-Status: In Progress
-Last activity: 2026-03-07 -- Completed 06-01 conductor pipeline tests
+Plan: 2 of 2 complete
+Status: Complete
+Last activity: 2026-03-07 -- Completed 06-02 edge case integration tests
 
-Progress: [█████████░] 92%
+Progress: [██████████] 100%
 
 ## Performance Metrics
 
 **Velocity:**
-- Total plans completed: 4
-- Average duration: 6min
-- Total execution time: 0.40 hours
+- Total plans completed: 6
+- Average duration: 8min
+- Total execution time: 0.83 hours
 
 | Phase | Plan | Duration | Tasks | Files |
 |-------|------|----------|-------|-------|
@@ -46,6 +46,7 @@ Progress: [█████████░] 92%
 | 05    | 01   | 9min     | 2     | 1     |
 | 05    | 02   | 6min     | 2     | 1     |
 | 06    | 01   | 5min     | 2     | 1     |
+| 06    | 02   | 22min    | 2     | 1     |
 
 *Updated after each plan completion*
 
@@ -73,6 +74,9 @@ Progress: [█████████░] 92%
 - [v1.1-05-02]: t.Cleanup for event file removal prevents orphaned artifacts
 - [Phase 06]: Multi-line chunked payload avoids terminal line buffer overflow (canonical mode ~4096 byte limit)
 - [Phase 06]: Sentinel message after chunked send proves sequential delivery without scrollback capture
+- [v1.1-06-02]: Replicated setupSkillTestEnv pattern in integration package (unexported helper cannot cross package boundary)
+- [v1.1-06-02]: 12 concurrent sessions with errgroup for race detection stress testing
+- [v1.1-06-02]: Dual StateDB instances on same file simulates cross-process StorageWatcher behavior
 
 ### Pending Todos
 
@@ -84,6 +88,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-03-06T17:35:32.958Z
-Stopped at: Completed 06-01-PLAN.md (conductor pipeline tests)
+Last session: 2026-03-06T17:36:10Z
+Stopped at: Completed 06-02-PLAN.md (edge case integration tests)
 Resume file: None
