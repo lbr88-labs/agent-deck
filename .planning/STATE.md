@@ -3,15 +3,15 @@ gsd_state_version: 1.0
 milestone: v1.2
 milestone_name: Conductor Reliability & Learnings Cleanup
 status: in-progress
-stopped_at: Completed 08-01-PLAN.md
-last_updated: "2026-03-06T20:28:19.875Z"
-last_activity: 2026-03-07 -- Completed 08-01 heartbeat group scoping and interval fixes
+stopped_at: Completed 08-02-PLAN.md
+last_updated: "2026-03-06T20:28:52.000Z"
+last_activity: 2026-03-07 -- Completed 08-02 CLI fixes (session death detection, flag parsing, help text)
 progress:
   total_phases: 10
-  completed_phases: 7
+  completed_phases: 8
   total_plans: 17
-  completed_plans: 16
-  percent: 94
+  completed_plans: 17
+  percent: 100
 ---
 
 # Project State
@@ -21,16 +21,16 @@ progress:
 See: .planning/PROJECT.md (updated 2026-03-07)
 
 **Core value:** Conductor orchestration and cross-session coordination must work reliably in production
-**Current focus:** Phase 8: Heartbeat & CLI Fixes
+**Current focus:** Phase 8: Heartbeat & CLI Fixes -- COMPLETE
 
 ## Current Position
 
-Phase: 8 of 10 (Heartbeat & CLI Fixes) -- IN PROGRESS
-Plan: 1 of 2 in current phase (08-01 complete, 08-02 pending)
-Status: Heartbeat fixes complete, CLI fixes next
-Last activity: 2026-03-07 -- Completed 08-01 heartbeat group scoping and interval fixes
+Phase: 8 of 10 (Heartbeat & CLI Fixes) -- COMPLETE
+Plan: 2 of 2 in current phase (all done)
+Status: Phase 8 complete, ready for Phase 9
+Last activity: 2026-03-07 -- Completed 08-02 CLI fixes (session death detection, flag parsing, help text)
 
-Progress: [█████████░] 94% (phases 1-7 complete, phase 8 plan 1/2 done)
+Progress: [██████████] 100% (phases 1-8 complete, phases 9-10 pending)
 
 ## Accumulated Context
 
@@ -53,6 +53,8 @@ Progress: [█████████░] 94% (phases 1-7 complete, phase 8 pla
 - [Phase 08-01]: interval=0 means disabled (returns 0), negative means use default 15
 - [Phase 08-01]: Heartbeat script checks conductor enabled status via JSON before sending
 - [Phase 08-01]: TUI clear-on-compact heartbeat also updated to group-scoped message
+- [Phase 08-02]: 5 consecutive GetStatus errors threshold for session death detection
+- [Phase 08-02]: Return ("error", nil) on session death so exit code 1 via existing logic
 
 ### Pending Todos
 
@@ -64,6 +66,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-03-06T20:28:19.873Z
-Stopped at: Completed 08-01-PLAN.md
+Last session: 2026-03-06T20:28:52.000Z
+Stopped at: Completed 08-02-PLAN.md
 Resume file: None

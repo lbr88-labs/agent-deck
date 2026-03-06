@@ -23,9 +23,9 @@ Requirements for Conductor Reliability & Learnings Cleanup milestone. Each maps 
 
 ### CLI Reliability
 
-- [ ] **CLI-01**: `session send --wait` exits cleanly with correct status codes and does not hang on edge cases
-- [ ] **CLI-02**: Using `-cmd` flag does not break `-group` flag parsing; `-c` shorthand is documented as the supported pattern
-- [ ] **CLI-03**: `--no-parent` followed by `set-parent` correctly restores parent routing, or `--no-parent` emits a clear warning about permanent effects
+- [x] **CLI-01**: `session send --wait` exits cleanly with correct status codes and does not hang on edge cases
+- [x] **CLI-02**: Using `-cmd` flag does not break `-group` flag parsing; `-c` shorthand is documented as the supported pattern
+- [x] **CLI-03**: `--no-parent` followed by `set-parent` correctly restores parent routing, or `--no-parent` emits a clear warning about permanent effects
 
 ### Learnings Promotion
 
@@ -105,9 +105,9 @@ Which phases cover which requirements. Updated during roadmap creation.
 | SEND-02 | Phase 7 | Complete |
 | HB-01 | Phase 8 | Complete |
 | HB-02 | Phase 8 | Complete |
-| CLI-01 | Phase 8 | Pending |
-| CLI-02 | Phase 8 | Pending |
-| CLI-03 | Phase 8 | Pending |
+| CLI-01 | Phase 8 | Complete |
+| CLI-02 | Phase 8 | Complete |
+| CLI-03 | Phase 8 | Complete |
 | PROC-01 | Phase 9 | Pending |
 | LEARN-01 | Phase 10 | Pending |
 | LEARN-02 | Phase 10 | Pending |
