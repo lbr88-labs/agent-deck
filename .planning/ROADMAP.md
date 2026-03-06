@@ -42,12 +42,12 @@ Plans:
   2. Session start, stop, fork, and attach operations complete successfully and update status accurately in both SQLite and tmux
   3. Skills referenced in session context trigger correctly, and pool skills loaded on demand are functional
   4. All bugs discovered during this testing phase are identified, fixed, and regression-tested
-**Plans**: TBD
+**Plans:** 3 plans
 
 Plans:
-- [ ] 02-01: Sleep/wake and status transition tests
-- [ ] 02-02: Session lifecycle end-to-end tests (start, stop, fork, attach)
-- [ ] 02-03: Skills triggering tests and bug fixes
+- [ ] 02-01-PLAN.md -- Sleep/wake status transition cycle tests and SQLite persistence verification
+- [ ] 02-02-PLAN.md -- Session lifecycle tests (start, stop, fork, attach) with tmux verification
+- [ ] 02-03-PLAN.md -- Skills runtime triggering tests and bug fixes from Plans 01-02
 
 ### Phase 3: Stabilization & Release Readiness
 **Goal**: Codebase passes all quality gates, is free of dead code, and is ready to tag a release
