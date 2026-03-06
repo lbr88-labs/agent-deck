@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -176,4 +177,83 @@ func TestConductor_HeartbeatRoundTrip(t *testing.T) {
 	content, err := tmuxSess.CapturePaneFresh()
 	require.NoError(t, err)
 	assert.Contains(t, content, heartbeatMsg, "pane should contain the full heartbeat message")
+}
+
+// TestConductor_ChunkedSendDelivery verifies that a message exceeding the 4096-byte
+// tmux chunk threshold is delivered intact via SendKeysChunked. The large payload is
+// split into multiple chunks with 50ms inter-chunk delay. (COND-04)
+//
+// The payload uses embedded newlines so that each chunk is flushed through the
+// terminal line discipline independently (canonical mode buffers up to ~4096 bytes
+// per line). A final sentinel line verifies end-to-end sequential delivery.
+func TestConductor_ChunkedSendDelivery(t *testing.T) {
+	h := NewTmuxHarness(t)
+
+	inst := h.CreateSession("cond-chunked", "/tmp")
+	inst.Command = "cat"
+	require.NoError(t, inst.Start())
+
+	WaitForCondition(t, 5*time.Second, 200*time.Millisecond,
+		"session to exist",
+		func() bool { return inst.Exists() })
+
+	tmuxSess := inst.GetTmuxSession()
+	require.NotNil(t, tmuxSess, "tmux session should not be nil")
+
+	// Build a multi-line message >4096 bytes that triggers chunked sending.
+	// Each line is short enough for the terminal line buffer, but the total
+	// payload exceeds the 4096-byte chunk threshold.
+	var lines []string
+	lines = append(lines, "CHUNK-START")
+	// Each line is ~82 bytes with newline. 55 lines = ~4510 bytes total.
+	for i := 0; i < 55; i++ {
+		lines = append(lines, fmt.Sprintf("LINE-%03d-%s", i, strings.Repeat("Z", 70)))
+	}
+	lines = append(lines, "CHUNK-END")
+	bigMsg := strings.Join(lines, "\n")
+	require.Greater(t, len(bigMsg), 4096, "message must exceed chunk threshold")
+
+	// Use SendKeysChunked directly to test the chunking path in isolation.
+	// The embedded newlines cause cat to echo each line as it receives it.
+	require.NoError(t, tmuxSess.SendKeysChunked(bigMsg))
+	require.NoError(t, tmuxSess.SendEnter())
+
+	// Use longer timeout since chunked sending incurs 50ms inter-chunk delays.
+	// Verify the last line (CHUNK-END) was delivered, proving no truncation.
+	WaitForPaneContent(t, inst, "CHUNK-END", 10*time.Second)
+
+	content, err := tmuxSess.CapturePaneFresh()
+	require.NoError(t, err)
+	assert.Contains(t, content, "CHUNK-END", "pane should contain end marker, proving full chunked delivery")
+}
+
+// TestConductor_SmallSendDelivery verifies that a message below the 4096-byte
+// threshold is delivered via the non-chunked (single SendKeys) path. (COND-04)
+func TestConductor_SmallSendDelivery(t *testing.T) {
+	h := NewTmuxHarness(t)
+
+	inst := h.CreateSession("cond-small", "/tmp")
+	inst.Command = "cat"
+	require.NoError(t, inst.Start())
+
+	WaitForCondition(t, 5*time.Second, 200*time.Millisecond,
+		"session to exist",
+		func() bool { return inst.Exists() })
+
+	tmuxSess := inst.GetTmuxSession()
+	require.NotNil(t, tmuxSess, "tmux session should not be nil")
+
+	// Build a small message that stays under the 4096-byte threshold.
+	smallMsg := "SMALL-MSG-" + strings.Repeat("A", 100) + "-END"
+	require.Less(t, len(smallMsg), 4096, "message must be under chunk threshold")
+
+	// SendKeysChunked with small content delegates to SendKeys (no chunking).
+	require.NoError(t, tmuxSess.SendKeysChunked(smallMsg))
+	require.NoError(t, tmuxSess.SendEnter())
+
+	WaitForPaneContent(t, inst, "SMALL-MSG-", 5*time.Second)
+
+	content, err := tmuxSess.CapturePaneFresh()
+	require.NoError(t, err)
+	assert.Contains(t, content, "-END", "pane should contain end marker")
 }
