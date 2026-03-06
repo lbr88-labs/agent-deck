@@ -2,6 +2,8 @@ package ui
 
 import (
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -599,6 +601,343 @@ func TestGetLayoutMode(t *testing.T) {
 	}
 }
 
+func TestHandleMainKeyEditNotesStartsEditor(t *testing.T) {
+	home := NewHome()
+	home.width = 100
+	home.height = 30
+
+	inst := &session.Instance{
+		ID:    "session-notes",
+		Title: "Session With Notes",
+		Tool:  "claude",
+		Notes: "existing notes",
+	}
+	home.flatItems = []session.Item{{Type: session.ItemTypeSession, Session: inst}}
+	home.cursor = 0
+	home.instanceByID[inst.ID] = inst
+
+	model, _ := home.handleMainKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'e'}})
+	h, ok := model.(*Home)
+	if !ok {
+		t.Fatal("handleMainKey should return *Home")
+	}
+
+	if !h.notesEditing {
+		t.Fatal("notes editor should be active after pressing edit hotkey")
+	}
+	if h.notesEditingSessionID != inst.ID {
+		t.Fatalf("notes editing session = %q, want %q", h.notesEditingSessionID, inst.ID)
+	}
+	if got := h.notesEditor.Value(); got != inst.Notes {
+		t.Fatalf("notes editor value = %q, want %q", got, inst.Notes)
+	}
+}
+
+func TestHandleNotesEditorKeySave(t *testing.T) {
+	home := NewHome()
+	home.width = 100
+	home.height = 30
+	home.storage = nil // Avoid touching persistence in this unit test.
+
+	inst := &session.Instance{
+		ID:    "session-save-notes",
+		Title: "Save Notes",
+		Tool:  "claude",
+		Notes: "before",
+	}
+	home.flatItems = []session.Item{{Type: session.ItemTypeSession, Session: inst}}
+	home.cursor = 0
+	home.instanceByID[inst.ID] = inst
+	home.beginNotesEditing(inst)
+	home.notesEditor.SetValue("after")
+
+	model, _ := home.handleNotesEditorKey(tea.KeyMsg{Type: tea.KeyCtrlS})
+	h, ok := model.(*Home)
+	if !ok {
+		t.Fatal("handleNotesEditorKey should return *Home")
+	}
+
+	if got := inst.Notes; got != "after" {
+		t.Fatalf("session notes = %q, want %q", got, "after")
+	}
+	if h.notesEditing {
+		t.Fatal("notes editor should close after save")
+	}
+}
+
+func TestNotesSectionLineBudget(t *testing.T) {
+	tests := []struct {
+		name          string
+		remaining     int
+		reserveOutput bool
+		split         float64
+		want          int
+	}{
+		{name: "none", remaining: 0, reserveOutput: true, split: 0.33, want: 0},
+		{name: "default split", remaining: 20, reserveOutput: true, split: 0.33, want: 6},
+		{name: "clamp minimum", remaining: 5, reserveOutput: true, split: 0.1, want: 2},
+		{name: "clamp maximum", remaining: 10, reserveOutput: true, split: 0.9, want: 7},
+		{name: "no output reserve", remaining: 8, reserveOutput: false, split: 0.33, want: 8},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := notesSectionLineBudget(tt.remaining, tt.reserveOutput, tt.split); got != tt.want {
+				t.Fatalf("notesSectionLineBudget(%d,%v,%v) = %d, want %d", tt.remaining, tt.reserveOutput, tt.split, got, tt.want)
+			}
+		})
+	}
+}
+
+func setFollowCwdOnAttachConfigForTest(t *testing.T, enabled *bool) {
+	t.Helper()
+
+	homeDir := t.TempDir()
+	t.Setenv("HOME", homeDir)
+
+	configDir := filepath.Join(homeDir, ".agent-deck")
+	if err := os.MkdirAll(configDir, 0o700); err != nil {
+		t.Fatalf("failed to create config directory: %v", err)
+	}
+
+	if enabled != nil {
+		value := "false"
+		if *enabled {
+			value = "true"
+		}
+		content := fmt.Sprintf("[instances]\nfollow_cwd_on_attach = %s\n", value)
+		configPath := filepath.Join(configDir, session.UserConfigFileName)
+		if err := os.WriteFile(configPath, []byte(content), 0o600); err != nil {
+			t.Fatalf("failed to write config.toml: %v", err)
+		}
+	}
+
+	session.ClearUserConfigCache()
+	t.Cleanup(session.ClearUserConfigCache)
+}
+
+func TestFollowAttachReturnCwdEnabledUpdatesProjectPath(t *testing.T) {
+	enabled := true
+	setFollowCwdOnAttachConfigForTest(t, &enabled)
+
+	home := NewHome()
+	home.storage = nil // Prevent persistence side effects in this unit test.
+
+	initialDir := t.TempDir()
+	inst := session.NewInstance("follow-cwd", initialDir)
+	newDir := t.TempDir()
+
+	home.instancesMu.Lock()
+	home.instances = []*session.Instance{inst}
+	home.instanceByID[inst.ID] = inst
+	home.instancesMu.Unlock()
+
+	home.followAttachReturnCwd(statusUpdateMsg{attachedSessionID: inst.ID, attachedWorkDir: newDir})
+
+	want := filepath.Clean(newDir)
+	if got := inst.ProjectPath; got != want {
+		t.Fatalf("project path = %q, want %q", got, want)
+	}
+	tmuxSess := inst.GetTmuxSession()
+	if tmuxSess == nil {
+		t.Fatal("tmux session should be initialized")
+	}
+	if got := tmuxSess.WorkDir; got != want {
+		t.Fatalf("tmux work dir = %q, want %q", got, want)
+	}
+}
+
+func TestFollowAttachReturnCwdDisabledDoesNotUpdateProjectPath(t *testing.T) {
+	disabled := false
+	setFollowCwdOnAttachConfigForTest(t, &disabled)
+
+	home := NewHome()
+	home.storage = nil
+
+	initialDir := t.TempDir()
+	inst := session.NewInstance("no-follow-cwd", initialDir)
+	newDir := t.TempDir()
+
+	home.instancesMu.Lock()
+	home.instances = []*session.Instance{inst}
+	home.instanceByID[inst.ID] = inst
+	home.instancesMu.Unlock()
+
+	home.followAttachReturnCwd(statusUpdateMsg{attachedSessionID: inst.ID, attachedWorkDir: newDir})
+
+	if got := inst.ProjectPath; got != initialDir {
+		t.Fatalf("project path changed = %q, want %q", got, initialDir)
+	}
+}
+
+func TestFollowAttachReturnCwdRejectsInvalidPaths(t *testing.T) {
+	enabled := true
+	setFollowCwdOnAttachConfigForTest(t, &enabled)
+
+	tests := []struct {
+		name    string
+		workDir string
+	}{
+		{name: "relative", workDir: "relative/path"},
+		{name: "missing", workDir: filepath.Join(t.TempDir(), "missing")},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			home := NewHome()
+			home.storage = nil
+
+			initialDir := t.TempDir()
+			inst := session.NewInstance("reject-path", initialDir)
+
+			home.instancesMu.Lock()
+			home.instances = []*session.Instance{inst}
+			home.instanceByID[inst.ID] = inst
+			home.instancesMu.Unlock()
+
+			home.followAttachReturnCwd(statusUpdateMsg{attachedSessionID: inst.ID, attachedWorkDir: tt.workDir})
+
+			if got := inst.ProjectPath; got != initialDir {
+				t.Fatalf("project path changed = %q, want %q", got, initialDir)
+			}
+		})
+	}
+}
+
+func TestRenderSessionListEmptyUsesConfiguredKeys(t *testing.T) {
+	home := NewHome()
+	home.setHotkeys(resolveHotkeys(map[string]string{
+		hotkeyNewSession:  "a",
+		hotkeyImport:      "b",
+		hotkeyCreateGroup: "c",
+	}))
+
+	rendered := home.renderSessionList(60, 22)
+
+	for _, want := range []string{
+		"Press a to create a new session",
+		"Press b to import existing tmux sessions",
+		"Press c to create a group",
+	} {
+		if !strings.Contains(rendered, want) {
+			t.Fatalf("empty state missing hint %q\nrendered=%q", want, rendered)
+		}
+	}
+}
+
+func TestRenderSessionListEmptyWithUnboundPrimaryActions(t *testing.T) {
+	home := NewHome()
+	home.setHotkeys(resolveHotkeys(map[string]string{
+		hotkeyNewSession:  "",
+		hotkeyImport:      "",
+		hotkeyCreateGroup: "",
+	}))
+
+	rendered := home.renderSessionList(60, 22)
+
+	if !strings.Contains(rendered, "Create or import sessions to get started") {
+		t.Fatalf("empty state should show fallback hint when all actions are unbound\nrendered=%q", rendered)
+	}
+}
+
+func TestSessionClosedMsgUsesConfiguredRestartHint(t *testing.T) {
+	home := NewHome()
+	home.storage = nil
+	home.setHotkeys(resolveHotkeys(map[string]string{hotkeyRestart: "ctrl+r"}))
+
+	inst := session.NewInstance("closed-session", t.TempDir())
+	home.instancesMu.Lock()
+	home.instances = []*session.Instance{inst}
+	home.instanceByID[inst.ID] = inst
+	home.instancesMu.Unlock()
+
+	model, _ := home.Update(sessionClosedMsg{sessionID: inst.ID})
+	h, ok := model.(*Home)
+	if !ok {
+		t.Fatal("Update should return *Home")
+	}
+
+	if h.err == nil {
+		t.Fatal("expected close-session message to be set")
+	}
+	if !strings.Contains(h.err.Error(), "ctrl+r to restart") {
+		t.Fatalf("close-session message should use configured restart key, got %q", h.err.Error())
+	}
+}
+
+func TestDeleteAndCloseSessionUseDistinctActions(t *testing.T) {
+	home := NewHome()
+	home.width = 100
+	home.height = 30
+
+	inst := session.NewInstance("actions-session", t.TempDir())
+	home.flatItems = []session.Item{{Type: session.ItemTypeSession, Session: inst}}
+	home.cursor = 0
+	home.instanceByID[inst.ID] = inst
+
+	model, _ := home.handleMainKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'d'}})
+	h, ok := model.(*Home)
+	if !ok {
+		t.Fatal("handleMainKey should return *Home")
+	}
+	if !h.confirmDialog.IsVisible() {
+		t.Fatal("delete should show confirmation dialog")
+	}
+	if got := h.confirmDialog.GetConfirmType(); got != ConfirmDeleteSession {
+		t.Fatalf("confirm type after delete = %v, want %v", got, ConfirmDeleteSession)
+	}
+
+	h.confirmDialog.Hide()
+
+	model, _ = h.handleMainKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'D'}})
+	h, ok = model.(*Home)
+	if !ok {
+		t.Fatal("handleMainKey should return *Home")
+	}
+	if !h.confirmDialog.IsVisible() {
+		t.Fatal("close should show confirmation dialog")
+	}
+	if got := h.confirmDialog.GetConfirmType(); got != ConfirmCloseSession {
+		t.Fatalf("confirm type after close = %v, want %v", got, ConfirmCloseSession)
+	}
+}
+
+func TestDeleteHotkeyRemapAndCloseUnbind(t *testing.T) {
+	home := NewHome()
+	home.width = 100
+	home.height = 30
+	home.setHotkeys(resolveHotkeys(map[string]string{
+		hotkeyDelete:       "backspace",
+		hotkeyCloseSession: "",
+	}))
+
+	inst := session.NewInstance("actions-remap", t.TempDir())
+	home.flatItems = []session.Item{{Type: session.ItemTypeSession, Session: inst}}
+	home.cursor = 0
+	home.instanceByID[inst.ID] = inst
+
+	model, _ := home.handleMainKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'D'}})
+	h, ok := model.(*Home)
+	if !ok {
+		t.Fatal("handleMainKey should return *Home")
+	}
+	if h.confirmDialog.IsVisible() {
+		t.Fatal("unbound close_session key should not open confirmation")
+	}
+
+	model, _ = h.handleMainKey(tea.KeyMsg{Type: tea.KeyBackspace})
+	h, ok = model.(*Home)
+	if !ok {
+		t.Fatal("handleMainKey should return *Home")
+	}
+	if !h.confirmDialog.IsVisible() {
+		t.Fatal("remapped delete key should show confirmation dialog")
+	}
+	if got := h.confirmDialog.GetConfirmType(); got != ConfirmDeleteSession {
+		t.Fatalf("confirm type after remapped delete = %v, want %v", got, ConfirmDeleteSession)
+	}
+}
+
 func TestRenderHelpBarTiny(t *testing.T) {
 	home := NewHome()
 	home.width = 45 // Tiny mode (<50 cols)
@@ -616,6 +955,30 @@ func TestRenderHelpBarTiny(t *testing.T) {
 	}
 	if strings.Contains(result, "Global") {
 		t.Error("Tiny help bar should not contain 'Global'")
+	}
+}
+
+func TestRenderHelpBarTinyUsesConfiguredHelpKey(t *testing.T) {
+	home := NewHome()
+	home.width = 45
+	home.height = 30
+	home.setHotkeys(resolveHotkeys(map[string]string{"help": "h"}))
+
+	result := home.renderHelpBar()
+	if !strings.Contains(result, "h for help") {
+		t.Fatalf("tiny help bar should use remapped help key, got %q", result)
+	}
+}
+
+func TestRenderHelpBarTinyHandlesUnboundHelpKey(t *testing.T) {
+	home := NewHome()
+	home.width = 45
+	home.height = 30
+	home.setHotkeys(resolveHotkeys(map[string]string{"help": ""}))
+
+	result := home.renderHelpBar()
+	if !strings.Contains(result, "Help key unbound") {
+		t.Fatalf("tiny help bar should show unbound message, got %q", result)
 	}
 }
 

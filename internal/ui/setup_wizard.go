@@ -20,7 +20,7 @@ type SetupWizard struct {
 
 	// Step 1: Tool selection
 	toolOptions  []string
-	selectedTool int // 0=Claude, 1=Gemini, 2=OpenCode, 3=Codex, 4=Shell
+	selectedTool int // 0=Claude, 1=Gemini, 2=OpenCode, 3=Codex, 4=Pi, 5=Shell
 
 	// Step 2: Claude settings (only if Claude selected)
 	dangerousMode        bool
@@ -53,7 +53,7 @@ func NewSetupWizard() *SetupWizard {
 		visible:             false,
 		complete:            false,
 		currentStep:         0,
-		toolOptions:         []string{"claude", "gemini", "opencode", "codex", "shell"},
+		toolOptions:         []string{"claude", "gemini", "opencode", "codex", "pi", "shell"},
 		selectedTool:        0, // Default to Claude
 		dangerousMode:       false,
 		useDefaultConfigDir: true,
@@ -382,6 +382,7 @@ func (w *SetupWizard) View() string {
 			"gemini":   "Gemini CLI - Google's AI assistant",
 			"opencode": "OpenCode - Open source AI coding tool",
 			"codex":    "Codex CLI - OpenAI's coding assistant",
+			"pi":       "Pi CLI - lightweight coding assistant",
 			"shell":    "Shell - No AI tool (plain terminal)",
 		}
 

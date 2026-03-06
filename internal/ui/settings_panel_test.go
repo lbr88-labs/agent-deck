@@ -1,11 +1,33 @@
 package ui
 
 import (
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/asheshgoplani/agent-deck/internal/session"
 	tea "github.com/charmbracelet/bubbletea"
 )
+
+func setSettingsPanelHotkeyConfigForTest(t *testing.T, tomlBody string) {
+	t.Helper()
+
+	homeDir := t.TempDir()
+	t.Setenv("HOME", homeDir)
+
+	configDir := filepath.Join(homeDir, ".agent-deck")
+	if err := os.MkdirAll(configDir, 0o700); err != nil {
+		t.Fatalf("failed to create config directory: %v", err)
+	}
+
+	configPath := filepath.Join(configDir, session.UserConfigFileName)
+	if err := os.WriteFile(configPath, []byte(tomlBody), 0o600); err != nil {
+		t.Fatalf("failed to write config.toml: %v", err)
+	}
+
+	session.ClearUserConfigCache()
+	t.Cleanup(session.ClearUserConfigCache)
+}
 
 func TestSettingsPanel_InitialState(t *testing.T) {
 	panel := NewSettingsPanel()
@@ -141,8 +163,9 @@ func TestSettingsPanel_LoadConfig_DefaultTool(t *testing.T) {
 		{"gemini", "gemini", 1},
 		{"opencode", "opencode", 2},
 		{"codex", "codex", 3},
-		{"empty", "", 4}, // None
-		{"unknown", "unknown-tool", 4},
+		{"pi", "pi", 4},
+		{"empty", "", 5}, // None
+		{"unknown", "unknown-tool", 5},
 	}
 
 	for _, tt := range tests {
@@ -302,7 +325,8 @@ func TestSettingsPanel_GetConfig_ToolMapping(t *testing.T) {
 		{"gemini", 1, "gemini"},
 		{"opencode", 2, "opencode"},
 		{"codex", 3, "codex"},
-		{"none", 4, ""},
+		{"pi", 4, "pi"},
+		{"none", 5, ""},
 	}
 
 	for _, tt := range tests {
@@ -544,8 +568,9 @@ func TestSettingsPanel_View_NotVisible(t *testing.T) {
 
 func TestSettingsPanel_View_Visible(t *testing.T) {
 	panel := NewSettingsPanel()
-	panel.SetSize(80, 40)
+	panel.SetSize(100, 80)
 	panel.Show()
+	panel.cursor = int(SettingMaintenanceEnabled)
 
 	view := panel.View()
 	if view == "" {
@@ -813,5 +838,32 @@ func TestSettingsPanel_PreviewSettings_ViewContains(t *testing.T) {
 		if !containsString(view, elem) {
 			t.Errorf("View() should contain %q", elem)
 		}
+	}
+}
+
+func TestSettingsPanel_ViewUsesConfiguredMCPHotkeyHint(t *testing.T) {
+	setSettingsPanelHotkeyConfigForTest(t, "[hotkeys]\nmcp_manager = \"ctrl+m\"\n")
+
+	panel := NewSettingsPanel()
+	panel.SetSize(100, 80)
+	panel.Show()
+
+	view := panel.View()
+	if !containsString(view, "Press ctrl+m on any Claude/Gemini session to attach MCPs.") {
+		t.Fatalf("settings view should show configured MCP key hint, got %q", view)
+	}
+}
+
+func TestSettingsPanel_ViewShowsUnboundMCPHotkeyHint(t *testing.T) {
+	setSettingsPanelHotkeyConfigForTest(t, "[hotkeys]\nmcp_manager = \"\"\n")
+
+	panel := NewSettingsPanel()
+	panel.SetSize(100, 80)
+	panel.Show()
+	panel.cursor = int(SettingMaintenanceEnabled)
+
+	view := panel.View()
+	if !containsString(view, "MCP Manager hotkey is unbound.") {
+		t.Fatalf("settings view should show unbound MCP key hint, got %q", view)
 	}
 }

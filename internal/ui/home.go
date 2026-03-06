@@ -15,6 +15,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/charmbracelet/bubbles/textarea"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
@@ -171,6 +172,16 @@ type Home struct {
 	geminiModelDialog    *GeminiModelDialog    // For selecting Gemini model
 	sessionPickerDialog  *SessionPickerDialog  // For sending output to another session
 	worktreeFinishDialog *WorktreeFinishDialog // For finishing worktree sessions (merge + cleanup)
+
+	// Configurable hotkeys
+	hotkeys        map[string]string // action -> configured key
+	hotkeyLookup   map[string]string // pressed key -> canonical key used by switch cases
+	blockedHotkeys map[string]bool   // canonical keys disabled via remap/unbind
+
+	// Inline preview notes editing
+	notesEditor           textarea.Model
+	notesEditing          bool
+	notesEditingSessionID string
 
 	// Analytics cache (async fetching with TTL)
 	currentAnalytics       *session.SessionAnalytics                  // Current analytics for selected session (Claude)
@@ -356,6 +367,35 @@ type uiState struct {
 	StatusFilter    string `json:"status_filter,omitempty"`
 }
 
+func (h *Home) reloadHotkeysFromConfig() {
+	h.setHotkeys(resolveHotkeys(session.GetHotkeyOverrides()))
+}
+
+func (h *Home) setHotkeys(bindings map[string]string) {
+	if bindings == nil {
+		bindings = resolveHotkeys(nil)
+	}
+	h.hotkeys = bindings
+	h.hotkeyLookup, h.blockedHotkeys = buildHotkeyLookup(bindings)
+	if h.helpOverlay != nil {
+		h.helpOverlay.SetHotkeys(bindings)
+	}
+}
+
+func (h *Home) normalizeMainKey(pressed string) string {
+	if canonical, ok := h.hotkeyLookup[pressed]; ok {
+		return canonical
+	}
+	if h.blockedHotkeys[pressed] {
+		return ""
+	}
+	return pressed
+}
+
+func (h *Home) actionKey(action string) string {
+	return actionHotkey(h.hotkeys, action)
+}
+
 // deletedSessionEntry holds a deleted session for undo restore
 type deletedSessionEntry struct {
 	instance  *session.Instance
@@ -398,7 +438,10 @@ type sessionForkedMsg struct {
 
 type refreshMsg struct{}
 
-type statusUpdateMsg struct{} // Triggers immediate status update without reloading
+type statusUpdateMsg struct {
+	attachedSessionID string // Session that just returned from attach (if local attach)
+	attachedWorkDir   string // pane_current_path captured after attach returns
+} // Triggers immediate status update without reloading
 
 // storageChangedMsg signals that state.db was modified externally
 type storageChangedMsg struct{}
@@ -501,6 +544,15 @@ type statusUpdateRequest struct {
 	flatItemIDs   []string // IDs of sessions in current flatItems order (for visible detection)
 }
 
+func newNotesEditor() textarea.Model {
+	editor := textarea.New()
+	editor.ShowLineNumbers = false
+	editor.Placeholder = "Write notes for this session..."
+	editor.Prompt = ""
+	editor.Blur()
+	return editor
+}
+
 // NewHome creates a new home model with the default profile
 func NewHome() *Home {
 	return NewHomeWithProfile("")
@@ -583,10 +635,16 @@ func NewHomeWithProfileAndMode(profile string) *Home {
 		statusTrigger:        make(chan statusUpdateRequest, 1), // Buffered to avoid blocking
 		statusWorkerDone:     make(chan struct{}),
 		logUpdateChan:        make(chan *session.Instance, 100), // Buffered to absorb bursts
+		hotkeys:              make(map[string]string),
+		hotkeyLookup:         make(map[string]string),
+		blockedHotkeys:       make(map[string]bool),
+		notesEditor:          newNotesEditor(),
 		boundKeys:            make(map[string]string),
 		undoStack:            make([]deletedSessionEntry, 0, 10),
 		pendingTitleChanges:  make(map[string]string),
 	}
+
+	h.reloadHotkeysFromConfig()
 
 	// Keep settings panel profile-aware so profile overrides (e.g., Claude config dir)
 	// are displayed and edited in the correct scope.
@@ -2349,6 +2407,7 @@ func (h *Home) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		h.reloadMu.Unlock()
 		h.initialLoading = false // First load complete, hide splash
+		h.reloadHotkeysFromConfig()
 
 		// Show hooks installation prompt (after splash screen is gone)
 		if h.pendingHooksPrompt && !h.setupWizard.IsVisible() {
@@ -2715,7 +2774,34 @@ func (h *Home) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		// Show undo hint (using setError as a transient message)
 		if deletedInstance != nil {
-			h.setError(fmt.Errorf("deleted '%s'. Ctrl+Z to undo", deletedInstance.Title))
+			if undoKey := h.actionKey(hotkeyUndoDelete); undoKey != "" {
+				h.setError(fmt.Errorf("deleted '%s'. %s to undo", deletedInstance.Title, undoKey))
+			} else {
+				h.setError(fmt.Errorf("deleted '%s'", deletedInstance.Title))
+			}
+		}
+		return h, nil
+
+	case sessionClosedMsg:
+		// Keep session metadata, just reflect runtime termination state.
+		if msg.killErr != nil {
+			h.setError(fmt.Errorf("failed to close session: %w", msg.killErr))
+			return h, nil
+		}
+
+		h.cachedStatusCounts.valid.Store(false)
+		h.invalidatePreviewCache(msg.sessionID)
+		h.rebuildFlatItems()
+		h.saveInstances()
+
+		restartHint := ""
+		if restartKey := h.actionKey(hotkeyRestart); restartKey != "" {
+			restartHint = fmt.Sprintf(". %s to restart", restartKey)
+		}
+		if inst := h.getInstanceByID(msg.sessionID); inst != nil {
+			h.setError(fmt.Errorf("closed '%s'%s", inst.Title, restartHint))
+		} else {
+			h.setError(fmt.Errorf("session closed%s", restartHint))
 		}
 		return h, nil
 
@@ -3002,6 +3088,8 @@ func (h *Home) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if reloading {
 			return h, nil
 		}
+
+		h.followAttachReturnCwd(msg)
 
 		// PERFORMANCE FIX: Skip save on attach return for 10 seconds
 		// Saving can also be blocking (JSON serialization + file write).
@@ -3420,6 +3508,7 @@ func (h *Home) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				h.setupWizard.Hide()
 				// Reload config cache
 				_, _ = session.ReloadUserConfig()
+				h.reloadHotkeysFromConfig()
 				// Apply default tool to new dialog
 				if defaultTool := session.GetDefaultTool(); defaultTool != "" {
 					h.newDialog.SetDefaultTool(defaultTool)
@@ -3440,6 +3529,7 @@ func (h *Home) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					h.errTime = time.Now()
 				}
 				_, _ = session.ReloadUserConfig()
+				h.reloadHotkeysFromConfig()
 
 				// Apply theme changes live
 				h.stopThemeWatcher()
@@ -3503,6 +3593,10 @@ func (h *Home) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		if h.worktreeFinishDialog.IsVisible() {
 			return h.handleWorktreeFinishDialogKey(msg)
+		}
+
+		if h.notesEditing {
+			return h.handleNotesEditorKey(msg)
 		}
 
 		// Main view keys
@@ -3784,9 +3878,59 @@ func (h *Home) handleNewDialogKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return h, cmd
 }
 
+func (h *Home) beginNotesEditing(inst *session.Instance) {
+	if inst == nil {
+		return
+	}
+	h.notesEditing = true
+	h.notesEditingSessionID = inst.ID
+	h.notesEditor.SetValue(inst.Notes)
+	h.notesEditor.Focus()
+}
+
+func (h *Home) stopNotesEditing() {
+	h.notesEditing = false
+	h.notesEditingSessionID = ""
+	h.notesEditor.Blur()
+}
+
+func (h *Home) handleNotesEditorKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	selected := h.getSelectedSession()
+	if selected == nil || selected.ID != h.notesEditingSessionID {
+		h.stopNotesEditing()
+		return h, nil
+	}
+
+	switch msg.String() {
+	case "esc":
+		h.stopNotesEditing()
+		return h, nil
+	case "ctrl+s":
+		notes := strings.TrimRight(h.notesEditor.Value(), "\n")
+		h.instancesMu.RLock()
+		inst := h.instanceByID[h.notesEditingSessionID]
+		h.instancesMu.RUnlock()
+		if inst != nil {
+			inst.Notes = notes
+			h.forceSaveInstances()
+		}
+		h.stopNotesEditing()
+		return h, nil
+	}
+
+	var cmd tea.Cmd
+	h.notesEditor, cmd = h.notesEditor.Update(msg)
+	return h, cmd
+}
+
 // handleMainKey handles keys in main view
 func (h *Home) handleMainKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	switch msg.String() {
+	key := h.normalizeMainKey(msg.String())
+	if key == "" {
+		return h, nil
+	}
+
+	switch key {
 	case "q", "ctrl+c":
 		return h.tryQuit()
 
@@ -4350,6 +4494,16 @@ func (h *Home) handleMainKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		return h, nil
 
+	case "D":
+		// Close session process without deleting metadata from the list/storage.
+		if h.cursor < len(h.flatItems) {
+			item := h.flatItems[h.cursor]
+			if item.Type == session.ItemTypeSession && item.Session != nil {
+				h.confirmDialog.ShowCloseSession(item.Session.ID, item.Session.Title, item.Session.IsSandboxed())
+			}
+		}
+		return h, nil
+
 	case "i":
 		return h, h.importSessions
 
@@ -4411,7 +4565,7 @@ func (h *Home) handleMainKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return h, nil
 
 	case "R":
-		// Restart session (Shift+R - recreate tmux session with resume)
+		// Restart session (recreate tmux session with resume)
 		if h.cursor < len(h.flatItems) {
 			item := h.flatItems[h.cursor]
 			if item.Type == session.ItemTypeSession && item.Session != nil {
@@ -4451,6 +4605,19 @@ func (h *Home) handleMainKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				}
 				h.sessionPickerDialog.SetSize(h.width, h.height)
 				h.sessionPickerDialog.Show(item.Session, h.instances)
+			}
+		}
+		return h, nil
+
+	case "e":
+		if h.getLayoutMode() == LayoutModeSingle {
+			h.setError(fmt.Errorf("notes editor is unavailable in single-column layout"))
+			return h, nil
+		}
+		if h.cursor < len(h.flatItems) {
+			item := h.flatItems[h.cursor]
+			if item.Type == session.ItemTypeSession && item.Session != nil {
+				h.beginNotesEditing(item.Session)
 			}
 		}
 		return h, nil
@@ -4499,7 +4666,7 @@ func (h *Home) handleMainKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 	case "1", "2", "3", "4", "5", "6", "7", "8", "9":
 		// Quick jump to Nth root group (1-indexed)
-		targetNum := int(msg.String()[0] - '0') // Convert "1" -> 1, "2" -> 2, etc.
+		targetNum := int(key[0] - '0') // Convert "1" -> 1, "2" -> 2, etc.
 		h.jumpToRootGroup(targetNum)
 		return h, nil
 
@@ -4646,6 +4813,12 @@ func (h *Home) handleConfirmDialogKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				if inst := h.getInstanceByID(sessionID); inst != nil {
 					h.confirmDialog.Hide()
 					return h, h.deleteSession(inst)
+				}
+			case ConfirmCloseSession:
+				sessionID := h.confirmDialog.GetTargetID()
+				if inst := h.getInstanceByID(sessionID); inst != nil {
+					h.confirmDialog.Hide()
+					return h, h.closeSession(inst)
 				}
 			case ConfirmDeleteGroup:
 				groupPath := h.confirmDialog.GetTargetID()
@@ -5572,6 +5745,12 @@ type sessionDeletedMsg struct {
 	killErr   error // Error from Kill() if any
 }
 
+// sessionClosedMsg signals that a session process was closed without deleting metadata.
+type sessionClosedMsg struct {
+	sessionID string
+	killErr   error
+}
+
 // sessionRestoredMsg signals that an undo-delete restore completed
 type sessionRestoredMsg struct {
 	instance *session.Instance
@@ -5592,6 +5771,15 @@ func (h *Home) deleteSession(inst *session.Instance) tea.Cmd {
 			_ = git.PruneWorktrees(worktreeRepoRoot)
 		}
 		return sessionDeletedMsg{deletedID: id, killErr: killErr}
+	}
+}
+
+// closeSession stops a session process but keeps metadata in list/storage.
+func (h *Home) closeSession(inst *session.Instance) tea.Cmd {
+	id := inst.ID
+	return func() tea.Msg {
+		killErr := inst.Kill()
+		return sessionClosedMsg{sessionID: id, killErr: killErr}
 	}
 }
 
@@ -5727,8 +5915,63 @@ skipSave:
 		// Acknowledgment happens on ATTACH (only if session was waiting/yellow).
 		// This lets running sessions stay green through attach/detach cycles.
 
-		return statusUpdateMsg{}
+		// Capture current pane CWD after attach returns for optional path follow.
+		currentWorkDir := strings.TrimSpace(tmuxSess.GetWorkDir())
+
+		return statusUpdateMsg{attachedSessionID: inst.ID, attachedWorkDir: currentWorkDir}
 	})
+}
+
+func (h *Home) followAttachReturnCwd(msg statusUpdateMsg) {
+	if msg.attachedSessionID == "" {
+		return
+	}
+
+	workDir := strings.TrimSpace(msg.attachedWorkDir)
+	if workDir == "" {
+		return
+	}
+
+	instanceSettings := session.GetInstanceSettings()
+	if !instanceSettings.GetFollowCwdOnAttach() {
+		return
+	}
+
+	workDir = filepath.Clean(workDir)
+	if !filepath.IsAbs(workDir) {
+		return
+	}
+
+	info, err := os.Stat(workDir)
+	if err != nil || !info.IsDir() {
+		return
+	}
+
+	h.instancesMu.RLock()
+	inst := h.instanceByID[msg.attachedSessionID]
+	h.instancesMu.RUnlock()
+	if inst == nil {
+		return
+	}
+
+	oldPath := strings.TrimSpace(inst.ProjectPath)
+	if oldPath == workDir {
+		return
+	}
+
+	inst.ProjectPath = workDir
+	if tmuxSess := inst.GetTmuxSession(); tmuxSess != nil {
+		tmuxSess.WorkDir = workDir
+	}
+	h.invalidatePreviewCache(inst.ID)
+	h.saveInstances()
+
+	uiLog.Info(
+		"attach_follow_cwd_updated",
+		slog.String("session_id", inst.ID),
+		slog.String("old_path", oldPath),
+		slog.String("new_path", workDir),
+	)
 }
 
 // attachCmd implements tea.ExecCommand for custom PTY attach
@@ -6823,14 +7066,27 @@ func renderDetectedAtLine(b *strings.Builder, detectedAt time.Time) {
 }
 
 // renderForkHintLine renders the fork keyboard hint line.
-func renderForkHintLine(b *strings.Builder) {
+func (h *Home) renderForkHintLine(b *strings.Builder) {
+	quickForkKey := h.actionKey(hotkeyQuickFork)
+	forkWithOptionsKey := h.actionKey(hotkeyForkWithOptions)
+	if quickForkKey == "" && forkWithOptionsKey == "" {
+		return
+	}
+
 	hintStyle := lipgloss.NewStyle().Foreground(ColorText).Italic(true)
 	keyStyle := lipgloss.NewStyle().Foreground(ColorAccent).Bold(true)
 	b.WriteString(hintStyle.Render("Fork:    "))
-	b.WriteString(keyStyle.Render("f"))
-	b.WriteString(hintStyle.Render(" quick fork, "))
-	b.WriteString(keyStyle.Render("F"))
-	b.WriteString(hintStyle.Render(" fork with options"))
+	if quickForkKey != "" {
+		b.WriteString(keyStyle.Render(quickForkKey))
+		b.WriteString(hintStyle.Render(" quick fork"))
+	}
+	if quickForkKey != "" && forkWithOptionsKey != "" {
+		b.WriteString(hintStyle.Render(", "))
+	}
+	if forkWithOptionsKey != "" {
+		b.WriteString(keyStyle.Render(forkWithOptionsKey))
+		b.WriteString(hintStyle.Render(" fork with options"))
+	}
 	b.WriteString("\n")
 }
 
@@ -6934,7 +7190,12 @@ func (h *Home) renderHelpBarTiny() string {
 	border := borderStyle.Render(strings.Repeat("─", max(0, h.width)))
 
 	hintStyle := lipgloss.NewStyle().Foreground(ColorComment)
-	hint := hintStyle.Render("? for help")
+	helpKey := h.actionKey(hotkeyHelp)
+	hintText := "Help key unbound"
+	if helpKey != "" {
+		hintText = helpKey + " for help"
+	}
+	hint := hintStyle.Render(hintText)
 
 	// Center the hint
 	padding := (h.width - lipgloss.Width(hint)) / 2
@@ -6958,41 +7219,80 @@ func (h *Home) renderHelpBarMinimal() string {
 		Bold(true)
 	sepStyle := lipgloss.NewStyle().Foreground(ColorBorder)
 	sep := sepStyle.Render(" │ ")
+	renderKeys := func(keys ...string) string {
+		parts := make([]string, 0, len(keys))
+		for _, key := range keys {
+			if strings.TrimSpace(key) == "" {
+				continue
+			}
+			parts = append(parts, keyStyle.Render(key))
+		}
+		return strings.Join(parts, " ")
+	}
 
 	// Context-specific keys (left side)
 	var contextKeys string
+	newKey := h.actionKey(hotkeyNewSession)
+	quickKey := h.actionKey(hotkeyQuickCreate)
+	importKey := h.actionKey(hotkeyImport)
+	groupKey := h.actionKey(hotkeyCreateGroup)
+	restartKey := h.actionKey(hotkeyRestart)
+	forkKey := h.actionKey(hotkeyQuickFork)
+	mcpKey := h.actionKey(hotkeyMCPManager)
+	skillsKey := h.actionKey(hotkeySkillsManager)
+	notesKey := h.actionKey(hotkeyEditNotes)
 	if len(h.flatItems) == 0 {
-		contextKeys = keyStyle.Render(
-			"n",
-		) + " " + keyStyle.Render(
-			"N",
-		) + " " + keyStyle.Render(
-			"i",
-		) + " " + keyStyle.Render(
-			"g",
-		)
+		contextKeys = renderKeys(newKey, quickKey, importKey, groupKey)
 	} else if h.cursor < len(h.flatItems) {
 		item := h.flatItems[h.cursor]
 		if item.Type == session.ItemTypeGroup {
-			contextKeys = keyStyle.Render("⏎") + " " + keyStyle.Render("n") + " " + keyStyle.Render("N") + " " + keyStyle.Render("g")
+			contextKeys = renderKeys("⏎", newKey, quickKey, groupKey)
 		} else {
-			contextKeys = keyStyle.Render("⏎") + " " + keyStyle.Render("n") + " " + keyStyle.Render("N") + " " + keyStyle.Render("R")
+			contextKeys = renderKeys("⏎", newKey, quickKey, restartKey)
 			if item.Session != nil && item.Session.CanFork() {
-				contextKeys += " " + keyStyle.Render("f")
+				forkRendered := renderKeys(forkKey)
+				if forkRendered != "" {
+					contextKeys += " " + forkRendered
+				}
 			}
 			if item.Session != nil && (item.Session.Tool == "claude" || item.Session.Tool == "gemini") {
-				contextKeys += " " + keyStyle.Render("m")
+				mcpRendered := renderKeys(mcpKey)
+				if mcpRendered != "" {
+					contextKeys += " " + mcpRendered
+				}
 			}
 			if item.Session != nil && item.Session.Tool == "claude" {
-				contextKeys += " " + keyStyle.Render("s")
+				skillsRendered := renderKeys(skillsKey)
+				if skillsRendered != "" {
+					contextKeys += " " + skillsRendered
+				}
+			}
+			notesRendered := renderKeys(notesKey)
+			if notesRendered != "" {
+				contextKeys += " " + notesRendered
 			}
 		}
 	}
 
 	// Global keys (right side)
 	globalStyle := lipgloss.NewStyle().Foreground(ColorComment)
-	globalKeys := globalStyle.Render("↑↓") + " " + globalStyle.Render("/") + " " +
-		globalStyle.Render("S") + " " + globalStyle.Render("?") + " " + globalStyle.Render("q")
+	globalParts := []string{globalStyle.Render("↑↓")}
+	if key := h.actionKey(hotkeySearch); key != "" {
+		globalParts = append(globalParts, globalStyle.Render(key))
+	}
+	if key := h.actionKey(hotkeySettings); key != "" {
+		globalParts = append(globalParts, globalStyle.Render(key))
+	}
+	if key := h.actionKey(hotkeyHelp); key != "" {
+		globalParts = append(globalParts, globalStyle.Render(key))
+	}
+	if key := h.actionKey(hotkeyQuit); key != "" {
+		globalParts = append(globalParts, globalStyle.Render(key))
+	}
+	globalKeys := strings.Join(globalParts, " ")
+	if contextKeys == "" {
+		contextKeys = globalStyle.Render("No actions bound")
+	}
 
 	// Calculate padding
 	leftPart := contextKeys
@@ -7005,6 +7305,9 @@ func (h *Home) renderHelpBarMinimal() string {
 	}
 
 	content := leftPart + sep + strings.Repeat(" ", padding) + rightPart
+	if rightPart == "" {
+		content = leftPart
+	}
 
 	raw := lipgloss.JoinVertical(lipgloss.Left, border, content)
 	return lipgloss.NewStyle().MaxWidth(h.width).Render(raw)
@@ -7017,54 +7320,85 @@ func (h *Home) renderHelpBarCompact() string {
 
 	sepStyle := lipgloss.NewStyle().Foreground(ColorBorder)
 	sep := sepStyle.Render(" │ ")
+	newQuickKey := joinHotkeyLabels(h.actionKey(hotkeyNewSession), h.actionKey(hotkeyQuickCreate))
 
 	// Abbreviated key+short desc
 	var contextHints []string
 	if len(h.flatItems) == 0 {
-		contextHints = []string{
-			h.helpKeyShort("n/N", "New"),
-			h.helpKeyShort("i", "Import"),
+		if newQuickKey != "" {
+			contextHints = append(contextHints, h.helpKeyShort(newQuickKey, "New"))
+		}
+		if key := h.actionKey(hotkeyImport); key != "" {
+			contextHints = append(contextHints, h.helpKeyShort(key, "Import"))
 		}
 	} else if h.cursor < len(h.flatItems) {
 		item := h.flatItems[h.cursor]
 		if item.Type == session.ItemTypeGroup {
-			contextHints = []string{
-				h.helpKeyShort("⏎", "Toggle"),
-				h.helpKeyShort("n/N", "New"),
+			contextHints = append(contextHints, h.helpKeyShort("⏎", "Toggle"))
+			if newQuickKey != "" {
+				contextHints = append(contextHints, h.helpKeyShort(newQuickKey, "New"))
 			}
 		} else {
-			contextHints = []string{
-				h.helpKeyShort("⏎", "Attach"),
-				h.helpKeyShort("n/N", "New"),
-				h.helpKeyShort("R", "Restart"),
+			contextHints = append(contextHints, h.helpKeyShort("⏎", "Attach"))
+			if newQuickKey != "" {
+				contextHints = append(contextHints, h.helpKeyShort(newQuickKey, "New"))
+			}
+			if key := h.actionKey(hotkeyRestart); key != "" {
+				contextHints = append(contextHints, h.helpKeyShort(key, "Restart"))
 			}
 			if item.Session != nil && item.Session.CanFork() {
-				contextHints = append(contextHints, h.helpKeyShort("f", "Fork"))
+				if key := h.actionKey(hotkeyQuickFork); key != "" {
+					contextHints = append(contextHints, h.helpKeyShort(key, "Fork"))
+				}
 			}
 			if item.Session != nil && (item.Session.Tool == "claude" || item.Session.Tool == "gemini") {
-				contextHints = append(contextHints, h.helpKeyShort("m", "MCP"))
-				contextHints = append(contextHints, h.helpKeyShort("v", h.previewModeShort()))
+				if key := h.actionKey(hotkeyMCPManager); key != "" {
+					contextHints = append(contextHints, h.helpKeyShort(key, "MCP"))
+				}
+				if key := h.actionKey(hotkeyTogglePreview); key != "" {
+					contextHints = append(contextHints, h.helpKeyShort(key, h.previewModeShort()))
+				}
 			}
 			if item.Session != nil && item.Session.Tool == "claude" {
-				contextHints = append(contextHints, h.helpKeyShort("s", "Skills"))
+				if key := h.actionKey(hotkeySkillsManager); key != "" {
+					contextHints = append(contextHints, h.helpKeyShort(key, "Skills"))
+				}
 			}
-			contextHints = append(contextHints, h.helpKeyShort("c", "Copy"))
-			contextHints = append(contextHints, h.helpKeyShort("x", "Send"))
+			if key := h.actionKey(hotkeyCopyOutput); key != "" {
+				contextHints = append(contextHints, h.helpKeyShort(key, "Copy"))
+			}
+			if key := h.actionKey(hotkeySendOutput); key != "" {
+				contextHints = append(contextHints, h.helpKeyShort(key, "Send"))
+			}
+			if key := h.actionKey(hotkeyEditNotes); key != "" {
+				contextHints = append(contextHints, h.helpKeyShort(key, "Notes"))
+			}
 		}
 	}
 
 	// Show undo hint when undo stack is non-empty
 	if len(h.undoStack) > 0 {
-		contextHints = append(contextHints, h.helpKeyShort("^Z", "Undo"))
+		if key := h.actionKey(hotkeyUndoDelete); key != "" {
+			contextHints = append(contextHints, h.helpKeyShort(key, "Undo"))
+		}
 	}
 
 	// Global hints (abbreviated)
 	globalStyle := lipgloss.NewStyle().Foreground(ColorComment)
-	globalHints := globalStyle.Render("↑↓ Nav") + " " +
-		globalStyle.Render("/") + " " +
-		globalStyle.Render("S") + " " +
-		globalStyle.Render("?") + " " +
-		globalStyle.Render("q")
+	globalParts := []string{globalStyle.Render("↑↓ Nav")}
+	if key := h.actionKey(hotkeySearch); key != "" {
+		globalParts = append(globalParts, globalStyle.Render(key))
+	}
+	if key := h.actionKey(hotkeySettings); key != "" {
+		globalParts = append(globalParts, globalStyle.Render(key))
+	}
+	if key := h.actionKey(hotkeyHelp); key != "" {
+		globalParts = append(globalParts, globalStyle.Render(key))
+	}
+	if key := h.actionKey(hotkeyQuit); key != "" {
+		globalParts = append(globalParts, globalStyle.Render(key))
+	}
+	globalHints := strings.Join(globalParts, " ")
 
 	leftPart := strings.Join(contextHints, " ")
 	rightPart := globalHints
@@ -7108,6 +7442,22 @@ func (h *Home) renderHelpBarFull() string {
 	// Separator style for grouping related actions
 	sepStyle := lipgloss.NewStyle().Foreground(ColorBorder)
 	sep := sepStyle.Render(" │ ")
+	newQuickKey := joinHotkeyLabels(h.actionKey(hotkeyNewSession), h.actionKey(hotkeyQuickCreate))
+	renameKey := h.actionKey(hotkeyRename)
+	restartKey := h.actionKey(hotkeyRestart)
+	deleteKey := h.actionKey(hotkeyDelete)
+	closeKey := h.actionKey(hotkeyCloseSession)
+	groupKey := h.actionKey(hotkeyCreateGroup)
+	moveKey := h.actionKey(hotkeyMoveToGroup)
+	mcpKey := h.actionKey(hotkeyMCPManager)
+	skillsKey := h.actionKey(hotkeySkillsManager)
+	previewKey := h.actionKey(hotkeyTogglePreview)
+	forkKeys := joinHotkeyLabels(h.actionKey(hotkeyQuickFork), h.actionKey(hotkeyForkWithOptions))
+	copyKey := h.actionKey(hotkeyCopyOutput)
+	sendKey := h.actionKey(hotkeySendOutput)
+	execShellKey := h.actionKey(hotkeyExecShell)
+	notesKey := h.actionKey(hotkeyEditNotes)
+	undoKey := h.actionKey(hotkeyUndoDelete)
 
 	// Determine context-specific hints grouped by action type
 	var primaryHints []string   // Main actions (attach, toggle, etc.)
@@ -7116,60 +7466,98 @@ func (h *Home) renderHelpBarFull() string {
 
 	if len(h.flatItems) == 0 {
 		contextTitle = "Empty"
-		primaryHints = []string{
-			h.helpKey("n/N", "New/Quick"),
-			h.helpKey("i", "Import"),
-			h.helpKey("g", "Group"),
+		if newQuickKey != "" {
+			primaryHints = append(primaryHints, h.helpKey(newQuickKey, "New/Quick"))
+		}
+		if key := h.actionKey(hotkeyImport); key != "" {
+			primaryHints = append(primaryHints, h.helpKey(key, "Import"))
+		}
+		if groupKey != "" {
+			primaryHints = append(primaryHints, h.helpKey(groupKey, "Group"))
 		}
 	} else if h.cursor < len(h.flatItems) {
 		item := h.flatItems[h.cursor]
 		if item.Type == session.ItemTypeGroup {
 			contextTitle = "Group"
-			primaryHints = []string{
-				h.helpKey("Tab", "Toggle"),
-				h.helpKey("n/N", "New/Quick"),
-				h.helpKey("g", "Group"),
+			primaryHints = append(primaryHints, h.helpKey("Tab", "Toggle"))
+			if newQuickKey != "" {
+				primaryHints = append(primaryHints, h.helpKey(newQuickKey, "New/Quick"))
 			}
-			secondaryHints = []string{
-				h.helpKey("r", "Rename"),
-				h.helpKey("d", "Delete"),
+			if groupKey != "" {
+				primaryHints = append(primaryHints, h.helpKey(groupKey, "Group"))
+			}
+			if renameKey != "" {
+				secondaryHints = append(secondaryHints, h.helpKey(renameKey, "Rename"))
+			}
+			if deleteKey != "" {
+				secondaryHints = append(secondaryHints, h.helpKey(deleteKey, "Delete"))
 			}
 		} else {
 			contextTitle = "Session"
-			primaryHints = []string{
-				h.helpKey("Enter", "Attach"),
-				h.helpKey("n/N", "New/Quick"),
-				h.helpKey("g", "Group"),
-				h.helpKey("R", "Restart"),
+			primaryHints = append(primaryHints, h.helpKey("Enter", "Attach"))
+			if newQuickKey != "" {
+				primaryHints = append(primaryHints, h.helpKey(newQuickKey, "New/Quick"))
+			}
+			if groupKey != "" {
+				primaryHints = append(primaryHints, h.helpKey(groupKey, "Group"))
+			}
+			if restartKey != "" {
+				primaryHints = append(primaryHints, h.helpKey(restartKey, "Restart"))
 			}
 			// Only show fork hints if session has a valid Claude session ID
 			if item.Session != nil && item.Session.CanFork() {
-				primaryHints = append(primaryHints, h.helpKey("f/F", "Fork"))
+				if forkKeys != "" {
+					primaryHints = append(primaryHints, h.helpKey(forkKeys, "Fork"))
+				}
 			}
 			// Show MCP Manager and preview mode toggle for Claude and Gemini sessions
 			if item.Session != nil && (item.Session.Tool == "claude" || item.Session.Tool == "gemini") {
-				primaryHints = append(primaryHints, h.helpKey("m", "MCP"))
-				primaryHints = append(primaryHints, h.helpKey("v", h.previewModeShort()))
+				if mcpKey != "" {
+					primaryHints = append(primaryHints, h.helpKey(mcpKey, "MCP"))
+				}
+				if previewKey != "" {
+					primaryHints = append(primaryHints, h.helpKey(previewKey, h.previewModeShort()))
+				}
 			}
 			if item.Session != nil && item.Session.Tool == "claude" {
-				primaryHints = append(primaryHints, h.helpKey("s", "Skills"))
+				if skillsKey != "" {
+					primaryHints = append(primaryHints, h.helpKey(skillsKey, "Skills"))
+				}
 			}
 			if item.Session != nil && item.Session.IsSandboxed() {
-				primaryHints = append(primaryHints, h.helpKey("E", "Exec"))
+				if execShellKey != "" {
+					primaryHints = append(primaryHints, h.helpKey(execShellKey, "Exec"))
+				}
 			}
-			primaryHints = append(primaryHints, h.helpKey("c", "Copy"))
-			primaryHints = append(primaryHints, h.helpKey("x", "Send"))
-			secondaryHints = []string{
-				h.helpKey("r", "Rename"),
-				h.helpKey("M", "Move"),
-				h.helpKey("d", "Delete"),
+			if copyKey != "" {
+				primaryHints = append(primaryHints, h.helpKey(copyKey, "Copy"))
+			}
+			if sendKey != "" {
+				primaryHints = append(primaryHints, h.helpKey(sendKey, "Send"))
+			}
+			if notesKey != "" {
+				primaryHints = append(primaryHints, h.helpKey(notesKey, "Notes"))
+			}
+			if renameKey != "" {
+				secondaryHints = append(secondaryHints, h.helpKey(renameKey, "Rename"))
+			}
+			if moveKey != "" {
+				secondaryHints = append(secondaryHints, h.helpKey(moveKey, "Move"))
+			}
+			if deleteKey != "" {
+				secondaryHints = append(secondaryHints, h.helpKey(deleteKey, "Delete"))
+			}
+			if closeKey != "" {
+				secondaryHints = append(secondaryHints, h.helpKey(closeKey, "Close"))
 			}
 		}
 	}
 
 	// Show undo hint when undo stack is non-empty
 	if len(h.undoStack) > 0 {
-		secondaryHints = append(secondaryHints, h.helpKey("^Z", "Undo"))
+		if undoKey != "" {
+			secondaryHints = append(secondaryHints, h.helpKey(undoKey, "Undo"))
+		}
 	}
 
 	// Top border
@@ -7203,9 +7591,21 @@ func (h *Home) renderHelpBarFull() string {
 
 	// Global shortcuts (right side) - more compact with separators
 	globalStyle := lipgloss.NewStyle().Foreground(ColorComment)
-	globalHints := globalStyle.Render("↑↓ Nav") + sep +
-		globalStyle.Render("/ Search  G Global") + sep +
-		globalStyle.Render("S Settings  ? Help  q Quit")
+	globalParts := []string{globalStyle.Render("↑↓ Nav")}
+	if key := h.actionKey(hotkeySearch); key != "" {
+		globalParts = append(globalParts, globalStyle.Render(key+" Search"))
+	}
+	globalParts = append(globalParts, globalStyle.Render("G Global"))
+	if key := h.actionKey(hotkeySettings); key != "" {
+		globalParts = append(globalParts, globalStyle.Render(key+" Settings"))
+	}
+	if key := h.actionKey(hotkeyHelp); key != "" {
+		globalParts = append(globalParts, globalStyle.Render(key+" Help"))
+	}
+	if key := h.actionKey(hotkeyQuit); key != "" {
+		globalParts = append(globalParts, globalStyle.Render(key+" Quit"))
+	}
+	globalHints := strings.Join(globalParts, sep)
 
 	// Calculate spacing between left (context) and right (global) portions
 	leftPart := contextLabel + " " + shortcutsLine
@@ -7253,15 +7653,25 @@ func (h *Home) renderSessionList(width, height int) string {
 			contentHeight = 5
 		}
 
+		hints := make([]string, 0, 3)
+		if key := h.actionKey(hotkeyNewSession); key != "" {
+			hints = append(hints, fmt.Sprintf("Press %s to create a new session", key))
+		}
+		if key := h.actionKey(hotkeyImport); key != "" {
+			hints = append(hints, fmt.Sprintf("Press %s to import existing tmux sessions", key))
+		}
+		if key := h.actionKey(hotkeyCreateGroup); key != "" {
+			hints = append(hints, fmt.Sprintf("Press %s to create a group", key))
+		}
+		if len(hints) == 0 {
+			hints = append(hints, "Create or import sessions to get started")
+		}
+
 		emptyContent := renderEmptyStateResponsive(EmptyStateConfig{
 			Icon:     "⬡",
 			Title:    "No Sessions Yet",
 			Subtitle: "Get started by creating your first session",
-			Hints: []string{
-				"Press n to create a new session",
-				"Press i to import existing tmux sessions",
-				"Press g to create a group",
-			},
+			Hints:    hints,
 		}, contentWidth, contentHeight)
 
 		return lipgloss.NewStyle().
@@ -8045,14 +8455,21 @@ func (h *Home) renderPreviewPane(width, height int) string {
 	if len(h.flatItems) == 0 || h.cursor >= len(h.flatItems) {
 		// Show different message when there are no sessions vs just no selection
 		if len(h.flatItems) == 0 {
+			hints := make([]string, 0, 2)
+			if key := h.actionKey(hotkeyNewSession); key != "" {
+				hints = append(hints, fmt.Sprintf("Press %s to create your first session", key))
+			}
+			if key := h.actionKey(hotkeyImport); key != "" {
+				hints = append(hints, fmt.Sprintf("Press %s to import tmux sessions", key))
+			}
+			if len(hints) == 0 {
+				hints = append(hints, "Create or import sessions to get started")
+			}
 			return renderEmptyStateResponsive(EmptyStateConfig{
 				Icon:     "✦",
 				Title:    "Ready to Go",
 				Subtitle: "Your workspace is set up",
-				Hints: []string{
-					"Press n to create your first session",
-					"Press i to import tmux sessions",
-				},
+				Hints:    hints,
 			}, width, height)
 		}
 		return renderEmptyStateResponsive(EmptyStateConfig{
@@ -8187,10 +8604,12 @@ func (h *Home) renderPreviewPane(width, height int) string {
 		b.WriteString("\n")
 
 		// Finish hint
-		b.WriteString(wtHintStyle.Render("Finish:  "))
-		b.WriteString(wtKeyStyle.Render("W"))
-		b.WriteString(wtHintStyle.Render(" merge + cleanup"))
-		b.WriteString("\n")
+		if finishKey := h.actionKey(hotkeyWorktreeFinish); finishKey != "" {
+			b.WriteString(wtHintStyle.Render("Finish:  "))
+			b.WriteString(wtKeyStyle.Render(finishKey))
+			b.WriteString(wtHintStyle.Render(" merge + cleanup"))
+			b.WriteString("\n")
+		}
 	}
 
 	// Claude-specific info (session ID and MCPs)
@@ -8364,14 +8783,25 @@ func (h *Home) renderPreviewPane(width, height int) string {
 
 		// Fork hint when session can be forked
 		if selected.CanFork() {
-			hintStyle := lipgloss.NewStyle().Foreground(ColorText).Italic(true)
-			keyStyle := lipgloss.NewStyle().Foreground(ColorAccent).Bold(true)
-			b.WriteString(hintStyle.Render("Fork:    "))
-			b.WriteString(keyStyle.Render("f"))
-			b.WriteString(hintStyle.Render(" quick fork, "))
-			b.WriteString(keyStyle.Render("F"))
-			b.WriteString(hintStyle.Render(" fork with options"))
-			b.WriteString("\n")
+			quickForkKey := h.actionKey(hotkeyQuickFork)
+			forkWithOptionsKey := h.actionKey(hotkeyForkWithOptions)
+			if quickForkKey != "" || forkWithOptionsKey != "" {
+				hintStyle := lipgloss.NewStyle().Foreground(ColorText).Italic(true)
+				keyStyle := lipgloss.NewStyle().Foreground(ColorAccent).Bold(true)
+				b.WriteString(hintStyle.Render("Fork:    "))
+				if quickForkKey != "" {
+					b.WriteString(keyStyle.Render(quickForkKey))
+					b.WriteString(hintStyle.Render(" quick fork"))
+				}
+				if quickForkKey != "" && forkWithOptionsKey != "" {
+					b.WriteString(hintStyle.Render(", "))
+				}
+				if forkWithOptionsKey != "" {
+					b.WriteString(keyStyle.Render(forkWithOptionsKey))
+					b.WriteString(hintStyle.Render(" fork with options"))
+				}
+				b.WriteString("\n")
+			}
 		}
 	}
 
@@ -8452,7 +8882,7 @@ func (h *Home) renderPreviewPane(width, height int) string {
 
 			// Fork hint for OpenCode
 			if selected.CanFork() {
-				renderForkHintLine(&b)
+				h.renderForkHintLine(&b)
 			}
 		} else {
 			// Check if detection has completed (OpenCodeDetectedAt is set even when no session found)
@@ -8518,17 +8948,40 @@ func (h *Home) renderPreviewPane(width, height int) string {
 
 			// Resume hint when tool supports restart with session resume
 			if selected.CanRestartGeneric() {
-				hintStyle := lipgloss.NewStyle().Foreground(ColorText).Italic(true)
-				keyStyle := lipgloss.NewStyle().Foreground(ColorAccent).Bold(true)
-				b.WriteString(hintStyle.Render("Resume:  "))
-				b.WriteString(keyStyle.Render("r"))
-				b.WriteString(hintStyle.Render(" restart with session resume"))
-				b.WriteString("\n")
+				if restartKey := h.actionKey(hotkeyRestart); restartKey != "" {
+					hintStyle := lipgloss.NewStyle().Foreground(ColorText).Italic(true)
+					keyStyle := lipgloss.NewStyle().Foreground(ColorAccent).Bold(true)
+					b.WriteString(hintStyle.Render("Resume:  "))
+					b.WriteString(keyStyle.Render(restartKey))
+					b.WriteString(hintStyle.Render(" restart with session resume"))
+					b.WriteString("\n")
+				}
 			}
 		}
 	}
 
 	b.WriteString("\n")
+
+	// Check preview settings for what to show
+	config, _ := session.LoadUserConfig()
+	showAnalytics := config != nil && config.GetShowAnalytics() &&
+		(selected.Tool == "claude" || selected.Tool == "gemini")
+	showOutput := config == nil || config.GetShowOutput() // Default to true if config fails
+	notesOutputSplit := 0.33
+	if config != nil {
+		notesOutputSplit = config.Preview.GetNotesOutputSplit()
+	}
+
+	// Apply preview mode override (v key cycles through modes)
+	switch h.previewMode {
+	case PreviewModeOutput:
+		showAnalytics = false
+		showOutput = true
+	case PreviewModeAnalytics:
+		// showAnalytics keeps its default value (only available for Claude/Gemini)
+		showOutput = false
+		// PreviewModeBoth: use config settings (default)
+	}
 
 	// Special handling for error state - show guidance instead of output
 	if selected.Status == session.StatusError {
@@ -8553,14 +9006,18 @@ func (h *Home) renderPreviewPane(width, height int) string {
 		b.WriteString("\n\n")
 		b.WriteString(dimStyle.Render("Actions:"))
 		b.WriteString("\n")
-		b.WriteString("  ")
-		b.WriteString(keyStyle.Render("R"))
-		b.WriteString(dimStyle.Render(" Start   - create and start tmux session"))
-		b.WriteString("\n")
-		b.WriteString("  ")
-		b.WriteString(keyStyle.Render("d"))
-		b.WriteString(dimStyle.Render(" Delete  - remove from list"))
-		b.WriteString("\n")
+		if restartKey := h.actionKey(hotkeyRestart); restartKey != "" {
+			b.WriteString("  ")
+			b.WriteString(keyStyle.Render(restartKey))
+			b.WriteString(dimStyle.Render(" Start   - create and start tmux session"))
+			b.WriteString("\n")
+		}
+		if deleteKey := h.actionKey(hotkeyDelete); deleteKey != "" {
+			b.WriteString("  ")
+			b.WriteString(keyStyle.Render(deleteKey))
+			b.WriteString(dimStyle.Render(" Delete  - remove from list"))
+			b.WriteString("\n")
+		}
 		b.WriteString("  ")
 		b.WriteString(keyStyle.Render("Enter"))
 		b.WriteString(dimStyle.Render(" - attach (will auto-start)"))
@@ -8582,23 +9039,6 @@ func (h *Home) renderPreviewPane(width, height int) string {
 		}
 
 		return content
-	}
-
-	// Check preview settings for what to show
-	config, _ := session.LoadUserConfig()
-	showAnalytics := config != nil && config.GetShowAnalytics() &&
-		(selected.Tool == "claude" || selected.Tool == "gemini")
-	showOutput := config == nil || config.GetShowOutput() // Default to true if config fails
-
-	// Apply preview mode override (v key cycles through modes)
-	switch h.previewMode {
-	case PreviewModeOutput:
-		showAnalytics = false
-		showOutput = true
-	case PreviewModeAnalytics:
-		// showAnalytics keeps its default value (only available for Claude/Gemini)
-		showOutput = false
-		// PreviewModeBoth: use config settings (default)
 	}
 
 	// Check if session is launching/resuming (for animation priority)
@@ -8633,11 +9073,20 @@ func (h *Home) renderPreviewPane(width, height int) string {
 		}
 	}
 
+	remainingLines := height - (strings.Count(b.String(), "\n") + 1)
+	notesLines := notesSectionLineBudget(remainingLines, showOutput || isStartingUp, notesOutputSplit)
+	if notesLines > 0 {
+		b.WriteString(h.renderNotesSection(selected, width, notesLines))
+		b.WriteString("\n")
+	}
+
 	// If output is disabled AND not starting up, return early
 	// (We want to show the launch animation even if output is normally disabled)
 	if !showOutput && !isStartingUp {
 		// If analytics was also not shown, display session info card as fallback
-		if !showAnalytics {
+		hasNotesContent := strings.TrimSpace(selected.Notes) != "" ||
+			(h.notesEditing && h.notesEditingSessionID == selected.ID)
+		if !showAnalytics && !hasNotesContent {
 			infoCard := h.renderSessionInfoCard(selected, width, height)
 			b.WriteString("\n")
 			b.WriteString(infoCard)
@@ -8897,6 +9346,131 @@ func (h *Home) renderPreviewPane(width, height int) string {
 	return strings.Join(truncatedLines, "\n")
 }
 
+func notesSectionLineBudget(remaining int, reserveOutput bool, split float64) int {
+	if remaining <= 0 {
+		return 0
+	}
+
+	if !reserveOutput {
+		return remaining
+	}
+
+	if split <= 0 {
+		split = 0.33
+	}
+
+	notesLines := int(float64(remaining) * split)
+	if notesLines < 3 {
+		notesLines = 3
+	}
+
+	maxNotes := remaining - 3
+	if maxNotes < 1 {
+		maxNotes = 1
+	}
+	if notesLines > maxNotes {
+		notesLines = maxNotes
+	}
+
+	return notesLines
+}
+
+func (h *Home) renderNotesSection(inst *session.Instance, width, maxLines int) string {
+	if inst == nil || maxLines <= 0 {
+		return ""
+	}
+	if maxLines < 2 {
+		maxLines = 2
+	}
+
+	contentWidth := width - 4
+	if contentWidth < 10 {
+		contentWidth = 10
+	}
+
+	lines := make([]string, 0, maxLines)
+	lines = append(lines, renderSectionDivider("Notes", width-4))
+	bodyLines := maxLines - 1
+	if bodyLines < 1 {
+		bodyLines = 1
+	}
+
+	hintStyle := lipgloss.NewStyle().Foreground(ColorComment).Italic(true)
+	notesStyle := lipgloss.NewStyle().Foreground(ColorText)
+	emptyStyle := lipgloss.NewStyle().Foreground(ColorTextDim).Italic(true)
+
+	if h.notesEditing && h.notesEditingSessionID == inst.ID {
+		editorLines := bodyLines - 1
+		if editorLines < 1 {
+			editorLines = 1
+		}
+
+		h.notesEditor.SetWidth(contentWidth)
+		h.notesEditor.SetHeight(editorLines)
+		h.notesEditor.Focus()
+
+		editorView := h.notesEditor.View()
+		viewLines := strings.Split(editorView, "\n")
+		if len(viewLines) > editorLines {
+			viewLines = viewLines[:editorLines]
+		}
+		for len(viewLines) < editorLines {
+			viewLines = append(viewLines, "")
+		}
+
+		for _, line := range viewLines {
+			lines = append(lines, ansi.Truncate(line, contentWidth, "..."))
+		}
+
+		lines = append(lines, hintStyle.Render("Ctrl+S save • Esc cancel"))
+	} else {
+		notesBodyLines := bodyLines - 1
+		if notesBodyLines < 1 {
+			notesBodyLines = 1
+		}
+
+		rawNotes := strings.TrimRight(inst.Notes, "\n")
+		rawLines := strings.Split(rawNotes, "\n")
+		if len(rawLines) == 1 && strings.TrimSpace(rawLines[0]) == "" {
+			rawLines = nil
+		}
+
+		if len(rawLines) == 0 {
+			lines = append(lines, emptyStyle.Render("No notes"))
+		} else {
+			overflow := len(rawLines) > notesBodyLines
+			displayLines := rawLines
+			if overflow {
+				displayLines = rawLines[:notesBodyLines]
+			}
+			for _, line := range displayLines {
+				safe := stripControlCharsPreserveANSI(line)
+				safe = runewidth.Truncate(safe, contentWidth, "...")
+				lines = append(lines, notesStyle.Render(safe))
+			}
+			if overflow && len(lines) > 0 {
+				more := len(rawLines) - notesBodyLines
+				lines[len(lines)-1] = hintStyle.Render(fmt.Sprintf("... +%d more lines", more))
+			}
+		}
+
+		hintText := "Notes hotkey unbound"
+		if editKey := h.actionKey(hotkeyEditNotes); editKey != "" {
+			hintText = fmt.Sprintf("%s edit notes", editKey)
+		}
+		lines = append(lines, hintStyle.Render(hintText))
+	}
+
+	if len(lines) > maxLines {
+		lines = lines[:maxLines]
+	}
+	for len(lines) < maxLines {
+		lines = append(lines, "")
+	}
+
+	return strings.Join(lines, "\n")
+}
+
 // stripControlCharsPreserveANSI removes dangerous C0 control characters while
 // preserving ANSI escape sequences (ESC = 0x1b). This allows terminal colors
 // and formatting from capture-pane -e output to pass through to display, while
@@ -9100,7 +9674,17 @@ func (h *Home) renderGroupPreview(group *session.Group, width, height int) strin
 	// Keyboard hints at bottom
 	b.WriteString("\n")
 	hintStyle := lipgloss.NewStyle().Foreground(ColorComment).Italic(true)
-	b.WriteString(hintStyle.Render("Tab toggle • R rename • d delete • g subgroup"))
+	hints := []string{"Tab toggle"}
+	if key := h.actionKey(hotkeyRename); key != "" {
+		hints = append(hints, key+" rename")
+	}
+	if key := h.actionKey(hotkeyDelete); key != "" {
+		hints = append(hints, key+" delete")
+	}
+	if key := h.actionKey(hotkeyCreateGroup); key != "" {
+		hints = append(hints, key+" subgroup")
+	}
+	b.WriteString(hintStyle.Render(strings.Join(hints, " • ")))
 
 	// CRITICAL: Enforce width constraint on ALL lines to prevent overflow into left panel
 	maxWidth := max(width-2, 20)

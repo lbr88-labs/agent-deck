@@ -1,0 +1,288 @@
+package ui
+
+import (
+	"strings"
+	"unicode"
+)
+
+const (
+	hotkeyQuit             = "quit"
+	hotkeyNewSession       = "new_session"
+	hotkeyQuickCreate      = "quick_create"
+	hotkeyRename           = "rename"
+	hotkeyRestart          = "restart"
+	hotkeyDelete           = "delete"
+	hotkeyCloseSession     = "close_session"
+	hotkeyUndoDelete       = "undo_delete"
+	hotkeyMoveToGroup      = "move_to_group"
+	hotkeyMCPManager       = "mcp_manager"
+	hotkeySkillsManager    = "skills_manager"
+	hotkeyTogglePreview    = "toggle_preview"
+	hotkeyMarkUnread       = "mark_unread"
+	hotkeyToggleGeminiYolo = "toggle_gemini_yolo"
+	hotkeyQuickFork        = "quick_fork"
+	hotkeyForkWithOptions  = "fork_with_options"
+	hotkeyCopyOutput       = "copy_output"
+	hotkeySendOutput       = "send_output"
+	hotkeyExecShell        = "exec_shell"
+	hotkeyEditNotes        = "edit_notes"
+	hotkeyWorktreeFinish   = "worktree_finish"
+	hotkeyCreateGroup      = "create_group"
+	hotkeySearch           = "search"
+	hotkeyHelp             = "help"
+	hotkeySettings         = "settings"
+	hotkeyImport           = "import"
+	hotkeyReload           = "reload"
+)
+
+var hotkeyActionOrder = []string{
+	hotkeyQuit,
+	hotkeyNewSession,
+	hotkeyQuickCreate,
+	hotkeyRename,
+	hotkeyRestart,
+	hotkeyDelete,
+	hotkeyCloseSession,
+	hotkeyUndoDelete,
+	hotkeyMoveToGroup,
+	hotkeyMCPManager,
+	hotkeySkillsManager,
+	hotkeyTogglePreview,
+	hotkeyMarkUnread,
+	hotkeyToggleGeminiYolo,
+	hotkeyQuickFork,
+	hotkeyForkWithOptions,
+	hotkeyCopyOutput,
+	hotkeySendOutput,
+	hotkeyExecShell,
+	hotkeyEditNotes,
+	hotkeyWorktreeFinish,
+	hotkeyCreateGroup,
+	hotkeySearch,
+	hotkeyHelp,
+	hotkeySettings,
+	hotkeyImport,
+	hotkeyReload,
+}
+
+var defaultHotkeyBindings = map[string]string{
+	hotkeyQuit:             "q",
+	hotkeyNewSession:       "n",
+	hotkeyQuickCreate:      "N",
+	hotkeyRename:           "r",
+	hotkeyRestart:          "R",
+	hotkeyDelete:           "d",
+	hotkeyCloseSession:     "D",
+	hotkeyUndoDelete:       "ctrl+z",
+	hotkeyMoveToGroup:      "M",
+	hotkeyMCPManager:       "m",
+	hotkeySkillsManager:    "s",
+	hotkeyTogglePreview:    "v",
+	hotkeyMarkUnread:       "u",
+	hotkeyToggleGeminiYolo: "y",
+	hotkeyQuickFork:        "f",
+	hotkeyForkWithOptions:  "F",
+	hotkeyCopyOutput:       "c",
+	hotkeySendOutput:       "x",
+	hotkeyExecShell:        "E",
+	hotkeyEditNotes:        "e",
+	hotkeyWorktreeFinish:   "W",
+	hotkeyCreateGroup:      "g",
+	hotkeySearch:           "/",
+	hotkeyHelp:             "?",
+	hotkeySettings:         "S",
+	hotkeyImport:           "i",
+	hotkeyReload:           "ctrl+r",
+}
+
+var hotkeyActionDefaultTriggers = map[string][]string{
+	hotkeyQuit:            {"q", "ctrl+c"},
+	hotkeyForkWithOptions: {"F", "shift+f"},
+	hotkeyMoveToGroup:     {"M", "shift+m"},
+	hotkeyWorktreeFinish:  {"W", "shift+w"},
+}
+
+func resolveHotkeys(overrides map[string]string) map[string]string {
+	bindings := make(map[string]string, len(defaultHotkeyBindings))
+	for action, key := range defaultHotkeyBindings {
+		bindings[action] = key
+	}
+
+	for action, key := range overrides {
+		normalizedAction := strings.TrimSpace(strings.ToLower(action))
+		if _, ok := defaultHotkeyBindings[normalizedAction]; !ok {
+			continue
+		}
+
+		normalizedKey := strings.TrimSpace(key)
+		if normalizedKey == "" {
+			delete(bindings, normalizedAction)
+			continue
+		}
+
+		bindings[normalizedAction] = normalizedKey
+	}
+
+	return bindings
+}
+
+func buildHotkeyLookup(bindings map[string]string) (map[string]string, map[string]bool) {
+	keyToCanonical := make(map[string]string, len(bindings))
+	blockedCanonical := make(map[string]bool)
+
+	for _, action := range hotkeyActionOrder {
+		canonical := defaultHotkeyBindings[action]
+		bound := strings.TrimSpace(bindings[action])
+		defaultTriggers := defaultTriggersForAction(action)
+		if bound == "" {
+			for _, trigger := range defaultTriggers {
+				blockedCanonical[trigger] = true
+			}
+			continue
+		}
+		if bound != canonical {
+			for _, trigger := range defaultTriggers {
+				blockedCanonical[trigger] = true
+			}
+		}
+		for _, alias := range hotkeyAliases(bound) {
+			if _, exists := keyToCanonical[alias]; !exists {
+				keyToCanonical[alias] = canonical
+			}
+		}
+	}
+
+	return keyToCanonical, blockedCanonical
+}
+
+func defaultTriggersForAction(action string) []string {
+	if triggers, ok := hotkeyActionDefaultTriggers[action]; ok {
+		return triggers
+	}
+	return hotkeyAliases(defaultHotkeyBindings[action])
+}
+
+func hotkeyAliases(key string) []string {
+	trimmed := strings.TrimSpace(key)
+	if trimmed == "" {
+		return nil
+	}
+
+	aliases := []string{trimmed}
+	seen := map[string]bool{trimmed: true}
+	add := func(alias string) {
+		alias = strings.TrimSpace(alias)
+		if alias == "" || seen[alias] {
+			return
+		}
+		seen[alias] = true
+		aliases = append(aliases, alias)
+	}
+
+	if shiftAlias := shiftedAliasFor(trimmed); shiftAlias != "" {
+		add(shiftAlias)
+	}
+	if unshiftedAlias := unshiftedAliasFor(trimmed); unshiftedAlias != "" {
+		add(unshiftedAlias)
+	}
+
+	return aliases
+}
+
+func shiftedAliasFor(key string) string {
+	runes := []rune(key)
+	if len(runes) != 1 {
+		return ""
+	}
+
+	r := runes[0]
+	if unicode.IsUpper(r) {
+		return "shift+" + strings.ToLower(string(r))
+	}
+
+	switch r {
+	case '!':
+		return "shift+1"
+	case '@':
+		return "shift+2"
+	case '#':
+		return "shift+3"
+	case '$':
+		return "shift+4"
+	case '%':
+		return "shift+5"
+	case '^':
+		return "shift+6"
+	case '&':
+		return "shift+7"
+	case '*':
+		return "shift+8"
+	case '(':
+		return "shift+9"
+	case ')':
+		return "shift+0"
+	}
+
+	return ""
+}
+
+func unshiftedAliasFor(key string) string {
+	lower := strings.ToLower(strings.TrimSpace(key))
+	if !strings.HasPrefix(lower, "shift+") {
+		return ""
+	}
+
+	base := strings.TrimSpace(lower[len("shift+"):])
+	runes := []rune(base)
+	if len(runes) != 1 {
+		return ""
+	}
+
+	r := runes[0]
+	if unicode.IsLetter(r) {
+		return strings.ToUpper(string(r))
+	}
+
+	switch r {
+	case '1':
+		return "!"
+	case '2':
+		return "@"
+	case '3':
+		return "#"
+	case '4':
+		return "$"
+	case '5':
+		return "%"
+	case '6':
+		return "^"
+	case '7':
+		return "&"
+	case '8':
+		return "*"
+	case '9':
+		return "("
+	case '0':
+		return ")"
+	}
+
+	return ""
+}
+
+func actionHotkey(bindings map[string]string, action string) string {
+	if bindings == nil {
+		return ""
+	}
+	return strings.TrimSpace(bindings[action])
+}
+
+func joinHotkeyLabels(keys ...string) string {
+	filtered := make([]string, 0, len(keys))
+	for _, key := range keys {
+		trimmed := strings.TrimSpace(key)
+		if trimmed != "" {
+			filtered = append(filtered, trimmed)
+		}
+	}
+	return strings.Join(filtered, "/")
+}

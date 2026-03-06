@@ -13,11 +13,12 @@ type HelpOverlay struct {
 	width        int
 	height       int
 	scrollOffset int // Current scroll position for small screens
+	hotkeys      map[string]string
 }
 
 // NewHelpOverlay creates a new help overlay
 func NewHelpOverlay() *HelpOverlay {
-	return &HelpOverlay{}
+	return &HelpOverlay{hotkeys: resolveHotkeys(nil)}
 }
 
 // Show makes the help overlay visible
@@ -40,6 +41,38 @@ func (h *HelpOverlay) IsVisible() bool {
 func (h *HelpOverlay) SetSize(width, height int) {
 	h.width = width
 	h.height = height
+}
+
+// SetHotkeys updates displayed hotkeys for dynamic help rendering.
+func (h *HelpOverlay) SetHotkeys(bindings map[string]string) {
+	h.hotkeys = make(map[string]string, len(bindings))
+	for action, key := range bindings {
+		h.hotkeys[action] = key
+	}
+}
+
+func (h *HelpOverlay) key(action, fallback string) string {
+	if h.hotkeys == nil {
+		return fallback
+	}
+	if key, ok := h.hotkeys[action]; ok {
+		trimmed := strings.TrimSpace(key)
+		if trimmed != "" {
+			return trimmed
+		}
+	}
+	return ""
+}
+
+func (h *HelpOverlay) keyPair(a, b, fallback string) string {
+	if h.hotkeys == nil {
+		return fallback
+	}
+	joined := joinHotkeyLabels(actionHotkey(h.hotkeys, a), actionHotkey(h.hotkeys, b))
+	if joined != "" {
+		return joined
+	}
+	return ""
 }
 
 // Update handles messages for the help overlay
@@ -89,6 +122,32 @@ func (h *HelpOverlay) View() string {
 	}
 
 	// Define help sections
+	newKeys := h.keyPair(hotkeyNewSession, hotkeyQuickCreate, "n/N")
+	forkKeys := h.keyPair(hotkeyQuickFork, hotkeyForkWithOptions, "f/F")
+	reorderKeys := "K / J"
+	searchKey := h.key(hotkeySearch, "/")
+	settingsKey := h.key(hotkeySettings, "S")
+	helpKey := h.key(hotkeyHelp, "?")
+	quitKey := h.key(hotkeyQuit, "q")
+	importKey := h.key(hotkeyImport, "i")
+	reloadKey := h.key(hotkeyReload, "Ctrl+R")
+	deleteKey := h.key(hotkeyDelete, "d")
+	closeKey := h.key(hotkeyCloseSession, "D")
+	restartKey := h.key(hotkeyRestart, "Shift+R")
+	renameKey := h.key(hotkeyRename, "r")
+	moveKey := h.key(hotkeyMoveToGroup, "M")
+	mcpKey := h.key(hotkeyMCPManager, "m")
+	skillsKey := h.key(hotkeySkillsManager, "s")
+	previewKey := h.key(hotkeyTogglePreview, "v")
+	unreadKey := h.key(hotkeyMarkUnread, "u")
+	copyKey := h.key(hotkeyCopyOutput, "c")
+	sendKey := h.key(hotkeySendOutput, "x")
+	execShellKey := h.key(hotkeyExecShell, "E")
+	notesKey := h.key(hotkeyEditNotes, "e")
+	worktreeKey := h.key(hotkeyWorktreeFinish, "W")
+	groupKey := h.key(hotkeyCreateGroup, "g")
+	undoKey := h.key(hotkeyUndoDelete, "Ctrl+Z")
+
 	sections := []struct {
 		title string
 		items [][2]string // [key, description]
@@ -110,29 +169,29 @@ func (h *HelpOverlay) View() string {
 		{
 			title: "SESSIONS",
 			items: [][2]string{
-				{"n", "New session"},
-				{"N", "Quick create (auto name, smart defaults)"},
-				{"r", "Rename session"},
-				{"Shift+R", "Restart session"},
-				{"d", "Delete session"},
-				{"Ctrl+Z", "Undo delete"},
-				{"M", "Move to group"},
-				{"m", "MCP Manager (Claude/Gemini)"},
-				{"s", "Skills Manager (Claude)"},
-				{"v", "Toggle preview mode (output/stats/both)"},
-				{"u", "Mark unread"},
-				{"K / J", "Reorder up/down"},
-				{"f", "Quick fork (Claude only)"},
-				{"F", "Fork with options (Claude only)"},
-				{"c", "Copy output to clipboard"},
-				{"x", "Send output to session"},
-				{"E", "Exec shell in sandbox container"},
+				{newKeys, "New / quick create"},
+				{renameKey, "Rename session"},
+				{restartKey, "Restart session"},
+				{deleteKey, "Delete session"},
+				{closeKey, "Close session process"},
+				{undoKey, "Undo delete"},
+				{moveKey, "Move to group"},
+				{mcpKey, "MCP Manager (Claude/Gemini)"},
+				{skillsKey, "Skills Manager (Claude)"},
+				{previewKey, "Toggle preview mode (output/stats/both)"},
+				{unreadKey, "Mark unread"},
+				{reorderKeys, "Reorder up/down"},
+				{forkKeys, "Fork session (Claude only)"},
+				{copyKey, "Copy output to clipboard"},
+				{sendKey, "Send output to session"},
+				{execShellKey, "Exec shell in sandbox container"},
+				{notesKey, "Edit notes"},
 			},
 		},
 		{
 			title: "WORKTREES",
 			items: [][2]string{
-				{"W", "Finish worktree (merge + cleanup)"},
+				{worktreeKey, "Finish worktree (merge + cleanup)"},
 				{"n → w", "Create session in worktree"},
 				{"F → w", "Fork session into worktree"},
 			},
@@ -140,15 +199,15 @@ func (h *HelpOverlay) View() string {
 		{
 			title: "GROUPS",
 			items: [][2]string{
-				{"g", "New group"},
-				{"r", "Rename group"},
+				{groupKey, "New group"},
+				{renameKey, "Rename group"},
 				{"Tab", "Toggle expand"},
 			},
 		},
 		{
 			title: "SEARCH & FILTER",
 			items: [][2]string{
-				{"/", "Open search"},
+				{searchKey, "Open search"},
 				{"/waiting", "Filter waiting"},
 				{"/running", "Filter running"},
 				{"/idle", "Filter idle"},
@@ -157,14 +216,25 @@ func (h *HelpOverlay) View() string {
 		{
 			title: "OTHER",
 			items: [][2]string{
-				{"S", "Settings"},
-				{"Ctrl+R", "Reload from disk"},
-				{"i", "Import tmux sessions"},
+				{settingsKey, "Settings"},
+				{reloadKey, "Reload from disk"},
+				{importKey, "Import tmux sessions"},
 				{"Ctrl+Q", "Detach from session"},
-				{"q", "Quit"},
-				{"?", "This help"},
+				{quitKey, "Quit"},
+				{helpKey, "This help"},
 			},
 		},
+	}
+
+	for i := range sections {
+		filtered := sections[i].items[:0]
+		for _, item := range sections[i].items {
+			if strings.TrimSpace(item[0]) == "" {
+				continue
+			}
+			filtered = append(filtered, item)
+		}
+		sections[i].items = filtered
 	}
 
 	// Styles
