@@ -1,25 +1,27 @@
-# Agent Deck: Integration Testing Framework
+# Agent Deck
 
 ## What This Is
 
-Agent-deck is a terminal session manager for AI coding agents (Go + Bubble Tea TUI managing tmux sessions). This milestone focuses on building a comprehensive integration testing framework that tests the full conductor orchestration pipeline, multi-tool session behavior, and cross-session event mechanisms. Currently at v0.21.1 on origin/main.
+Agent-deck is a terminal session manager for AI coding agents (Go + Bubble Tea TUI managing tmux sessions). It manages tmux sessions with status tracking, supports multiple AI tools (Claude Code, Gemini CLI, OpenCode, Codex), and provides conductor orchestration for multi-agent workflows. Currently at v0.23.0.
 
 ## Core Value
 
-Conductor orchestration and cross-session coordination must be reliably tested end-to-end, catching regressions before they reach users.
+Conductor orchestration and cross-session coordination must work reliably in production, enabling multi-agent workflows without manual intervention.
 
-## Current Milestone: v1.1 Integration Testing
+## Current Milestone: v1.2 Conductor Reliability & Learnings Cleanup
 
-**Goal:** Build a comprehensive integration testing framework for agent-deck that tests the full conductor orchestration pipeline.
+**Goal:** Fix the top operational issues discovered across 6 conductors, promote validated learnings to appropriate locations, and improve send/heartbeat reliability.
 
 **Target features:**
-- Test framework architecture for integration tests
-- Conductor orchestration pipeline testing (send to child response)
-- Cross-session event notification testing
-- Multi-tool session testing (Claude Code, Gemini CLI, OpenCode, Codex)
-- Sleep/wait detection reliability testing across all tools
-- Skills attachment and triggering tests
-- Session lifecycle integration tests (start, stop, fork, restart with flags)
+- Heartbeat scope filtering (group-aware, not global)
+- Heartbeat respects enabled=false configuration
+- Enter key submission reliability (race condition fix)
+- Codex session send timing (readiness detection)
+- Exit 137 investigation and mitigation
+- --wait flag reliability
+- -cmd flag group parsing fix
+- --no-parent + set-parent routing restoration
+- Learnings promotion to shared CLAUDE.md, GSD conductor skill, and agent-deck skill
 
 ## Requirements
 
@@ -38,32 +40,42 @@ Conductor orchestration and cross-session coordination must be reliably tested e
 - Sleep/wake detection and status transitions tested (v1.0)
 - Session lifecycle unit tests passing (v1.0)
 - Codebase stabilized, lint clean, all tests passing (v1.0)
+- Integration test framework with shared helpers (v1.1)
+- Conductor orchestration pipeline tested end-to-end (v1.1)
+- Cross-session event notification tested (v1.1)
+- Multi-tool session behavior verified (Claude, Gemini, OpenCode, Codex) (v1.1)
+- Sleep/wait detection reliability tests across all tools (v1.1)
+- Edge cases tested: concurrent polling, external storage changes, skills integration (v1.1)
 
 ### Active
 
-- [ ] Integration test framework architecture
-- [ ] Conductor orchestration pipeline tests
-- [ ] Cross-session event notification tests
-- [ ] Multi-tool session behavior tests
-- [ ] Sleep/wait detection reliability tests
-- [ ] Skills attachment and triggering integration tests
-- [ ] Session lifecycle integration tests with flags
+- [ ] Heartbeat scope filtering per conductor group
+- [ ] Heartbeat respects enabled=false configuration
+- [ ] Enter key submission reliability
+- [ ] Codex session send timing (readiness detection)
+- [ ] Exit 137 from incoming messages (investigation + mitigation)
+- [ ] --wait flag reliability
+- [ ] -cmd flag group parsing
+- [ ] --no-parent + set-parent routing restoration
+- [ ] Learnings promoted to shared locations
 
 ### Out of Scope
 
-- New features or functionality beyond testing infrastructure
+- Project-specific learnings (ARD deploy, Ryan ElevenLabs, etc.) stay in their conductors
+- Personal preferences (voice-to-text parsing) stay in user CLAUDE.md
+- New features unrelated to conductor reliability
 - UI/TUI testing (Bubble Tea testing requires separate approach)
 - Performance/load testing
-- CI/CD pipeline integration (tests run locally)
 
 ## Context
 
-- **Previous milestone (v1.0):** Skills Reorganization & Stabilization, 18 requirements completed across 3 phases
-- **Existing test infrastructure:** TestMain files force `AGENTDECK_PROFILE=_test` for isolation, `skipIfNoTmuxServer(t)` for CI graceful skip
-- **Conductor logic:** `internal/session/conductor.go` handles multi-agent orchestration
-- **Multi-tool support:** Claude Code (`claude.go`), Gemini CLI (`gemini.go`), with different sleep/wait patterns
-- **Session management:** `internal/session/instance.go` (struct, status enum), `storage.go` (SQLite), `config.go` (profiles)
+- **Previous milestones:** v1.0 Skills Reorg (3 phases), v1.1 Integration Testing (3 phases), both complete
+- **Conductor operations:** 6 conductors in daily use, surfacing reliability issues documented in spec
+- **Issue recurrence:** Enter key failure (15+), exit 137 (10+), Codex timing (7+), -cmd parsing (7+), set-parent (6+)
+- **Existing test infrastructure:** TestMain files force `AGENTDECK_PROFILE=_test`, integration test framework from v1.1
+- **Key files:** `internal/session/conductor.go`, `conductor_templates.go` (heartbeat), `internal/tmux/tmux.go` (SendKeys), `internal/session/instance.go` (Send, WaitForReady)
 - **tmux layer:** `internal/tmux/` with session cache, pipe manager, pane capture
+- **Learnings scattered:** 6 conductor LEARNINGS.md files need consolidation and promotion
 
 ## Constraints
 
@@ -80,7 +92,7 @@ Conductor orchestration and cross-session coordination must be reliably tested e
 | Skills stay in repo `skills/` directory | Plugin system copies them to cache on install | Good |
 | GSD conductor goes to pool, not built-in | Only needed in conductor contexts, not every session | Good |
 | Skip codebase mapping | CLAUDE.md already has comprehensive architecture docs | Good |
-| Architecture first approach for test framework | Need consistent patterns before writing many tests | -- Pending |
+| Architecture first approach for test framework | Need consistent patterns before writing many tests | Good |
 
 ---
-*Last updated: 2026-03-06 after milestone v1.1 initialization*
+*Last updated: 2026-03-07 after milestone v1.2 initialization*

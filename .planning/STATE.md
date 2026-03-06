@@ -1,54 +1,34 @@
 ---
 gsd_state_version: 1.0
-milestone: v1.1
-milestone_name: Integration Testing
-status: completed
-stopped_at: Completed 06-02-PLAN.md (edge case integration tests)
-last_updated: "2026-03-06T17:42:11.351Z"
-last_activity: 2026-03-07 -- Completed 06-02 edge case integration tests
+milestone: v1.2
+milestone_name: Conductor Reliability & Learnings Cleanup
+status: requirements
+stopped_at: null
+last_updated: "2026-03-07"
+last_activity: 2026-03-07 -- Milestone v1.2 started
 progress:
-  total_phases: 6
-  completed_phases: 6
-  total_plans: 13
-  completed_plans: 13
-  percent: 100
+  total_phases: 0
+  completed_phases: 0
+  total_plans: 0
+  completed_plans: 0
+  percent: 0
 ---
 
 # Project State
 
 ## Project Reference
 
-See: .planning/PROJECT.md (updated 2026-03-06)
+See: .planning/PROJECT.md (updated 2026-03-07)
 
-**Core value:** Conductor orchestration and cross-session coordination must be reliably tested end-to-end
-**Current focus:** Phase 6: Conductor Pipeline & Edge Cases (COMPLETE)
+**Core value:** Conductor orchestration and cross-session coordination must work reliably in production
+**Current focus:** Defining requirements for v1.2
 
 ## Current Position
 
-Phase: 6 of 6 (Conductor Pipeline & Edge Cases)
-Plan: 2 of 2 complete
-Status: Complete
-Last activity: 2026-03-07 -- Completed 06-02 edge case integration tests
-
-Progress: [██████████] 100%
-
-## Performance Metrics
-
-**Velocity:**
-- Total plans completed: 6
-- Average duration: 8min
-- Total execution time: 0.83 hours
-
-| Phase | Plan | Duration | Tasks | Files |
-|-------|------|----------|-------|-------|
-| 04    | 01   | 7min     | 2     | 7     |
-| 04    | 02   | 2min     | 2     | 1     |
-| 05    | 01   | 9min     | 2     | 1     |
-| 05    | 02   | 6min     | 2     | 1     |
-| 06    | 01   | 5min     | 2     | 1     |
-| 06    | 02   | 22min    | 2     | 1     |
-
-*Updated after each plan completion*
+Phase: Not started (defining requirements)
+Plan: --
+Status: Defining requirements
+Last activity: 2026-03-07 -- Milestone v1.2 started
 
 ## Accumulated Context
 
@@ -58,7 +38,7 @@ Progress: [██████████] 100%
 - [v1.0]: TestMain files in all test packages force AGENTDECK_PROFILE=_test
 - [v1.0]: Shell sessions during tmux startup window show StatusStarting from tmux layer
 - [v1.0]: Runtime tests verify file readability (os.ReadFile) at materialized paths
-- [v1.1]: Architecture first approach for test framework (PROJECT.md)
+- [v1.1]: Architecture first approach for test framework
 - [v1.1]: No new dependencies needed; existing Go stdlib + testify + errgroup sufficient
 - [v1.1]: Integration tests use real tmux but simple commands (echo, sleep, cat), not real AI tools
 - [v1.1-04-01]: Used dashes in inttest- prefix to survive tmux sanitizeName
@@ -88,6 +68,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-03-06T17:36:10Z
-Stopped at: Completed 06-02-PLAN.md (edge case integration tests)
+Last session: 2026-03-07
+Stopped at: Fresh milestone start
 Resume file: None
