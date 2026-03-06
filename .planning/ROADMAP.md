@@ -152,7 +152,11 @@ Plans:
   1. Pasting text into a tmux session followed by Enter key submission delivers the complete message without dropped Enter keys, even under rapid successive sends
   2. Messages sent to a Codex session are held until Codex has attached to stdin, preventing text from being consumed by the underlying shell
   3. Existing send-related integration tests (COND-04 chunked send, COND-01 send-to-child) continue passing after the fixes
-**Plans**: TBD
+**Plans:** 2 plans
+
+Plans:
+- [ ] 07-01-PLAN.md -- Consolidate send verification, harden Enter retry, add Codex readiness detection
+- [ ] 07-02-PLAN.md -- Integration tests for Enter retry and Codex readiness on real tmux
 
 ### Phase 8: Heartbeat & CLI Fixes
 **Goal**: Conductor heartbeat only monitors sessions in its own group, respects disabled configuration, and CLI flags for --wait, -cmd, and --no-parent work correctly without interfering with each other
@@ -199,7 +203,7 @@ Phases execute in numeric order: 7 -> 8 -> 9 -> 10
 | 4. Framework Foundation | v1.1 | 2/2 | Complete | 2026-03-07 |
 | 5. Status Detection & Events | v1.1 | 2/2 | Complete | 2026-03-07 |
 | 6. Conductor Pipeline & Edge Cases | v1.1 | 2/2 | Complete | 2026-03-07 |
-| 7. Send Reliability | v1.2 | 0/? | Not started | - |
+| 7. Send Reliability | v1.2 | 0/2 | In progress | - |
 | 8. Heartbeat & CLI Fixes | v1.2 | 0/? | Not started | - |
 | 9. Process Stability | v1.2 | 0/? | Not started | - |
 | 10. Learnings Promotion | v1.2 | 0/? | Not started | - |
