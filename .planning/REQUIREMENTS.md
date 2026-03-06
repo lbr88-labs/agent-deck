@@ -16,7 +16,7 @@
 ### Testing
 
 - [x] **TEST-01**: Sleep/wake detection correctly transitions session status (running -> idle -> running on activity)
-- [ ] **TEST-02**: Skills trigger correctly when referenced in session context or loaded on demand
+- [x] **TEST-02**: Skills trigger correctly when referenced in session context or loaded on demand
 - [x] **TEST-03**: Session start creates tmux session and transitions to running status
 - [x] **TEST-04**: Session stop cleanly terminates tmux session and updates status
 - [x] **TEST-05**: Session fork creates independent copy with correct instance ID propagation
@@ -25,7 +25,7 @@
 
 ### Stabilization
 
-- [ ] **STAB-01**: All bugs discovered during testing are fixed
+- [x] **STAB-01**: All bugs discovered during testing are fixed
 - [ ] **STAB-02**: `golangci-lint run` passes with zero warnings
 - [ ] **STAB-03**: `go test -race ./...` passes with zero failures
 - [ ] **STAB-04**: `go build` succeeds for all target platforms (darwin/linux, amd64/arm64)
@@ -59,13 +59,13 @@
 | SKILL-04 | Phase 1 | Complete |
 | SKILL-05 | Phase 1 | Complete |
 | TEST-01 | Phase 2 | Complete |
-| TEST-02 | Phase 2 | Pending |
+| TEST-02 | Phase 2 | Complete |
 | TEST-03 | Phase 2 | Complete |
 | TEST-04 | Phase 2 | Complete |
 | TEST-05 | Phase 2 | Complete |
 | TEST-06 | Phase 2 | Complete |
 | TEST-07 | Phase 2 | Complete |
-| STAB-01 | Phase 2 | Pending |
+| STAB-01 | Phase 2 | Complete |
 | STAB-02 | Phase 3 | Pending |
 | STAB-03 | Phase 3 | Pending |
 | STAB-04 | Phase 3 | Pending |
