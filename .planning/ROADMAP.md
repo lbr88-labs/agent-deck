@@ -1,8 +1,9 @@
-# Roadmap: Agent Deck Skills Reorganization & Stabilization
+# Roadmap: Agent Deck
 
-## Overview
+## Milestones
 
-This milestone transforms the agent-deck skills system to use the official Anthropic skill-creator format, verifies session lifecycle and skills loading through comprehensive testing, and stabilizes the codebase for release readiness. The work flows naturally from reformatting skills, to verifying everything works, to ensuring the codebase is clean and shippable.
+- ~~**v1.0 Skills Reorganization & Stabilization**~~ -- Phases 1-3 (shipped)
+- **v1.1 Integration Testing** -- Phases 4-6 (in progress)
 
 ## Phases
 
@@ -12,11 +13,25 @@ This milestone transforms the agent-deck skills system to use the official Anthr
 
 Decimal phases appear between their surrounding integers in numeric order.
 
-- [ ] **Phase 1: Skills Reorganization** - Reformat all skills to official Anthropic skill-creator structure and verify path resolution
-- [ ] **Phase 2: Testing & Bug Fixes** - Verify session lifecycle, sleep/wake detection, and skills triggering; fix discovered bugs
-- [ ] **Phase 3: Stabilization & Release Readiness** - Clean up codebase, pass all quality gates, prepare for release
+<details>
+<summary>v1.0 Skills Reorganization & Stabilization (Phases 1-3) -- SHIPPED</summary>
+
+- [x] **Phase 1: Skills Reorganization** - Reformat all skills to official Anthropic skill-creator structure and verify path resolution
+- [x] **Phase 2: Testing & Bug Fixes** - Verify session lifecycle, sleep/wake detection, and skills triggering; fix discovered bugs
+- [x] **Phase 3: Stabilization & Release Readiness** - Clean up codebase, pass all quality gates, prepare for release
+
+</details>
+
+### v1.1 Integration Testing
+
+- [ ] **Phase 4: Framework Foundation** - Build shared test infrastructure and verify session lifecycle with real tmux sessions
+- [ ] **Phase 5: Status Detection & Events** - Validate sleep/wait detection accuracy, multi-tool behavior, and cross-session event delivery
+- [ ] **Phase 6: Conductor Pipeline & Edge Cases** - Test full orchestration round-trips and production-grade edge case scenarios
 
 ## Phase Details
+
+<details>
+<summary>v1.0 Phases (shipped)</summary>
 
 ### Phase 1: Skills Reorganization
 **Goal**: All agent-deck skills use the official Anthropic skill-creator format and load correctly from both plugin cache and local development paths
@@ -30,8 +45,8 @@ Decimal phases appear between their surrounding integers in numeric order.
 **Plans:** 2 plans
 
 Plans:
-- [ ] 01-01-PLAN.md -- Fix frontmatter for agent-deck and session-share, add $SKILL_DIR path resolution, register session-share in marketplace.json
-- [ ] 01-02-PLAN.md -- Audit and update GSD conductor skill content, validate path resolution across all three skills
+- [x] 01-01: Fix frontmatter for agent-deck and session-share, add $SKILL_DIR path resolution, register session-share in marketplace.json
+- [x] 01-02: Audit and update GSD conductor skill content, validate path resolution across all three skills
 
 ### Phase 2: Testing & Bug Fixes
 **Goal**: Session lifecycle, sleep/wake detection, and skills triggering are verified through tests, and all bugs found during testing are fixed
@@ -45,9 +60,9 @@ Plans:
 **Plans:** 3 plans
 
 Plans:
-- [ ] 02-01-PLAN.md -- Sleep/wake status transition cycle tests and SQLite persistence verification
-- [ ] 02-02-PLAN.md -- Session lifecycle tests (start, stop, fork, attach) with tmux verification
-- [ ] 02-03-PLAN.md -- Skills runtime triggering tests and bug fixes from Plans 01-02
+- [x] 02-01: Sleep/wake status transition cycle tests and SQLite persistence verification
+- [x] 02-02: Session lifecycle tests (start, stop, fork, attach) with tmux verification
+- [x] 02-03: Skills runtime triggering tests and bug fixes from Plans 01-02
 
 ### Phase 3: Stabilization & Release Readiness
 **Goal**: Codebase passes all quality gates, is free of dead code, and is ready to tag a release
@@ -62,16 +77,55 @@ Plans:
 **Plans:** 2 plans
 
 Plans:
-- [ ] 03-01-PLAN.md -- Quality gates verification, dead code scan, and stale artifact removal
-- [ ] 03-02-PLAN.md -- Changelog entry for milestone and final make ci release gate
+- [x] 03-01: Quality gates verification, dead code scan, and stale artifact removal
+- [x] 03-02: Changelog entry for milestone and final make ci release gate
+
+</details>
+
+### Phase 4: Framework Foundation
+**Goal**: Developers can write integration tests using shared helpers that manage real tmux sessions, poll for conditions, and seed SQLite fixtures, with session lifecycle tests proving the foundation works
+**Depends on**: Phase 3 (stable codebase from v1.0)
+**Requirements**: INFRA-01, INFRA-02, INFRA-03, INFRA-04, LIFE-01, LIFE-02, LIFE-03, LIFE-04
+**Success Criteria** (what must be TRUE):
+  1. A new integration test can create a real tmux session, run a command in it, and have the session automatically cleaned up after the test completes, without orphaned sessions remaining
+  2. Tests that need to wait for asynchronous state (pane content appearing, status changing) use polling helpers instead of time.Sleep, and fail with clear timeout messages when conditions are not met
+  3. Integration tests run in complete isolation from production data: profile is forced to `_test`, SQLite databases are created in temp directories, and no user sessions are affected
+  4. Session start creates a real tmux session that transitions to running, session stop terminates it, session fork produces an independent copy with parent-child linkage, and session restart with flags recreates correctly
+**Plans**: TBD
+
+### Phase 5: Status Detection & Events
+**Goal**: Sleep/wait detection correctly identifies tool-specific patterns across all supported tools, and cross-session event notifications reliably propagate between conductor parent and child sessions
+**Depends on**: Phase 4
+**Requirements**: DETECT-01, DETECT-02, DETECT-03, COND-01, COND-02
+**Success Criteria** (what must be TRUE):
+  1. Simulated pane output containing Claude, Gemini, OpenCode, and Codex sleep/wait patterns is correctly detected by the status engine, producing accurate status transitions
+  2. Creating sessions with different tool types (Claude, Gemini, OpenCode, Codex) produces the correct launch commands and detection configuration for each tool
+  3. A session driven through real tmux pane content transitions correctly through the full status cycle: starting to running to waiting to idle
+  4. A conductor parent can send a command to a child session via real tmux and the child receives it; the cross-session event notification cycle completes (event written, watcher detects, parent notified)
+**Plans**: TBD
+
+### Phase 6: Conductor Pipeline & Edge Cases
+**Goal**: The full conductor orchestration pipeline is tested end-to-end, and production-grade edge cases (concurrent polling, external storage changes, skills integration) are verified
+**Depends on**: Phase 5
+**Requirements**: COND-03, COND-04, EDGE-01, EDGE-02, EDGE-03
+**Success Criteria** (what must be TRUE):
+  1. A conductor heartbeat round-trip completes: parent sends heartbeat, child responds, parent verifies receipt
+  2. Send-with-retry delivers content to a real tmux session using chunked sending and paste-marker detection
+  3. Skills are discovered from directory, attached to a session, and trigger conditions are evaluated correctly
+  4. Concurrent polling of 10+ sessions returns correct status for each session without data races (verified by -race flag)
+  5. A second Storage instance writing to the same SQLite database triggers the storage watcher in the first instance to detect the external change
+**Plans**: TBD
 
 ## Progress
 
 **Execution Order:**
-Phases execute in numeric order: 1 -> 2 -> 3
+Phases execute in numeric order: 4 -> 5 -> 6
 
-| Phase | Plans Complete | Status | Completed |
-|-------|----------------|--------|-----------|
-| 1. Skills Reorganization | 0/2 | Not started | - |
-| 2. Testing & Bug Fixes | 0/3 | Not started | - |
-| 3. Stabilization & Release Readiness | 0/2 | Not started | - |
+| Phase | Milestone | Plans Complete | Status | Completed |
+|-------|-----------|----------------|--------|-----------|
+| 1. Skills Reorganization | v1.0 | 2/2 | Complete | 2026-03-06 |
+| 2. Testing & Bug Fixes | v1.0 | 3/3 | Complete | 2026-03-06 |
+| 3. Stabilization & Release Readiness | v1.0 | 2/2 | Complete | 2026-03-06 |
+| 4. Framework Foundation | v1.1 | 0/? | Not started | - |
+| 5. Status Detection & Events | v1.1 | 0/? | Not started | - |
+| 6. Conductor Pipeline & Edge Cases | v1.1 | 0/? | Not started | - |

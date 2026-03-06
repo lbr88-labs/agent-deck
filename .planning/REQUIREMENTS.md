@@ -65,30 +65,30 @@ Requirements for integration testing milestone. Each maps to roadmap phases.
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| INFRA-01 | TBD | Pending |
-| INFRA-02 | TBD | Pending |
-| INFRA-03 | TBD | Pending |
-| INFRA-04 | TBD | Pending |
-| LIFE-01 | TBD | Pending |
-| LIFE-02 | TBD | Pending |
-| LIFE-03 | TBD | Pending |
-| LIFE-04 | TBD | Pending |
-| DETECT-01 | TBD | Pending |
-| DETECT-02 | TBD | Pending |
-| DETECT-03 | TBD | Pending |
-| COND-01 | TBD | Pending |
-| COND-02 | TBD | Pending |
-| COND-03 | TBD | Pending |
-| COND-04 | TBD | Pending |
-| EDGE-01 | TBD | Pending |
-| EDGE-02 | TBD | Pending |
-| EDGE-03 | TBD | Pending |
+| INFRA-01 | Phase 4 | Pending |
+| INFRA-02 | Phase 4 | Pending |
+| INFRA-03 | Phase 4 | Pending |
+| INFRA-04 | Phase 4 | Pending |
+| LIFE-01 | Phase 4 | Pending |
+| LIFE-02 | Phase 4 | Pending |
+| LIFE-03 | Phase 4 | Pending |
+| LIFE-04 | Phase 4 | Pending |
+| DETECT-01 | Phase 5 | Pending |
+| DETECT-02 | Phase 5 | Pending |
+| DETECT-03 | Phase 5 | Pending |
+| COND-01 | Phase 5 | Pending |
+| COND-02 | Phase 5 | Pending |
+| COND-03 | Phase 6 | Pending |
+| COND-04 | Phase 6 | Pending |
+| EDGE-01 | Phase 6 | Pending |
+| EDGE-02 | Phase 6 | Pending |
+| EDGE-03 | Phase 6 | Pending |
 
 **Coverage:**
 - v1.1 requirements: 18 total
-- Mapped to phases: 0 (pending roadmap)
-- Unmapped: 18
+- Mapped to phases: 18
+- Unmapped: 0
 
 ---
 *Requirements defined: 2026-03-06*
-*Last updated: 2026-03-06 after initial definition*
+*Last updated: 2026-03-06 after roadmap creation*
