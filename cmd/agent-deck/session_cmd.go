@@ -1527,9 +1527,11 @@ func sendWithRetryTarget(target sendRetryTarget, message string, skipVerify bool
 				}
 			} else {
 				waitingNoMarkerChecks = 0
-				// We haven't observed any post-send activity yet. Periodically
-				// nudge Enter while waiting to handle late prompt-state races.
-				if retry%3 == 2 {
+				// We haven't observed any post-send activity yet. Nudge Enter
+				// aggressively in the early window (every iteration for first 5
+				// retries) then every 2nd iteration. This addresses bracketed
+				// paste timing failures that are most likely early on.
+				if retry < 5 || retry%2 == 0 {
 					_ = target.SendEnter()
 				}
 			}
@@ -1537,8 +1539,10 @@ func sendWithRetryTarget(target sendRetryTarget, message string, skipVerify bool
 		}
 		waitingNoMarkerChecks = 0
 
-		// Ambiguous state: keep a small best-effort Enter retry budget.
-		if retry < 2 {
+		// Ambiguous state: keep a best-effort Enter retry budget.
+		// Increased from 2 to 4 because some TUI frameworks take longer
+		// to process and reflect state.
+		if retry < 4 {
 			_ = target.SendEnter()
 		}
 	}
@@ -1585,6 +1589,18 @@ func waitForAgentReady(tmuxSess *tmux.Session, tool string) error {
 					// Claude can report waiting before the interactive prompt is visible.
 					// Keep polling until the prompt line is present.
 					continue
+				}
+			}
+			// Gate Codex sends on prompt readiness: wait for "codex>" or
+			// "Continue?" to be visible before considering the agent ready.
+			if tool == "codex" {
+				if rawContent, captureErr := tmuxSess.CapturePaneFresh(); captureErr == nil {
+					content := tmux.StripANSI(rawContent)
+					detector := tmux.NewPromptDetector("codex")
+					if !detector.HasPrompt(content) {
+						// Codex hasn't shown its prompt yet; keep polling.
+						continue
+					}
 				}
 			}
 			time.Sleep(300 * time.Millisecond) // Small delay for UI to render

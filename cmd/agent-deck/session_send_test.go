@@ -200,8 +200,9 @@ func TestSendWithRetryTarget_WaitingWithoutPasteMarkerReturnsSuccess(t *testing.
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if got := atomic.LoadInt32(&mock.sendEnterCalls); got != 1 {
-		t.Fatalf("expected 1 periodic fallback SendEnter call for waiting-without-active state, got %d", got)
+	// With aggressive early retry (retry < 5), all 4 iterations nudge Enter.
+	if got := atomic.LoadInt32(&mock.sendEnterCalls); got != 4 {
+		t.Fatalf("expected 4 aggressive early SendEnter calls for waiting-without-active state, got %d", got)
 	}
 }
 
@@ -238,8 +239,10 @@ func TestSendWithRetryTarget_DetectsPasteMarkerAfterInitialWaiting(t *testing.T)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if got := atomic.LoadInt32(&mock.sendEnterCalls); got != 1 {
-		t.Fatalf("expected 1 SendEnter call when pasted marker appears after initial waiting, got %d", got)
+	// 2 calls: retry 0 fires early aggressive nudge (waiting, no active seen),
+	// retry 1 fires from paste marker detection.
+	if got := atomic.LoadInt32(&mock.sendEnterCalls); got != 2 {
+		t.Fatalf("expected 2 SendEnter calls (1 early nudge + 1 paste marker), got %d", got)
 	}
 }
 
@@ -287,8 +290,9 @@ func TestSendWithRetryTarget_AmbiguousStateUsesLimitedFallbackRetries(t *testing
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if got := atomic.LoadInt32(&mock.sendEnterCalls); got != 2 {
-		t.Fatalf("expected 2 limited fallback SendEnter calls, got %d", got)
+	// Ambiguous-state Enter budget increased from 2 to 4; all 4 retries send Enter.
+	if got := atomic.LoadInt32(&mock.sendEnterCalls); got != 4 {
+		t.Fatalf("expected 4 fallback SendEnter calls (increased budget), got %d", got)
 	}
 }
 
@@ -304,6 +308,52 @@ func TestSendWithRetryTarget_ReturnsErrorWhenInitialSendFails(t *testing.T) {
 		t.Fatalf("unexpected error message: %v", err)
 	}
 }
+
+func TestSendWithRetryTarget_AggressiveEarlyEnterNudge(t *testing.T) {
+	// Verify that SendEnter is called on every iteration for the first 5
+	// retries when in waiting-without-active state, then every 2nd iteration.
+	mock := &mockSendRetryTarget{
+		statuses: []string{
+			"waiting", "waiting", "waiting", "waiting", "waiting", // retries 0-4: all nudge
+			"waiting", "waiting", "waiting", "waiting", "waiting", // retries 5-9: even nudge
+		},
+		panes: []string{"", "", "", "", "", "", "", "", "", ""},
+	}
+	err := sendWithRetryTarget(mock, "hello", false, sendRetryOptions{maxRetries: 10, checkDelay: 0})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	// First 5 retries (0-4): all nudge = 5 calls
+	// Retries 5-9: retry%2==0 means retries 6, 8 nudge = 2 calls
+	// Total: 5 + 2 = 7
+	// But wait: retry 5 is not < 5 and 5%2 != 0, so no nudge.
+	// retry 6: 6%2 == 0, nudge. retry 7: no. retry 8: nudge. retry 9: no.
+	// Total: 5 (early) + 2 (even from 5-9) = 7
+	if got := atomic.LoadInt32(&mock.sendEnterCalls); got != 7 {
+		t.Fatalf("expected 7 SendEnter calls (5 early + 2 even), got %d", got)
+	}
+}
+
+func TestSendWithRetryTarget_IncreasedAmbiguousBudget(t *testing.T) {
+	// Verify that ambiguous-state Enter budget is 4 (up from 2).
+	mock := &mockSendRetryTarget{
+		statuses: []string{"error", "error", "error", "error", "error"},
+		panes:    []string{"", "", "", "", ""},
+	}
+	err := sendWithRetryTarget(mock, "hello", false, sendRetryOptions{maxRetries: 5, checkDelay: 0})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	// Retries 0, 1, 2, 3 are < 4 so SendEnter is called 4 times; retry 4 is not.
+	if got := atomic.LoadInt32(&mock.sendEnterCalls); got != 4 {
+		t.Fatalf("expected 4 SendEnter calls for increased ambiguous budget, got %d", got)
+	}
+}
+
+// Integration test coverage for Codex readiness: waitForAgentReady uses a
+// concrete *tmux.Session so it cannot be unit tested with mocks here.
+// See TestSend_CodexReadiness in internal/integration/send_reliability_test.go
+// (Plan 02) for integration test coverage of Codex prompt gating.
 
 // TestWaitOutputRetrieval_StaleSessionID verifies that --wait correctly
 // retrieves output even when the initially-loaded ClaudeSessionID is stale.

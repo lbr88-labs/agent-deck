@@ -1972,6 +1972,17 @@ func (i *Instance) sendMessageWhenReady(message string) error {
 					continue
 				}
 			}
+			// Gate Codex sends on prompt readiness: wait for "codex>" or
+			// "Continue?" to be visible before considering the agent ready.
+			if i.Tool == "codex" {
+				if rawContent, captureErr := i.tmuxSession.CapturePaneFresh(); captureErr == nil {
+					content := tmux.StripANSI(rawContent)
+					detector := tmux.NewPromptDetector("codex")
+					if !detector.HasPrompt(content) {
+						continue
+					}
+				}
+			}
 			// Small delay to ensure UI is fully rendered
 			time.Sleep(300 * time.Millisecond)
 
@@ -2031,9 +2042,9 @@ func (i *Instance) sendMessageWhenReady(message string) error {
 					} else {
 						waitingNoMarkerChecks = 0
 						// We haven't observed any post-send activity yet.
-						// Periodically nudge Enter while waiting to handle
-						// late prompt-state races.
-						if retry%3 == 2 {
+						// Nudge Enter aggressively in the early window (every
+						// iteration for first 5 retries) then every 2nd iteration.
+						if retry < 5 || retry%2 == 0 {
 							_ = i.tmuxSession.SendEnter()
 						}
 					}
@@ -2041,7 +2052,8 @@ func (i *Instance) sendMessageWhenReady(message string) error {
 				}
 
 				waitingNoMarkerChecks = 0
-				if retry < 2 {
+				// Increased from 2 to 4 for TUI frameworks needing more time.
+				if retry < 4 {
 					_ = i.tmuxSession.SendEnter()
 				}
 			}
