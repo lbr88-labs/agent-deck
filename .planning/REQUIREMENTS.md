@@ -17,10 +17,10 @@
 
 - [ ] **TEST-01**: Sleep/wake detection correctly transitions session status (running -> idle -> running on activity)
 - [ ] **TEST-02**: Skills trigger correctly when referenced in session context or loaded on demand
-- [ ] **TEST-03**: Session start creates tmux session and transitions to running status
-- [ ] **TEST-04**: Session stop cleanly terminates tmux session and updates status
-- [ ] **TEST-05**: Session fork creates independent copy with correct instance ID propagation
-- [ ] **TEST-06**: Session attach connects to existing tmux session without errors
+- [x] **TEST-03**: Session start creates tmux session and transitions to running status
+- [x] **TEST-04**: Session stop cleanly terminates tmux session and updates status
+- [x] **TEST-05**: Session fork creates independent copy with correct instance ID propagation
+- [x] **TEST-06**: Session attach connects to existing tmux session without errors
 - [ ] **TEST-07**: Session status tracking reflects actual tmux session state accurately
 
 ### Stabilization
@@ -60,10 +60,10 @@
 | SKILL-05 | Phase 1 | Complete |
 | TEST-01 | Phase 2 | Pending |
 | TEST-02 | Phase 2 | Pending |
-| TEST-03 | Phase 2 | Pending |
-| TEST-04 | Phase 2 | Pending |
-| TEST-05 | Phase 2 | Pending |
-| TEST-06 | Phase 2 | Pending |
+| TEST-03 | Phase 2 | Complete |
+| TEST-04 | Phase 2 | Complete |
+| TEST-05 | Phase 2 | Complete |
+| TEST-06 | Phase 2 | Complete |
 | TEST-07 | Phase 2 | Pending |
 | STAB-01 | Phase 2 | Pending |
 | STAB-02 | Phase 3 | Pending |
