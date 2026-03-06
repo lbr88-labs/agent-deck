@@ -5,6 +5,27 @@ All notable changes to Agent Deck will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.21.0] - 2026-03-06
+
+### Added
+
+- Add built-in Pi tool support, configurable hotkeys, session notes in the preview pane, and optional follow-CWD-on-attach behavior in the TUI.
+- Add OpenClaw gateway integration with sync, status, list, send, and bridge commands for managing OpenClaw agents as agent-deck sessions.
+- Add per-window tmux tracking in the session list with direct window navigation and AI tool badges.
+- Add remote session creation from the TUI (`n`/`N` on remote groups and remote sessions).
+- Add remote binary management with automatic install during `agent-deck remote add` and the new `agent-deck remote update` command.
+- Add configurable `[worktree].branch_prefix` for new worktree sessions.
+- Add Vimium-style jump mode for session-list navigation.
+
+### Changed
+
+- Significantly reduce TUI lag during navigation, attach/return flows, preview rendering, and background status refreshes.
+
+### Fixed
+
+- Enable Claude-specific session management features for custom tools that wrap the `claude` binary.
+- Prevent non-interactive installs from hanging when `tmux` is missing by skipping interactive prompts and failing fast when `sudo` would block.
+
 ## [0.20.2] - 2026-03-03
 
 ### Fixed
