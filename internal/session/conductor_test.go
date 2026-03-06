@@ -1875,3 +1875,54 @@ func TestConductorClearOnCompact(t *testing.T) {
 		t.Error("non-conductor-prefixed title should return false")
 	}
 }
+
+// TestConductorHeartbeatScript_GroupScoped verifies the heartbeat script references
+// the conductor's own group (not all sessions in the profile) and includes an
+// enabled-config guard.
+func TestConductorHeartbeatScript_GroupScoped(t *testing.T) {
+	// The heartbeat message must NOT reference "all sessions in the {PROFILE} profile"
+	if strings.Contains(conductorHeartbeatScript, "Check all sessions in the") {
+		t.Fatal("heartbeat script should NOT reference 'all sessions in the {PROFILE} profile'; must be group-scoped")
+	}
+
+	// The heartbeat message must reference the conductor's own group via {NAME}
+	if !strings.Contains(conductorHeartbeatScript, "{NAME}") {
+		t.Fatal("heartbeat script must reference {NAME} for group scoping")
+	}
+	if !strings.Contains(conductorHeartbeatScript, "Check sessions in") {
+		t.Fatal("heartbeat script should contain group-scoped message like 'Check sessions in'")
+	}
+
+	// The script must contain an enabled-config guard that queries conductor status
+	if !strings.Contains(conductorHeartbeatScript, "ENABLED") {
+		t.Fatal("heartbeat script must contain an ENABLED guard that checks conductor status before sending")
+	}
+	if !strings.Contains(conductorHeartbeatScript, "conductor status") {
+		t.Fatal("heartbeat script must query conductor status to determine if enabled")
+	}
+}
+
+// TestGetHeartbeatInterval_ZeroMeansDisabled verifies interval=0 means disabled,
+// negative means use default, and positive means use the configured value.
+func TestGetHeartbeatInterval_ZeroMeansDisabled(t *testing.T) {
+	tests := []struct {
+		name     string
+		interval int
+		expected int
+	}{
+		{"zero means disabled", 0, 0},
+		{"negative means default", -1, 15},
+		{"custom value", 30, 30},
+		{"explicit default", 15, 15},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			settings := ConductorSettings{HeartbeatInterval: tt.interval}
+			got := settings.GetHeartbeatInterval()
+			if got != tt.expected {
+				t.Errorf("GetHeartbeatInterval() with %d = %d, want %d", tt.interval, got, tt.expected)
+			}
+		})
+	}
+}
