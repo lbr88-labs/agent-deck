@@ -189,6 +189,38 @@ func TestInstance_Fork_ExplicitConfig(t *testing.T) {
 	}
 }
 
+func TestInstance_CreateForkedInstance_ExportsForkedInstanceID(t *testing.T) {
+	origConfigDir := os.Getenv("CLAUDE_CONFIG_DIR")
+	origHome := os.Getenv("HOME")
+	os.Unsetenv("CLAUDE_CONFIG_DIR")
+	os.Setenv("HOME", t.TempDir())
+	ClearUserConfigCache()
+	defer func() {
+		if origConfigDir != "" {
+			os.Setenv("CLAUDE_CONFIG_DIR", origConfigDir)
+		}
+		os.Setenv("HOME", origHome)
+		ClearUserConfigCache()
+	}()
+
+	inst := NewInstanceWithTool("test", "/tmp/test", "claude")
+	inst.ClaudeSessionID = "abc-123"
+	inst.ClaudeDetectedAt = time.Now()
+
+	forked, cmd, err := inst.CreateForkedInstance("forked-test", "")
+	if err != nil {
+		t.Fatalf("CreateForkedInstance() failed: %v", err)
+	}
+
+	expectedPrefix := "AGENTDECK_INSTANCE_ID=" + forked.ID
+	if !strings.Contains(cmd, expectedPrefix) {
+		t.Fatalf("Fork command should contain %q, got: %s", expectedPrefix, cmd)
+	}
+	if strings.Contains(cmd, "AGENTDECK_INSTANCE_ID="+inst.ID) {
+		t.Fatalf("Fork command should not export the parent instance ID, got: %s", cmd)
+	}
+}
+
 // TestInstance_CreateForkedInstance tests the CreateForkedInstance method
 func TestInstance_CreateForkedInstance(t *testing.T) {
 	// Isolate from user's environment to ensure CLAUDE_CONFIG_DIR is NOT explicit

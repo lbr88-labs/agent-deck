@@ -4091,6 +4091,26 @@ func (i *Instance) Fork(newTitle, newGroupPath string) (string, error) {
 // Uses capture-resume pattern: starts fork in print mode to get new session ID,
 // stores in tmux environment, then resumes interactively
 func (i *Instance) ForkWithOptions(newTitle, newGroupPath string, opts *ClaudeOptions) (string, error) {
+	projectPath := i.ProjectPath
+	if opts != nil && opts.WorkDir != "" {
+		projectPath = opts.WorkDir
+	}
+	target := NewInstance(newTitle, projectPath)
+	if newGroupPath != "" {
+		target.GroupPath = newGroupPath
+	} else {
+		target.GroupPath = i.GroupPath
+	}
+	target.Tool = "claude"
+
+	return i.buildClaudeForkCommandForTarget(target, opts)
+}
+
+func (i *Instance) buildClaudeForkCommandForTarget(target *Instance, opts *ClaudeOptions) (string, error) {
+	if target == nil {
+		return "", fmt.Errorf("cannot build fork command: target instance is nil")
+	}
+
 	// Sync session from disk to pick up /clear session changes before forking
 	i.syncClaudeSessionFromDisk()
 
@@ -4098,20 +4118,13 @@ func (i *Instance) ForkWithOptions(newTitle, newGroupPath string, opts *ClaudeOp
 		return "", fmt.Errorf("cannot fork: no active Claude session")
 	}
 
-	workDir := i.ProjectPath
-	if opts != nil && opts.WorkDir != "" {
-		workDir = opts.WorkDir
-	}
+	workDir := target.ProjectPath
 
 	// IMPORTANT: For capture-resume commands (which contain $(...) syntax), we MUST use
-	// "claude" binary + CLAUDE_CONFIG_DIR, NOT a custom command alias like "cdw".
+	// "claude" binary + explicit env exports, NOT a custom command alias like "cdw".
 	// Reason: Commands with $(...) get wrapped in `bash -c` for fish compatibility (#47),
 	// and shell aliases are not available in non-interactive bash shells.
-	bashExportPrefix := ""
-	if IsClaudeConfigDirExplicit() {
-		configDir := GetClaudeConfigDir()
-		bashExportPrefix = fmt.Sprintf("export CLAUDE_CONFIG_DIR=%s; ", configDir)
-	}
+	bashExportPrefix := target.buildBashExportPrefix()
 
 	// If no options provided, use defaults from config
 	if opts == nil {
@@ -4161,11 +4174,6 @@ func (i *Instance) CreateForkedInstanceWithOptions(
 	newTitle, newGroupPath string,
 	opts *ClaudeOptions,
 ) (*Instance, string, error) {
-	cmd, err := i.ForkWithOptions(newTitle, newGroupPath, opts)
-	if err != nil {
-		return nil, "", err
-	}
-
 	// Create new instance - use worktree path if provided, otherwise parent's project path
 	projectPath := i.ProjectPath
 	if opts != nil && opts.WorkDir != "" {
@@ -4177,8 +4185,13 @@ func (i *Instance) CreateForkedInstanceWithOptions(
 	} else {
 		forked.GroupPath = i.GroupPath
 	}
-	forked.Command = cmd
 	forked.Tool = "claude"
+
+	cmd, err := i.buildClaudeForkCommandForTarget(forked, opts)
+	if err != nil {
+		return nil, "", err
+	}
+	forked.Command = cmd
 
 	// Store options in the new instance for persistence
 	if opts != nil {

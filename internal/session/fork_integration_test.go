@@ -46,6 +46,9 @@ func TestForkFlow_Integration(t *testing.T) {
 	if !strings.Contains(cmd, "tmux set-environment CLAUDE_SESSION_ID") {
 		t.Errorf("Fork command should store session ID in tmux env: %s", cmd)
 	}
+	if !strings.Contains(cmd, "AGENTDECK_INSTANCE_ID="+forked.ID) {
+		t.Errorf("Fork command should export AGENTDECK_INSTANCE_ID for the forked session: %s", cmd)
+	}
 	// Should use --session-id with the generated UUID
 	if !strings.Contains(cmd, `--session-id "$session_id"`) {
 		t.Errorf("Fork command should use --session-id flag: %s", cmd)
