@@ -1,0 +1,82 @@
+# Requirements: Agent Deck Skills Reorganization & Stabilization
+
+**Defined:** 2026-03-06
+**Core Value:** Skills must load correctly and trigger reliably when sessions start or on demand
+
+## v1 Requirements
+
+### Skills Reformatting
+
+- [ ] **SKILL-01**: Agent-deck skill uses official skill-creator format with proper SKILL.md frontmatter, scripts/, and references/ directories
+- [ ] **SKILL-02**: Session-share skill uses official skill-creator format with proper SKILL.md frontmatter and scripts/
+- [ ] **SKILL-03**: GSD conductor skill is properly packaged in ~/.agent-deck/skills/pool/gsd-conductor/ with up-to-date content
+- [ ] **SKILL-04**: All skill SKILL.md files have correct frontmatter (name, description, compatibility fields)
+- [ ] **SKILL-05**: Skill script path resolution works correctly from both plugin cache and local development paths
+
+### Testing
+
+- [ ] **TEST-01**: Sleep/wake detection correctly transitions session status (running -> idle -> running on activity)
+- [ ] **TEST-02**: Skills trigger correctly when referenced in session context or loaded on demand
+- [ ] **TEST-03**: Session start creates tmux session and transitions to running status
+- [ ] **TEST-04**: Session stop cleanly terminates tmux session and updates status
+- [ ] **TEST-05**: Session fork creates independent copy with correct instance ID propagation
+- [ ] **TEST-06**: Session attach connects to existing tmux session without errors
+- [ ] **TEST-07**: Session status tracking reflects actual tmux session state accurately
+
+### Stabilization
+
+- [ ] **STAB-01**: All bugs discovered during testing are fixed
+- [ ] **STAB-02**: `golangci-lint run` passes with zero warnings
+- [ ] **STAB-03**: `go test -race ./...` passes with zero failures
+- [ ] **STAB-04**: `go build` succeeds for all target platforms (darwin/linux, amd64/arm64)
+- [ ] **STAB-05**: Dead code and stale artifacts removed from codebase
+- [ ] **STAB-06**: CHANGELOG.md updated with all changes
+
+## v2 Requirements
+
+### Skills Ecosystem
+
+- **SKILL-06**: Pool skill auto-discovery (list available pool skills from TUI)
+- **SKILL-07**: Skill versioning and update mechanism
+- **SKILL-08**: Skill dependency resolution
+
+## Out of Scope
+
+| Feature | Reason |
+|---------|--------|
+| New agent-deck features | This milestone is reorganization and stabilization only |
+| CI/CD pipeline changes | Local release process is sufficient |
+| Version bump | Deferred until work is assessed |
+| Skills for other tools (Gemini, etc.) | Focus on Claude Code skills only |
+
+## Traceability
+
+| Requirement | Phase | Status |
+|-------------|-------|--------|
+| SKILL-01 | TBD | Pending |
+| SKILL-02 | TBD | Pending |
+| SKILL-03 | TBD | Pending |
+| SKILL-04 | TBD | Pending |
+| SKILL-05 | TBD | Pending |
+| TEST-01 | TBD | Pending |
+| TEST-02 | TBD | Pending |
+| TEST-03 | TBD | Pending |
+| TEST-04 | TBD | Pending |
+| TEST-05 | TBD | Pending |
+| TEST-06 | TBD | Pending |
+| TEST-07 | TBD | Pending |
+| STAB-01 | TBD | Pending |
+| STAB-02 | TBD | Pending |
+| STAB-03 | TBD | Pending |
+| STAB-04 | TBD | Pending |
+| STAB-05 | TBD | Pending |
+| STAB-06 | TBD | Pending |
+
+**Coverage:**
+- v1 requirements: 18 total
+- Mapped to phases: 0
+- Unmapped: 18
+
+---
+*Requirements defined: 2026-03-06*
+*Last updated: 2026-03-06 after initial definition*
