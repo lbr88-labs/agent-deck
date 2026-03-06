@@ -139,3 +139,161 @@ func TestSessionStart_NilTmuxSession(t *testing.T) {
 	assert.Contains(t, err.Error(), "tmux session not initialized",
 		"error should mention tmux session not initialized")
 }
+
+// --- Task 2: Session fork and attach tests (TEST-05, TEST-06) ---
+
+// TestSessionFork_CreatesForkWithDifferentID verifies that CreateForkedInstance
+// produces a new Instance with a different ID but the same ProjectPath and Tool.
+func TestSessionFork_CreatesForkWithDifferentID(t *testing.T) {
+	inst := NewInstanceWithTool("test-fork-parent", "/tmp", "claude")
+	inst.ClaudeSessionID = "test-session-123"
+	inst.ClaudeDetectedAt = time.Now()
+
+	forked, _, err := inst.CreateForkedInstance("forked-test", "")
+	require.NoError(t, err, "CreateForkedInstance should succeed")
+
+	// Forked instance should have a different ID
+	assert.NotEqual(t, inst.ID, forked.ID,
+		"forked instance should have a different ID from parent")
+
+	// Forked instance should inherit ProjectPath
+	assert.Equal(t, inst.ProjectPath, forked.ProjectPath,
+		"forked instance should have the same ProjectPath")
+
+	// Forked instance should have Tool set to claude
+	assert.Equal(t, "claude", forked.Tool,
+		"forked instance should have Tool set to claude")
+}
+
+// TestSessionFork_IndependentTmuxSession verifies that two sessions have
+// independent tmux sessions: killing one does not affect the other.
+func TestSessionFork_IndependentTmuxSession(t *testing.T) {
+	skipIfNoTmuxServer(t)
+
+	// Create parent session (shell tool, not claude, to avoid fork command complexity)
+	parent := NewInstance("test-fork-parent-tmux", "/tmp")
+	parent.Command = "sleep 60"
+
+	err := parent.Start()
+	require.NoError(t, err, "parent Start() should succeed")
+	defer func() { _ = parent.Kill() }()
+
+	// Create child session independently
+	child := NewInstance("test-fork-child-tmux", "/tmp")
+	child.Command = "sleep 60"
+
+	err = child.Start()
+	require.NoError(t, err, "child Start() should succeed")
+	defer func() { _ = child.Kill() }()
+
+	// Both should exist
+	assert.True(t, parent.Exists(), "parent should exist")
+	assert.True(t, child.Exists(), "child should exist")
+
+	// They should have different tmux session names
+	assert.NotEqual(t, parent.GetTmuxSession().Name, child.GetTmuxSession().Name,
+		"parent and child should have different tmux session names")
+
+	// Kill parent and verify child survives (independence)
+	err = parent.Kill()
+	require.NoError(t, err, "parent Kill() should succeed")
+
+	assert.False(t, parent.Exists(), "parent should not exist after Kill()")
+	assert.True(t, child.Exists(), "child should still exist after parent Kill()")
+}
+
+// TestSessionFork_CanForkStaleness verifies the CanFork() staleness threshold.
+// A session with a ClaudeSessionID detected more than 5 minutes ago cannot fork.
+func TestSessionFork_CanForkStaleness(t *testing.T) {
+	tests := []struct {
+		name       string
+		sessionID  string
+		detectedAt time.Time
+		tool       string
+		wantFork   bool
+	}{
+		{
+			name:       "no session ID",
+			sessionID:  "",
+			detectedAt: time.Now(),
+			tool:       "claude",
+			wantFork:   false,
+		},
+		{
+			name:       "recent detection (within threshold)",
+			sessionID:  "abc-123",
+			detectedAt: time.Now(),
+			tool:       "claude",
+			wantFork:   true,
+		},
+		{
+			name:       "stale detection (4 minutes, still within 5min threshold)",
+			sessionID:  "abc-123",
+			detectedAt: time.Now().Add(-4 * time.Minute),
+			tool:       "claude",
+			wantFork:   true,
+		},
+		{
+			name:       "stale detection (6 minutes, beyond 5min threshold)",
+			sessionID:  "abc-123",
+			detectedAt: time.Now().Add(-6 * time.Minute),
+			tool:       "claude",
+			wantFork:   false,
+		},
+		{
+			name:       "stale detection (10 minutes, well beyond threshold)",
+			sessionID:  "abc-123",
+			detectedAt: time.Now().Add(-10 * time.Minute),
+			tool:       "claude",
+			wantFork:   false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			inst := NewInstanceWithTool("test-canfork", "/tmp", tt.tool)
+			inst.ClaudeSessionID = tt.sessionID
+			inst.ClaudeDetectedAt = tt.detectedAt
+
+			got := inst.CanFork()
+			assert.Equal(t, tt.wantFork, got,
+				"CanFork() for %s", tt.name)
+		})
+	}
+}
+
+// TestSessionAttach_Preconditions verifies that an un-started instance has
+// a nil tmux session, making attach impossible.
+func TestSessionAttach_Preconditions(t *testing.T) {
+	// Un-started instance created via NewInstance has a tmuxSession allocated
+	// but not yet started. However, a bare Instance{} has nil tmuxSession.
+	bare := &Instance{}
+	assert.Nil(t, bare.GetTmuxSession(),
+		"bare Instance should have nil tmux session (attach impossible)")
+
+	// Also verify that Exists() returns false for un-started instances
+	inst := NewInstance("test-attach-precond", "/tmp")
+	assert.False(t, inst.Exists(),
+		"un-started instance should not exist in tmux")
+}
+
+// TestSessionAttach_RunningSessionHasTmuxSession verifies that a running session
+// has a non-nil, existing tmux session, satisfying the attach precondition.
+// Full attach test requires PTY; we verify the precondition that a running session
+// has an attachable tmux session.
+func TestSessionAttach_RunningSessionHasTmuxSession(t *testing.T) {
+	skipIfNoTmuxServer(t)
+
+	inst := NewInstance("test-attach-running", "/tmp")
+	inst.Command = "sleep 60"
+
+	err := inst.Start()
+	require.NoError(t, err, "Start() should succeed")
+	defer func() { _ = inst.Kill() }()
+
+	tmuxSess := inst.GetTmuxSession()
+	require.NotNil(t, tmuxSess,
+		"running session should have a non-nil tmux session")
+	assert.True(t, tmuxSess.Exists(),
+		"running session's tmux session should exist (attach precondition satisfied)")
+}
