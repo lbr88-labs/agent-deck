@@ -32,13 +32,16 @@ func NewSSHRunner(name string, rc RemoteConfig) *SSHRunner {
 
 // Run executes an agent-deck command on the remote host and returns stdout.
 func (r *SSHRunner) Run(ctx context.Context, args ...string) ([]byte, error) {
+	timeoutCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+	return r.run(timeoutCtx, args...)
+}
+
+// run executes an agent-deck command on the remote host using the provided context directly.
+func (r *SSHRunner) run(ctx context.Context, args ...string) ([]byte, error) {
 	_ = os.MkdirAll(sshControlDir, 0700)
 
 	remoteCmd := r.buildRemoteCommand(args...)
-
-	// Build SSH command with ControlMaster and timeout
-	timeoutCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
-	defer cancel()
 
 	sshArgs := []string{
 		"-o", "ControlMaster=auto",
@@ -50,7 +53,7 @@ func (r *SSHRunner) Run(ctx context.Context, args ...string) ([]byte, error) {
 		remoteCmd,
 	}
 
-	cmd := exec.CommandContext(timeoutCtx, "ssh", sshArgs...)
+	cmd := exec.CommandContext(ctx, "ssh", sshArgs...)
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
@@ -265,6 +268,38 @@ func (r *SSHRunner) sshBaseArgs(remoteCmd string) []string {
 		r.Host,
 		remoteCmd,
 	}
+}
+
+// CreateSession creates and starts a new session on the remote, returning its ID.
+// It runs "add --quick --json" to create the session, then "session start" to
+// launch the tmux process, so the session is ready to attach.
+func (r *SSHRunner) CreateSession(ctx context.Context) (string, error) {
+	// Step 1: Create the session
+	output, err := r.Run(ctx, "add", "--quick", "--json")
+	if err != nil {
+		return "", fmt.Errorf("failed to create remote session: %w", err)
+	}
+
+	var result struct {
+		ID    string `json:"id"`
+		Title string `json:"title"`
+	}
+	if err := json.Unmarshal(output, &result); err != nil {
+		return "", fmt.Errorf("failed to parse remote add output: %w", err)
+	}
+	if result.ID == "" {
+		return "", fmt.Errorf("remote add returned empty session ID")
+	}
+
+	// Step 2: Start the session so it has a tmux process to attach to.
+	// Use ID to avoid ambiguity when titles are duplicated.
+	startCtx, cancel := context.WithTimeout(ctx, 20*time.Second)
+	defer cancel()
+	if _, err := r.run(startCtx, "session", "start", result.ID); err != nil {
+		return "", fmt.Errorf("failed to start remote session: %w", err)
+	}
+
+	return result.ID, nil
 }
 
 // RemoteSessionInfo represents a session from a remote agent-deck instance.
