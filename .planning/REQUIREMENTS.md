@@ -1,82 +1,94 @@
-# Requirements: Agent Deck Skills Reorganization & Stabilization
+# Requirements: Agent Deck Integration Testing Framework
 
 **Defined:** 2026-03-06
-**Core Value:** Skills must load correctly and trigger reliably when sessions start or on demand
+**Core Value:** Conductor orchestration and cross-session coordination must be reliably tested end-to-end
 
-## v1 Requirements
+## v1.1 Requirements
 
-### Skills Reformatting
+Requirements for integration testing milestone. Each maps to roadmap phases.
 
-- [x] **SKILL-01**: Agent-deck skill uses official skill-creator format with proper SKILL.md frontmatter, scripts/, and references/ directories
-- [x] **SKILL-02**: Session-share skill uses official skill-creator format with proper SKILL.md frontmatter and scripts/
-- [x] **SKILL-03**: GSD conductor skill is properly packaged in ~/.agent-deck/skills/pool/gsd-conductor/ with up-to-date content
-- [x] **SKILL-04**: All skill SKILL.md files have correct frontmatter (name, description, compatibility fields)
-- [x] **SKILL-05**: Skill script path resolution works correctly from both plugin cache and local development paths
+### Test Framework Infrastructure
 
-### Testing
+- [ ] **INFRA-01**: Shared TmuxHarness helper provides session create/cleanup/naming with t.Cleanup teardown
+- [ ] **INFRA-02**: Polling helpers (WaitForCondition, WaitForPaneContent, WaitForStatus) replace flaky time.Sleep assertions
+- [ ] **INFRA-03**: SQLite fixture helpers provide test storage factory, instance builders, and conductor fixtures
+- [ ] **INFRA-04**: Integration package has TestMain with AGENTDECK_PROFILE=_test isolation and orphan session cleanup
 
-- [x] **TEST-01**: Sleep/wake detection correctly transitions session status (running -> idle -> running on activity)
-- [x] **TEST-02**: Skills trigger correctly when referenced in session context or loaded on demand
-- [x] **TEST-03**: Session start creates tmux session and transitions to running status
-- [x] **TEST-04**: Session stop cleanly terminates tmux session and updates status
-- [x] **TEST-05**: Session fork creates independent copy with correct instance ID propagation
-- [x] **TEST-06**: Session attach connects to existing tmux session without errors
-- [x] **TEST-07**: Session status tracking reflects actual tmux session state accurately
+### Session Lifecycle
 
-### Stabilization
+- [ ] **LIFE-01**: Session start creates real tmux session and transitions status (starting -> running)
+- [ ] **LIFE-02**: Session stop terminates tmux session and updates status correctly
+- [ ] **LIFE-03**: Session fork creates independent copy with env var propagation and parent-child linkage in SQLite
+- [ ] **LIFE-04**: Session restart with flags (yolo, etc.) recreates session correctly
 
-- [x] **STAB-01**: All bugs discovered during testing are fixed
-- [x] **STAB-02**: `golangci-lint run` passes with zero warnings
-- [x] **STAB-03**: `go test -race ./...` passes with zero failures
-- [x] **STAB-04**: `go build` succeeds for all target platforms (darwin/linux, amd64/arm64)
-- [x] **STAB-05**: Dead code and stale artifacts removed from codebase
-- [x] **STAB-06**: CHANGELOG.md updated with all changes
+### Status Detection
+
+- [ ] **DETECT-01**: Sleep/wait detection correctly identifies patterns for Claude, Gemini, OpenCode, and Codex via simulated output
+- [ ] **DETECT-02**: Multi-tool session creation produces correct commands and detection config per tool type
+- [ ] **DETECT-03**: Status transition cycle (starting -> running -> waiting -> idle) verified with real tmux pane content
+
+### Conductor Orchestration
+
+- [ ] **COND-01**: Conductor sends command to child session via real tmux and child receives it
+- [ ] **COND-02**: Cross-session event notification cycle works (event written, watcher detects, parent notified)
+- [ ] **COND-03**: Conductor heartbeat round-trip completes (send heartbeat, child responds, verify receipt)
+- [ ] **COND-04**: Send-with-retry delivers to real tmux session with chunked sending and paste-marker detection
+
+### Edge Cases
+
+- [ ] **EDGE-01**: Skills discovered from directory, attached to session, trigger conditions evaluated correctly
+- [ ] **EDGE-02**: Concurrent polling of 10+ sessions returns correct status for each without races
+- [ ] **EDGE-03**: Storage watcher detects external SQLite changes from a second Storage instance
 
 ## v2 Requirements
 
-### Skills Ecosystem
+### Test Ecosystem
 
-- **SKILL-06**: Pool skill auto-discovery (list available pool skills from TUI)
-- **SKILL-07**: Skill versioning and update mechanism
-- **SKILL-08**: Skill dependency resolution
+- **TEST-EXT-01**: TUI (Bubble Tea) integration tests via tea.Test or VHS
+- **TEST-EXT-02**: CI/CD pipeline integration with tmux server in GitHub Actions
+- **TEST-EXT-03**: Performance/load benchmarks for session polling hot paths
+- **TEST-EXT-04**: MCP attach/detach scoped config integration tests
+- **TEST-EXT-05**: Event watcher recovery after directory recreation
 
 ## Out of Scope
 
 | Feature | Reason |
 |---------|--------|
-| New agent-deck features | This milestone is reorganization and stabilization only |
-| CI/CD pipeline changes | Local release process is sufficient |
-| Version bump | Deferred until work is assessed |
-| Skills for other tools (Gemini, etc.) | Focus on Claude Code skills only |
+| Full end-to-end tests with real AI tools | Requires API keys, costs money, flaky, violates public repo constraint |
+| TUI (Bubble Tea) integration tests | Separate approach needed (tea.Test/VHS), home.go is 8500 lines |
+| Docker-based test isolation | tmux in Docker is fragile, adds CGO dependency |
+| CI/CD pipeline integration | Tests run locally, CI is a separate effort |
+| Performance/load testing | Different infrastructure needed, separate concern |
+| Parallel integration test execution | tmux global namespace causes race conditions |
 
 ## Traceability
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| SKILL-01 | Phase 1 | Complete |
-| SKILL-02 | Phase 1 | Complete |
-| SKILL-03 | Phase 1 | Complete |
-| SKILL-04 | Phase 1 | Complete |
-| SKILL-05 | Phase 1 | Complete |
-| TEST-01 | Phase 2 | Complete |
-| TEST-02 | Phase 2 | Complete |
-| TEST-03 | Phase 2 | Complete |
-| TEST-04 | Phase 2 | Complete |
-| TEST-05 | Phase 2 | Complete |
-| TEST-06 | Phase 2 | Complete |
-| TEST-07 | Phase 2 | Complete |
-| STAB-01 | Phase 2 | Complete |
-| STAB-02 | Phase 3 | Complete |
-| STAB-03 | Phase 3 | Complete |
-| STAB-04 | Phase 3 | Complete |
-| STAB-05 | Phase 3 | Complete |
-| STAB-06 | Phase 3 | Complete |
+| INFRA-01 | TBD | Pending |
+| INFRA-02 | TBD | Pending |
+| INFRA-03 | TBD | Pending |
+| INFRA-04 | TBD | Pending |
+| LIFE-01 | TBD | Pending |
+| LIFE-02 | TBD | Pending |
+| LIFE-03 | TBD | Pending |
+| LIFE-04 | TBD | Pending |
+| DETECT-01 | TBD | Pending |
+| DETECT-02 | TBD | Pending |
+| DETECT-03 | TBD | Pending |
+| COND-01 | TBD | Pending |
+| COND-02 | TBD | Pending |
+| COND-03 | TBD | Pending |
+| COND-04 | TBD | Pending |
+| EDGE-01 | TBD | Pending |
+| EDGE-02 | TBD | Pending |
+| EDGE-03 | TBD | Pending |
 
 **Coverage:**
-- v1 requirements: 18 total
-- Mapped to phases: 18
-- Unmapped: 0
+- v1.1 requirements: 18 total
+- Mapped to phases: 0 (pending roadmap)
+- Unmapped: 18
 
 ---
 *Requirements defined: 2026-03-06*
-*Last updated: 2026-03-06 after roadmap creation*
+*Last updated: 2026-03-06 after initial definition*
