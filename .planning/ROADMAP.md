@@ -91,7 +91,11 @@ Plans:
   2. Tests that need to wait for asynchronous state (pane content appearing, status changing) use polling helpers instead of time.Sleep, and fail with clear timeout messages when conditions are not met
   3. Integration tests run in complete isolation from production data: profile is forced to `_test`, SQLite databases are created in temp directories, and no user sessions are affected
   4. Session start creates a real tmux session that transitions to running, session stop terminates it, session fork produces an independent copy with parent-child linkage, and session restart with flags recreates correctly
-**Plans**: TBD
+**Plans:** 2 plans
+
+Plans:
+- [ ] 04-01-PLAN.md -- Integration test infrastructure: TmuxHarness, polling helpers, SQLite fixtures, TestMain isolation
+- [ ] 04-02-PLAN.md -- Session lifecycle integration tests: start, stop, fork, restart using the new framework
 
 ### Phase 5: Status Detection & Events
 **Goal**: Sleep/wait detection correctly identifies tool-specific patterns across all supported tools, and cross-session event notifications reliably propagate between conductor parent and child sessions
@@ -126,6 +130,6 @@ Phases execute in numeric order: 4 -> 5 -> 6
 | 1. Skills Reorganization | v1.0 | 2/2 | Complete | 2026-03-06 |
 | 2. Testing & Bug Fixes | v1.0 | 3/3 | Complete | 2026-03-06 |
 | 3. Stabilization & Release Readiness | v1.0 | 2/2 | Complete | 2026-03-06 |
-| 4. Framework Foundation | v1.1 | 0/? | Not started | - |
+| 4. Framework Foundation | v1.1 | 0/2 | Planning | - |
 | 5. Status Detection & Events | v1.1 | 0/? | Not started | - |
 | 6. Conductor Pipeline & Edge Cases | v1.1 | 0/? | Not started | - |
