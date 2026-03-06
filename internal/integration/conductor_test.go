@@ -1,9 +1,14 @@
 package integration
 
 import (
+	"fmt"
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
+	"github.com/asheshgoplani/agent-deck/internal/session"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
@@ -51,4 +56,90 @@ func TestConductor_SendMultipleMessages(t *testing.T) {
 
 	require.NoError(t, tmuxSess.SendKeysAndEnter("msg-two"))
 	WaitForPaneContent(t, inst, "msg-two", 5*time.Second)
+}
+
+// TestConductor_EventWriteWatch verifies that a StatusEvent written via WriteStatusEvent
+// is detected by StatusEventWatcher.WaitForStatus and delivered with matching fields. (COND-02)
+func TestConductor_EventWriteWatch(t *testing.T) {
+	instanceID := fmt.Sprintf("inttest-event-%d", time.Now().UnixNano())
+
+	// Clean up event file after test.
+	t.Cleanup(func() {
+		_ = os.Remove(filepath.Join(session.GetEventsDir(), instanceID+".json"))
+	})
+
+	watcher, err := session.NewStatusEventWatcher(instanceID)
+	require.NoError(t, err)
+	defer watcher.Stop()
+
+	go watcher.Start()
+
+	// Allow time for fsnotify to register the watch (100ms debounce + startup).
+	time.Sleep(300 * time.Millisecond)
+
+	event := session.StatusEvent{
+		InstanceID: instanceID,
+		Title:      "test-child",
+		Tool:       "claude",
+		Status:     "waiting",
+		PrevStatus: "running",
+		Timestamp:  time.Now().Unix(),
+	}
+	require.NoError(t, session.WriteStatusEvent(event))
+
+	received, err := watcher.WaitForStatus([]string{"waiting"}, 5*time.Second)
+	require.NoError(t, err)
+
+	assert.Equal(t, instanceID, received.InstanceID, "instance ID should match")
+	assert.Equal(t, "waiting", received.Status, "status should match")
+	assert.Equal(t, "running", received.PrevStatus, "prev status should match")
+}
+
+// TestConductor_EventWatcherFilters verifies that a watcher filtering for instance "A"
+// does NOT receive events for instance "B", but DOES receive events for instance "A". (COND-02)
+func TestConductor_EventWatcherFilters(t *testing.T) {
+	idA := fmt.Sprintf("inttest-filter-a-%d", time.Now().UnixNano())
+	idB := fmt.Sprintf("inttest-filter-b-%d", time.Now().UnixNano())
+
+	// Clean up event files after test.
+	t.Cleanup(func() {
+		_ = os.Remove(filepath.Join(session.GetEventsDir(), idA+".json"))
+		_ = os.Remove(filepath.Join(session.GetEventsDir(), idB+".json"))
+	})
+
+	watcher, err := session.NewStatusEventWatcher(idA)
+	require.NoError(t, err)
+	defer watcher.Stop()
+
+	go watcher.Start()
+
+	// Allow time for fsnotify to register the watch.
+	time.Sleep(300 * time.Millisecond)
+
+	// Write event for idB first (should be filtered out by the watcher).
+	eventB := session.StatusEvent{
+		InstanceID: idB,
+		Title:      "child-b",
+		Tool:       "claude",
+		Status:     "waiting",
+		PrevStatus: "running",
+		Timestamp:  time.Now().Unix(),
+	}
+	require.NoError(t, session.WriteStatusEvent(eventB))
+
+	// Write event for idA second.
+	eventA := session.StatusEvent{
+		InstanceID: idA,
+		Title:      "child-a",
+		Tool:       "claude",
+		Status:     "waiting",
+		PrevStatus: "idle",
+		Timestamp:  time.Now().Unix(),
+	}
+	require.NoError(t, session.WriteStatusEvent(eventA))
+
+	received, err := watcher.WaitForStatus([]string{"waiting"}, 5*time.Second)
+	require.NoError(t, err)
+
+	assert.Equal(t, idA, received.InstanceID, "should receive event for filtered instance A, not B")
 }
