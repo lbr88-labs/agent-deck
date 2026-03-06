@@ -32,7 +32,7 @@ Requirements for Conductor Reliability & Learnings Cleanup milestone. Each maps 
 - [x] **LEARN-01**: Validated universal conductor patterns (event-driven monitoring, parent linkage, session transition verification, Enter key workaround) are promoted to the shared conductor CLAUDE.md
 - [x] **LEARN-02**: GSD-specific learnings (Claude-only, codebase mapping, comprehensive specs, wave model) are promoted to the GSD conductor skill
 - [x] **LEARN-03**: Agent-deck operational learnings (Codex launch syntax, release sessions, Gemini video, --wait patterns, project folder launching) are promoted to the agent-deck skill
-- [ ] **LEARN-04**: All conductor LEARNINGS.md files are cleaned up: promoted entries marked, retired entries removed, duplicates consolidated
+- [x] **LEARN-04**: All conductor LEARNINGS.md files are cleaned up: promoted entries marked, retired entries removed, duplicates consolidated
 
 ## v1.1 Requirements (Complete)
 
@@ -112,7 +112,7 @@ Which phases cover which requirements. Updated during roadmap creation.
 | LEARN-01 | Phase 10 | Complete |
 | LEARN-02 | Phase 10 | Complete |
 | LEARN-03 | Phase 10 | Complete |
-| LEARN-04 | Phase 10 | Pending |
+| LEARN-04 | Phase 10 | Complete |
 
 **Coverage:**
 - v1.2 requirements: 12 total

@@ -37,7 +37,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 - [ ] **Phase 7: Send Reliability** - Fix Enter key race condition and Codex readiness detection, the two highest-impact send failures
 - [ ] **Phase 8: Heartbeat & CLI Fixes** - Scope heartbeat to conductor groups, honor enabled=false config, and fix CLI flag parsing issues
 - [x] **Phase 9: Process Stability** - Investigate exit 137 from incoming messages and document mitigation or fix
-- [ ] **Phase 10: Learnings Promotion** - Promote validated conductor learnings to shared locations and clean up LEARNINGS.md files
+- [x] **Phase 10: Learnings Promotion** - Promote validated conductor learnings to shared locations and clean up LEARNINGS.md files (completed 2026-03-06)
 
 ## Phase Details
 
@@ -196,7 +196,7 @@ Plans:
   2. GSD-specific learnings (Claude-only, codebase mapping, comprehensive specs, wave model) are incorporated into the GSD conductor skill at `~/.agent-deck/skills/pool/gsd-conductor/`
   3. Agent-deck operational learnings (Codex launch syntax, release sessions, Gemini video, --wait patterns, project folder launching) are incorporated into the agent-deck skill
   4. All six conductor LEARNINGS.md files have promoted entries marked as promoted, retired entries removed, and duplicates consolidated
-**Plans:** 1/2 plans executed
+**Plans:** 2/2 plans complete
 
 Plans:
 - [ ] 10-01-PLAN.md -- Promote learnings to 3 destination files (CLAUDE.md, gsd-conductor SKILL.md, agent-deck-workflow SKILL.md)
@@ -218,4 +218,4 @@ Phases execute in numeric order: 7 -> 8 -> 9 -> 10
 | 7. Send Reliability | v1.2 | 2/2 | Complete | 2026-03-07 |
 | 8. Heartbeat & CLI Fixes | v1.2 | 2/2 | Complete | 2026-03-07 |
 | 9. Process Stability | v1.2 | 2/2 | Complete | 2026-03-07 |
-| 10. Learnings Promotion | 1/2 | In Progress|  | - |
+| 10. Learnings Promotion | 2/2 | Complete   | 2026-03-06 | - |
