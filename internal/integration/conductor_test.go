@@ -143,3 +143,37 @@ func TestConductor_EventWatcherFilters(t *testing.T) {
 
 	assert.Equal(t, idA, received.InstanceID, "should receive event for filtered instance A, not B")
 }
+
+// TestConductor_HeartbeatRoundTrip verifies the heartbeat pipeline: parent checks
+// child existence, sends a heartbeat-prefixed message, and confirms receipt in the
+// child's pane content. Mirrors the production heartbeat script logic. (COND-03)
+func TestConductor_HeartbeatRoundTrip(t *testing.T) {
+	h := NewTmuxHarness(t)
+
+	inst := h.CreateSession("cond-heartbeat", "/tmp")
+	inst.Command = "cat"
+	require.NoError(t, inst.Start())
+
+	// Wait for child session to exist (heartbeat first checks session status).
+	WaitForCondition(t, 5*time.Second, 200*time.Millisecond,
+		"session to exist",
+		func() bool { return inst.Exists() })
+
+	// Verify existence explicitly (mirrors heartbeat's "check status" step).
+	require.True(t, inst.Exists(), "child session must exist before heartbeat send")
+
+	tmuxSess := inst.GetTmuxSession()
+	require.NotNil(t, tmuxSess, "tmux session should not be nil")
+
+	// Send heartbeat message (cat echoes it back to pane).
+	heartbeatMsg := "HEARTBEAT: check-all-sessions-" + t.Name()
+	require.NoError(t, tmuxSess.SendKeysAndEnter(heartbeatMsg))
+
+	// Verify receipt via polling.
+	WaitForPaneContent(t, inst, "HEARTBEAT:", 5*time.Second)
+
+	// Additionally capture and assert the full heartbeat text is present.
+	content, err := tmuxSess.CapturePaneFresh()
+	require.NoError(t, err)
+	assert.Contains(t, content, heartbeatMsg, "pane should contain the full heartbeat message")
+}
