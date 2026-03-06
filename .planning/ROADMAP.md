@@ -181,7 +181,11 @@ Plans:
 **Success Criteria** (what must be TRUE):
   1. The root cause of exit 137 is documented with reproduction steps, identifying whether it originates from agent-deck's send pipeline, tmux, or Claude Code itself
   2. If fixable in agent-deck, incoming messages no longer kill running Bash tool child processes; if a Claude Code limitation, the mitigation strategy is documented in the conductor CLAUDE.md and the GSD conductor skill
-**Plans**: TBD
+**Plans:** 2 plans
+
+Plans:
+- [ ] 09-01-PLAN.md -- Investigate exit 137 signal chain, reproduce, determine root cause and fixability
+- [ ] 09-02-PLAN.md -- Document mitigation in conductor CLAUDE.md and GSD conductor skill
 
 ### Phase 10: Learnings Promotion
 **Goal**: Validated conductor learnings from six production conductors are promoted to their appropriate shared locations, and the scattered LEARNINGS.md files are cleaned up
@@ -209,5 +213,5 @@ Phases execute in numeric order: 7 -> 8 -> 9 -> 10
 | 6. Conductor Pipeline & Edge Cases | v1.1 | 2/2 | Complete | 2026-03-07 |
 | 7. Send Reliability | v1.2 | 0/2 | In progress | - |
 | 8. Heartbeat & CLI Fixes | v1.2 | 0/2 | Not started | - |
-| 9. Process Stability | v1.2 | 0/? | Not started | - |
+| 9. Process Stability | v1.2 | 0/2 | Not started | - |
 | 10. Learnings Promotion | v1.2 | 0/? | Not started | - |
