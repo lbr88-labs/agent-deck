@@ -29,8 +29,8 @@ Requirements for integration testing milestone. Each maps to roadmap phases.
 
 ### Conductor Orchestration
 
-- [ ] **COND-01**: Conductor sends command to child session via real tmux and child receives it
-- [ ] **COND-02**: Cross-session event notification cycle works (event written, watcher detects, parent notified)
+- [x] **COND-01**: Conductor sends command to child session via real tmux and child receives it
+- [x] **COND-02**: Cross-session event notification cycle works (event written, watcher detects, parent notified)
 - [ ] **COND-03**: Conductor heartbeat round-trip completes (send heartbeat, child responds, verify receipt)
 - [ ] **COND-04**: Send-with-retry delivers to real tmux session with chunked sending and paste-marker detection
 
@@ -76,8 +76,8 @@ Requirements for integration testing milestone. Each maps to roadmap phases.
 | DETECT-01 | Phase 5 | Pending |
 | DETECT-02 | Phase 5 | Pending |
 | DETECT-03 | Phase 5 | Pending |
-| COND-01 | Phase 5 | Pending |
-| COND-02 | Phase 5 | Pending |
+| COND-01 | Phase 5 | Complete |
+| COND-02 | Phase 5 | Complete |
 | COND-03 | Phase 6 | Pending |
 | COND-04 | Phase 6 | Pending |
 | EDGE-01 | Phase 6 | Pending |

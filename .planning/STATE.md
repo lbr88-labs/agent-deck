@@ -2,16 +2,16 @@
 gsd_state_version: 1.0
 milestone: v1.1
 milestone_name: Integration Testing
-status: completed
-stopped_at: Completed 04-02-PLAN.md (session lifecycle tests)
-last_updated: "2026-03-06T11:40:31.594Z"
-last_activity: 2026-03-06 -- Completed 04-02 session lifecycle tests
+status: in-progress
+stopped_at: Completed 05-02-PLAN.md (conductor integration tests)
+last_updated: "2026-03-06T12:40:22Z"
+last_activity: 2026-03-06 -- Completed 05-02 conductor integration tests
 progress:
   total_phases: 6
   completed_phases: 4
   total_plans: 9
-  completed_plans: 9
-  percent: 33
+  completed_plans: 10
+  percent: 44
 ---
 
 # Project State
@@ -21,28 +21,29 @@ progress:
 See: .planning/PROJECT.md (updated 2026-03-06)
 
 **Core value:** Conductor orchestration and cross-session coordination must be reliably tested end-to-end
-**Current focus:** Phase 4: Framework Foundation
+**Current focus:** Phase 5: Status Detection & Events
 
 ## Current Position
 
-Phase: 4 of 6 (Framework Foundation) -- COMPLETE
+Phase: 5 of 6 (Status Detection & Events)
 Plan: 2 of 2 complete
-Status: Phase Complete
-Last activity: 2026-03-06 -- Completed 04-02 session lifecycle tests
+Status: In Progress
+Last activity: 2026-03-06 -- Completed 05-02 conductor integration tests
 
-Progress: [███░░░░░░░] 33%
+Progress: [████░░░░░░] 44%
 
 ## Performance Metrics
 
 **Velocity:**
-- Total plans completed: 2
-- Average duration: 4min
-- Total execution time: 0.15 hours
+- Total plans completed: 3
+- Average duration: 5min
+- Total execution time: 0.25 hours
 
 | Phase | Plan | Duration | Tasks | Files |
 |-------|------|----------|-------|-------|
 | 04    | 01   | 7min     | 2     | 7     |
 | 04    | 02   | 2min     | 2     | 1     |
+| 05    | 02   | 6min     | 2     | 1     |
 
 *Updated after each plan completion*
 
@@ -62,6 +63,10 @@ Progress: [███░░░░░░░] 33%
 - [v1.1-04-01]: Fixtures use statedb.StateDB directly (decoupled from session.Storage)
 - [v1.1-04-02]: Fork tests use manual ParentSessionID linkage (CreateForkedInstance is Claude-specific)
 - [v1.1-04-02]: Shell-only restart tested (dead session recreated via Restart fallback path)
+- [v1.1-05-02]: cat command as child process for send tests (reads stdin, echoes stdout)
+- [v1.1-05-02]: 300ms fsnotify startup delay accounts for debounce + registration time
+- [v1.1-05-02]: Unique instance IDs with UnixNano() prevent test collisions
+- [v1.1-05-02]: t.Cleanup for event file removal prevents orphaned artifacts
 
 ### Pending Todos
 
@@ -74,5 +79,5 @@ None yet.
 ## Session Continuity
 
 Last session: 2026-03-06
-Stopped at: Completed 04-02-PLAN.md (session lifecycle tests)
+Stopped at: Completed 05-02-PLAN.md (conductor integration tests)
 Resume file: None
