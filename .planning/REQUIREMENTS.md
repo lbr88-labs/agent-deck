@@ -101,24 +101,24 @@ Which phases cover which requirements. Updated during roadmap creation.
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| HB-01 | TBD | Pending |
-| HB-02 | TBD | Pending |
-| SEND-01 | TBD | Pending |
-| SEND-02 | TBD | Pending |
-| PROC-01 | TBD | Pending |
-| CLI-01 | TBD | Pending |
-| CLI-02 | TBD | Pending |
-| CLI-03 | TBD | Pending |
-| LEARN-01 | TBD | Pending |
-| LEARN-02 | TBD | Pending |
-| LEARN-03 | TBD | Pending |
-| LEARN-04 | TBD | Pending |
+| SEND-01 | Phase 7 | Pending |
+| SEND-02 | Phase 7 | Pending |
+| HB-01 | Phase 8 | Pending |
+| HB-02 | Phase 8 | Pending |
+| CLI-01 | Phase 8 | Pending |
+| CLI-02 | Phase 8 | Pending |
+| CLI-03 | Phase 8 | Pending |
+| PROC-01 | Phase 9 | Pending |
+| LEARN-01 | Phase 10 | Pending |
+| LEARN-02 | Phase 10 | Pending |
+| LEARN-03 | Phase 10 | Pending |
+| LEARN-04 | Phase 10 | Pending |
 
 **Coverage:**
 - v1.2 requirements: 12 total
-- Mapped to phases: 0
-- Unmapped: 12
+- Mapped to phases: 12
+- Unmapped: 0
 
 ---
 *Requirements defined: 2026-03-07*
-*Last updated: 2026-03-07 after initial definition*
+*Last updated: 2026-03-07 after roadmap creation (phases 7-10)*

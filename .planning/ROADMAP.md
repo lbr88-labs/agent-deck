@@ -3,7 +3,8 @@
 ## Milestones
 
 - ~~**v1.0 Skills Reorganization & Stabilization**~~ -- Phases 1-3 (shipped)
-- **v1.1 Integration Testing** -- Phases 4-6 (in progress)
+- ~~**v1.1 Integration Testing**~~ -- Phases 4-6 (shipped)
+- **v1.2 Conductor Reliability & Learnings Cleanup** -- Phases 7-10 (in progress)
 
 ## Phases
 
@@ -22,11 +23,21 @@ Decimal phases appear between their surrounding integers in numeric order.
 
 </details>
 
-### v1.1 Integration Testing
+<details>
+<summary>v1.1 Integration Testing (Phases 4-6) -- SHIPPED</summary>
 
-- [ ] **Phase 4: Framework Foundation** - Build shared test infrastructure and verify session lifecycle with real tmux sessions
-- [ ] **Phase 5: Status Detection & Events** - Validate sleep/wait detection accuracy, multi-tool behavior, and cross-session event delivery
-- [ ] **Phase 6: Conductor Pipeline & Edge Cases** - Test full orchestration round-trips and production-grade edge case scenarios
+- [x] **Phase 4: Framework Foundation** - Build shared test infrastructure and verify session lifecycle with real tmux sessions
+- [x] **Phase 5: Status Detection & Events** - Validate sleep/wait detection accuracy, multi-tool behavior, and cross-session event delivery
+- [x] **Phase 6: Conductor Pipeline & Edge Cases** - Test full orchestration round-trips and production-grade edge case scenarios
+
+</details>
+
+### v1.2 Conductor Reliability & Learnings Cleanup
+
+- [ ] **Phase 7: Send Reliability** - Fix Enter key race condition and Codex readiness detection, the two highest-impact send failures
+- [ ] **Phase 8: Heartbeat & CLI Fixes** - Scope heartbeat to conductor groups, honor enabled=false config, and fix CLI flag parsing issues
+- [ ] **Phase 9: Process Stability** - Investigate exit 137 from incoming messages and document mitigation or fix
+- [ ] **Phase 10: Learnings Promotion** - Promote validated conductor learnings to shared locations and clean up LEARNINGS.md files
 
 ## Phase Details
 
@@ -82,6 +93,9 @@ Plans:
 
 </details>
 
+<details>
+<summary>v1.1 Phases (shipped)</summary>
+
 ### Phase 4: Framework Foundation
 **Goal**: Developers can write integration tests using shared helpers that manage real tmux sessions, poll for conditions, and seed SQLite fixtures, with session lifecycle tests proving the foundation works
 **Depends on**: Phase 3 (stable codebase from v1.0)
@@ -94,8 +108,8 @@ Plans:
 **Plans:** 2 plans
 
 Plans:
-- [ ] 04-01-PLAN.md -- Integration test infrastructure: TmuxHarness, polling helpers, SQLite fixtures, TestMain isolation
-- [ ] 04-02-PLAN.md -- Session lifecycle integration tests: start, stop, fork, restart using the new framework
+- [x] 04-01: Integration test infrastructure: TmuxHarness, polling helpers, SQLite fixtures, TestMain isolation
+- [x] 04-02: Session lifecycle integration tests: start, stop, fork, restart using the new framework
 
 ### Phase 5: Status Detection & Events
 **Goal**: Sleep/wait detection correctly identifies tool-specific patterns across all supported tools, and cross-session event notifications reliably propagate between conductor parent and child sessions
@@ -109,8 +123,8 @@ Plans:
 **Plans:** 2 plans
 
 Plans:
-- [ ] 05-01-PLAN.md -- Status detection pattern tests for all four tools and real tmux status transition cycle
-- [ ] 05-02-PLAN.md -- Conductor send-to-child via tmux and cross-session event write-watch cycle
+- [x] 05-01: Status detection pattern tests for all four tools and real tmux status transition cycle
+- [x] 05-02: Conductor send-to-child via tmux and cross-session event write-watch cycle
 
 ### Phase 6: Conductor Pipeline & Edge Cases
 **Goal**: The full conductor orchestration pipeline is tested end-to-end, and production-grade edge cases (concurrent polling, external storage changes, skills integration) are verified
@@ -125,19 +139,67 @@ Plans:
 **Plans:** 2 plans
 
 Plans:
-- [ ] 06-01-PLAN.md -- Conductor heartbeat round-trip and chunked send delivery tests (COND-03, COND-04)
-- [ ] 06-02-PLAN.md -- Edge case tests: skills discover/attach, concurrent polling, cross-instance storage watcher (EDGE-01, EDGE-02, EDGE-03)
+- [x] 06-01: Conductor heartbeat round-trip and chunked send delivery tests (COND-03, COND-04)
+- [x] 06-02: Edge case tests: skills discover/attach, concurrent polling, cross-instance storage watcher (EDGE-01, EDGE-02, EDGE-03)
+
+</details>
+
+### Phase 7: Send Reliability
+**Goal**: Messages sent to sessions are reliably delivered, with Enter key submission working consistently and Codex sessions receiving text only after they are ready to accept input
+**Depends on**: Phase 6 (integration test infrastructure available for verification)
+**Requirements**: SEND-01, SEND-02
+**Success Criteria** (what must be TRUE):
+  1. Pasting text into a tmux session followed by Enter key submission delivers the complete message without dropped Enter keys, even under rapid successive sends
+  2. Messages sent to a Codex session are held until Codex has attached to stdin, preventing text from being consumed by the underlying shell
+  3. Existing send-related integration tests (COND-04 chunked send, COND-01 send-to-child) continue passing after the fixes
+**Plans**: TBD
+
+### Phase 8: Heartbeat & CLI Fixes
+**Goal**: Conductor heartbeat only monitors sessions in its own group, respects disabled configuration, and CLI flags for --wait, -cmd, and --no-parent work correctly without interfering with each other
+**Depends on**: Phase 7 (send reliability fixes may affect heartbeat send path)
+**Requirements**: HB-01, HB-02, CLI-01, CLI-02, CLI-03
+**Success Criteria** (what must be TRUE):
+  1. A conductor's heartbeat script reports status only for sessions in its configured group, not sessions belonging to other conductor groups
+  2. Setting `conductor.enabled = false` or `heartbeat_interval = 0` in config prevents heartbeat from running; no launchd jobs fire and no heartbeat messages are sent
+  3. `session send --wait` returns the correct exit code (0 for success, non-zero for failure) and does not hang when the target session completes or errors
+  4. Using `-cmd` flag alongside `-group` flag parses both correctly; the `-c` shorthand is documented and does not collide with other flags
+  5. Running `--no-parent` followed by `set-parent` restores parent routing, or `--no-parent` emits a clear warning that the detachment is permanent
+**Plans**: TBD
+
+### Phase 9: Process Stability
+**Goal**: The cause of exit 137 (SIGKILL) on incoming messages is identified, and either fixed in agent-deck or documented as a Claude Code limitation with a practical mitigation strategy
+**Depends on**: Phase 7 (send fixes must land first to isolate whether exit 137 is send-related or a separate issue)
+**Requirements**: PROC-01
+**Success Criteria** (what must be TRUE):
+  1. The root cause of exit 137 is documented with reproduction steps, identifying whether it originates from agent-deck's send pipeline, tmux, or Claude Code itself
+  2. If fixable in agent-deck, incoming messages no longer kill running Bash tool child processes; if a Claude Code limitation, the mitigation strategy is documented in the conductor CLAUDE.md and the GSD conductor skill
+**Plans**: TBD
+
+### Phase 10: Learnings Promotion
+**Goal**: Validated conductor learnings from six production conductors are promoted to their appropriate shared locations, and the scattered LEARNINGS.md files are cleaned up
+**Depends on**: Phase 9 (all code fixes complete, so learnings include any new findings from phases 7-9)
+**Requirements**: LEARN-01, LEARN-02, LEARN-03, LEARN-04
+**Success Criteria** (what must be TRUE):
+  1. Universal conductor patterns (event-driven monitoring, parent linkage, session transition verification, Enter key workaround) appear in the shared conductor CLAUDE.md at `~/.agent-deck/conductor/CLAUDE.md`
+  2. GSD-specific learnings (Claude-only, codebase mapping, comprehensive specs, wave model) are incorporated into the GSD conductor skill at `~/.agent-deck/skills/pool/gsd-conductor/`
+  3. Agent-deck operational learnings (Codex launch syntax, release sessions, Gemini video, --wait patterns, project folder launching) are incorporated into the agent-deck skill
+  4. All six conductor LEARNINGS.md files have promoted entries marked as promoted, retired entries removed, and duplicates consolidated
+**Plans**: TBD
 
 ## Progress
 
 **Execution Order:**
-Phases execute in numeric order: 4 -> 5 -> 6
+Phases execute in numeric order: 7 -> 8 -> 9 -> 10
 
 | Phase | Milestone | Plans Complete | Status | Completed |
 |-------|-----------|----------------|--------|-----------|
 | 1. Skills Reorganization | v1.0 | 2/2 | Complete | 2026-03-06 |
 | 2. Testing & Bug Fixes | v1.0 | 3/3 | Complete | 2026-03-06 |
 | 3. Stabilization & Release Readiness | v1.0 | 2/2 | Complete | 2026-03-06 |
-| 4. Framework Foundation | v1.1 | 0/2 | Planning | - |
-| 5. Status Detection & Events | v1.1 | 0/2 | Planning | - |
-| 6. Conductor Pipeline & Edge Cases | v1.1 | 0/2 | Not started | - |
+| 4. Framework Foundation | v1.1 | 2/2 | Complete | 2026-03-07 |
+| 5. Status Detection & Events | v1.1 | 2/2 | Complete | 2026-03-07 |
+| 6. Conductor Pipeline & Edge Cases | v1.1 | 2/2 | Complete | 2026-03-07 |
+| 7. Send Reliability | v1.2 | 0/? | Not started | - |
+| 8. Heartbeat & CLI Fixes | v1.2 | 0/? | Not started | - |
+| 9. Process Stability | v1.2 | 0/? | Not started | - |
+| 10. Learnings Promotion | v1.2 | 0/? | Not started | - |
