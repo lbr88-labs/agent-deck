@@ -5,13 +5,13 @@ milestone_name: Integration Testing
 status: active
 stopped_at: null
 last_updated: "2026-03-06"
-last_activity: 2026-03-06 -- Roadmap created for v1.1 (3 phases, 18 requirements)
+last_activity: 2026-03-06 -- Completed 04-01 integration test infrastructure
 progress:
   total_phases: 3
   completed_phases: 0
-  total_plans: 0
-  completed_plans: 0
-  percent: 0
+  total_plans: 2
+  completed_plans: 1
+  percent: 5
 ---
 
 # Project State
@@ -26,18 +26,22 @@ See: .planning/PROJECT.md (updated 2026-03-06)
 ## Current Position
 
 Phase: 4 of 6 (Framework Foundation)
-Plan: --
-Status: Ready to plan
-Last activity: 2026-03-06 -- Roadmap created for v1.1
+Plan: 1 of 2 complete
+Status: Executing
+Last activity: 2026-03-06 -- Completed 04-01 integration test infrastructure
 
-Progress: [░░░░░░░░░░] 0%
+Progress: [█░░░░░░░░░] 5%
 
 ## Performance Metrics
 
 **Velocity:**
-- Total plans completed: 0
-- Average duration: -
-- Total execution time: 0 hours
+- Total plans completed: 1
+- Average duration: 7min
+- Total execution time: 0.12 hours
+
+| Phase | Plan | Duration | Tasks | Files |
+|-------|------|----------|-------|-------|
+| 04    | 01   | 7min     | 2     | 7     |
 
 *Updated after each plan completion*
 
@@ -52,6 +56,9 @@ Progress: [░░░░░░░░░░] 0%
 - [v1.1]: Architecture first approach for test framework (PROJECT.md)
 - [v1.1]: No new dependencies needed; existing Go stdlib + testify + errgroup sufficient
 - [v1.1]: Integration tests use real tmux but simple commands (echo, sleep, cat), not real AI tools
+- [v1.1-04-01]: Used dashes in inttest- prefix to survive tmux sanitizeName
+- [v1.1-04-01]: TestingT interface for polling helpers enables mock-based timeout testing
+- [v1.1-04-01]: Fixtures use statedb.StateDB directly (decoupled from session.Storage)
 
 ### Pending Todos
 
@@ -64,5 +71,5 @@ None yet.
 ## Session Continuity
 
 Last session: 2026-03-06
-Stopped at: Roadmap created, ready to plan Phase 4
+Stopped at: Completed 04-01-PLAN.md (integration test infrastructure)
 Resume file: None

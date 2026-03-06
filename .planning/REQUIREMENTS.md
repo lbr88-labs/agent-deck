@@ -9,10 +9,10 @@ Requirements for integration testing milestone. Each maps to roadmap phases.
 
 ### Test Framework Infrastructure
 
-- [ ] **INFRA-01**: Shared TmuxHarness helper provides session create/cleanup/naming with t.Cleanup teardown
-- [ ] **INFRA-02**: Polling helpers (WaitForCondition, WaitForPaneContent, WaitForStatus) replace flaky time.Sleep assertions
-- [ ] **INFRA-03**: SQLite fixture helpers provide test storage factory, instance builders, and conductor fixtures
-- [ ] **INFRA-04**: Integration package has TestMain with AGENTDECK_PROFILE=_test isolation and orphan session cleanup
+- [x] **INFRA-01**: Shared TmuxHarness helper provides session create/cleanup/naming with t.Cleanup teardown
+- [x] **INFRA-02**: Polling helpers (WaitForCondition, WaitForPaneContent, WaitForStatus) replace flaky time.Sleep assertions
+- [x] **INFRA-03**: SQLite fixture helpers provide test storage factory, instance builders, and conductor fixtures
+- [x] **INFRA-04**: Integration package has TestMain with AGENTDECK_PROFILE=_test isolation and orphan session cleanup
 
 ### Session Lifecycle
 
@@ -65,10 +65,10 @@ Requirements for integration testing milestone. Each maps to roadmap phases.
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| INFRA-01 | Phase 4 | Pending |
-| INFRA-02 | Phase 4 | Pending |
-| INFRA-03 | Phase 4 | Pending |
-| INFRA-04 | Phase 4 | Pending |
+| INFRA-01 | Phase 4 | Complete |
+| INFRA-02 | Phase 4 | Complete |
+| INFRA-03 | Phase 4 | Complete |
+| INFRA-04 | Phase 4 | Complete |
 | LIFE-01 | Phase 4 | Pending |
 | LIFE-02 | Phase 4 | Pending |
 | LIFE-03 | Phase 4 | Pending |
