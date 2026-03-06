@@ -148,9 +148,11 @@ func fetchLatestRelease() (*Release, error) {
 
 // getAssetURL returns the download URL for the current platform
 func getAssetURL(release *Release) string {
-	goos := runtime.GOOS
-	goarch := runtime.GOARCH
+	return GetAssetURLForPlatform(release, runtime.GOOS, runtime.GOARCH)
+}
 
+// GetAssetURLForPlatform returns the download URL for a specific OS/arch combination.
+func GetAssetURLForPlatform(release *Release, goos, goarch string) string {
 	// Construct expected asset name: agent-deck_X.Y.Z_os_arch.tar.gz
 	version := strings.TrimPrefix(release.TagName, "v")
 	expectedName := fmt.Sprintf("agent-deck_%s_%s_%s.tar.gz", version, goos, goarch)
@@ -162,6 +164,40 @@ func getAssetURL(release *Release) string {
 	}
 
 	return ""
+}
+
+// FetchLatestRelease fetches the latest release from GitHub (exported for remote update).
+func FetchLatestRelease() (*Release, error) {
+	return fetchLatestRelease()
+}
+
+// DownloadAndExtractBinary downloads a release tarball and returns the binary bytes.
+func DownloadAndExtractBinary(downloadURL string) ([]byte, error) {
+	client := &http.Client{Timeout: 120 * time.Second}
+	resp, err := client.Get(downloadURL)
+	if err != nil {
+		return nil, fmt.Errorf("failed to download: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("download failed with status %d", resp.StatusCode)
+	}
+
+	tmpFile, err := os.CreateTemp("", "agent-deck-update-*.tar.gz")
+	if err != nil {
+		return nil, fmt.Errorf("failed to create temp file: %w", err)
+	}
+	tmpPath := tmpFile.Name()
+	defer os.Remove(tmpPath)
+
+	if _, err = io.Copy(tmpFile, resp.Body); err != nil {
+		tmpFile.Close()
+		return nil, fmt.Errorf("failed to save download: %w", err)
+	}
+	tmpFile.Close()
+
+	return extractBinaryFromTarGz(tmpPath)
 }
 
 // CompareVersions compares two semantic versions

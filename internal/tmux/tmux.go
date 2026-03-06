@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -323,7 +324,7 @@ func SupportsHyperlinks() bool {
 }
 
 // Tool detection patterns (used by DetectTool for initial tool identification)
-var toolDetectionOrder = []string{"claude", "gemini", "opencode", "codex"}
+var toolDetectionOrder = []string{"claude", "gemini", "opencode", "codex", "pi"}
 
 var toolDetectionPatterns = map[string][]*regexp.Regexp{
 	"claude": {
@@ -344,10 +345,36 @@ var toolDetectionPatterns = map[string][]*regexp.Regexp{
 		regexp.MustCompile(`(?i)codex`),
 		regexp.MustCompile(`(?i)openai`),
 	},
+	"pi": {
+		regexp.MustCompile(`(?mi)^\s*pi>\s*`),
+		regexp.MustCompile(`(?i)\bpi\s+cli\b`),
+		regexp.MustCompile(`(?i)\bpi\s+code\b`),
+	},
 }
 
 func detectToolFromCommand(command string) string {
 	cmdLower := strings.ToLower(strings.TrimSpace(command))
+	if cmdLower == "" {
+		return ""
+	}
+
+	fields := strings.Fields(cmdLower)
+	if len(fields) > 0 {
+		base := filepath.Base(fields[0])
+		switch base {
+		case "claude":
+			return "claude"
+		case "gemini":
+			return "gemini"
+		case "opencode", "open-code":
+			return "opencode"
+		case "codex":
+			return "codex"
+		case "pi":
+			return "pi"
+		}
+	}
+
 	switch {
 	case strings.Contains(cmdLower, "claude"):
 		return "claude"
@@ -357,6 +384,8 @@ func detectToolFromCommand(command string) string {
 		return "opencode"
 	case strings.Contains(cmdLower, "codex"):
 		return "codex"
+	case strings.Contains(cmdLower, " pi ") || strings.HasPrefix(cmdLower, "pi "):
+		return "pi"
 	default:
 		return ""
 	}
@@ -898,11 +927,110 @@ func (s *Session) InvalidateEnvCache() {
 	s.envCacheMu.Unlock()
 }
 
+// sanitizeNameRe matches characters not allowed in tmux session names.
+var sanitizeNameRe = regexp.MustCompile(`[^a-zA-Z0-9-]+`)
+
 // sanitizeName converts a display name to a valid tmux session name
 func sanitizeName(name string) string {
 	// Replace spaces and special characters with hyphens
-	re := regexp.MustCompile(`[^a-zA-Z0-9-]+`)
-	return re.ReplaceAllString(name, "-")
+	return sanitizeNameRe.ReplaceAllString(name, "-")
+}
+
+func shouldRecoverFromTmuxStartError(output string) bool {
+	lower := strings.ToLower(output)
+	return strings.Contains(lower, "server exited unexpectedly") ||
+		strings.Contains(lower, "lost server")
+}
+
+func recoverFromStaleDefaultSocketIfNeeded(startErrOutput string) (bool, error) {
+	if !shouldRecoverFromTmuxStartError(startErrOutput) {
+		return false, nil
+	}
+
+	// If tmux can already answer list-sessions, don't touch any socket file.
+	if err := exec.Command("tmux", "list-sessions").Run(); err == nil {
+		return false, nil
+	}
+
+	for _, socketPath := range defaultTmuxSocketCandidates() {
+		info, err := os.Stat(socketPath)
+		if err != nil {
+			continue
+		}
+		if info.IsDir() {
+			continue
+		}
+		if isSocketAcceptingConnections(socketPath) {
+			continue
+		}
+
+		backupPath := fmt.Sprintf("%s.stale.%d", socketPath, time.Now().UnixNano())
+		if err := os.Rename(socketPath, backupPath); err != nil {
+			return false, fmt.Errorf("failed to quarantine stale tmux socket %s: %w", socketPath, err)
+		}
+
+		statusLog.Warn("tmux_stale_socket_recovered",
+			slog.String("socket", socketPath),
+			slog.String("backup", backupPath),
+		)
+		return true, nil
+	}
+
+	return false, nil
+}
+
+func defaultTmuxSocketCandidates() []string {
+	uid := os.Getuid()
+	if uid < 0 {
+		return nil
+	}
+
+	add := func(out []string, seen map[string]struct{}, p string) []string {
+		if p == "" {
+			return out
+		}
+		if _, ok := seen[p]; ok {
+			return out
+		}
+		seen[p] = struct{}{}
+		return append(out, p)
+	}
+
+	seen := make(map[string]struct{})
+	candidates := make([]string, 0, 5)
+	if tmuxPath := tmuxSocketPathFromEnv(); tmuxPath != "" {
+		candidates = add(candidates, seen, tmuxPath)
+	}
+
+	socketSuffix := filepath.Join(fmt.Sprintf("tmux-%d", uid), "default")
+	if tmuxTmp := os.Getenv("TMUX_TMPDIR"); tmuxTmp != "" {
+		candidates = add(candidates, seen, filepath.Join(tmuxTmp, socketSuffix))
+	}
+	candidates = add(candidates, seen, filepath.Join(os.TempDir(), socketSuffix))
+	candidates = add(candidates, seen, filepath.Join("/tmp", socketSuffix))
+	candidates = add(candidates, seen, filepath.Join("/private/tmp", socketSuffix))
+	return candidates
+}
+
+func tmuxSocketPathFromEnv() string {
+	raw := os.Getenv("TMUX")
+	if raw == "" {
+		return ""
+	}
+	parts := strings.Split(raw, ",")
+	if len(parts) == 0 {
+		return ""
+	}
+	return parts[0]
+}
+
+func isSocketAcceptingConnections(socketPath string) bool {
+	conn, err := net.DialTimeout("unix", socketPath, 200*time.Millisecond)
+	if err != nil {
+		return false
+	}
+	_ = conn.Close()
+	return true
 }
 
 // Start creates and starts a tmux session.
@@ -944,6 +1072,19 @@ func (s *Session) Start(command string) error {
 	}
 	cmd := exec.Command("tmux", args...)
 	output, err := cmd.CombinedOutput()
+	if err != nil {
+		if recovered, recoverErr := recoverFromStaleDefaultSocketIfNeeded(string(output)); recoverErr != nil {
+			statusLog.Warn("tmux_stale_socket_recovery_failed",
+				slog.String("session", s.Name),
+				slog.String("error", recoverErr.Error()),
+			)
+		} else if recovered {
+			statusLog.Warn("tmux_start_retry_after_socket_recovery",
+				slog.String("session", s.Name),
+			)
+			output, err = exec.Command("tmux", args...).CombinedOutput()
+		}
+	}
 	if err != nil {
 		return fmt.Errorf("failed to create tmux session: %w (output: %s)", err, string(output))
 	}

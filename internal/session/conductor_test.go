@@ -1825,6 +1825,16 @@ func TestBridgeTemplate_DiscordInMain(t *testing.T) {
 	}
 }
 
+func TestBridgeTemplate_DiscordTypingIndicator(t *testing.T) {
+	template := conductorBridgePy
+	if !strings.Contains(template, "async with message.channel.typing():") {
+		t.Error("Discord on_message should show typing indicator while waiting for conductor response")
+	}
+	if !strings.Contains(template, "run_in_executor") {
+		t.Error("Discord on_message should offload blocking send_to_conductor to thread executor")
+	}
+}
+
 func TestConductorClearOnCompact(t *testing.T) {
 	// Override HOME so LoadConductorMeta reads from our temp dir
 	tmpHome := t.TempDir()

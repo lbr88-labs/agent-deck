@@ -75,9 +75,22 @@ func DefaultRawPatterns(toolName string) *RawPatterns {
 			},
 			PromptPatterns: []string{"How can I help", "codex>", "Continue?"},
 		}
+	case "pi":
+		return &RawPatterns{
+			BusyPatterns: []string{
+				"ctrl+c to interrupt",
+				"esc to interrupt",
+			},
+			PromptPatterns: []string{`re:(?m)^\s*pi>\s*`},
+		}
 	case "shell":
 		return &RawPatterns{
 			PromptPatterns: []string{"$ ", "# ", "% "},
+		}
+	case "openclaw":
+		return &RawPatterns{
+			BusyPatterns:   []string{"[PROCESSING]", "[CONNECTING]", "[RECONNECTING]"},
+			PromptPatterns: []string{"openclaw> "},
 		}
 	default:
 		return nil

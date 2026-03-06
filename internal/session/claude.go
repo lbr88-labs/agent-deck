@@ -16,6 +16,9 @@ import (
 // Claude Code replaces all such characters with hyphens in project directory names
 var claudeDirNameRegex = regexp.MustCompile(`[^a-zA-Z0-9-]`)
 
+// uuidSessionFileRegex matches UUID-format JSONL session filenames.
+var uuidSessionFileRegex = regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.jsonl$`)
+
 // ConvertToClaudeDirName converts a filesystem path to Claude's directory naming format.
 // Claude Code replaces all non-alphanumeric characters (except hyphens) with hyphens.
 // Example: /Users/master/Code cloud/!Project → -Users-master-Code-cloud--Project
@@ -351,8 +354,8 @@ func findActiveSessionIDExcluding(configDir, projectPath string, excludeIDs map[
 		return ""
 	}
 
-	// UUID pattern for session files
-	uuidPattern := regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.jsonl$`)
+	// UUID pattern for session files (compiled once at package level)
+	uuidPattern := uuidSessionFileRegex
 
 	var mostRecent string
 	var mostRecentTime time.Time

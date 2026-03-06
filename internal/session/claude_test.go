@@ -546,10 +546,21 @@ func TestFindActiveSessionIDExcluding(t *testing.T) {
 
 	sessionA := "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
 	sessionB := "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"
-	if err := os.WriteFile(filepath.Join(projectDir, sessionA+".jsonl"), []byte("{}"), 0644); err != nil {
+	fileA := filepath.Join(projectDir, sessionA+".jsonl")
+	fileB := filepath.Join(projectDir, sessionB+".jsonl")
+	if err := os.WriteFile(fileA, []byte("{}"), 0644); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(projectDir, sessionB+".jsonl"), []byte("{}"), 0644); err != nil {
+	if err := os.WriteFile(fileB, []byte("{}"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	older := time.Now().Add(-2 * time.Second)
+	newer := time.Now().Add(-1 * time.Second)
+	if err := os.Chtimes(fileA, older, older); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chtimes(fileB, newer, newer); err != nil {
 		t.Fatal(err)
 	}
 

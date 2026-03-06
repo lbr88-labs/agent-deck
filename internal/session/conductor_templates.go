@@ -1639,13 +1639,18 @@ def create_discord_bot(config: dict):
             "Discord message -> [%s]: %s",
             target["name"], cleaned_msg[:100],
         )
-        ok, response = send_to_conductor(
-            session_title,
-            cleaned_msg,
-            profile=profile,
-            wait_for_reply=True,
-            response_timeout=RESPONSE_TIMEOUT,
-        )
+        async with message.channel.typing():
+            loop = asyncio.get_event_loop()
+            ok, response = await loop.run_in_executor(
+                None,
+                lambda: send_to_conductor(
+                    session_title,
+                    cleaned_msg,
+                    profile=profile,
+                    wait_for_reply=True,
+                    response_timeout=RESPONSE_TIMEOUT,
+                ),
+            )
         if not ok:
             await message.channel.send(
                 f"[Failed to send message to conductor {target['name']}.]",

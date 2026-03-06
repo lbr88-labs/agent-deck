@@ -14,6 +14,7 @@ type ConfirmType int
 
 const (
 	ConfirmDeleteSession ConfirmType = iota
+	ConfirmCloseSession
 	ConfirmDeleteGroup
 	ConfirmQuitWithPool
 	ConfirmCreateDirectory
@@ -48,6 +49,15 @@ func NewConfirmDialog() *ConfirmDialog {
 func (c *ConfirmDialog) ShowDeleteSession(sessionID string, sessionName string, sandboxed bool) {
 	c.visible = true
 	c.confirmType = ConfirmDeleteSession
+	c.targetID = sessionID
+	c.targetName = sessionName
+	c.sandboxed = sandboxed
+}
+
+// ShowCloseSession shows confirmation for non-destructive session close.
+func (c *ConfirmDialog) ShowCloseSession(sessionID string, sessionName string, sandboxed bool) {
+	c.visible = true
+	c.confirmType = ConfirmCloseSession
 	c.targetID = sessionID
 	c.targetName = sessionName
 	c.sandboxed = sandboxed
@@ -161,7 +171,7 @@ func (c *ConfirmDialog) View() string {
 		if c.sandboxed {
 			details += "\n• The Docker container will be removed"
 		}
-		details += "\n• Press Ctrl+Z after deletion to undo"
+		details += "\n• Undo is available from the session list"
 		borderColor = ColorRed
 
 		buttonYes := lipgloss.NewStyle().
@@ -170,6 +180,32 @@ func (c *ConfirmDialog) View() string {
 			Padding(0, 2).
 			Bold(true).
 			Render("y Delete")
+		buttonNo := lipgloss.NewStyle().
+			Foreground(ColorBg).
+			Background(ColorAccent).
+			Padding(0, 2).
+			Bold(true).
+			Render("n Cancel")
+		escHint := lipgloss.NewStyle().
+			Foreground(ColorTextDim).
+			Render("(Esc to cancel)")
+		buttons = lipgloss.JoinHorizontal(lipgloss.Center, buttonYes, "  ", buttonNo, "  ", escHint)
+
+	case ConfirmCloseSession:
+		title = "Close Session?"
+		warning = fmt.Sprintf("This will close the running process for:\n\n  \"%s\"", c.targetName)
+		details = "• The tmux session will be terminated\n• Session metadata will be kept in the list\n• You can restart later from the session list"
+		if c.sandboxed {
+			details += "\n• The Docker container will be removed"
+		}
+		borderColor = ColorYellow
+
+		buttonYes := lipgloss.NewStyle().
+			Foreground(ColorBg).
+			Background(ColorYellow).
+			Padding(0, 2).
+			Bold(true).
+			Render("y Close")
 		buttonNo := lipgloss.NewStyle().
 			Foreground(ColorBg).
 			Background(ColorAccent).

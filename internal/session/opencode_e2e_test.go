@@ -18,9 +18,18 @@ func skipIfNoOpenCode(t *testing.T) {
 	}
 }
 
+func skipIfNoOpenCodeSessionForProject(t *testing.T, projectPath string) {
+	t.Helper()
+	probe := &Instance{Tool: "opencode", ProjectPath: projectPath}
+	if probe.queryOpenCodeSession() == "" {
+		t.Skip("Skipping: no OpenCode sessions available for this project path")
+	}
+}
+
 func TestOpenCodeDetectionE2E(t *testing.T) {
 	skipIfNoOpenCode(t)
 	projectPath := "/Users/ashesh/claude-deck"
+	skipIfNoOpenCodeSessionForProject(t, projectPath)
 
 	t.Log("=== E2E OpenCode Detection Test ===")
 
@@ -65,6 +74,7 @@ func TestOpenCodeDetectionE2E(t *testing.T) {
 func TestQueryOpenCodeSessionDirect(t *testing.T) {
 	skipIfNoOpenCode(t)
 	projectPath := "/Users/ashesh/claude-deck"
+	skipIfNoOpenCodeSessionForProject(t, projectPath)
 
 	inst := &Instance{
 		Tool:        "opencode",

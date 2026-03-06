@@ -29,7 +29,7 @@ import (
 	"github.com/asheshgoplani/agent-deck/internal/web"
 )
 
-const Version = "0.20.1"
+const Version = "0.20.2"
 
 // Table column widths for list command output
 const (
@@ -249,6 +249,9 @@ func main() {
 			return
 		case "conductor":
 			handleConductor(profile, args[1:])
+			return
+		case "openclaw", "oc":
+			handleOpenClaw(profile, args[1:])
 			return
 		case "remote":
 			handleRemote(profile, args[1:])
@@ -2048,6 +2051,9 @@ func handleUpdate(args []string) {
 
 	fmt.Printf("\n✓ Updated to v%s\n", info.LatestVersion)
 	fmt.Println("  Restart agent-deck to use the new version.")
+
+	// Offer to update remotes
+	updateRemotesAfterLocalUpdate(info.LatestVersion)
 }
 
 func runHomebrewUpgradeWithRefresh(homebrewUpgradeCmd string) error {

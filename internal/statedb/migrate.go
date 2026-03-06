@@ -49,6 +49,7 @@ type jsonInstanceData struct {
 	CodexDetectedAt time.Time `json:"codex_detected_at,omitempty"`
 
 	LatestPrompt    string          `json:"latest_prompt,omitempty"`
+	Notes           string          `json:"notes,omitempty"`
 	ToolOptionsJSON json.RawMessage `json:"tool_options,omitempty"`
 	LoadedMCPNames  []string        `json:"loaded_mcp_names,omitempty"`
 }
@@ -75,6 +76,7 @@ type toolDataBlob struct {
 	CodexSessionID     string          `json:"codex_session_id,omitempty"`
 	CodexDetectedAt    int64           `json:"codex_detected_at,omitempty"`
 	LatestPrompt       string          `json:"latest_prompt,omitempty"`
+	Notes              string          `json:"notes,omitempty"`
 	LoadedMCPNames     []string        `json:"loaded_mcp_names,omitempty"`
 	ToolOptions        json.RawMessage `json:"tool_options,omitempty"`
 	SSHHost            string          `json:"ssh_host,omitempty"`
@@ -105,6 +107,7 @@ func MigrateFromJSON(jsonPath string, db *StateDB) (int, int, error) {
 			OpenCodeSessionID: inst.OpenCodeSessionID,
 			CodexSessionID:    inst.CodexSessionID,
 			LatestPrompt:      inst.LatestPrompt,
+			Notes:             inst.Notes,
 			LoadedMCPNames:    inst.LoadedMCPNames,
 			ToolOptions:       inst.ToolOptionsJSON,
 		}
@@ -180,7 +183,7 @@ func MarshalToolData(
 	geminiYoloMode *bool, geminiModel string,
 	openCodeSessionID string, openCodeDetectedAt time.Time,
 	codexSessionID string, codexDetectedAt time.Time,
-	latestPrompt string, loadedMCPNames []string,
+	latestPrompt string, notes string, loadedMCPNames []string,
 	toolOptionsJSON json.RawMessage,
 	sshHost string, sshRemotePath string,
 ) json.RawMessage {
@@ -192,6 +195,7 @@ func MarshalToolData(
 		OpenCodeSessionID: openCodeSessionID,
 		CodexSessionID:    codexSessionID,
 		LatestPrompt:      latestPrompt,
+		Notes:             notes,
 		LoadedMCPNames:    loadedMCPNames,
 		ToolOptions:       toolOptionsJSON,
 		SSHHost:           sshHost,
@@ -221,7 +225,7 @@ func UnmarshalToolData(data json.RawMessage) (
 	geminiYoloMode *bool, geminiModel string,
 	openCodeSessionID string, openCodeDetectedAt time.Time,
 	codexSessionID string, codexDetectedAt time.Time,
-	latestPrompt string, loadedMCPNames []string,
+	latestPrompt string, notes string, loadedMCPNames []string,
 	toolOptionsJSON json.RawMessage,
 	sshHost string, sshRemotePath string,
 ) {
@@ -251,6 +255,7 @@ func UnmarshalToolData(data json.RawMessage) (
 		codexDetectedAt = time.Unix(td.CodexDetectedAt, 0)
 	}
 	latestPrompt = td.LatestPrompt
+	notes = td.Notes
 	loadedMCPNames = td.LoadedMCPNames
 	toolOptionsJSON = td.ToolOptions
 	sshHost = td.SSHHost

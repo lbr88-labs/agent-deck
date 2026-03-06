@@ -3,6 +3,7 @@ package git
 import (
 	"crypto/rand"
 	"encoding/hex"
+	"net/url"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -29,10 +30,11 @@ var consecutiveDashes = regexp.MustCompile(`-{2,}`)
 
 // templateVars holds values for template substitution.
 type templateVars struct {
-	branch    string
-	repoName  string
-	repoRoot  string
-	sessionID string
+	branch        string
+	branchEscaped string
+	repoName      string
+	repoRoot      string
+	sessionID     string
 }
 
 // WorktreePathOptions configures worktree path generation.
@@ -53,6 +55,14 @@ func sanitizeBranchForPath(branch string) string {
 	return strings.Trim(result, "-")
 }
 
+// escapeBranchForPath returns a reversible path-safe branch representation.
+// Unlike sanitizeBranchForPath, this avoids collisions:
+// - feature/foo    -> feature%2Ffoo
+// - feature-foo    -> feature-foo
+func escapeBranchForPath(branch string) string {
+	return url.PathEscape(branch)
+}
+
 // resolveTemplate expands a path template with the given variables.
 // Returns the resolved absolute path.
 //
@@ -68,6 +78,7 @@ func resolveTemplate(template string, vars templateVars) string {
 		"{repo-name}", vars.repoName,
 		"{repo-root}", vars.repoRoot,
 		"{branch}", sanitizedBranch,
+		"{branch-escaped}", vars.branchEscaped,
 		"{session-id}", vars.sessionID,
 	)
 	resolved := replacer.Replace(template)
@@ -81,7 +92,11 @@ func resolveTemplate(template string, vars templateVars) string {
 }
 
 // WorktreePath generates a worktree path. If opts.Template is set, it expands
-// the template with variables {repo-name}, {repo-root}, {branch}, {session-id}.
+// the template with variables:
+//   - {repo-name}, {repo-root}, {session-id}
+//   - {branch}: sanitized (human-friendly, may collide)
+//   - {branch-escaped}: URL-escaped (collision-resistant, reversible)
+//
 // Unknown variables like {foo} are left as-is in the resolved path.
 // Falls back to location-based strategy using opts.Location when template is
 // empty or RepoDir is invalid.
@@ -94,10 +109,11 @@ func WorktreePath(opts WorktreePathOptions) string {
 	}
 
 	vars := templateVars{
-		branch:    opts.Branch,
-		repoName:  repoName,
-		repoRoot:  opts.RepoDir,
-		sessionID: opts.SessionID,
+		branch:        opts.Branch,
+		branchEscaped: escapeBranchForPath(opts.Branch),
+		repoName:      repoName,
+		repoRoot:      opts.RepoDir,
+		sessionID:     opts.SessionID,
 	}
 	return resolveTemplate(opts.Template, vars)
 }
