@@ -5,6 +5,19 @@ All notable changes to Agent Deck will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+- Add session lifecycle tests covering start, stop, fork, and attach operations with tmux verification.
+- Add status lifecycle tests for sleep/wake detection and SQLite persistence round-trips.
+- Add skills runtime tests verifying on-demand skill loading, pool skill discovery, and project skill application.
+
+### Changed
+- Reformat agent-deck and session-share SKILL.md files to official Anthropic skill-creator format with proper frontmatter.
+- Add $SKILL_DIR path resolution to session-share skill for plugin cache compatibility.
+- Register session-share skill in marketplace.json for independent discoverability.
+- Update GSD conductor skill content in pool directory with current lifecycle documentation.
+
 ## [0.21.1] - 2026-03-06
 
 ### Fixed
