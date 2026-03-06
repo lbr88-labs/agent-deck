@@ -27,11 +27,11 @@ Decimal phases appear between their surrounding integers in numeric order.
   2. Session-share skill has proper SKILL.md frontmatter and scripts/ directory following the official format
   3. GSD conductor skill exists in ~/.agent-deck/skills/pool/gsd-conductor/ with current, complete content
   4. Loading a skill via `Read ~/.agent-deck/skills/pool/<name>/SKILL.md` resolves script paths correctly regardless of whether it runs from plugin cache or local checkout
-**Plans**: TBD
+**Plans:** 2 plans
 
 Plans:
-- [ ] 01-01: Reformat agent-deck and session-share skills to official structure
-- [ ] 01-02: Package GSD conductor skill and validate path resolution
+- [ ] 01-01-PLAN.md -- Fix frontmatter for agent-deck and session-share, add $SKILL_DIR path resolution, register session-share in marketplace.json
+- [ ] 01-02-PLAN.md -- Audit and update GSD conductor skill content, validate path resolution across all three skills
 
 ### Phase 2: Testing & Bug Fixes
 **Goal**: Session lifecycle, sleep/wake detection, and skills triggering are verified through tests, and all bugs found during testing are fixed
