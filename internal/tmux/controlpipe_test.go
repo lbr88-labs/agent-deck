@@ -235,9 +235,10 @@ func TestPipeManager_RefreshAllActivities(t *testing.T) {
 
 	require.NoError(t, pm.Connect(name))
 
-	activities, err := pm.RefreshAllActivities()
+	activities, windows, err := pm.RefreshAllActivities()
 	require.NoError(t, err)
 	assert.NotEmpty(t, activities, "should return at least one session's activity")
+	assert.NotNil(t, windows, "should return window data")
 
 	// Our test session should be in the results
 	_, found := activities[name]
