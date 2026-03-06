@@ -2859,6 +2859,14 @@ func (i *Instance) PreviewFull() (string, error) {
 	return i.tmuxSession.CaptureFullHistory()
 }
 
+// PreviewWindowFull returns the full scrollback of a specific tmux window.
+func (i *Instance) PreviewWindowFull(windowIndex int) (string, error) {
+	if i.tmuxSession == nil {
+		return "", fmt.Errorf("tmux session not initialized")
+	}
+	return i.tmuxSession.CaptureWindowFullHistory(windowIndex)
+}
+
 // HasUpdated checks if there's new output since last check
 func (i *Instance) HasUpdated() bool {
 	if i.tmuxSession == nil {

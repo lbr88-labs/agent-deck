@@ -24,6 +24,7 @@ const (
 	ItemTypeSession
 	ItemTypeRemoteGroup
 	ItemTypeRemoteSession
+	ItemTypeWindow
 )
 
 // Item represents a single item in the flattened group tree view
@@ -40,6 +41,12 @@ type Item struct {
 	IsSubSession        bool               // True if this session has a parent session
 	IsLastSubSession    bool               // True if this is the last sub-session of its parent (for tree rendering)
 	ParentIsLastInGroup bool               // True if parent session is last top-level item (for tree line rendering)
+	IsWindow            bool               // True for ItemTypeWindow items
+	IsLastWindow        bool               // True if last window of parent session
+	WindowIndex         int                // Tmux window index (for ItemTypeWindow)
+	WindowName          string             // Tmux window name (for ItemTypeWindow)
+	WindowSessionID     string             // Parent session ID (for ItemTypeWindow)
+	WindowTool          string             // Detected tool in this window (claude, gemini, etc.)
 }
 
 // Group represents a group of sessions

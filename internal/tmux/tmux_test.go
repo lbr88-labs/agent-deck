@@ -2525,3 +2525,30 @@ func TestSplitIntoChunks_SplitsAtNewlineBoundary(t *testing.T) {
 	assert.Equal(t, line+line, chunks[0])
 	assert.Equal(t, line, chunks[1])
 }
+
+func TestParseWindowCacheFromListWindows(t *testing.T) {
+	// Simulate list-windows output with extended format
+	lines := []string{
+		"agentdeck_proj_abc12345\t1704067200\t0\tmain",
+		"agentdeck_proj_abc12345\t1704067300\t1\ttests",
+		"agentdeck_other_def67890\t1704067100\t0\tbash",
+	}
+
+	sessionCache, windowCache := parseListWindowsOutput(strings.Join(lines, "\n"))
+
+	// Session cache: max activity per session
+	assert.Equal(t, int64(1704067300), sessionCache["agentdeck_proj_abc12345"])
+	assert.Equal(t, int64(1704067100), sessionCache["agentdeck_other_def67890"])
+
+	// Window cache: per-window entries
+	assert.Len(t, windowCache["agentdeck_proj_abc12345"], 2)
+	assert.Equal(t, "main", windowCache["agentdeck_proj_abc12345"][0].Name)
+	assert.Equal(t, 1, windowCache["agentdeck_proj_abc12345"][1].Index)
+	assert.Len(t, windowCache["agentdeck_other_def67890"], 1)
+}
+
+func TestParseWindowCacheEmptyInput(t *testing.T) {
+	sessionCache, windowCache := parseListWindowsOutput("")
+	assert.Empty(t, sessionCache)
+	assert.Empty(t, windowCache)
+}

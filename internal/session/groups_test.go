@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/asheshgoplani/agent-deck/internal/testutil"
+	"github.com/stretchr/testify/assert"
 )
 
 func TestNewGroupTree(t *testing.T) {
@@ -1467,4 +1468,28 @@ func TestBranchOrderingByOrder(t *testing.T) {
 		t.Errorf("Zebra (Order=0) should come before Alpha (Order=1). Zebra=%d, Alpha=%d",
 			zebraIdx, alphaIdx)
 	}
+}
+
+func TestFlattenIncludesWindowType(t *testing.T) {
+	instances := []*Instance{
+		{ID: "1", Title: "session-1", GroupPath: "project-a"},
+	}
+	tree := NewGroupTree(instances)
+	tree.ExpandGroup("project-a")
+
+	items := tree.Flatten()
+
+	// Without windows, just group + session
+	sessionCount := 0
+	windowCount := 0
+	for _, item := range items {
+		if item.Type == ItemTypeSession {
+			sessionCount++
+		}
+		if item.Type == ItemTypeWindow {
+			windowCount++
+		}
+	}
+	assert.Equal(t, 1, sessionCount)
+	assert.Equal(t, 0, windowCount, "no windows injected at Flatten level")
 }
