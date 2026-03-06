@@ -132,7 +132,7 @@ func RefreshPaneInfoCache() {
 
 	newCache := make(map[string]PaneInfo)
 	windowTools := make(map[string]map[int]string) // session -> windowIndex -> tool
-	seenWindowTool := make(map[string]bool)         // "session\twinIdx" -> already processed
+	seenWindowTool := make(map[string]bool)        // "session\twinIdx" -> already processed
 	for _, line := range strings.Split(strings.TrimSpace(string(output)), "\n") {
 		if line == "" {
 			continue

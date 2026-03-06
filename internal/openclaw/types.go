@@ -76,15 +76,15 @@ type ChallengePayload struct {
 
 // ConnectParams are sent in the "connect" request.
 type ConnectParams struct {
-	MinProtocol int            `json:"minProtocol"`
-	MaxProtocol int            `json:"maxProtocol"`
-	Client      ClientInfo     `json:"client"`
-	Caps        []string       `json:"caps,omitempty"`
-	Role        string         `json:"role,omitempty"`
-	Scopes      []string       `json:"scopes,omitempty"`
-	Auth        *ConnectAuth   `json:"auth,omitempty"`
-	Locale      string         `json:"locale,omitempty"`
-	UserAgent   string         `json:"userAgent,omitempty"`
+	MinProtocol int          `json:"minProtocol"`
+	MaxProtocol int          `json:"maxProtocol"`
+	Client      ClientInfo   `json:"client"`
+	Caps        []string     `json:"caps,omitempty"`
+	Role        string       `json:"role,omitempty"`
+	Scopes      []string     `json:"scopes,omitempty"`
+	Auth        *ConnectAuth `json:"auth,omitempty"`
+	Locale      string       `json:"locale,omitempty"`
+	UserAgent   string       `json:"userAgent,omitempty"`
 }
 
 // ClientInfo identifies this client to the gateway.
@@ -108,13 +108,13 @@ type ConnectAuth struct {
 
 // HelloOk is the payload of a successful "connect" response.
 type HelloOk struct {
-	Type     string       `json:"type"` // "hello-ok"
-	Protocol int          `json:"protocol"`
-	Server   ServerInfo   `json:"server"`
-	Features Features     `json:"features"`
-	Snapshot Snapshot     `json:"snapshot"`
-	Auth     *HelloAuth   `json:"auth,omitempty"`
-	Policy   HelloPolicy  `json:"policy"`
+	Type     string      `json:"type"` // "hello-ok"
+	Protocol int         `json:"protocol"`
+	Server   ServerInfo  `json:"server"`
+	Features Features    `json:"features"`
+	Snapshot Snapshot    `json:"snapshot"`
+	Auth     *HelloAuth  `json:"auth,omitempty"`
+	Policy   HelloPolicy `json:"policy"`
 }
 
 // ServerInfo identifies the gateway server.
@@ -139,21 +139,21 @@ type HelloAuth struct {
 
 // HelloPolicy defines connection limits.
 type HelloPolicy struct {
-	MaxPayload      int `json:"maxPayload"`
+	MaxPayload       int `json:"maxPayload"`
 	MaxBufferedBytes int `json:"maxBufferedBytes"`
-	TickIntervalMs  int `json:"tickIntervalMs"`
+	TickIntervalMs   int `json:"tickIntervalMs"`
 }
 
 // Snapshot is the initial state snapshot in hello-ok.
 type Snapshot struct {
-	Presence        []PresenceEntry `json:"presence"`
-	Health          json.RawMessage `json:"health"`
-	StateVersion    StateVersion    `json:"stateVersion"`
-	UptimeMs        int64           `json:"uptimeMs"`
-	ConfigPath      string          `json:"configPath,omitempty"`
-	StateDir        string          `json:"stateDir,omitempty"`
+	Presence        []PresenceEntry  `json:"presence"`
+	Health          json.RawMessage  `json:"health"`
+	StateVersion    StateVersion     `json:"stateVersion"`
+	UptimeMs        int64            `json:"uptimeMs"`
+	ConfigPath      string           `json:"configPath,omitempty"`
+	StateDir        string           `json:"stateDir,omitempty"`
 	SessionDefaults *SessionDefaults `json:"sessionDefaults,omitempty"`
-	AuthMode        string          `json:"authMode,omitempty"`
+	AuthMode        string           `json:"authMode,omitempty"`
 }
 
 // SessionDefaults from the snapshot.
@@ -214,17 +214,17 @@ type AgentsListResult struct {
 
 // SessionEntry is returned by sessions.list.
 type SessionEntry struct {
-	Key           string          `json:"key"`
-	SessionID     string          `json:"sessionId,omitempty"`
-	AgentID       string          `json:"agentId,omitempty"`
-	Title         string          `json:"title,omitempty"`
-	DerivedTitle  string          `json:"derivedTitle,omitempty"`
-	Label         string          `json:"label,omitempty"`
-	LastMessage   json.RawMessage `json:"lastMessage,omitempty"`
-	LastActiveMs  int64           `json:"lastActiveMs,omitempty"`
-	CreatedMs     int64           `json:"createdMs,omitempty"`
-	MessageCount  int             `json:"messageCount,omitempty"`
-	SpawnedBy     string          `json:"spawnedBy,omitempty"`
+	Key          string          `json:"key"`
+	SessionID    string          `json:"sessionId,omitempty"`
+	AgentID      string          `json:"agentId,omitempty"`
+	Title        string          `json:"title,omitempty"`
+	DerivedTitle string          `json:"derivedTitle,omitempty"`
+	Label        string          `json:"label,omitempty"`
+	LastMessage  json.RawMessage `json:"lastMessage,omitempty"`
+	LastActiveMs int64           `json:"lastActiveMs,omitempty"`
+	CreatedMs    int64           `json:"createdMs,omitempty"`
+	MessageCount int             `json:"messageCount,omitempty"`
+	SpawnedBy    string          `json:"spawnedBy,omitempty"`
 }
 
 // SessionsListParams are parameters for sessions.list.

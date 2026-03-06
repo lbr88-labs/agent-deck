@@ -50,9 +50,9 @@ type BridgeModel struct {
 	ready     bool
 
 	// Connection
-	ctx       context.Context
-	cancel    context.CancelFunc
-	err       error
+	ctx    context.Context
+	cancel context.CancelFunc
+	err    error
 }
 
 // --- Tea messages ---

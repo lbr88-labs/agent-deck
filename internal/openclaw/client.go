@@ -41,13 +41,13 @@ type Client struct {
 	url      string
 	password string
 
-	conn     *websocket.Conn
-	connMu   sync.Mutex
-	hello    *HelloOk
-	events   chan *GatewayEvent
-	pending  map[string]chan *ResponseFrame
-	pendMu   sync.Mutex
-	closed   chan struct{}
+	conn      *websocket.Conn
+	connMu    sync.Mutex
+	hello     *HelloOk
+	events    chan *GatewayEvent
+	pending   map[string]chan *ResponseFrame
+	pendMu    sync.Mutex
+	closed    chan struct{}
 	closeOnce sync.Once
 
 	// Reconnection state
