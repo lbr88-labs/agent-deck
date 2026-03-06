@@ -328,12 +328,13 @@ type Home struct {
 	viewBuilder strings.Builder
 
 	// Notification bar (tmux status-left for waiting sessions)
-	notificationManager  *session.NotificationManager
-	notificationsEnabled bool
-	boundKeys            map[string]string // Track which key is bound (key -> "sessionID:tmuxName")
-	boundKeysMu          sync.Mutex        // Protects boundKeys for background worker access
-	lastBarText          string            // Cache to avoid updating all sessions every tick
-	lastBarTextMu        sync.Mutex        // Protects lastBarText for background worker access
+	notificationManager     *session.NotificationManager
+	notificationsEnabled    bool
+	manageTmuxNotifications bool
+	boundKeys               map[string]string // Track which key is bound (key -> "sessionID:tmuxName")
+	boundKeysMu             sync.Mutex        // Protects boundKeys for background worker access
+	lastBarText             string            // Cache to avoid updating all sessions every tick
+	lastBarTextMu           sync.Mutex        // Protects lastBarText for background worker access
 
 	// Maintenance banner (shown after background maintenance completes)
 	maintenanceMsg     string
@@ -671,10 +672,13 @@ func NewHomeWithProfileAndMode(profile string) *Home {
 	// Restore persisted UI state (preview mode, status filter, cursor position)
 	h.loadUIState()
 
-	// Initialize notification manager if enabled in config
+	tmuxSettings := session.GetTmuxSettings()
+	h.manageTmuxNotifications = tmuxSettings.GetInjectStatusLine()
+
+	// Initialize notification manager if enabled in config and tmux status injection is allowed.
 	// All instances manage the notification bar (they share SQLite state, so produce identical output)
 	notifSettings := session.GetNotificationsSettings()
-	if notifSettings.Enabled {
+	if notifSettings.Enabled && h.manageTmuxNotifications {
 		h.notificationsEnabled = true
 		h.notificationManager = session.NewNotificationManager(notifSettings.MaxShown, notifSettings.ShowAll, notifSettings.Minimal)
 
@@ -1304,7 +1308,7 @@ func (h *Home) getAttachedSessionID() string {
 
 // cleanupNotifications removes all notification bar state on exit
 func (h *Home) cleanupNotifications() {
-	if !h.notificationsEnabled || h.notificationManager == nil {
+	if !h.manageTmuxNotifications || !h.notificationsEnabled || h.notificationManager == nil {
 		return
 	}
 
@@ -2321,7 +2325,7 @@ func (h *Home) syncNotificationsBackground() {
 		}
 	}()
 
-	if !h.notificationsEnabled || h.notificationManager == nil {
+	if !h.manageTmuxNotifications || !h.notificationsEnabled || h.notificationManager == nil {
 		return
 	}
 
@@ -2416,6 +2420,10 @@ func (h *Home) syncNotificationsBackground() {
 // updateKeyBindings updates tmux key bindings based on current notification entries.
 // Thread-safe via boundKeysMu. Can be called from both foreground and background.
 func (h *Home) updateKeyBindings() {
+	if !h.manageTmuxNotifications {
+		return
+	}
+
 	// Minimal mode shows counts only — no named slots, no key bindings to manage
 	if h.notificationManager.IsMinimal() {
 		return

@@ -29,6 +29,38 @@ func TestNewHome(t *testing.T) {
 	}
 }
 
+func TestNewHome_DisablesTmuxNotificationsWhenStatusInjectionDisabled(t *testing.T) {
+	origHome := os.Getenv("HOME")
+	tmpHome := t.TempDir()
+	os.Setenv("HOME", tmpHome)
+	session.ClearUserConfigCache()
+	defer func() {
+		os.Setenv("HOME", origHome)
+		session.ClearUserConfigCache()
+	}()
+
+	configDir := filepath.Join(tmpHome, ".agent-deck")
+	if err := os.MkdirAll(configDir, 0o755); err != nil {
+		t.Fatalf("MkdirAll() failed: %v", err)
+	}
+	configPath := filepath.Join(configDir, "config.toml")
+	config := "[tmux]\ninject_status_line = false\n"
+	if err := os.WriteFile(configPath, []byte(config), 0o644); err != nil {
+		t.Fatalf("WriteFile() failed: %v", err)
+	}
+
+	home := NewHome()
+	if home.manageTmuxNotifications {
+		t.Fatal("manageTmuxNotifications should be false when inject_status_line is disabled")
+	}
+	if home.notificationsEnabled {
+		t.Fatal("notificationsEnabled should stay false when tmux status injection is disabled")
+	}
+	if home.notificationManager != nil {
+		t.Fatal("notificationManager should not initialize when tmux status injection is disabled")
+	}
+}
+
 func TestHomeInit(t *testing.T) {
 	home := NewHome()
 	cmd := home.Init()

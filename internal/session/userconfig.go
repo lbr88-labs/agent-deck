@@ -825,7 +825,9 @@ func (m *MCPDef) HasAutoStartServer() bool {
 type TmuxSettings struct {
 	// InjectStatusLine controls whether agent-deck injects a custom status line
 	// into new tmux sessions. When false, the tmux status bar is not modified,
-	// allowing users to use their own tmux status line configuration.
+	// allowing users to use their own tmux status line configuration. This also
+	// disables Agent Deck's global tmux notification bar and key bindings so the
+	// runtime stops mutating global tmux options.
 	// Default: true (nil = use default true)
 	InjectStatusLine *bool `toml:"inject_status_line"`
 
@@ -1682,7 +1684,8 @@ auto_cleanup = true
 # Controls how agent-deck configures tmux sessions
 # [tmux]
 # inject_status_line controls whether agent-deck sets up a custom tmux status bar
-# When false, your existing tmux status line configuration is preserved
+# When false, your existing tmux status line configuration is preserved and
+# agent-deck stops mutating the global tmux notification bar / number key bindings
 # Default: true (agent-deck injects its own status bar with session info)
 # inject_status_line = false
 # Override tmux options applied to every session (applied after defaults)
