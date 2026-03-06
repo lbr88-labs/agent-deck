@@ -1,11 +1,43 @@
-# Requirements: Agent Deck Integration Testing Framework
+# Requirements: Agent Deck
 
-**Defined:** 2026-03-06
-**Core Value:** Conductor orchestration and cross-session coordination must be reliably tested end-to-end
+**Defined:** 2026-03-07
+**Core Value:** Conductor orchestration and cross-session coordination must work reliably in production
 
-## v1.1 Requirements
+## v1.2 Requirements
 
-Requirements for integration testing milestone. Each maps to roadmap phases.
+Requirements for Conductor Reliability & Learnings Cleanup milestone. Each maps to roadmap phases.
+
+### Heartbeat
+
+- [ ] **HB-01**: Heartbeat scripts filter sessions by the conductor's own group instead of reporting all sessions across all groups
+- [ ] **HB-02**: Heartbeat respects `conductor.enabled = false` and `heartbeat_interval = 0` by stopping launchd services or checking config before sending
+
+### Send Reliability
+
+- [ ] **SEND-01**: Session send reliably submits Enter key after pasting text into tmux, eliminating the race condition between paste and keypress
+- [ ] **SEND-02**: Messages sent to Codex sessions wait for Codex to attach to stdin before delivery, preventing text from going to the underlying shell
+
+### Process Stability
+
+- [ ] **PROC-01**: Incoming messages to the conductor do not kill running Bash tool child processes with SIGKILL (exit 137), or mitigation is documented if this is a Claude Code limitation
+
+### CLI Reliability
+
+- [ ] **CLI-01**: `session send --wait` exits cleanly with correct status codes and does not hang on edge cases
+- [ ] **CLI-02**: Using `-cmd` flag does not break `-group` flag parsing; `-c` shorthand is documented as the supported pattern
+- [ ] **CLI-03**: `--no-parent` followed by `set-parent` correctly restores parent routing, or `--no-parent` emits a clear warning about permanent effects
+
+### Learnings Promotion
+
+- [ ] **LEARN-01**: Validated universal conductor patterns (event-driven monitoring, parent linkage, session transition verification, Enter key workaround) are promoted to the shared conductor CLAUDE.md
+- [ ] **LEARN-02**: GSD-specific learnings (Claude-only, codebase mapping, comprehensive specs, wave model) are promoted to the GSD conductor skill
+- [ ] **LEARN-03**: Agent-deck operational learnings (Codex launch syntax, release sessions, Gemini video, --wait patterns, project folder launching) are promoted to the agent-deck skill
+- [ ] **LEARN-04**: All conductor LEARNINGS.md files are cleaned up: promoted entries marked, retired entries removed, duplicates consolidated
+
+## v1.1 Requirements (Complete)
+
+<details>
+<summary>18 requirements, all complete</summary>
 
 ### Test Framework Infrastructure
 
@@ -40,55 +72,53 @@ Requirements for integration testing milestone. Each maps to roadmap phases.
 - [x] **EDGE-02**: Concurrent polling of 10+ sessions returns correct status for each without races
 - [x] **EDGE-03**: Storage watcher detects external SQLite changes from a second Storage instance
 
-## v2 Requirements
+</details>
 
-### Test Ecosystem
+## Future Requirements
 
+Deferred to future milestones. Tracked but not in current roadmap.
+
+### Testing Expansion
+
+- **TEXP-01**: Integration tests for Codex readiness detection with real Codex binary
+- **TEXP-02**: Performance benchmarks for concurrent session polling at scale (50+ sessions)
 - **TEST-EXT-01**: TUI (Bubble Tea) integration tests via tea.Test or VHS
 - **TEST-EXT-02**: CI/CD pipeline integration with tmux server in GitHub Actions
-- **TEST-EXT-03**: Performance/load benchmarks for session polling hot paths
-- **TEST-EXT-04**: MCP attach/detach scoped config integration tests
-- **TEST-EXT-05**: Event watcher recovery after directory recreation
 
 ## Out of Scope
 
 | Feature | Reason |
 |---------|--------|
-| Full end-to-end tests with real AI tools | Requires API keys, costs money, flaky, violates public repo constraint |
-| TUI (Bubble Tea) integration tests | Separate approach needed (tea.Test/VHS), home.go is 8500 lines |
-| Docker-based test isolation | tmux in Docker is fragile, adds CGO dependency |
-| CI/CD pipeline integration | Tests run locally, CI is a separate effort |
-| Performance/load testing | Different infrastructure needed, separate concern |
-| Parallel integration test execution | tmux global namespace causes race conditions |
+| Project-specific learnings (ARD deploy, Ryan ElevenLabs) | Stay in their respective conductor LEARNINGS.md files |
+| Personal preferences (voice-to-text parsing) | Stay in user CLAUDE.md, not shared |
+| New features unrelated to conductor reliability | This is a bugfix and cleanup milestone |
+| UI/TUI testing | Requires separate Bubble Tea testing approach |
+| CI/CD pipeline integration | Tests run locally; CI integration is a future milestone |
 
 ## Traceability
 
+Which phases cover which requirements. Updated during roadmap creation.
+
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| INFRA-01 | Phase 4 | Complete |
-| INFRA-02 | Phase 4 | Complete |
-| INFRA-03 | Phase 4 | Complete |
-| INFRA-04 | Phase 4 | Complete |
-| LIFE-01 | Phase 4 | Complete |
-| LIFE-02 | Phase 4 | Complete |
-| LIFE-03 | Phase 4 | Complete |
-| LIFE-04 | Phase 4 | Complete |
-| DETECT-01 | Phase 5 | Complete |
-| DETECT-02 | Phase 5 | Complete |
-| DETECT-03 | Phase 5 | Complete |
-| COND-01 | Phase 5 | Complete |
-| COND-02 | Phase 5 | Complete |
-| COND-03 | Phase 6 | Complete |
-| COND-04 | Phase 6 | Complete |
-| EDGE-01 | Phase 6 | Complete |
-| EDGE-02 | Phase 6 | Complete |
-| EDGE-03 | Phase 6 | Complete |
+| HB-01 | TBD | Pending |
+| HB-02 | TBD | Pending |
+| SEND-01 | TBD | Pending |
+| SEND-02 | TBD | Pending |
+| PROC-01 | TBD | Pending |
+| CLI-01 | TBD | Pending |
+| CLI-02 | TBD | Pending |
+| CLI-03 | TBD | Pending |
+| LEARN-01 | TBD | Pending |
+| LEARN-02 | TBD | Pending |
+| LEARN-03 | TBD | Pending |
+| LEARN-04 | TBD | Pending |
 
 **Coverage:**
-- v1.1 requirements: 18 total
-- Mapped to phases: 18
-- Unmapped: 0
+- v1.2 requirements: 12 total
+- Mapped to phases: 0
+- Unmapped: 12
 
 ---
-*Requirements defined: 2026-03-06*
-*Last updated: 2026-03-06 after roadmap creation*
+*Requirements defined: 2026-03-07*
+*Last updated: 2026-03-07 after initial definition*
