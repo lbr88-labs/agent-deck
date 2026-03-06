@@ -26,10 +26,10 @@
 ### Stabilization
 
 - [x] **STAB-01**: All bugs discovered during testing are fixed
-- [ ] **STAB-02**: `golangci-lint run` passes with zero warnings
-- [ ] **STAB-03**: `go test -race ./...` passes with zero failures
-- [ ] **STAB-04**: `go build` succeeds for all target platforms (darwin/linux, amd64/arm64)
-- [ ] **STAB-05**: Dead code and stale artifacts removed from codebase
+- [x] **STAB-02**: `golangci-lint run` passes with zero warnings
+- [x] **STAB-03**: `go test -race ./...` passes with zero failures
+- [x] **STAB-04**: `go build` succeeds for all target platforms (darwin/linux, amd64/arm64)
+- [x] **STAB-05**: Dead code and stale artifacts removed from codebase
 - [ ] **STAB-06**: CHANGELOG.md updated with all changes
 
 ## v2 Requirements
@@ -66,10 +66,10 @@
 | TEST-06 | Phase 2 | Complete |
 | TEST-07 | Phase 2 | Complete |
 | STAB-01 | Phase 2 | Complete |
-| STAB-02 | Phase 3 | Pending |
-| STAB-03 | Phase 3 | Pending |
-| STAB-04 | Phase 3 | Pending |
-| STAB-05 | Phase 3 | Pending |
+| STAB-02 | Phase 3 | Complete |
+| STAB-03 | Phase 3 | Complete |
+| STAB-04 | Phase 3 | Complete |
+| STAB-05 | Phase 3 | Complete |
 | STAB-06 | Phase 3 | Pending |
 
 **Coverage:**
