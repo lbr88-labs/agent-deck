@@ -1628,6 +1628,9 @@ func waitForCompletion(checker statusChecker, timeout time.Duration) (string, er
 	// sendWithRetry already checks for "active", but give a small buffer.
 	time.Sleep(1 * time.Second)
 
+	consecutiveErrors := 0
+	const maxConsecutiveErrors = 5
+
 	for {
 		select {
 		case <-ctx.Done():
@@ -1637,10 +1640,14 @@ func waitForCompletion(checker statusChecker, timeout time.Duration) (string, er
 
 		status, err := checker.GetStatus()
 		if err != nil {
-			// Transient tmux error, keep polling
+			consecutiveErrors++
+			if consecutiveErrors >= maxConsecutiveErrors {
+				return "error", nil // Session likely died
+			}
 			time.Sleep(pollInterval)
 			continue
 		}
+		consecutiveErrors = 0
 
 		// "active" means still processing, keep waiting
 		if status == "active" {

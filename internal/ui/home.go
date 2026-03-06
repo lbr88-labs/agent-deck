@@ -2171,11 +2171,11 @@ func (h *Home) backgroundStatusUpdate() {
 					_ = tmuxSess.SendKeysAndEnter("/clear")
 					// After /clear wipes context, immediately send heartbeat to restore orientation
 					time.Sleep(3 * time.Second)
-					profile := session.DefaultProfile
+					_ = session.DefaultProfile
 					if meta, err := session.LoadConductorMeta(conductorName); err == nil {
-						profile = meta.Profile
+						_ = meta.Profile
 					}
-					msg := fmt.Sprintf("Heartbeat: Check all sessions in the %s profile. List any waiting sessions, auto-respond where safe, and report what needs my attention.", profile)
+					msg := fmt.Sprintf("Heartbeat: Check sessions in your group (%s). List any that are waiting, auto-respond where safe, and report what needs my attention.", conductorName)
 					_ = tmuxSess.SendKeysAndEnter(msg)
 				}()
 			}
