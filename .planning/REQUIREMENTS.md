@@ -9,8 +9,8 @@ Requirements for Conductor Reliability & Learnings Cleanup milestone. Each maps 
 
 ### Heartbeat
 
-- [ ] **HB-01**: Heartbeat scripts filter sessions by the conductor's own group instead of reporting all sessions across all groups
-- [ ] **HB-02**: Heartbeat respects `conductor.enabled = false` and `heartbeat_interval = 0` by stopping launchd services or checking config before sending
+- [x] **HB-01**: Heartbeat scripts filter sessions by the conductor's own group instead of reporting all sessions across all groups
+- [x] **HB-02**: Heartbeat respects `conductor.enabled = false` and `heartbeat_interval = 0` by stopping launchd services or checking config before sending
 
 ### Send Reliability
 
@@ -103,8 +103,8 @@ Which phases cover which requirements. Updated during roadmap creation.
 |-------------|-------|--------|
 | SEND-01 | Phase 7 | Complete |
 | SEND-02 | Phase 7 | Complete |
-| HB-01 | Phase 8 | Pending |
-| HB-02 | Phase 8 | Pending |
+| HB-01 | Phase 8 | Complete |
+| HB-02 | Phase 8 | Complete |
 | CLI-01 | Phase 8 | Pending |
 | CLI-02 | Phase 8 | Pending |
 | CLI-03 | Phase 8 | Pending |

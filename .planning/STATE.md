@@ -2,16 +2,16 @@
 gsd_state_version: 1.0
 milestone: v1.2
 milestone_name: Conductor Reliability & Learnings Cleanup
-status: completed
-stopped_at: Completed 07-02-PLAN.md
-last_updated: "2026-03-06T19:39:18.944Z"
-last_activity: 2026-03-07 -- Completed 07-02 send reliability integration tests
+status: in-progress
+stopped_at: Completed 08-01-PLAN.md
+last_updated: "2026-03-06T20:28:19.875Z"
+last_activity: 2026-03-07 -- Completed 08-01 heartbeat group scoping and interval fixes
 progress:
   total_phases: 10
   completed_phases: 7
-  total_plans: 15
-  completed_plans: 15
-  percent: 100
+  total_plans: 17
+  completed_plans: 16
+  percent: 94
 ---
 
 # Project State
@@ -21,16 +21,16 @@ progress:
 See: .planning/PROJECT.md (updated 2026-03-07)
 
 **Core value:** Conductor orchestration and cross-session coordination must work reliably in production
-**Current focus:** Phase 7: Send Reliability
+**Current focus:** Phase 8: Heartbeat & CLI Fixes
 
 ## Current Position
 
-Phase: 7 of 10 (Send Reliability) -- COMPLETE
-Plan: 2 of 2 in current phase (all done)
-Status: Phase 7 complete, ready for Phase 8
-Last activity: 2026-03-07 -- Completed 07-02 send reliability integration tests
+Phase: 8 of 10 (Heartbeat & CLI Fixes) -- IN PROGRESS
+Plan: 1 of 2 in current phase (08-01 complete, 08-02 pending)
+Status: Heartbeat fixes complete, CLI fixes next
+Last activity: 2026-03-07 -- Completed 08-01 heartbeat group scoping and interval fixes
 
-Progress: [██████████] 100% (phases 1-7 complete, phases 8-10 pending)
+Progress: [█████████░] 94% (phases 1-7 complete, phase 8 plan 1/2 done)
 
 ## Accumulated Context
 
@@ -50,6 +50,9 @@ Progress: [██████████] 100% (phases 1-7 complete, phases 8-1
 - [v1.2 07-01]: Enter retry hardened to every-iteration for first 5, then every-2nd (was every-3rd)
 - [Phase 07-02]: Integration tests verify tmux primitives, not cmd-level wrappers (not importable)
 - [Phase 07-02]: Shell script fixtures in t.TempDir simulate tool startup delay for integration tests
+- [Phase 08-01]: interval=0 means disabled (returns 0), negative means use default 15
+- [Phase 08-01]: Heartbeat script checks conductor enabled status via JSON before sending
+- [Phase 08-01]: TUI clear-on-compact heartbeat also updated to group-scoped message
 
 ### Pending Todos
 
@@ -61,6 +64,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-03-06T19:35:34.029Z
-Stopped at: Completed 07-02-PLAN.md
+Last session: 2026-03-06T20:28:19.873Z
+Stopped at: Completed 08-01-PLAN.md
 Resume file: None
