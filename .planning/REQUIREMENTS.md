@@ -14,8 +14,8 @@ Requirements for Conductor Reliability & Learnings Cleanup milestone. Each maps 
 
 ### Send Reliability
 
-- [ ] **SEND-01**: Session send reliably submits Enter key after pasting text into tmux, eliminating the race condition between paste and keypress
-- [ ] **SEND-02**: Messages sent to Codex sessions wait for Codex to attach to stdin before delivery, preventing text from going to the underlying shell
+- [x] **SEND-01**: Session send reliably submits Enter key after pasting text into tmux, eliminating the race condition between paste and keypress
+- [x] **SEND-02**: Messages sent to Codex sessions wait for Codex to attach to stdin before delivery, preventing text from going to the underlying shell
 
 ### Process Stability
 
@@ -101,8 +101,8 @@ Which phases cover which requirements. Updated during roadmap creation.
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| SEND-01 | Phase 7 | Pending |
-| SEND-02 | Phase 7 | Pending |
+| SEND-01 | Phase 7 | Complete |
+| SEND-02 | Phase 7 | Complete |
 | HB-01 | Phase 8 | Pending |
 | HB-02 | Phase 8 | Pending |
 | CLI-01 | Phase 8 | Pending |

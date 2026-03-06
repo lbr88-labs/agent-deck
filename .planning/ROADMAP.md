@@ -155,7 +155,7 @@ Plans:
 **Plans:** 2 plans
 
 Plans:
-- [ ] 07-01-PLAN.md -- Consolidate send verification, harden Enter retry, add Codex readiness detection
+- [x] 07-01-PLAN.md -- Consolidate send verification, harden Enter retry, add Codex readiness detection
 - [ ] 07-02-PLAN.md -- Integration tests for Enter retry and Codex readiness on real tmux
 
 ### Phase 8: Heartbeat & CLI Fixes
