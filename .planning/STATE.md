@@ -2,16 +2,16 @@
 gsd_state_version: 1.0
 milestone: v1.2
 milestone_name: Conductor Reliability & Learnings Cleanup
-status: completed
-stopped_at: Completed 09-02-PLAN.md
-last_updated: "2026-03-06T21:10:37.321Z"
-last_activity: 2026-03-07 -- Completed 09-02 exit 137 mitigation documentation in conductor CLAUDE.md and GSD conductor SKILL.md
+status: executing
+stopped_at: Completed 10-01-PLAN.md
+last_updated: "2026-03-06T21:32:54.878Z"
+last_activity: 2026-03-07 -- Completed 10-01 learnings promotion to conductor CLAUDE.md, gsd-conductor SKILL.md, and agent-deck-workflow SKILL.md
 progress:
   total_phases: 10
   completed_phases: 9
-  total_plans: 19
-  completed_plans: 19
-  percent: 100
+  total_plans: 21
+  completed_plans: 20
+  percent: 95
 ---
 
 # Project State
@@ -21,16 +21,16 @@ progress:
 See: .planning/PROJECT.md (updated 2026-03-07)
 
 **Core value:** Conductor orchestration and cross-session coordination must work reliably in production
-**Current focus:** Phase 10: Learnings Promotion -- PENDING
+**Current focus:** Phase 10: Learnings Promotion -- IN PROGRESS
 
 ## Current Position
 
-Phase: 9 of 10 (Process Stability) -- COMPLETE
-Plan: 2 of 2 in current phase (09-01 complete, 09-02 complete)
-Status: Phase 9 complete, Phase 10 pending
-Last activity: 2026-03-07 -- Completed 09-02 exit 137 mitigation documentation in conductor CLAUDE.md and GSD conductor SKILL.md
+Phase: 10 of 10 (Learnings Promotion) -- IN PROGRESS
+Plan: 1 of 2 in current phase (10-01 complete, 10-02 pending)
+Status: Phase 10 in progress
+Last activity: 2026-03-07 -- Completed 10-01 learnings promotion to conductor CLAUDE.md, gsd-conductor SKILL.md, and agent-deck-workflow SKILL.md
 
-Progress: [██████████] 100% (phases 1-9 complete, phase 10 pending)
+Progress: [█████████░] 95% (phases 1-9 complete, phase 10 plan 1 of 2 complete)
 
 ## Accumulated Context
 
@@ -61,6 +61,11 @@ Progress: [██████████] 100% (phases 1-9 complete, phase 10 p
 - [Phase 09-02]: Exit 137 mitigation documented in conductor CLAUDE.md (between Heartbeat Protocol and State Management)
 - [Phase 09-02]: GSD-specific exit 137 guidance added to gsd-conductor SKILL.md (before GSD Lifecycle)
 - [Phase 09-02]: Emphasized session output as safe read-only alternative to sending messages to running sessions
+- [Phase 10-01]: Orchestration Best Practices placed between Exit 137 and State Management in conductor CLAUDE.md
+- [Phase 10-01]: Universal patterns grouped into Monitoring, Sending, Session Management, and Task Design subsections
+- [Phase 10-01]: GSD Claude-only constraint added as prominent callout at top of gsd-conductor SKILL.md
+- [Phase 10-01]: Stage 0 (codebase mapping) added to GSD lifecycle for brownfield projects
+- [Phase 10-01]: Codex troubleshooting items added to existing Troubleshooting section of agent-deck-workflow SKILL.md
 
 ### Pending Todos
 
@@ -72,6 +77,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-03-06T21:04:33Z
-Stopped at: Completed 09-02-PLAN.md
+Last session: 2026-03-06T21:32:54.876Z
+Stopped at: Completed 10-01-PLAN.md
 Resume file: None
