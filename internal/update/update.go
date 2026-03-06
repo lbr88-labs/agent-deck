@@ -581,8 +581,8 @@ func extractBinaryFromTarGz(tarPath string) ([]byte, error) {
 			return nil, err
 		}
 
-		// Look for the agent-deck binary
-		if header.Typeflag == tar.TypeReg && header.Name == "agent-deck" {
+		// Look for the agent-deck binary (may be at root or nested in a directory)
+		if header.Typeflag == tar.TypeReg && filepath.Base(header.Name) == "agent-deck" {
 			data, err := io.ReadAll(tr)
 			if err != nil {
 				return nil, err
