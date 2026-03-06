@@ -106,7 +106,11 @@ Plans:
   2. Creating sessions with different tool types (Claude, Gemini, OpenCode, Codex) produces the correct launch commands and detection configuration for each tool
   3. A session driven through real tmux pane content transitions correctly through the full status cycle: starting to running to waiting to idle
   4. A conductor parent can send a command to a child session via real tmux and the child receives it; the cross-session event notification cycle completes (event written, watcher detects, parent notified)
-**Plans**: TBD
+**Plans:** 2 plans
+
+Plans:
+- [ ] 05-01-PLAN.md -- Status detection pattern tests for all four tools and real tmux status transition cycle
+- [ ] 05-02-PLAN.md -- Conductor send-to-child via tmux and cross-session event write-watch cycle
 
 ### Phase 6: Conductor Pipeline & Edge Cases
 **Goal**: The full conductor orchestration pipeline is tested end-to-end, and production-grade edge cases (concurrent polling, external storage changes, skills integration) are verified
@@ -131,5 +135,5 @@ Phases execute in numeric order: 4 -> 5 -> 6
 | 2. Testing & Bug Fixes | v1.0 | 3/3 | Complete | 2026-03-06 |
 | 3. Stabilization & Release Readiness | v1.0 | 2/2 | Complete | 2026-03-06 |
 | 4. Framework Foundation | v1.1 | 0/2 | Planning | - |
-| 5. Status Detection & Events | v1.1 | 0/? | Not started | - |
+| 5. Status Detection & Events | v1.1 | 0/2 | Planning | - |
 | 6. Conductor Pipeline & Edge Cases | v1.1 | 0/? | Not started | - |
