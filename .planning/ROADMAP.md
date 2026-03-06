@@ -168,7 +168,11 @@ Plans:
   3. `session send --wait` returns the correct exit code (0 for success, non-zero for failure) and does not hang when the target session completes or errors
   4. Using `-cmd` flag alongside `-group` flag parses both correctly; the `-c` shorthand is documented and does not collide with other flags
   5. Running `--no-parent` followed by `set-parent` restores parent routing, or `--no-parent` emits a clear warning that the detachment is permanent
-**Plans**: TBD
+**Plans:** 2 plans
+
+Plans:
+- [ ] 08-01-PLAN.md -- Fix heartbeat group scoping, interval=0 disabled semantics, and config guard
+- [ ] 08-02-PLAN.md -- Fix --wait hang on session death, verify -c/-g flag parsing, improve --no-parent docs
 
 ### Phase 9: Process Stability
 **Goal**: The cause of exit 137 (SIGKILL) on incoming messages is identified, and either fixed in agent-deck or documented as a Claude Code limitation with a practical mitigation strategy
@@ -204,6 +208,6 @@ Phases execute in numeric order: 7 -> 8 -> 9 -> 10
 | 5. Status Detection & Events | v1.1 | 2/2 | Complete | 2026-03-07 |
 | 6. Conductor Pipeline & Edge Cases | v1.1 | 2/2 | Complete | 2026-03-07 |
 | 7. Send Reliability | v1.2 | 0/2 | In progress | - |
-| 8. Heartbeat & CLI Fixes | v1.2 | 0/? | Not started | - |
+| 8. Heartbeat & CLI Fixes | v1.2 | 0/2 | Not started | - |
 | 9. Process Stability | v1.2 | 0/? | Not started | - |
 | 10. Learnings Promotion | v1.2 | 0/? | Not started | - |
