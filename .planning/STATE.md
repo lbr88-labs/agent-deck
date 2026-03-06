@@ -5,13 +5,13 @@ milestone_name: Integration Testing
 status: active
 stopped_at: null
 last_updated: "2026-03-06"
-last_activity: 2026-03-06 -- Completed 04-01 integration test infrastructure
+last_activity: 2026-03-06 -- Completed 04-02 session lifecycle tests
 progress:
   total_phases: 3
-  completed_phases: 0
+  completed_phases: 1
   total_plans: 2
-  completed_plans: 1
-  percent: 5
+  completed_plans: 2
+  percent: 33
 ---
 
 # Project State
@@ -25,23 +25,24 @@ See: .planning/PROJECT.md (updated 2026-03-06)
 
 ## Current Position
 
-Phase: 4 of 6 (Framework Foundation)
-Plan: 1 of 2 complete
-Status: Executing
-Last activity: 2026-03-06 -- Completed 04-01 integration test infrastructure
+Phase: 4 of 6 (Framework Foundation) -- COMPLETE
+Plan: 2 of 2 complete
+Status: Phase Complete
+Last activity: 2026-03-06 -- Completed 04-02 session lifecycle tests
 
-Progress: [█░░░░░░░░░] 5%
+Progress: [███░░░░░░░] 33%
 
 ## Performance Metrics
 
 **Velocity:**
-- Total plans completed: 1
-- Average duration: 7min
-- Total execution time: 0.12 hours
+- Total plans completed: 2
+- Average duration: 4min
+- Total execution time: 0.15 hours
 
 | Phase | Plan | Duration | Tasks | Files |
 |-------|------|----------|-------|-------|
 | 04    | 01   | 7min     | 2     | 7     |
+| 04    | 02   | 2min     | 2     | 1     |
 
 *Updated after each plan completion*
 
@@ -59,6 +60,8 @@ Progress: [█░░░░░░░░░] 5%
 - [v1.1-04-01]: Used dashes in inttest- prefix to survive tmux sanitizeName
 - [v1.1-04-01]: TestingT interface for polling helpers enables mock-based timeout testing
 - [v1.1-04-01]: Fixtures use statedb.StateDB directly (decoupled from session.Storage)
+- [v1.1-04-02]: Fork tests use manual ParentSessionID linkage (CreateForkedInstance is Claude-specific)
+- [v1.1-04-02]: Shell-only restart tested (dead session recreated via Restart fallback path)
 
 ### Pending Todos
 
@@ -71,5 +74,5 @@ None yet.
 ## Session Continuity
 
 Last session: 2026-03-06
-Stopped at: Completed 04-01-PLAN.md (integration test infrastructure)
+Stopped at: Completed 04-02-PLAN.md (session lifecycle tests)
 Resume file: None

@@ -16,10 +16,10 @@ Requirements for integration testing milestone. Each maps to roadmap phases.
 
 ### Session Lifecycle
 
-- [ ] **LIFE-01**: Session start creates real tmux session and transitions status (starting -> running)
-- [ ] **LIFE-02**: Session stop terminates tmux session and updates status correctly
-- [ ] **LIFE-03**: Session fork creates independent copy with env var propagation and parent-child linkage in SQLite
-- [ ] **LIFE-04**: Session restart with flags (yolo, etc.) recreates session correctly
+- [x] **LIFE-01**: Session start creates real tmux session and transitions status (starting -> running)
+- [x] **LIFE-02**: Session stop terminates tmux session and updates status correctly
+- [x] **LIFE-03**: Session fork creates independent copy with env var propagation and parent-child linkage in SQLite
+- [x] **LIFE-04**: Session restart with flags (yolo, etc.) recreates session correctly
 
 ### Status Detection
 
@@ -69,10 +69,10 @@ Requirements for integration testing milestone. Each maps to roadmap phases.
 | INFRA-02 | Phase 4 | Complete |
 | INFRA-03 | Phase 4 | Complete |
 | INFRA-04 | Phase 4 | Complete |
-| LIFE-01 | Phase 4 | Pending |
-| LIFE-02 | Phase 4 | Pending |
-| LIFE-03 | Phase 4 | Pending |
-| LIFE-04 | Phase 4 | Pending |
+| LIFE-01 | Phase 4 | Complete |
+| LIFE-02 | Phase 4 | Complete |
+| LIFE-03 | Phase 4 | Complete |
+| LIFE-04 | Phase 4 | Complete |
 | DETECT-01 | Phase 5 | Pending |
 | DETECT-02 | Phase 5 | Pending |
 | DETECT-03 | Phase 5 | Pending |
