@@ -3,15 +3,15 @@ gsd_state_version: 1.0
 milestone: v1.1
 milestone_name: Integration Testing
 status: executing
-stopped_at: Completed 05-01-PLAN.md (status detection tests)
-last_updated: "2026-03-06T12:49:18.395Z"
-last_activity: 2026-03-06 -- Completed 05-01 status detection tests
+stopped_at: Completed 06-01-PLAN.md (conductor pipeline tests)
+last_updated: "2026-03-06T17:35:32.961Z"
+last_activity: 2026-03-07 -- Completed 06-01 conductor pipeline tests
 progress:
   total_phases: 6
   completed_phases: 5
-  total_plans: 11
-  completed_plans: 11
-  percent: 44
+  total_plans: 13
+  completed_plans: 12
+  percent: 92
 ---
 
 # Project State
@@ -21,16 +21,16 @@ progress:
 See: .planning/PROJECT.md (updated 2026-03-06)
 
 **Core value:** Conductor orchestration and cross-session coordination must be reliably tested end-to-end
-**Current focus:** Phase 5: Status Detection & Events
+**Current focus:** Phase 6: Conductor Pipeline & Edge Cases
 
 ## Current Position
 
-Phase: 5 of 6 (Status Detection & Events)
-Plan: 2 of 2 complete
+Phase: 6 of 6 (Conductor Pipeline & Edge Cases)
+Plan: 1 of 2 complete
 Status: In Progress
-Last activity: 2026-03-06 -- Completed 05-01 status detection tests
+Last activity: 2026-03-07 -- Completed 06-01 conductor pipeline tests
 
-Progress: [████░░░░░░] 44%
+Progress: [█████████░] 92%
 
 ## Performance Metrics
 
@@ -45,6 +45,7 @@ Progress: [████░░░░░░] 44%
 | 04    | 02   | 2min     | 2     | 1     |
 | 05    | 01   | 9min     | 2     | 1     |
 | 05    | 02   | 6min     | 2     | 1     |
+| 06    | 01   | 5min     | 2     | 1     |
 
 *Updated after each plan completion*
 
@@ -70,6 +71,8 @@ Progress: [████░░░░░░] 44%
 - [v1.1-05-02]: 300ms fsnotify startup delay accounts for debounce + registration time
 - [v1.1-05-02]: Unique instance IDs with UnixNano() prevent test collisions
 - [v1.1-05-02]: t.Cleanup for event file removal prevents orphaned artifacts
+- [Phase 06]: Multi-line chunked payload avoids terminal line buffer overflow (canonical mode ~4096 byte limit)
+- [Phase 06]: Sentinel message after chunked send proves sequential delivery without scrollback capture
 
 ### Pending Todos
 
@@ -81,6 +84,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-03-06
-Stopped at: Completed 05-01-PLAN.md (status detection tests)
+Last session: 2026-03-06T17:35:32.958Z
+Stopped at: Completed 06-01-PLAN.md (conductor pipeline tests)
 Resume file: None
