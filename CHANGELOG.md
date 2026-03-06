@@ -5,6 +5,15 @@ All notable changes to Agent Deck will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.21.1] - 2026-03-06
+
+### Fixed
+
+- Propagate forked `AGENTDECK_INSTANCE_ID` values correctly so Claude hook subprocesses update the child session instead of the parent.
+- Fully honor `[tmux].inject_status_line = false` by skipping tmux notification/status-line mutations when status injection is disabled.
+- Add Gemini `--yolo` CLI overrides for `agent-deck add`, `agent-deck session start`, and TUI session creation.
+- Clamp final TUI frames to the terminal viewport so navigation cannot spill duplicate footer/help rows into scrollback.
+
 ## [0.21.0] - 2026-03-06
 
 ### Added
