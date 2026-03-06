@@ -120,6 +120,7 @@ func handleSessionStart(profile string, args []string) {
 	quietShort := fs.Bool("q", false, "Minimal output (short)")
 	message := fs.String("message", "", "Initial message to send once agent is ready")
 	messageShort := fs.String("m", "", "Initial message to send once agent is ready (short)")
+	yoloMode := fs.Bool("yolo", false, "Enable Gemini YOLO mode when starting the session")
 
 	fs.Usage = func() {
 		fmt.Println("Usage: agent-deck session start <id|title> [options]")
@@ -167,6 +168,11 @@ func handleSessionStart(profile string, args []string) {
 	// Check if already running
 	if inst.Exists() {
 		out.Error(fmt.Sprintf("session '%s' is already running", inst.Title), ErrCodeInvalidOperation)
+		os.Exit(1)
+	}
+
+	if err := applyGeminiCLIYoloOverride(inst, *yoloMode); err != nil {
+		out.Error(err.Error(), ErrCodeInvalidOperation)
 		os.Exit(1)
 	}
 

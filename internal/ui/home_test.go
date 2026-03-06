@@ -61,6 +61,25 @@ func TestNewHome_DisablesTmuxNotificationsWhenStatusInjectionDisabled(t *testing
 	}
 }
 
+func TestApplyCreateSessionToolOverrides_GeminiExplicitFalsePersists(t *testing.T) {
+	inst := session.NewInstanceWithTool("gemini-test", "/tmp/test", "gemini")
+	applyCreateSessionToolOverrides(inst, "gemini", false)
+	if inst.GeminiYoloMode == nil {
+		t.Fatal("GeminiYoloMode should be set when Gemini YOLO is explicitly disabled")
+	}
+	if *inst.GeminiYoloMode {
+		t.Fatal("GeminiYoloMode should be false when Gemini YOLO is explicitly disabled")
+	}
+}
+
+func TestApplyCreateSessionToolOverrides_NonGeminiNoop(t *testing.T) {
+	inst := session.NewInstanceWithTool("claude-test", "/tmp/test", "claude")
+	applyCreateSessionToolOverrides(inst, "claude", true)
+	if inst.GeminiYoloMode != nil {
+		t.Fatalf("GeminiYoloMode = %v, want nil for non-gemini tools", inst.GeminiYoloMode)
+	}
+}
+
 func TestHomeInit(t *testing.T) {
 	home := NewHome()
 	cmd := home.Init()

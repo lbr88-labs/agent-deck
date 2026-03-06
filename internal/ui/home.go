@@ -5879,10 +5879,7 @@ func (h *Home) createSessionInGroupWithWorktreeAndOptions(
 			inst.WorktreeBranch = worktreeBranch
 		}
 
-		// Set Gemini YOLO mode if enabled (per-session override)
-		if geminiYoloMode && tool == "gemini" {
-			inst.GeminiYoloMode = &geminiYoloMode
-		}
+		applyCreateSessionToolOverrides(inst, tool, geminiYoloMode)
 
 		// Apply generic tool options (claude, codex, etc.)
 		if len(toolOptionsJSON) > 0 {
@@ -5905,6 +5902,15 @@ func (h *Home) createSessionInGroupWithWorktreeAndOptions(
 		}
 		uiLog.Info("session_create_succeeded", slog.String("id", inst.ID))
 		return sessionCreatedMsg{instance: inst}
+	}
+}
+
+func applyCreateSessionToolOverrides(inst *session.Instance, tool string, geminiYoloMode bool) {
+	if inst == nil {
+		return
+	}
+	if tool == "gemini" {
+		inst.SetGeminiYoloMode(geminiYoloMode)
 	}
 }
 

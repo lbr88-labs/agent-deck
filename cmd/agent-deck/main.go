@@ -723,6 +723,8 @@ func handleAdd(profile string, args []string) {
 
 	// Resume session flag
 	resumeSession := fs.String("resume-session", "", "Claude session ID to resume (skips new session creation)")
+	yoloMode := fs.Bool("yolo", false, "Enable Gemini YOLO mode for this session")
+	geminiYoloMode := fs.Bool("gemini-yolo", false, "Enable Gemini YOLO mode for this session")
 
 	fs.Usage = func() {
 		fmt.Println("Usage: agent-deck add [path] [options]")
@@ -745,6 +747,7 @@ func handleAdd(profile string, args []string) {
 		fmt.Println("  agent-deck add -t \"Research\" -c claude --mcp memory --mcp sequential-thinking /tmp/x")
 		fmt.Println("  agent-deck add -c opencode --wrapper \"nvim +'terminal {command}' +'startinsert'\" .")
 		fmt.Println("  agent-deck add -c \"codex --dangerously-bypass-approvals-and-sandbox\" .")
+		fmt.Println("  agent-deck add -c gemini --yolo .")
 		fmt.Println("  agent-deck add -g ard --no-parent -c claude .")
 		fmt.Println("  agent-deck add --quick -c claude .   # Auto-generated name")
 		fmt.Println()
@@ -1053,6 +1056,11 @@ func handleAdd(profile string, args []string) {
 		if err := newInstance.SetClaudeOptions(opts); err != nil {
 			fmt.Fprintf(os.Stderr, "Warning: failed to set resume options: %v\n", err)
 		}
+	}
+
+	if err := applyGeminiCLIYoloOverride(newInstance, *yoloMode || *geminiYoloMode); err != nil {
+		fmt.Printf("Error: %v\n", err)
+		os.Exit(1)
 	}
 
 	// Add to instances
