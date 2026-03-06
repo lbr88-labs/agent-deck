@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.22.0] - 2026-03-06
+
 ### Added
 - Add session lifecycle tests covering start, stop, fork, and attach operations with tmux verification.
 - Add status lifecycle tests for sleep/wake detection and SQLite persistence round-trips.
