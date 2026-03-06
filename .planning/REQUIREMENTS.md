@@ -30,7 +30,7 @@
 - [x] **STAB-03**: `go test -race ./...` passes with zero failures
 - [x] **STAB-04**: `go build` succeeds for all target platforms (darwin/linux, amd64/arm64)
 - [x] **STAB-05**: Dead code and stale artifacts removed from codebase
-- [ ] **STAB-06**: CHANGELOG.md updated with all changes
+- [x] **STAB-06**: CHANGELOG.md updated with all changes
 
 ## v2 Requirements
 
@@ -70,7 +70,7 @@
 | STAB-03 | Phase 3 | Complete |
 | STAB-04 | Phase 3 | Complete |
 | STAB-05 | Phase 3 | Complete |
-| STAB-06 | Phase 3 | Pending |
+| STAB-06 | Phase 3 | Complete |
 
 **Coverage:**
 - v1 requirements: 18 total
