@@ -289,7 +289,7 @@ func TestGetHeartbeatInterval(t *testing.T) {
 		interval int
 		expected int
 	}{
-		{0, 15},  // default
+		{0, 0},   // zero means disabled
 		{-1, 15}, // negative defaults to 15
 		{10, 10}, // custom
 		{30, 30}, // custom

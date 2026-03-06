@@ -436,15 +436,21 @@ func handleConductorSetup(profile string, args []string) {
 		os.Exit(1)
 	}
 
-	// Step 6: Install heartbeat timer (if heartbeat enabled)
+	// Step 6: Install heartbeat timer (if heartbeat enabled and interval > 0)
 	if heartbeatEnabled {
 		interval := settings.GetHeartbeatInterval()
-		if err := session.InstallHeartbeatScript(name, resolvedProfile); err != nil {
-			fmt.Fprintf(os.Stderr, "Warning: failed to install heartbeat script: %v\n", err)
-		} else if err := session.InstallHeartbeatDaemon(name, resolvedProfile, interval); err != nil {
-			fmt.Fprintf(os.Stderr, "Warning: failed to install heartbeat daemon: %v\n", err)
-		} else if !*jsonOutput {
-			fmt.Printf("  [ok] Heartbeat timer installed (every %d min)\n", interval)
+		if interval <= 0 {
+			if !*jsonOutput {
+				fmt.Println("  [skip] Heartbeat disabled (interval = 0)")
+			}
+		} else {
+			if err := session.InstallHeartbeatScript(name, resolvedProfile); err != nil {
+				fmt.Fprintf(os.Stderr, "Warning: failed to install heartbeat script: %v\n", err)
+			} else if err := session.InstallHeartbeatDaemon(name, resolvedProfile, interval); err != nil {
+				fmt.Fprintf(os.Stderr, "Warning: failed to install heartbeat daemon: %v\n", err)
+			} else if !*jsonOutput {
+				fmt.Printf("  [ok] Heartbeat timer installed (every %d min)\n", interval)
+			}
 		}
 	}
 

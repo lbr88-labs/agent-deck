@@ -131,10 +131,16 @@ func (i *Instance) ConductorClearOnCompact() bool {
 // conductorNameRegex validates conductor names: starts with alphanumeric, then alphanumeric/._-
 var conductorNameRegex = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9._-]*$`)
 
-// GetHeartbeatInterval returns the heartbeat interval, defaulting to 15 minutes
+// GetHeartbeatInterval returns the heartbeat interval in minutes.
+// Returns 0 when HeartbeatInterval is 0 (explicitly disabled).
+// Returns 15 (default) when HeartbeatInterval is negative.
+// Returns the configured value when HeartbeatInterval is positive.
 func (c *ConductorSettings) GetHeartbeatInterval() int {
-	if c.HeartbeatInterval <= 0 {
-		return 15
+	if c.HeartbeatInterval == 0 {
+		return 0 // explicitly disabled
+	}
+	if c.HeartbeatInterval < 0 {
+		return 15 // negative = use default
 	}
 	return c.HeartbeatInterval
 }
@@ -606,11 +612,17 @@ const conductorHeartbeatScript = `#!/bin/bash
 SESSION="conductor-{NAME}"
 PROFILE="{PROFILE}"
 
+# Check if conductor is enabled
+ENABLED=$(agent-deck -p "$PROFILE" conductor status --json 2>/dev/null | tr -d '\n' | sed -n 's/.*"enabled"[[:space:]]*:[[:space:]]*\(true\|false\).*/\1/p')
+if [ "$ENABLED" != "true" ]; then
+    exit 0
+fi
+
 # Only send if the session is running
 STATUS=$(agent-deck -p "$PROFILE" session show "$SESSION" --json 2>/dev/null | tr -d '\n' | sed -n 's/.*"status"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p')
 
 if [ "$STATUS" = "idle" ] || [ "$STATUS" = "waiting" ]; then
-    agent-deck -p "$PROFILE" session send "$SESSION" "Heartbeat: Check all sessions in the {PROFILE} profile. List any waiting sessions, auto-respond where safe, and report what needs my attention." --no-wait -q
+    agent-deck -p "$PROFILE" session send "$SESSION" "Heartbeat: Check sessions in your group ({NAME}). List any that are waiting, auto-respond where safe, and report what needs my attention." --no-wait -q
 fi
 `
 
