@@ -226,8 +226,10 @@ type Home struct {
 
 	// Background status worker (Priority 1C optimization)
 	// Moves status updates to a separate goroutine, completely decoupling from UI
-	statusTrigger    chan statusUpdateRequest // Triggers background status update
-	statusWorkerDone chan struct{}            // Signals worker has stopped
+	statusTrigger       chan statusUpdateRequest // Triggers background status update
+	statusWorkerDone    chan struct{}            // Signals worker has stopped
+	lastFullStatusSweep atomic.Int64             // UnixNano timestamp of last full background status sweep
+	lastPersistedStatus map[string]string        // instanceID -> last status written to SQLite
 
 	// PERFORMANCE: Worker pool for output-driven status updates (Priority 2)
 	// Caps the number of goroutines spawned for %output events from control pipes
@@ -306,6 +308,10 @@ type Home struct {
 	// Navigation tracking (PERFORMANCE: suspend background updates during rapid navigation)
 	lastNavigationTime time.Time // When user last navigated (up/down/j/k)
 	isNavigating       bool      // True if user is rapidly navigating
+	lastAttachReturn   time.Time // When we returned from tea.Exec attach/detach
+	navigationHotUntil atomic.Int64
+	// Snapshot of status/tool used by render path to avoid per-row lock contention.
+	sessionRenderSnapshot atomic.Value // map[string]sessionRenderState
 
 	// Cached status counts (invalidated on instance changes)
 	cachedStatusCounts struct {
@@ -640,6 +646,7 @@ func NewHomeWithProfileAndMode(profile string) *Home {
 		worktreeDirtyCacheTs: make(map[string]time.Time),
 		statusTrigger:        make(chan statusUpdateRequest, 1), // Buffered to avoid blocking
 		statusWorkerDone:     make(chan struct{}),
+		lastPersistedStatus:  make(map[string]string),
 		logUpdateChan:        make(chan *session.Instance, 100), // Buffered to absorb bursts
 		hotkeys:              make(map[string]string),
 		hotkeyLookup:         make(map[string]string),
@@ -649,6 +656,7 @@ func NewHomeWithProfileAndMode(profile string) *Home {
 		undoStack:            make([]deletedSessionEntry, 0, 10),
 		pendingTitleChanges:  make(map[string]string),
 	}
+	h.sessionRenderSnapshot.Store(make(map[string]sessionRenderState))
 
 	h.reloadHotkeysFromConfig()
 
@@ -1895,6 +1903,66 @@ func (h *Home) getSelectedSession() *session.Instance {
 	return nil
 }
 
+type sessionRenderState struct {
+	status session.Status
+	tool   string
+}
+
+func (h *Home) getSessionRenderSnapshot() map[string]sessionRenderState {
+	if snap := h.sessionRenderSnapshot.Load(); snap != nil {
+		if typed, ok := snap.(map[string]sessionRenderState); ok {
+			return typed
+		}
+	}
+	return nil
+}
+
+func (h *Home) refreshSessionRenderSnapshot(instances []*session.Instance) {
+	if instances == nil {
+		h.instancesMu.RLock()
+		instances = make([]*session.Instance, len(h.instances))
+		copy(instances, h.instances)
+		h.instancesMu.RUnlock()
+	}
+
+	snap := make(map[string]sessionRenderState, len(instances))
+	for _, inst := range instances {
+		if inst == nil {
+			continue
+		}
+		snap[inst.ID] = sessionRenderState{
+			status: inst.GetStatusThreadSafe(),
+			tool:   inst.GetToolThreadSafe(),
+		}
+	}
+	h.sessionRenderSnapshot.Store(snap)
+}
+
+func (h *Home) getSessionRenderState(inst *session.Instance) sessionRenderState {
+	if inst == nil {
+		return sessionRenderState{}
+	}
+	if snap := h.getSessionRenderSnapshot(); snap != nil {
+		if state, ok := snap[inst.ID]; ok {
+			return state
+		}
+	}
+	// Fallback for newly-added sessions before snapshot refresh.
+	return sessionRenderState{
+		status: inst.GetStatusThreadSafe(),
+		tool:   inst.GetToolThreadSafe(),
+	}
+}
+
+// markNavigationActivity records a short "hot" window where background workers
+// should avoid heavy refresh work to keep key navigation responsive.
+func (h *Home) markNavigationActivity() {
+	now := time.Now()
+	h.lastNavigationTime = now
+	h.isNavigating = true
+	h.navigationHotUntil.Store(now.Add(900 * time.Millisecond).UnixNano())
+}
+
 // getInstanceByID returns the instance with the given ID using O(1) map lookup
 // Returns nil if not found. Caller must hold instancesMu if accessing from background goroutine.
 func (h *Home) getInstanceByID(id string) *session.Instance {
@@ -1950,6 +2018,11 @@ func (h *Home) statusWorker() {
 		case <-ticker.C:
 			// Self-triggered update - runs even when TUI is paused
 			h.backgroundStatusUpdate()
+			// Coalesce a queued immediate request after full sweep.
+			select {
+			case <-h.statusTrigger:
+			default:
+			}
 
 		case req := <-h.statusTrigger:
 			// Explicit trigger from TUI (for immediate updates)
@@ -2011,6 +2084,9 @@ func (h *Home) backgroundStatusUpdate() {
 	}()
 
 	totalStart := time.Now()
+	if hotUntil := h.navigationHotUntil.Load(); hotUntil > 0 && time.Now().UnixNano() < hotUntil {
+		return
+	}
 
 	// Refresh tmux session cache
 	refreshStart := time.Now()
@@ -2170,6 +2246,7 @@ func (h *Home) backgroundStatusUpdate() {
 		h.cachedStatusCounts.valid.Store(false)
 		h.publishWebSessionStates(instances)
 	}
+	h.refreshSessionRenderSnapshot(instances)
 
 	// SQLite sync: heartbeat, status writes, ack reads (enables multi-instance coordination)
 	if db := statedb.GetGlobal(); db != nil {
@@ -2182,9 +2259,21 @@ func (h *Home) backgroundStatusUpdate() {
 			h.lastDeadInstanceCleanup = time.Now()
 		}
 
-		// Write current status for each instance so other TUI instances stay in sync
+		// Write statuses only when changed to reduce SQLite write pressure.
+		currentIDs := make(map[string]struct{}, len(instances))
 		for _, inst := range instances {
-			_ = db.WriteStatus(inst.ID, string(inst.GetStatusThreadSafe()), inst.Tool)
+			currentIDs[inst.ID] = struct{}{}
+			status := string(inst.GetStatusThreadSafe())
+			if prev, ok := h.lastPersistedStatus[inst.ID]; ok && prev == status {
+				continue
+			}
+			_ = db.WriteStatus(inst.ID, status, inst.Tool)
+			h.lastPersistedStatus[inst.ID] = status
+		}
+		for id := range h.lastPersistedStatus {
+			if _, ok := currentIDs[id]; !ok {
+				delete(h.lastPersistedStatus, id)
+			}
 		}
 
 		// Read acknowledgments from SQLite (picks up acks from other instances)
@@ -2213,6 +2302,7 @@ func (h *Home) backgroundStatusUpdate() {
 			slog.Duration("refresh", refreshDur),
 			slog.Int("sessions", len(instances)))
 	}
+	h.lastFullStatusSweep.Store(time.Now().UnixNano())
 }
 
 // syncNotificationsBackground updates the tmux notification bar directly
@@ -2419,6 +2509,15 @@ func (h *Home) triggerStatusUpdate() {
 // With batching (3 visible + 2 non-visible per tick), we keep each tick under 100ms.
 func (h *Home) processStatusUpdate(req statusUpdateRequest) {
 	const batchSize = 2 // Reduced from 5 to 2 - fewer CapturePane() calls per tick
+	if hotUntil := h.navigationHotUntil.Load(); hotUntil > 0 && time.Now().UnixNano() < hotUntil {
+		return
+	}
+	if last := h.lastFullStatusSweep.Load(); last > 0 {
+		if time.Since(time.Unix(0, last)) < 1500*time.Millisecond {
+			// A full all-session sweep just ran; skip redundant incremental update.
+			return
+		}
+	}
 
 	// CRITICAL FIX: Refresh session cache in background worker, NOT main goroutine
 	// This prevents UI freezing when subprocess spawning is slow (high system load)
@@ -2497,6 +2596,7 @@ func (h *Home) processStatusUpdate(req statusUpdateRequest) {
 		h.cachedStatusCounts.valid.Store(false)
 		h.publishWebSessionStates(instancesCopy)
 	}
+	h.refreshSessionRenderSnapshot(instancesCopy)
 }
 
 // Update handles messages
@@ -2592,6 +2692,7 @@ func (h *Home) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 			}
 			h.instancesMu.Unlock()
+			h.refreshSessionRenderSnapshot(msg.instances)
 			// Invalidate status counts cache
 			h.cachedStatusCounts.valid.Store(false)
 			// Sync group tree with loaded data
@@ -3159,6 +3260,7 @@ func (h *Home) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case statusUpdateMsg:
 		// Clear attach flag - we've returned from the attached session
 		h.isAttaching.Store(false) // Atomic store for thread safety
+		h.lastAttachReturn = time.Now()
 
 		// Refresh window cache and rebuild flat items to reflect window changes
 		// (user may have opened/closed tmux windows while attached)
@@ -3484,9 +3586,9 @@ func (h *Home) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			h.clearError()
 		}
 
-		// PERFORMANCE: Detect when navigation has settled (300ms since last up/down)
+		// PERFORMANCE: Detect when navigation has settled before re-enabling sync work.
 		// This allows background updates to resume after rapid navigation stops
-		const navigationSettleTime = 300 * time.Millisecond
+		const navigationSettleTime = 700 * time.Millisecond
 		if h.isNavigating && time.Since(h.lastNavigationTime) > navigationSettleTime {
 			h.isNavigating = false
 		}
@@ -4076,9 +4178,7 @@ func (h *Home) handleMainKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if h.cursor > 0 {
 			h.cursor--
 			h.syncViewport()
-			// Track navigation for adaptive background updates
-			h.lastNavigationTime = time.Now()
-			h.isNavigating = true
+			h.markNavigationActivity()
 			// PERFORMANCE: Debounced preview fetch - waits 150ms for navigation to settle
 			// This prevents spawning tmux subprocess on every keystroke
 			return h, h.fetchSelectedPreview()
@@ -4089,16 +4189,14 @@ func (h *Home) handleMainKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if h.cursor < len(h.flatItems)-1 {
 			h.cursor++
 			h.syncViewport()
-			// Track navigation for adaptive background updates
-			h.lastNavigationTime = time.Now()
-			h.isNavigating = true
+			h.markNavigationActivity()
 			// PERFORMANCE: Debounced preview fetch - waits 150ms for navigation to settle
 			// This prevents spawning tmux subprocess on every keystroke
 			return h, h.fetchSelectedPreview()
 		}
 		return h, nil
 
-	// Vi-style pagination (#38) - half/full page scrolling
+		// Vi-style pagination (#38) - half/full page scrolling
 	case "ctrl+u": // Half page up
 		pageSize := h.getVisibleHeight() / 2
 		if pageSize < 1 {
@@ -4109,8 +4207,7 @@ func (h *Home) handleMainKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			h.cursor = 0
 		}
 		h.syncViewport()
-		h.lastNavigationTime = time.Now()
-		h.isNavigating = true
+		h.markNavigationActivity()
 		return h, h.fetchSelectedPreview()
 
 	case "ctrl+d": // Half page down
@@ -4126,8 +4223,7 @@ func (h *Home) handleMainKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			h.cursor = 0
 		}
 		h.syncViewport()
-		h.lastNavigationTime = time.Now()
-		h.isNavigating = true
+		h.markNavigationActivity()
 		return h, h.fetchSelectedPreview()
 
 	case "ctrl+b": // Full page up (backward)
@@ -4140,8 +4236,7 @@ func (h *Home) handleMainKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			h.cursor = 0
 		}
 		h.syncViewport()
-		h.lastNavigationTime = time.Now()
-		h.isNavigating = true
+		h.markNavigationActivity()
 		return h, h.fetchSelectedPreview()
 
 	case "ctrl+f": // Full page down (forward)
@@ -4157,8 +4252,7 @@ func (h *Home) handleMainKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			h.cursor = 0
 		}
 		h.syncViewport()
-		h.lastNavigationTime = time.Now()
-		h.isNavigating = true
+		h.markNavigationActivity()
 		return h, h.fetchSelectedPreview()
 
 	case "G": // Open global search (fall back to local search if index not available)
@@ -4184,7 +4278,6 @@ func (h *Home) handleMainKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 						}
 						return h, nil
 					}
-					h.isAttaching.Store(true) // Prevent View() output during transition (atomic)
 					return h, h.attachSession(item.Session)
 				}
 				// Session exited (tmux session gone) — auto-restart it.
@@ -4460,8 +4553,7 @@ func (h *Home) handleMainKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			if len(h.flatItems) > 0 {
 				h.cursor = 0
 				h.syncViewport()
-				h.lastNavigationTime = time.Now()
-				h.isNavigating = true
+				h.markNavigationActivity()
 				return h, h.fetchSelectedPreview()
 			}
 			return h, nil
@@ -6017,40 +6109,10 @@ func (h *Home) attachSession(inst *session.Instance) tea.Cmd {
 	// (Deferred from load time for performance)
 	inst.SyncSessionIDsToTmux()
 
-	// Mark session as accessed (for recency-sorted path suggestions)
+	// Mark session as accessed (for recency-sorted path suggestions).
+	// Do not synchronously save here; saving on attach blocks transition and causes
+	// visible blank-screen delay before tmux attach starts.
 	inst.MarkAccessed()
-
-	// Skip saving during reload to avoid overwriting external changes
-	// THREAD-SAFE: Read isReloading under mutex
-	h.reloadMu.Lock()
-	reloading := h.isReloading
-	h.reloadMu.Unlock()
-	if !reloading && h.storage != nil {
-		// Take snapshot under lock for defensive programming
-		h.instancesMu.RLock()
-		instancesCopy := make([]*session.Instance, len(h.instances))
-		copy(instancesCopy, h.instances)
-		instanceCount := len(h.instances)
-		h.instancesMu.RUnlock()
-
-		// DEFENSIVE: Never save empty instances if storage has data
-		if instanceCount == 0 {
-			if info, err := os.Stat(h.storage.Path()); err == nil && info.Size() > 100 {
-				uiLog.Warn("save_attach_refusing_empty_overwrite", slog.Int64("file_bytes", info.Size()))
-				goto skipSave
-			}
-		}
-
-		groupTreeCopy := h.groupTree.ShallowCopyForSave()
-
-		// CRITICAL FIX: NotifySave MUST be called immediately before SaveWithGroups
-		// Previously it was called 18 lines earlier, creating a race window
-		if h.storageWatcher != nil {
-			h.storageWatcher.NotifySave()
-		}
-		_ = h.storage.SaveWithGroups(instancesCopy, groupTreeCopy)
-	}
-skipSave:
 
 	// Acknowledge on ATTACH (not detach) - but ONLY if session is waiting (yellow)
 	// This ensures:
@@ -6069,6 +6131,7 @@ skipSave:
 	// Use tea.Exec with a custom command that runs our Attach method
 	// On return, immediately update all session statuses (don't reload from storage
 	// which would lose the tmux session state)
+	h.isAttaching.Store(true) // Prevent View() output only during actual attach transition
 	return tea.Exec(attachCmd{session: tmuxSess}, func(err error) tea.Msg {
 		// CRITICAL: Set isAttaching to false BEFORE returning the message
 		// This prevents a race condition where View() could be called with
@@ -6291,9 +6354,13 @@ func (h *Home) countSessionStatuses() (running, waiting, idle, errored int) {
 	}
 
 	// Compute counts
-	h.instancesMu.RLock()
-	for _, inst := range h.instances {
-		switch inst.GetStatusThreadSafe() {
+	snapshot := h.getSessionRenderSnapshot()
+	if snapshot == nil {
+		h.refreshSessionRenderSnapshot(nil)
+		snapshot = h.getSessionRenderSnapshot()
+	}
+	for _, state := range snapshot {
+		switch state.status {
 		case session.StatusRunning:
 			running++
 		case session.StatusWaiting:
@@ -6304,7 +6371,6 @@ func (h *Home) countSessionStatuses() (running, waiting, idle, errored int) {
 			errored++
 		}
 	}
-	h.instancesMu.RUnlock()
 
 	// Cache results with timestamp
 	h.cachedStatusCounts.running = running
@@ -7128,7 +7194,12 @@ func (h *Home) renderDualColumnLayout(contentHeight int) string {
 
 	// Build right panel (preview) with styled title
 	rightTitle := h.renderPanelTitle("PREVIEW", rightWidth)
-	rightContent := h.renderPreviewPane(rightWidth, panelContentHeight)
+	rightContent := ""
+	if h.shouldDeferPreviewPane() {
+		rightContent = h.renderDeferredPreview(rightWidth, panelContentHeight)
+	} else {
+		rightContent = h.renderPreviewPane(rightWidth, panelContentHeight)
+	}
 	// CRITICAL: Ensure right content has exactly panelContentHeight lines
 	rightContent = ensureExactHeight(rightContent, panelContentHeight)
 	rightPanel := rightTitle + "\n" + rightContent
@@ -7196,13 +7267,34 @@ func (h *Home) renderStackedLayout(totalHeight int) string {
 
 	// Preview (full width)
 	previewTitle := h.renderPanelTitle("PREVIEW", h.width)
-	previewContent := h.renderPreviewPane(h.width, previewHeight-2) // -2 for title
+	previewContent := ""
+	if h.shouldDeferPreviewPane() {
+		previewContent = h.renderDeferredPreview(h.width, previewHeight-2)
+	} else {
+		previewContent = h.renderPreviewPane(h.width, previewHeight-2) // -2 for title
+	}
 	previewContent = ensureExactHeight(previewContent, previewHeight-2)
 	b.WriteString(previewTitle)
 	b.WriteString("\n")
 	b.WriteString(previewContent)
 
 	return b.String()
+}
+
+// shouldDeferPreviewPane reports whether preview pane rendering should be temporarily
+// deferred to prioritize navigation responsiveness.
+func (h *Home) shouldDeferPreviewPane() bool {
+	if h.isNavigating {
+		return true
+	}
+	return time.Since(h.lastNavigationTime) < 450*time.Millisecond
+}
+
+// renderDeferredPreview renders a lightweight placeholder while navigation is active.
+func (h *Home) renderDeferredPreview(width, height int) string {
+	style := lipgloss.NewStyle().Foreground(ColorText).Italic(true)
+	content := style.Render("Preview paused while navigating...")
+	return ensureExactHeight(content, height)
 }
 
 // renderSingleColumnLayout renders list only for narrow terminals (<50 cols)
@@ -7924,9 +8016,11 @@ func (h *Home) renderSessionList(width, height int) string {
 		maxVisible-- // Account for the indicator line
 	}
 
+	snapshot := h.getSessionRenderSnapshot()
+	groupStats := h.buildGroupRenderStats(snapshot)
 	for i := h.viewOffset; i < len(h.flatItems) && visibleCount < maxVisible; i++ {
 		item := h.flatItems[i]
-		h.renderItem(&b, item, i == h.cursor, i)
+		h.renderItem(&b, item, i == h.cursor, i, groupStats, snapshot)
 		visibleCount++
 	}
 
@@ -7940,13 +8034,75 @@ func (h *Home) renderSessionList(width, height int) string {
 	return b.String()
 }
 
+type groupRenderStats struct {
+	sessionCount int
+	running      int
+	waiting      int
+}
+
+func (h *Home) buildGroupRenderStats(snapshot map[string]sessionRenderState) map[string]groupRenderStats {
+	stats := make(map[string]groupRenderStats)
+	if h.groupTree == nil {
+		return stats
+	}
+
+	for path, g := range h.groupTree.Groups {
+		if g == nil {
+			continue
+		}
+
+		directSessions := len(g.Sessions)
+		directRunning := 0
+		directWaiting := 0
+		for _, sess := range g.Sessions {
+			state, ok := snapshot[sess.ID]
+			status := sess.Status
+			if ok {
+				status = state.status
+			}
+			switch status {
+			case session.StatusRunning:
+				directRunning++
+			case session.StatusWaiting:
+				directWaiting++
+			}
+		}
+
+		// Add direct totals to this group and all ancestors once,
+		// avoiding repeated recursive scans per rendered row.
+		ancestor := path
+		for ancestor != "" {
+			entry := stats[ancestor]
+			entry.sessionCount += directSessions
+			entry.running += directRunning
+			entry.waiting += directWaiting
+			stats[ancestor] = entry
+
+			idx := strings.LastIndex(ancestor, "/")
+			if idx == -1 {
+				break
+			}
+			ancestor = ancestor[:idx]
+		}
+	}
+
+	return stats
+}
+
 // renderItem renders a single item (group or session) for the left panel
-func (h *Home) renderItem(b *strings.Builder, item session.Item, selected bool, itemIndex int) {
+func (h *Home) renderItem(
+	b *strings.Builder,
+	item session.Item,
+	selected bool,
+	itemIndex int,
+	groupStats map[string]groupRenderStats,
+	snapshot map[string]sessionRenderState,
+) {
 	switch item.Type {
 	case session.ItemTypeGroup:
-		h.renderGroupItem(b, item, selected, itemIndex)
+		h.renderGroupItem(b, item, selected, itemIndex, groupStats)
 	case session.ItemTypeSession:
-		h.renderSessionItem(b, item, selected)
+		h.renderSessionItem(b, item, selected, snapshot)
 	case session.ItemTypeWindow:
 		h.renderWindowItem(b, item, selected)
 	case session.ItemTypeRemoteGroup:
@@ -7958,7 +8114,13 @@ func (h *Home) renderItem(b *strings.Builder, item session.Item, selected bool, 
 
 // renderGroupItem renders a group header
 // PERFORMANCE: Uses cached styles from styles.go to avoid allocations
-func (h *Home) renderGroupItem(b *strings.Builder, item session.Item, selected bool, itemIndex int) {
+func (h *Home) renderGroupItem(
+	b *strings.Builder,
+	item session.Item,
+	selected bool,
+	itemIndex int,
+	groupStats map[string]groupRenderStats,
+) {
 	group := item.Group
 
 	// Calculate indentation based on nesting level (no tree lines, just spaces)
@@ -7998,33 +8160,16 @@ func (h *Home) renderGroupItem(b *strings.Builder, item session.Item, selected b
 		countStyle = GroupCountSelStyle
 	}
 
-	// Use recursive count to include sessions in subgroups (Issue #48)
-	sessionCount := h.groupTree.SessionCountForGroup(group.Path)
-	countStr := countStyle.Render(fmt.Sprintf(" (%d)", sessionCount))
-
-	// Status indicators (compact, on same line) using cached styles
-	// Also count recursively for subgroups
-	running := 0
-	waiting := 0
-	for path, g := range h.groupTree.Groups {
-		if path == group.Path || strings.HasPrefix(path, group.Path+"/") {
-			for _, sess := range g.Sessions {
-				switch sess.Status {
-				case session.StatusRunning:
-					running++
-				case session.StatusWaiting:
-					waiting++
-				}
-			}
-		}
-	}
+	// Use precomputed recursive stats (group + descendants) for this render pass.
+	stats := groupStats[group.Path]
+	countStr := countStyle.Render(fmt.Sprintf(" (%d)", stats.sessionCount))
 
 	statusStr := ""
-	if running > 0 {
-		statusStr += " " + GroupStatusRunning.Render(fmt.Sprintf("● %d", running))
+	if stats.running > 0 {
+		statusStr += " " + GroupStatusRunning.Render(fmt.Sprintf("● %d", stats.running))
 	}
-	if waiting > 0 {
-		statusStr += " " + GroupStatusWaiting.Render(fmt.Sprintf("◐ %d", waiting))
+	if stats.waiting > 0 {
+		statusStr += " " + GroupStatusWaiting.Render(fmt.Sprintf("◐ %d", stats.waiting))
 	}
 
 	// Build the row: [indent][hotkey][expand] [name](count) [status]
@@ -8054,12 +8199,21 @@ const (
 
 // renderSessionItem renders a single session item for the left panel
 // PERFORMANCE: Uses cached styles from styles.go to avoid allocations
-func (h *Home) renderSessionItem(b *strings.Builder, item session.Item, selected bool) {
+func (h *Home) renderSessionItem(
+	b *strings.Builder,
+	item session.Item,
+	selected bool,
+	snapshot map[string]sessionRenderState,
+) {
 	inst := item.Session
 
-	// Snapshot status and tool under read lock to avoid races with background worker
-	instStatus := inst.GetStatusThreadSafe()
-	instTool := inst.GetToolThreadSafe()
+	// Read status/tool from snapshot so render path stays lock-light during key-repeat.
+	instState, ok := snapshot[inst.ID]
+	if !ok {
+		instState = h.getSessionRenderState(inst)
+	}
+	instStatus := instState.status
+	instTool := instState.tool
 
 	// Tree style for connectors - Use ColorText for clear visibility of box-drawing characters
 	treeStyle := TreeConnectorStyle
@@ -8823,6 +8977,20 @@ func (h *Home) renderPreviewPane(width, height int) string {
 	pvKey := selected.ID
 	if item.Type == session.ItemTypeWindow {
 		pvKey = previewCacheKey(selected.ID, item.WindowIndex)
+	}
+
+	// Attach-return fast path: prioritize immediate list navigation and defer preview work.
+	if !h.lastAttachReturn.IsZero() && time.Since(h.lastAttachReturn) < 900*time.Millisecond {
+		quickStyle := lipgloss.NewStyle().Foreground(ColorText).Italic(true)
+		return quickStyle.Render("Returned from session... refreshing preview")
+	}
+
+	// Navigation-first fast path: while user is moving quickly, defer expensive preview
+	// rendering and show a lightweight placeholder instead. This keeps j/k responsive
+	// even when the selected session has large/expensive preview content.
+	if hotUntil := h.navigationHotUntil.Load(); hotUntil > 0 && time.Now().UnixNano() < hotUntil {
+		quickStyle := lipgloss.NewStyle().Foreground(ColorText).Italic(true)
+		return quickStyle.Render("Moving... preview updating")
 	}
 
 	// Session info header box

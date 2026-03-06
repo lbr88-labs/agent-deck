@@ -159,6 +159,10 @@ type Instance struct {
 	// Not serialized - only relevant for current TUI session
 	lastStartTime time.Time
 
+	// Rate-limits expensive session metadata sync work (Claude/Gemini/Codex)
+	// that runs from UpdateStatus while this instance lock is held.
+	lastSessionMetaSync time.Time
+
 	// SkipMCPRegenerate skips .mcp.json regeneration on next Restart()
 	// Set by MCP dialog Apply() to avoid race condition where Apply writes
 	// config then Restart immediately overwrites it with different pool state
@@ -2402,23 +2406,45 @@ func (i *Instance) UpdateStatus() error {
 		}
 	}
 
-	// Update session tracking only for active/waiting sessions (skip idle - nothing changes)
+	// Update session metadata tracking only for active/waiting sessions.
+	// This path can perform filesystem and tmux env reads while i.mu is held, so
+	// rate-limit it to reduce intermittent render/key handling stalls under load.
 	if i.Status == StatusRunning || i.Status == StatusWaiting {
-		// Update Claude session tracking (non-blocking, best-effort)
-		i.UpdateClaudeSession(nil)
-
-		// Update Gemini session tracking (non-blocking, best-effort)
-		if i.Tool == "gemini" {
-			i.UpdateGeminiSession(nil)
-		}
-
-		// Update Codex session tracking (non-blocking, best-effort)
-		if i.Tool == "codex" {
-			var exclude map[string]bool
-			if i.CodexSessionID == "" {
-				exclude = i.collectOtherCodexSessionIDs()
+		interval := 2 * time.Second
+		// Bootstrap unknown IDs faster for newly-started sessions.
+		switch i.Tool {
+		case "claude":
+			if i.ClaudeSessionID == "" {
+				interval = 500 * time.Millisecond
 			}
-			i.UpdateCodexSession(exclude)
+		case "gemini":
+			if i.GeminiSessionID == "" {
+				interval = 500 * time.Millisecond
+			}
+		case "codex":
+			if i.CodexSessionID == "" {
+				interval = 500 * time.Millisecond
+			}
+		}
+		if i.lastSessionMetaSync.IsZero() || time.Since(i.lastSessionMetaSync) >= interval {
+			i.lastSessionMetaSync = time.Now()
+
+			// Update Claude session tracking (non-blocking, best-effort)
+			i.UpdateClaudeSession(nil)
+
+			// Update Gemini session tracking (non-blocking, best-effort)
+			if i.Tool == "gemini" {
+				i.UpdateGeminiSession(nil)
+			}
+
+			// Update Codex session tracking (non-blocking, best-effort)
+			if i.Tool == "codex" {
+				var exclude map[string]bool
+				if i.CodexSessionID == "" {
+					exclude = i.collectOtherCodexSessionIDs()
+				}
+				i.UpdateCodexSession(exclude)
+			}
 		}
 	}
 
