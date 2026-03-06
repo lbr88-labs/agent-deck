@@ -211,7 +211,7 @@ Phases execute in numeric order: 7 -> 8 -> 9 -> 10
 | 4. Framework Foundation | v1.1 | 2/2 | Complete | 2026-03-07 |
 | 5. Status Detection & Events | v1.1 | 2/2 | Complete | 2026-03-07 |
 | 6. Conductor Pipeline & Edge Cases | v1.1 | 2/2 | Complete | 2026-03-07 |
-| 7. Send Reliability | v1.2 | 0/2 | In progress | - |
-| 8. Heartbeat & CLI Fixes | v1.2 | 0/2 | Not started | - |
-| 9. Process Stability | v1.2 | 0/2 | Not started | - |
+| 7. Send Reliability | v1.2 | 2/2 | Complete | 2026-03-07 |
+| 8. Heartbeat & CLI Fixes | v1.2 | 2/2 | Complete | 2026-03-07 |
+| 9. Process Stability | v1.2 | 1/2 | In Progress | - |
 | 10. Learnings Promotion | v1.2 | 0/? | Not started | - |

@@ -19,7 +19,7 @@ Requirements for Conductor Reliability & Learnings Cleanup milestone. Each maps 
 
 ### Process Stability
 
-- [ ] **PROC-01**: Incoming messages to the conductor do not kill running Bash tool child processes with SIGKILL (exit 137), or mitigation is documented if this is a Claude Code limitation
+- [x] **PROC-01**: Incoming messages to the conductor do not kill running Bash tool child processes with SIGKILL (exit 137), or mitigation is documented if this is a Claude Code limitation
 
 ### CLI Reliability
 
@@ -108,7 +108,7 @@ Which phases cover which requirements. Updated during roadmap creation.
 | CLI-01 | Phase 8 | Complete |
 | CLI-02 | Phase 8 | Complete |
 | CLI-03 | Phase 8 | Complete |
-| PROC-01 | Phase 9 | Pending |
+| PROC-01 | Phase 9 | Complete |
 | LEARN-01 | Phase 10 | Pending |
 | LEARN-02 | Phase 10 | Pending |
 | LEARN-03 | Phase 10 | Pending |

@@ -2,16 +2,16 @@
 gsd_state_version: 1.0
 milestone: v1.2
 milestone_name: Conductor Reliability & Learnings Cleanup
-status: completed
-stopped_at: Completed 08-02-PLAN.md
-last_updated: "2026-03-06T20:34:49.787Z"
-last_activity: 2026-03-07 -- Completed 08-02 CLI fixes (session death detection, flag parsing, help text)
+status: executing
+stopped_at: Completed 09-01-PLAN.md
+last_updated: "2026-03-06T21:02:11.378Z"
+last_activity: "2026-03-07 -- Completed 09-01 exit 137 investigation (root cause: Claude Code, not fixable in agent-deck)"
 progress:
   total_phases: 10
   completed_phases: 8
-  total_plans: 17
-  completed_plans: 17
-  percent: 100
+  total_plans: 19
+  completed_plans: 18
+  percent: 95
 ---
 
 # Project State
@@ -21,16 +21,16 @@ progress:
 See: .planning/PROJECT.md (updated 2026-03-07)
 
 **Core value:** Conductor orchestration and cross-session coordination must work reliably in production
-**Current focus:** Phase 8: Heartbeat & CLI Fixes -- COMPLETE
+**Current focus:** Phase 9: Process Stability -- IN PROGRESS
 
 ## Current Position
 
-Phase: 8 of 10 (Heartbeat & CLI Fixes) -- COMPLETE
-Plan: 2 of 2 in current phase (all done)
-Status: Phase 8 complete, ready for Phase 9
-Last activity: 2026-03-07 -- Completed 08-02 CLI fixes (session death detection, flag parsing, help text)
+Phase: 9 of 10 (Process Stability)
+Plan: 1 of 2 in current phase (09-01 complete, 09-02 pending)
+Status: Phase 9 in progress
+Last activity: 2026-03-07 -- Completed 09-01 exit 137 investigation (root cause: Claude Code, not fixable in agent-deck)
 
-Progress: [██████████] 100% (phases 1-8 complete, phases 9-10 pending)
+Progress: [██████████] 95% (phases 1-8 complete, phase 9 in progress, phase 10 pending)
 
 ## Accumulated Context
 
@@ -55,6 +55,9 @@ Progress: [██████████] 100% (phases 1-8 complete, phases 9-1
 - [Phase 08-01]: TUI clear-on-compact heartbeat also updated to group-scoped message
 - [Phase 08-02]: 5 consecutive GetStatus errors threshold for session death detection
 - [Phase 08-02]: Return ("error", nil) on session death so exit code 1 via existing logic
+- [Phase 09-01]: Exit 137 root cause: Claude Code kills Bash tool children on new PTY input, not tmux or agent-deck
+- [Phase 09-01]: Not fixable in agent-deck: tmux send-keys (only channel) is indistinguishable from human typing
+- [Phase 09-01]: Primary mitigation (waitForAgentReady status gating) already implemented in Phase 7
 
 ### Pending Todos
 
@@ -62,10 +65,10 @@ None yet.
 
 ### Blockers/Concerns
 
-- PROC-01 (exit 137) may be a Claude Code limitation, not fixable in agent-deck. Investigation in Phase 9 will determine.
+- PROC-01 (exit 137) confirmed as Claude Code limitation, not fixable in agent-deck. Mitigations documented in 09-INVESTIGATION.md.
 
 ## Session Continuity
 
-Last session: 2026-03-06T20:28:52.000Z
-Stopped at: Completed 08-02-PLAN.md
+Last session: 2026-03-06T21:02:07.413Z
+Stopped at: Completed 09-01-PLAN.md
 Resume file: None
