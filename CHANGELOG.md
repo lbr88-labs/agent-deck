@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.23.0] - 2026-03-07
+
+### Added
+- Add status detection integration tests: real tmux status transition cycles, pattern detection, and tool config verification.
+- Add conductor pipeline integration tests: send-to-child delivery, cross-session event write-watch, heartbeat round-trips, and chunked send delivery.
+- Add edge case integration tests: skills discover-attach verification.
+- Complete milestone v1.1 Integration Testing (38 integration tests across 6 phases).
+
+### Fixed
+- Handle nested binary paths in release tarballs so self-update works with both flat and directory-wrapped archives.
+
 ## [0.22.0] - 2026-03-06
 
 ### Added
