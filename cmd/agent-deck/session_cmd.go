@@ -1126,6 +1126,7 @@ func handleSessionSetParent(profile string, args []string) {
 		fmt.Println()
 		fmt.Println("Link a session as a sub-session of another session.")
 		fmt.Println("The session will inherit the parent's group.")
+		fmt.Println("This works for any session, including those created with --no-parent.")
 		fmt.Println()
 		fmt.Println("Options:")
 		fs.PrintDefaults()
