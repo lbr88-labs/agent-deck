@@ -59,11 +59,11 @@ Plans:
   3. `go build` succeeds for darwin/amd64, darwin/arm64, linux/amd64, and linux/arm64
   4. No dead code, unused imports, or stale artifacts remain in the repository
   5. CHANGELOG.md documents all changes made during this milestone
-**Plans**: TBD
+**Plans:** 2 plans
 
 Plans:
-- [ ] 03-01: Lint fixes, dead code removal, and cross-platform build verification
-- [ ] 03-02: Changelog and final release preparation
+- [ ] 03-01-PLAN.md -- Quality gates verification, dead code scan, and stale artifact removal
+- [ ] 03-02-PLAN.md -- Changelog entry for milestone and final make ci release gate
 
 ## Progress
 
