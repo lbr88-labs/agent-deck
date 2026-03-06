@@ -196,7 +196,11 @@ Plans:
   2. GSD-specific learnings (Claude-only, codebase mapping, comprehensive specs, wave model) are incorporated into the GSD conductor skill at `~/.agent-deck/skills/pool/gsd-conductor/`
   3. Agent-deck operational learnings (Codex launch syntax, release sessions, Gemini video, --wait patterns, project folder launching) are incorporated into the agent-deck skill
   4. All six conductor LEARNINGS.md files have promoted entries marked as promoted, retired entries removed, and duplicates consolidated
-**Plans**: TBD
+**Plans:** 2 plans
+
+Plans:
+- [ ] 10-01-PLAN.md -- Promote learnings to 3 destination files (CLAUDE.md, gsd-conductor SKILL.md, agent-deck-workflow SKILL.md)
+- [ ] 10-02-PLAN.md -- Clean up all LEARNINGS.md source files (mark promoted, remove retired, consolidate duplicates)
 
 ## Progress
 
@@ -214,4 +218,4 @@ Phases execute in numeric order: 7 -> 8 -> 9 -> 10
 | 7. Send Reliability | v1.2 | 2/2 | Complete | 2026-03-07 |
 | 8. Heartbeat & CLI Fixes | v1.2 | 2/2 | Complete | 2026-03-07 |
 | 9. Process Stability | v1.2 | 2/2 | Complete | 2026-03-07 |
-| 10. Learnings Promotion | v1.2 | 0/? | Not started | - |
+| 10. Learnings Promotion | v1.2 | 0/2 | Not started | - |
