@@ -2621,53 +2621,5 @@ func TestInstance_SetAcknowledgedFromShared_WaitingApplied(t *testing.T) {
 	}
 }
 
-func TestHasUnsentComposerPrompt(t *testing.T) {
-	content := "────────────────\n❯\u00a0Write one line: LAUNCH_OK\n[Opus 4.6] Context: 0%"
-	if !hasUnsentComposerPrompt(content, "Write one line: LAUNCH_OK") {
-		t.Fatal("expected unsent composer prompt to be detected")
-	}
-	if hasUnsentComposerPrompt(content, "Different text") {
-		t.Fatal("did not expect mismatched composer text to be detected")
-	}
-
-	// Submitted messages can appear in history; only current composer should count.
-	submitted := "❯ Write one line: LAUNCH_OK\n✳ Tempering…\n────────────────\n❯\n────────────────\n[Opus 4.6] Context: 0%"
-	if hasUnsentComposerPrompt(submitted, "Write one line: LAUNCH_OK") {
-		t.Fatal("did not expect submitted history line to be treated as unsent composer input")
-	}
-
-	// Wrapped current composer lines only expose a prefix of the message.
-	wrappedContent := "────────────────\n❯\u00a0Read these 3 files and produce a summary for DIAGTOKEN_123. Keep\n  under 80 lines and include one verdict line.\n────────────────\n[Opus 4.6] Context: 0%"
-	wrappedMessage := "Read these 3 files and produce a summary for DIAGTOKEN_123. Keep under 80 lines and include one verdict line."
-	if !hasUnsentComposerPrompt(wrappedContent, wrappedMessage) {
-		t.Fatal("expected wrapped unsent composer prompt to be detected")
-	}
-
-	// Claude hint suggestions should not be treated as unsent input for a
-	// different message.
-	suggestion := "────────────────\n❯\u00a0Try \"write a test for <filepath>\"\n────────────────\n[Opus 4.6] Context: 0%"
-	if hasUnsentComposerPrompt(suggestion, wrappedMessage) {
-		t.Fatal("did not expect suggestion placeholder to be treated as unsent composer input")
-	}
-}
-
-func TestCurrentComposerPrompt_UsesBottomComposerBlock(t *testing.T) {
-	content := strings.Join([]string{
-		"> quoted output line from earlier response",
-		"Some other output",
-		"────────────────",
-		"❯\u00a0Read these 3 files and produce a summary for DIAGTOKEN_123. Keep",
-		"  under 80 lines and include one verdict line.",
-		"────────────────",
-		"[Opus 4.6] Context: 0%",
-	}, "\n")
-
-	got, ok := currentComposerPrompt(content)
-	if !ok {
-		t.Fatal("expected current composer prompt to be found")
-	}
-	want := "Read these 3 files and produce a summary for DIAGTOKEN_123. Keep under 80 lines and include one verdict line."
-	if got != want {
-		t.Fatalf("unexpected composer prompt.\nwant: %q\ngot:  %q", want, got)
-	}
-}
+// Tests for hasUnsentComposerPrompt and currentComposerPrompt moved to
+// internal/send/send_test.go as part of send verification consolidation.
