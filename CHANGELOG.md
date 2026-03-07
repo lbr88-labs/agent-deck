@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.24.1] - 2026-03-07
+
+### Fixed
+- Restore instant preview rendering from cached content during session navigation and immediately after returning from an attached session, removing placeholder delays introduced in `0.24.0`.
+
 ## [0.24.0] - 2026-03-07
 
 ### Added
