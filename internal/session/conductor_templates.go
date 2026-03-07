@@ -552,33 +552,16 @@ def get_unique_profiles() -> list[str]:
 
 
 def select_heartbeat_conductors(conductors: list[dict]) -> list[dict]:
-    """Select at most one heartbeat conductor per profile.
-
-    Multiple conductors may share a profile. Heartbeat auto-actions are profile-wide,
-    so running all of them would duplicate interventions. We choose one deterministic
-    conductor (oldest by created_at, then name) per profile.
-    """
-    selected: dict[str, dict] = {}
-    for c in conductors:
-        if not c.get("heartbeat_enabled", True):
-            continue
-        profile = c.get("profile") or "default"
-        current = selected.get(profile)
-        if current is None:
-            selected[profile] = c
-            continue
-
-        cur_key = (
-            str(current.get("created_at", "")),
-            str(current.get("name", "")),
-        )
-        cand_key = (
+    """Select all heartbeat-enabled conductors in deterministic order."""
+    enabled = [c for c in conductors if c.get("heartbeat_enabled", True)]
+    return sorted(
+        enabled,
+        key=lambda c: (
+            str(c.get("profile") or "default"),
             str(c.get("created_at", "")),
             str(c.get("name", "")),
-        )
-        if cand_key < cur_key:
-            selected[profile] = c
-    return list(selected.values())
+        ),
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -1710,12 +1693,22 @@ async def heartbeat_loop(
 
                 session_title = conductor_session_title(name)
 
-                # Get current status for this conductor's profile
-                summary = get_status_summary(profile)
-                waiting = summary.get("waiting", 0)
-                running = summary.get("running", 0)
-                idle = summary.get("idle", 0)
-                error = summary.get("error", 0)
+                # Scope heartbeat monitoring to this conductor's own group.
+                sessions = get_sessions_list(profile)
+                scoped_sessions = []
+                for s in sessions:
+                    s_title = s.get("title", "untitled")
+                    s_group = s.get("group", "") or ""
+                    if s_title.startswith("conductor-"):
+                        continue
+                    if s_group != name and not s_group.startswith(f"{name}/"):
+                        continue
+                    scoped_sessions.append(s)
+
+                waiting = sum(1 for s in scoped_sessions if s.get("status", "") == "waiting")
+                running = sum(1 for s in scoped_sessions if s.get("status", "") == "running")
+                idle = sum(1 for s in scoped_sessions if s.get("status", "") == "idle")
+                error = sum(1 for s in scoped_sessions if s.get("status", "") == "error")
 
                 log.info(
                     "Heartbeat [%s/%s]: %d waiting, %d running, %d idle, %d error",
@@ -1727,16 +1720,12 @@ async def heartbeat_loop(
                     continue
 
                 # Build heartbeat message with waiting session details
-                sessions = get_sessions_list(profile)
                 waiting_details = []
                 error_details = []
-                for s in sessions:
+                for s in scoped_sessions:
                     s_title = s.get("title", "untitled")
                     s_status = s.get("status", "")
                     s_path = s.get("path", "")
-                    # Skip conductor sessions
-                    if s_title.startswith("conductor-"):
-                        continue
                     if s_status == "waiting":
                         waiting_details.append(
                             f"{s_title} (project: {s_path})"
