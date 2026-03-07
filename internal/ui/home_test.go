@@ -1272,6 +1272,70 @@ func TestHomeViewStackedLayout(t *testing.T) {
 	}
 }
 
+func TestHomeViewUsesCachedPreviewDuringNavigationBursts(t *testing.T) {
+	tests := []struct {
+		name   string
+		width  int
+		height int
+	}{
+		{name: "dual layout", width: 100, height: 30},
+		{name: "stacked layout", width: 65, height: 50},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			home := NewHome()
+			home.width = tt.width
+			home.height = tt.height
+			home.initialLoading = false
+
+			inst := session.NewInstanceWithTool("Preview Session", "/tmp/project", "other")
+			inst.ID = "preview-session"
+			inst.Status = session.StatusIdle
+			inst.CreatedAt = time.Now().Add(-time.Minute)
+
+			home.instancesMu.Lock()
+			home.instances = []*session.Instance{inst}
+			home.instanceByID[inst.ID] = inst
+			home.instancesMu.Unlock()
+			home.groupTree = session.NewGroupTree(home.instances)
+			home.rebuildFlatItems()
+			home.refreshSessionRenderSnapshot(home.instances)
+			for i, item := range home.flatItems {
+				if item.Type == session.ItemTypeSession && item.Session != nil && item.Session.ID == inst.ID {
+					home.cursor = i
+					break
+				}
+			}
+
+			home.previewCacheMu.Lock()
+			home.previewCache[inst.ID] = "cached preview content that should remain visible immediately"
+			home.previewCacheTime[inst.ID] = time.Now()
+			home.previewCacheMu.Unlock()
+
+			home.isNavigating = true
+			home.lastNavigationTime = time.Now()
+			home.lastAttachReturn = time.Now()
+			home.navigationHotUntil.Store(time.Now().Add(900 * time.Millisecond).UnixNano())
+
+			view := home.View()
+
+			if !strings.Contains(view, "cached preview content") {
+				t.Fatalf("View() should render cached preview content during navigation burst:\n%s", view)
+			}
+			if strings.Contains(view, "Preview paused while navigating...") {
+				t.Fatalf("View() should not suppress preview pane during navigation burst:\n%s", view)
+			}
+			if strings.Contains(view, "Moving... preview updating") {
+				t.Fatalf("View() should not replace cached preview during navigation burst:\n%s", view)
+			}
+			if strings.Contains(view, "Returned from session... refreshing preview") {
+				t.Fatalf("View() should not hide cached preview after attach return:\n%s", view)
+			}
+		})
+	}
+}
+
 func TestHomeViewSingleColumnLayout(t *testing.T) {
 	home := NewHome()
 	home.width = 45 // Single column mode (<50)
