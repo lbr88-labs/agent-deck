@@ -9668,6 +9668,7 @@ func (h *Home) renderPreviewPane(width, height int) string {
 	showAnalytics := config != nil && config.GetShowAnalytics() &&
 		(session.IsClaudeCompatible(selected.Tool) || selected.Tool == "gemini")
 	showOutput := config == nil || config.GetShowOutput() // Default to true if config fails
+	showNotes := config == nil || config.GetShowNotes()   // Default to true if config fails
 	notesOutputSplit := 0.33
 	if config != nil {
 		notesOutputSplit = config.Preview.GetNotesOutputSplit()
@@ -9775,10 +9776,12 @@ func (h *Home) renderPreviewPane(width, height int) string {
 	}
 
 	remainingLines := height - (strings.Count(b.String(), "\n") + 1)
-	notesLines := notesSectionLineBudget(remainingLines, showOutput || isStartingUp, notesOutputSplit)
-	if notesLines > 0 {
-		b.WriteString(h.renderNotesSection(selected, width, notesLines))
-		b.WriteString("\n")
+	if showNotes {
+		notesLines := notesSectionLineBudget(remainingLines, showOutput || isStartingUp, notesOutputSplit)
+		if notesLines > 0 {
+			b.WriteString(h.renderNotesSection(selected, width, notesLines))
+			b.WriteString("\n")
+		}
 	}
 
 	// If output is disabled AND not starting up, return early
