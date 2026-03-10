@@ -121,7 +121,7 @@ func handleSessionStart(profile string, args []string) {
 	quietShort := fs.Bool("q", false, "Minimal output (short)")
 	message := fs.String("message", "", "Initial message to send once agent is ready")
 	messageShort := fs.String("m", "", "Initial message to send once agent is ready (short)")
-	yoloMode := fs.Bool("yolo", false, "Enable Gemini YOLO mode when starting the session")
+	yoloMode := fs.Bool("yolo", false, "Enable YOLO mode when starting Gemini or Codex sessions")
 
 	fs.Usage = func() {
 		fmt.Println("Usage: agent-deck session start <id|title> [options]")
@@ -172,7 +172,7 @@ func handleSessionStart(profile string, args []string) {
 		os.Exit(1)
 	}
 
-	if err := applyGeminiCLIYoloOverride(inst, *yoloMode); err != nil {
+	if err := applyCLIYoloOverride(inst, *yoloMode); err != nil {
 		out.Error(err.Error(), ErrCodeInvalidOperation)
 		os.Exit(1)
 	}

@@ -4915,31 +4915,55 @@ func (h *Home) handleMainKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return h, nil
 
 	case "y":
-		// Toggle Gemini YOLO mode (requires restart)
+		// Toggle YOLO mode for Gemini or Codex sessions (requires restart)
 		if h.cursor < len(h.flatItems) {
 			item := h.flatItems[h.cursor]
-			if item.Type == session.ItemTypeSession && item.Session != nil && item.Session.Tool == "gemini" {
+			if item.Type == session.ItemTypeSession && item.Session != nil {
 				inst := item.Session
-				// Determine current YOLO state
-				currentYolo := false
-				if inst.GeminiYoloMode != nil {
-					currentYolo = *inst.GeminiYoloMode
-				} else {
-					// Fall back to global config
-					userConfig, _ := session.LoadUserConfig()
-					if userConfig != nil {
-						currentYolo = userConfig.Gemini.YoloMode
+				toggled := false
+
+				switch inst.Tool {
+				case "gemini":
+					currentYolo := false
+					if inst.GeminiYoloMode != nil {
+						currentYolo = *inst.GeminiYoloMode
+					} else {
+						userConfig, _ := session.LoadUserConfig()
+						if userConfig != nil {
+							currentYolo = userConfig.Gemini.YoloMode
+						}
 					}
+					newYolo := !currentYolo
+					inst.GeminiYoloMode = &newYolo
+					toggled = true
+
+				case "codex":
+					currentYolo := false
+					opts := inst.GetCodexOptions()
+					if opts != nil && opts.YoloMode != nil {
+						currentYolo = *opts.YoloMode
+					} else {
+						userConfig, _ := session.LoadUserConfig()
+						if userConfig != nil {
+							currentYolo = userConfig.Codex.YoloMode
+						}
+					}
+					newYolo := !currentYolo
+					if opts == nil {
+						opts = &session.CodexOptions{}
+					}
+					opts.YoloMode = &newYolo
+					_ = inst.SetCodexOptions(opts)
+					toggled = true
 				}
-				// Toggle: set per-session override to opposite of current
-				newYolo := !currentYolo
-				inst.GeminiYoloMode = &newYolo
-				h.saveInstances()
-				// If session is running, it needs restart to apply
-				if inst.GetStatusThreadSafe() == session.StatusRunning ||
-					inst.GetStatusThreadSafe() == session.StatusWaiting {
-					h.resumingSessions[inst.ID] = time.Now()
-					return h, h.restartSession(inst)
+
+				if toggled {
+					h.saveInstances()
+					if inst.GetStatusThreadSafe() == session.StatusRunning ||
+						inst.GetStatusThreadSafe() == session.StatusWaiting {
+						h.resumingSessions[inst.ID] = time.Now()
+						return h, h.restartSession(inst)
+					}
 				}
 			}
 		}
@@ -8491,9 +8515,17 @@ func (h *Home) renderSessionItem(
 	title := titleStyle.Render(inst.Title)
 	tool := toolStyle.Render(" " + instTool)
 
-	// YOLO badge for Gemini sessions with YOLO mode enabled
+	// YOLO badge for Gemini/Codex sessions with YOLO mode enabled
 	yoloBadge := ""
+	showYolo := false
 	if instTool == "gemini" && inst.GeminiYoloMode != nil && *inst.GeminiYoloMode {
+		showYolo = true
+	} else if instTool == "codex" {
+		if opts := inst.GetCodexOptions(); opts != nil && opts.YoloMode != nil && *opts.YoloMode {
+			showYolo = true
+		}
+	}
+	if showYolo {
 		yoloStyle := lipgloss.NewStyle().Foreground(ColorYellow).Bold(true)
 		if selected {
 			yoloStyle = SessionStatusSelStyle

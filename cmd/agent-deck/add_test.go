@@ -7,34 +7,42 @@ import (
 	"github.com/asheshgoplani/agent-deck/internal/session"
 )
 
-func TestApplyGeminiCLIYoloOverride(t *testing.T) {
+func TestApplyCLIYoloOverride(t *testing.T) {
 	t.Run("enabled for gemini sets override", func(t *testing.T) {
 		inst := session.NewInstanceWithTool("gemini-test", "/tmp/test", "gemini")
-		if err := applyGeminiCLIYoloOverride(inst, true); err != nil {
-			t.Fatalf("applyGeminiCLIYoloOverride() error = %v", err)
+		if err := applyCLIYoloOverride(inst, true); err != nil {
+			t.Fatalf("applyCLIYoloOverride() error = %v", err)
 		}
 		if inst.GeminiYoloMode == nil || !*inst.GeminiYoloMode {
 			t.Fatalf("GeminiYoloMode = %v, want true override", inst.GeminiYoloMode)
 		}
 	})
 
+	t.Run("enabled for codex sets override", func(t *testing.T) {
+		inst := session.NewInstanceWithTool("codex-test", "/tmp/test", "codex")
+		if err := applyCLIYoloOverride(inst, true); err != nil {
+			t.Fatalf("applyCLIYoloOverride() error = %v", err)
+		}
+		opts := inst.GetCodexOptions()
+		if opts == nil || opts.YoloMode == nil || !*opts.YoloMode {
+			t.Fatalf("CodexOptions.YoloMode = %v, want true override", opts)
+		}
+	})
+
 	t.Run("disabled is a no-op", func(t *testing.T) {
 		inst := session.NewInstanceWithTool("gemini-test", "/tmp/test", "gemini")
-		if err := applyGeminiCLIYoloOverride(inst, false); err != nil {
-			t.Fatalf("applyGeminiCLIYoloOverride() error = %v", err)
+		if err := applyCLIYoloOverride(inst, false); err != nil {
+			t.Fatalf("applyCLIYoloOverride() error = %v", err)
 		}
 		if inst.GeminiYoloMode != nil {
 			t.Fatalf("GeminiYoloMode = %v, want nil when flag is not set", inst.GeminiYoloMode)
 		}
 	})
 
-	t.Run("non-gemini returns error", func(t *testing.T) {
+	t.Run("non-gemini-codex returns error", func(t *testing.T) {
 		inst := session.NewInstanceWithTool("claude-test", "/tmp/test", "claude")
-		if err := applyGeminiCLIYoloOverride(inst, true); err == nil {
-			t.Fatal("applyGeminiCLIYoloOverride() error = nil, want non-nil")
-		}
-		if inst.GeminiYoloMode != nil {
-			t.Fatalf("GeminiYoloMode = %v, want nil for non-gemini sessions", inst.GeminiYoloMode)
+		if err := applyCLIYoloOverride(inst, true); err == nil {
+			t.Fatal("applyCLIYoloOverride() error = nil, want non-nil")
 		}
 	})
 }

@@ -723,8 +723,8 @@ func handleAdd(profile string, args []string) {
 
 	// Resume session flag
 	resumeSession := fs.String("resume-session", "", "Claude session ID to resume (skips new session creation)")
-	yoloMode := fs.Bool("yolo", false, "Enable Gemini YOLO mode for this session")
-	geminiYoloMode := fs.Bool("gemini-yolo", false, "Enable Gemini YOLO mode for this session")
+	yoloMode := fs.Bool("yolo", false, "Enable YOLO mode for Gemini or Codex sessions")
+	geminiYoloMode := fs.Bool("gemini-yolo", false, "Enable YOLO mode (alias for --yolo)")
 
 	fs.Usage = func() {
 		fmt.Println("Usage: agent-deck add [path] [options]")
@@ -1059,7 +1059,7 @@ func handleAdd(profile string, args []string) {
 		}
 	}
 
-	if err := applyGeminiCLIYoloOverride(newInstance, *yoloMode || *geminiYoloMode); err != nil {
+	if err := applyCLIYoloOverride(newInstance, *yoloMode || *geminiYoloMode); err != nil {
 		fmt.Printf("Error: %v\n", err)
 		os.Exit(1)
 	}
