@@ -1095,6 +1095,87 @@ func TestDeleteHotkeyRemapAndCloseUnbind(t *testing.T) {
 	}
 }
 
+func TestRemoteDeleteAndCloseUseDistinctActions(t *testing.T) {
+	home := NewHome()
+	home.width = 100
+	home.height = 30
+
+	remote := session.RemoteSessionInfo{ID: "remote-123", Title: "remote-session", RemoteName: "myserver"}
+	home.flatItems = []session.Item{{Type: session.ItemTypeRemoteSession, RemoteSession: &remote, RemoteName: "myserver"}}
+	home.cursor = 0
+
+	model, _ := home.handleMainKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'d'}})
+	h, ok := model.(*Home)
+	if !ok {
+		t.Fatal("handleMainKey should return *Home")
+	}
+	if !h.confirmDialog.IsVisible() {
+		t.Fatal("delete should show confirmation dialog")
+	}
+	if got := h.confirmDialog.GetConfirmType(); got != ConfirmDeleteRemoteSession {
+		t.Fatalf("confirm type after delete = %v, want %v", got, ConfirmDeleteRemoteSession)
+	}
+	if got := h.confirmDialog.GetRemoteName(); got != "myserver" {
+		t.Fatalf("remote name after delete = %q, want %q", got, "myserver")
+	}
+
+	h.confirmDialog.Hide()
+
+	model, _ = h.handleMainKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'D'}})
+	h, ok = model.(*Home)
+	if !ok {
+		t.Fatal("handleMainKey should return *Home")
+	}
+	if !h.confirmDialog.IsVisible() {
+		t.Fatal("close should show confirmation dialog")
+	}
+	if got := h.confirmDialog.GetConfirmType(); got != ConfirmCloseRemoteSession {
+		t.Fatalf("confirm type after close = %v, want %v", got, ConfirmCloseRemoteSession)
+	}
+	if got := h.confirmDialog.GetRemoteName(); got != "myserver" {
+		t.Fatalf("remote name after close = %q, want %q", got, "myserver")
+	}
+}
+
+func TestRemoteRestartReturnsRemoteCommand(t *testing.T) {
+	home := NewHome()
+	home.width = 100
+	home.height = 30
+
+	remote := session.RemoteSessionInfo{ID: "remote-123", Title: "remote-session", RemoteName: "myserver"}
+	home.flatItems = []session.Item{{Type: session.ItemTypeRemoteSession, RemoteSession: &remote, RemoteName: "myserver"}}
+	home.cursor = 0
+
+	model, cmd := home.handleMainKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'R'}})
+	h, ok := model.(*Home)
+	if !ok {
+		t.Fatal("handleMainKey should return *Home")
+	}
+	if cmd == nil {
+		t.Fatal("restart should return a command")
+	}
+
+	msg := cmd()
+	restartMsg, ok := msg.(remoteSessionRestartedMsg)
+	if !ok {
+		t.Fatalf("command returned %T, want remoteSessionRestartedMsg", msg)
+	}
+	if restartMsg.remoteName != "myserver" {
+		t.Fatalf("remoteName = %q, want %q", restartMsg.remoteName, "myserver")
+	}
+	if restartMsg.sessionID != "remote-123" {
+		t.Fatalf("sessionID = %q, want %q", restartMsg.sessionID, "remote-123")
+	}
+	if restartMsg.title != "remote-session" {
+		t.Fatalf("title = %q, want %q", restartMsg.title, "remote-session")
+	}
+	if restartMsg.err == nil {
+		t.Fatal("expected error when remote config is unavailable")
+	}
+
+	_ = h
+}
+
 func TestRenderHelpBarTiny(t *testing.T) {
 	home := NewHome()
 	home.width = 45 // Tiny mode (<50 cols)
