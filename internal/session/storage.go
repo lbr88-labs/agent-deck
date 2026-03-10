@@ -86,6 +86,12 @@ type InstanceData struct {
 	// SSH remote support
 	SSHHost       string `json:"ssh_host,omitempty"`
 	SSHRemotePath string `json:"ssh_remote_path,omitempty"`
+
+	// Multi-repo support
+	MultiRepoEnabled   bool                            `json:"multi_repo_enabled,omitempty"`
+	AdditionalPaths    []string                        `json:"additional_paths,omitempty"`
+	MultiRepoTempDir   string                          `json:"multi_repo_temp_dir,omitempty"`
+	MultiRepoWorktrees []statedb.MultiRepoWorktreeData `json:"multi_repo_worktrees,omitempty"`
 }
 
 // GroupData represents serializable group data
@@ -259,6 +265,15 @@ func (s *Storage) SaveWithGroups(instances []*Instance, groupTree *GroupTree) er
 			tmuxName = inst.tmuxSession.Name
 		}
 
+		var mrWorktrees []statedb.MultiRepoWorktreeData
+		for _, wt := range inst.MultiRepoWorktrees {
+			mrWorktrees = append(mrWorktrees, statedb.MultiRepoWorktreeData{
+				OriginalPath: wt.OriginalPath,
+				WorktreePath: wt.WorktreePath,
+				RepoRoot:     wt.RepoRoot,
+				Branch:       wt.Branch,
+			})
+		}
 		toolData := statedb.MarshalToolData(
 			inst.ClaudeSessionID, inst.ClaudeDetectedAt,
 			inst.GeminiSessionID, inst.GeminiDetectedAt,
@@ -268,6 +283,8 @@ func (s *Storage) SaveWithGroups(instances []*Instance, groupTree *GroupTree) er
 			inst.LatestPrompt, inst.Notes, inst.LoadedMCPNames,
 			inst.ToolOptionsJSON,
 			inst.SSHHost, inst.SSHRemotePath,
+			inst.MultiRepoEnabled, inst.AdditionalPaths,
+			inst.MultiRepoTempDir, mrWorktrees,
 		)
 
 		rows[i] = &statedb.InstanceRow{
@@ -408,7 +425,9 @@ func (s *Storage) LoadLite() ([]*InstanceData, []*GroupData, error) {
 			codexSID, codexAt,
 			latestPrompt, notes, loadedMCPs,
 			toolOpts,
-			sshHost2, sshRemotePath2 := statedb.UnmarshalToolData(r.ToolData)
+			sshHost2, sshRemotePath2,
+			mrEnabled2, addPaths2,
+			mrTempDir2, mrWorktrees2 := statedb.UnmarshalToolData(r.ToolData)
 
 		instances[i] = &InstanceData{
 			ID:                 r.ID,
@@ -443,6 +462,10 @@ func (s *Storage) LoadLite() ([]*InstanceData, []*GroupData, error) {
 			LoadedMCPNames:     loadedMCPs,
 			SSHHost:            sshHost2,
 			SSHRemotePath:      sshRemotePath2,
+			MultiRepoEnabled:   mrEnabled2,
+			AdditionalPaths:    addPaths2,
+			MultiRepoTempDir:   mrTempDir2,
+			MultiRepoWorktrees: mrWorktrees2,
 		}
 	}
 
@@ -494,7 +517,9 @@ func (s *Storage) LoadWithGroups() ([]*Instance, []*GroupData, error) {
 			codexSID, codexAt,
 			latestPrompt, notes, loadedMCPs,
 			toolOpts,
-			sshHost, sshRemotePath := statedb.UnmarshalToolData(r.ToolData)
+			sshHost, sshRemotePath,
+			mrEnabled, addPaths,
+			mrTempDir, mrWorktrees := statedb.UnmarshalToolData(r.ToolData)
 
 		data.Instances[i] = &InstanceData{
 			ID:                 r.ID,
@@ -529,6 +554,10 @@ func (s *Storage) LoadWithGroups() ([]*Instance, []*GroupData, error) {
 			LoadedMCPNames:     loadedMCPs,
 			SSHHost:            sshHost,
 			SSHRemotePath:      sshRemotePath,
+			MultiRepoEnabled:   mrEnabled,
+			AdditionalPaths:    addPaths,
+			MultiRepoTempDir:   mrTempDir,
+			MultiRepoWorktrees: mrWorktrees,
 		}
 	}
 
@@ -725,7 +754,19 @@ func (s *Storage) convertToInstances(data *StorageData) ([]*Instance, []*GroupDa
 			LoadedMCPNames:     instData.LoadedMCPNames,
 			SSHHost:            instData.SSHHost,
 			SSHRemotePath:      instData.SSHRemotePath,
+			MultiRepoEnabled:   instData.MultiRepoEnabled,
+			AdditionalPaths:    instData.AdditionalPaths,
+			MultiRepoTempDir:   instData.MultiRepoTempDir,
 			tmuxSession:        tmuxSess,
+		}
+		// Convert multi-repo worktree data
+		for _, wt := range instData.MultiRepoWorktrees {
+			inst.MultiRepoWorktrees = append(inst.MultiRepoWorktrees, MultiRepoWorktree{
+				OriginalPath: wt.OriginalPath,
+				WorktreePath: wt.WorktreePath,
+				RepoRoot:     wt.RepoRoot,
+				Branch:       wt.Branch,
+			})
 		}
 
 		// PERFORMANCE: Skip UpdateStatus at load time - use cached status from SQLite
