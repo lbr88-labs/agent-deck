@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"sort"
 	"strings"
 	"unicode"
 )
@@ -113,23 +114,41 @@ func resolveHotkeys(overrides map[string]string) map[string]string {
 		bindings[action] = key
 	}
 
-	for action, key := range overrides {
+	overrideActions := make([]string, 0, len(overrides))
+	for action := range overrides {
+		overrideActions = append(overrideActions, action)
+	}
+	sort.Strings(overrideActions)
+
+	canonicalOverrides := make(map[string]string, len(overrides))
+	for _, action := range overrideActions {
+		key := overrides[action]
 		normalizedAction := strings.TrimSpace(strings.ToLower(action))
-		// Migrate renamed hotkey actions
-		if newName, ok := renamedHotkeys[normalizedAction]; ok {
-			normalizedAction = newName
-		}
-		if _, ok := defaultHotkeyBindings[normalizedAction]; !ok {
-			continue
-		}
-
 		normalizedKey := strings.TrimSpace(key)
-		if normalizedKey == "" {
-			delete(bindings, normalizedAction)
+
+		if _, ok := defaultHotkeyBindings[normalizedAction]; ok {
+			canonicalOverrides[normalizedAction] = normalizedKey
+		}
+	}
+	for _, action := range overrideActions {
+		key := overrides[action]
+		normalizedAction := strings.TrimSpace(strings.ToLower(action))
+		newName, ok := renamedHotkeys[normalizedAction]
+		if !ok {
 			continue
 		}
+		if _, exists := canonicalOverrides[newName]; exists {
+			continue
+		}
+		canonicalOverrides[newName] = strings.TrimSpace(key)
+	}
 
-		bindings[normalizedAction] = normalizedKey
+	for action, key := range canonicalOverrides {
+		if key == "" {
+			delete(bindings, action)
+			continue
+		}
+		bindings[action] = key
 	}
 
 	return bindings
