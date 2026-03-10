@@ -1718,6 +1718,7 @@ func (s *Session) CapturePaneFresh() (string, error) {
 	s.cacheContent = content
 	s.cacheTime = time.Now()
 	s.cacheMu.Unlock()
+
 	return content, nil
 }
 

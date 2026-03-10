@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync/atomic"
@@ -10,6 +11,7 @@ import (
 	"time"
 
 	"github.com/asheshgoplani/agent-deck/internal/session"
+	"github.com/asheshgoplani/agent-deck/internal/tmux"
 )
 
 // mockStatusChecker implements statusChecker for testing waitForCompletion.
@@ -160,6 +162,7 @@ type mockSendRetryTarget struct {
 
 	sendKeysCalls  int32
 	sendEnterCalls int32
+	sendCtrlCCalls int32
 }
 
 func (m *mockSendRetryTarget) SendKeysAndEnter(_ string) error {
@@ -184,6 +187,11 @@ func (m *mockSendRetryTarget) GetStatus() (string, error) {
 
 func (m *mockSendRetryTarget) SendEnter() error {
 	atomic.AddInt32(&m.sendEnterCalls, 1)
+	return nil
+}
+
+func (m *mockSendRetryTarget) SendCtrlC() error {
+	atomic.AddInt32(&m.sendCtrlCCalls, 1)
 	return nil
 }
 
@@ -386,6 +394,157 @@ func TestSendWithRetryTarget_IncreasedAmbiguousBudget(t *testing.T) {
 	// Retries 0, 1, 2, 3 are < 4 so SendEnter is called 4 times; retry 4 is not.
 	if got := atomic.LoadInt32(&mock.sendEnterCalls); got != 4 {
 		t.Fatalf("expected 4 SendEnter calls for increased ambiguous budget, got %d", got)
+	}
+}
+
+func TestSendWithRetryTarget_FullResendAfterMessageLost(t *testing.T) {
+	// Simulate the TUI init race: agent reports "waiting" but never transitions
+	// to "active" because the message was lost during init. After
+	// fullResendThreshold (8) consecutive waiting checks with no activity,
+	// sendWithRetryTarget should Ctrl+C and re-send the full message.
+	// After re-send, the agent transitions to "active".
+	statuses := make([]string, 12)
+	panes := make([]string, 12)
+	for i := range statuses {
+		statuses[i] = "waiting"
+		panes[i] = ""
+	}
+	// After the full resend (at check ~9), agent becomes active
+	statuses[10] = "active"
+	statuses[11] = "active"
+
+	mock := &mockSendRetryTarget{
+		statuses: statuses,
+		panes:    panes,
+	}
+	err := sendWithRetryTarget(mock, "hello", false, sendRetryOptions{maxRetries: 12, checkDelay: 0})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got := atomic.LoadInt32(&mock.sendCtrlCCalls); got != 1 {
+		t.Fatalf("expected 1 SendCtrlC call for full resend, got %d", got)
+	}
+	// sendKeysCalls: 1 initial + 1 resend = 2
+	if got := atomic.LoadInt32(&mock.sendKeysCalls); got != 2 {
+		t.Fatalf("expected 2 SendKeysAndEnter calls (initial + resend), got %d", got)
+	}
+}
+
+func TestSendWithRetryTarget_FullResendMaxLimit(t *testing.T) {
+	// Verify that full resends are capped at maxFullResends (3).
+	// With fullResendThreshold=8, we need at least 8*4=32 retries
+	// to trigger all 3 resends plus some trailing checks.
+	n := 40
+	statuses := make([]string, n)
+	panes := make([]string, n)
+	for i := range statuses {
+		statuses[i] = "waiting"
+		panes[i] = ""
+	}
+	mock := &mockSendRetryTarget{
+		statuses: statuses,
+		panes:    panes,
+	}
+	err := sendWithRetryTarget(mock, "hello", false, sendRetryOptions{maxRetries: n, checkDelay: 0})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	// Should have exactly 3 full resends (the cap)
+	if got := atomic.LoadInt32(&mock.sendCtrlCCalls); got != 3 {
+		t.Fatalf("expected 3 SendCtrlC calls (max resends), got %d", got)
+	}
+	// 1 initial + 3 resends = 4
+	if got := atomic.LoadInt32(&mock.sendKeysCalls); got != 4 {
+		t.Fatalf("expected 4 SendKeysAndEnter calls (initial + 3 resends), got %d", got)
+	}
+}
+
+// skipIfNoTmuxServer skips the test if tmux is not available or not running.
+func skipIfNoTmuxServer(t *testing.T) {
+	t.Helper()
+	if _, err := exec.LookPath("tmux"); err != nil {
+		t.Skip("tmux not available")
+	}
+	if err := exec.Command("tmux", "list-sessions").Run(); err != nil {
+		t.Skip("tmux server not running")
+	}
+}
+
+// TestSendWithRetry_DelayedInputHandler_Integration reproduces the bug where
+// session send reports success but the message is silently dropped.
+//
+// The bug scenario: Claude Code renders the ❯ prompt (causing GetStatus to
+// report "waiting") before its Ink-based TUI input handler is ready to accept
+// keystrokes. waitForAgentReady returns, sendWithRetry sends keys, but the TUI
+// discards them because it hasn't finished initializing.
+//
+// This test simulates that race by running a script that:
+// 1. Immediately prints a ❯ prompt (so status detection sees "waiting")
+// 2. Sleeps before starting to read input (simulating TUI init delay)
+// 3. After the delay, reads a line and echoes it with a marker
+func TestSendWithRetry_DelayedInputHandler_Integration(t *testing.T) {
+	skipIfNoTmuxServer(t)
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+
+	sess := tmux.NewSession("send-test-delayed", "/tmp")
+
+	// Script that simulates Claude's startup race condition.
+	// Traps SIGINT so Ctrl+C doesn't kill it (like real Claude TUI).
+	// The inner loop discards empty lines (simulating how Claude's Ink TUI
+	// ignores empty Enter presses) and only accepts non-empty input.
+	script := `bash -c '
+		trap "" INT   # Ignore Ctrl+C (like Claude Ink TUI)
+
+		# Phase 1: Show prompt before input handler is ready
+		printf "❯ "
+
+		# Phase 2: TUI init delay — drain all input that arrives
+		sleep 2
+		while read -t 0.1 -r _discard 2>/dev/null; do :; done
+
+		# Phase 3: TUI ready — show fresh prompt, accept non-empty input only
+		# (Claude ignores empty Enter presses at the prompt)
+		while true; do
+			printf "\n❯ "
+			read -r line
+			if [ -n "$line" ]; then
+				echo "GOT: $line"
+				break
+			fi
+		done
+		sleep 2
+	'`
+
+	if err := sess.Start(script); err != nil {
+		t.Fatalf("Failed to start session: %v", err)
+	}
+	defer func() { _ = sess.Kill() }()
+
+	// Wait for the ❯ prompt to appear (simulates what waitForAgentReady sees)
+	time.Sleep(500 * time.Millisecond)
+
+	message := "DELAYED_HANDLER_TEST_MSG"
+	err := sendWithRetry(sess, message, false)
+	if err != nil {
+		t.Fatalf("sendWithRetry failed: %v", err)
+	}
+
+	// Wait for the script to process the re-sent message
+	time.Sleep(3 * time.Second)
+
+	content, err := sess.CapturePane()
+	if err != nil {
+		t.Fatalf("CapturePane failed: %v", err)
+	}
+
+	t.Logf("Pane content after send:\n%s", content)
+
+	if !strings.Contains(content, "GOT: "+message) {
+		t.Errorf("Message was sent but never delivered to the input handler.\n"+
+			"sendWithRetry reported success but the message was lost during the TUI init window.\n"+
+			"Pane content:\n%s", content)
 	}
 }
 

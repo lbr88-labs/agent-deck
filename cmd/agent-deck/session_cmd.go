@@ -1456,6 +1456,7 @@ type sendRetryTarget interface {
 	SendKeysAndEnter(string) error
 	GetStatus() (string, error)
 	SendEnter() error
+	SendCtrlC() error
 	CapturePaneFresh() (string, error)
 }
 
@@ -1487,11 +1488,22 @@ func sendWithRetryTarget(target sendRetryTarget, message string, skipVerify bool
 	// - If we never observe active and remain in waiting/idle, keep a periodic
 	//   fallback Enter cadence instead of returning early (handles late unsent
 	//   prompt rendering races seen in Claude startup).
+	// - If the message appears completely lost (no prompt marker, no activity
+	//   after several retries), clear stale input with Ctrl+C and re-send the
+	//   full message. This handles the TUI init race where the prompt renders
+	//   before the input handler is ready, causing sent keys to be discarded.
 	const activeSuccessThreshold = 2
 	const waitingAfterActiveThreshold = 2
+	// fullResendThreshold: after this many consecutive waiting/idle checks
+	// with no activity and no unsent prompt, assume the message was lost
+	// during TUI init and re-send the full message.
+	const fullResendThreshold = 8
+	const maxFullResends = 3
 	waitingNoMarkerChecks := 0
+	waitingNoActivityChecks := 0
 	activeChecks := 0
 	sawActiveAfterSend := false
+	fullResendCount := 0
 	for retry := 0; retry < opts.maxRetries; retry++ {
 		time.Sleep(opts.checkDelay)
 
@@ -1504,6 +1516,7 @@ func sendWithRetryTarget(target sendRetryTarget, message string, skipVerify bool
 
 		if unsentPromptDetected {
 			waitingNoMarkerChecks = 0
+			waitingNoActivityChecks = 0
 			activeChecks = 0
 			_ = target.SendEnter()
 			continue
@@ -1512,6 +1525,7 @@ func sendWithRetryTarget(target sendRetryTarget, message string, skipVerify bool
 		if err == nil && status == "active" {
 			sawActiveAfterSend = true
 			waitingNoMarkerChecks = 0
+			waitingNoActivityChecks = 0
 			activeChecks++
 			if activeChecks >= activeSuccessThreshold {
 				return nil
@@ -1523,11 +1537,26 @@ func sendWithRetryTarget(target sendRetryTarget, message string, skipVerify bool
 		if err == nil && (status == "waiting" || status == "idle") {
 			if sawActiveAfterSend {
 				waitingNoMarkerChecks++
+				waitingNoActivityChecks = 0
 				if waitingNoMarkerChecks >= waitingAfterActiveThreshold {
 					return nil
 				}
 			} else {
 				waitingNoMarkerChecks = 0
+				waitingNoActivityChecks++
+
+				// Message may have been lost during TUI init: the prompt was
+				// visible but the input handler wasn't ready, so sent keys were
+				// discarded. Clear stale input and re-send the full message.
+				if waitingNoActivityChecks >= fullResendThreshold && fullResendCount < maxFullResends {
+					fullResendCount++
+					waitingNoActivityChecks = 0
+					_ = target.SendCtrlC()
+					time.Sleep(200 * time.Millisecond)
+					_ = target.SendKeysAndEnter(message)
+					continue
+				}
+
 				// We haven't observed any post-send activity yet. Nudge Enter
 				// aggressively in the early window (every iteration for first 5
 				// retries) then every 2nd iteration. This addresses bracketed
@@ -1539,6 +1568,7 @@ func sendWithRetryTarget(target sendRetryTarget, message string, skipVerify bool
 			continue
 		}
 		waitingNoMarkerChecks = 0
+		waitingNoActivityChecks = 0
 
 		// Ambiguous state: keep a best-effort Enter retry budget.
 		// Increased from 2 to 4 because some TUI frameworks take longer
