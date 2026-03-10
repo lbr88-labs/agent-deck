@@ -14,7 +14,7 @@ Each conductor has its own identity in its subdirectory and its own policy in PO
 ### Status & Listing
 | Command | Description |
 |---------|-------------|
-| ` + "`" + `agent-deck -p <PROFILE> status --json` + "`" + ` | Get counts: ` + "`" + `{"waiting": N, "running": N, "idle": N, "error": N, "total": N}` + "`" + ` |
+| ` + "`" + `agent-deck -p <PROFILE> status --json` + "`" + ` | Get counts: ` + "`" + `{"waiting": N, "running": N, "idle": N, "error": N, "stopped": N, "total": N}` + "`" + ` |
 | ` + "`" + `agent-deck -p <PROFILE> list --json` + "`" + ` | List all sessions with details (id, title, path, tool, status, group) |
 | ` + "`" + `agent-deck -p <PROFILE> session show --json <id_or_title>` + "`" + ` | Full details for one session |
 
@@ -265,7 +265,7 @@ When you first start (or after a restart):
 3. Run ` + "`" + `agent-deck -p {PROFILE} status --json` + "`" + ` to get the current state
 4. Run ` + "`" + `agent-deck -p {PROFILE} list --json` + "`" + ` to know what sessions exist
 5. Log startup in ` + "`" + `./task-log.md` + "`" + `
-6. If any sessions are in error state, try to restart them
+6. If any sessions are in error state (NOT stopped), try to restart them. Sessions in "stopped" status were intentionally closed by the user and must NOT be restarted.
 7. Reply: "Conductor {NAME} ({PROFILE}) online. N sessions tracked (X running, Y waiting)."
 
 ## Policy
@@ -595,7 +595,7 @@ def run_cli(
 
 
 def get_session_status(session: str, profile: str | None = None) -> str:
-    """Get the status of a session (running/waiting/idle/error)."""
+    """Get the status of a session (running/waiting/idle/error/stopped)."""
     result = run_cli(
         "session", "show", "--json", session, profile=profile, timeout=30
     )
@@ -655,16 +655,16 @@ def get_status_summary(profile: str | None = None) -> dict:
     """Get agent-deck status as a dict for a single profile."""
     result = run_cli("status", "--json", profile=profile, timeout=30)
     if result.returncode != 0:
-        return {"waiting": 0, "running": 0, "idle": 0, "error": 0, "total": 0}
+        return {"waiting": 0, "running": 0, "idle": 0, "error": 0, "stopped": 0, "total": 0}
     try:
         return json.loads(result.stdout)
     except json.JSONDecodeError:
-        return {"waiting": 0, "running": 0, "idle": 0, "error": 0, "total": 0}
+        return {"waiting": 0, "running": 0, "idle": 0, "error": 0, "stopped": 0, "total": 0}
 
 
 def get_status_summary_all(profiles: list[str]) -> dict:
     """Aggregate status across all profiles."""
-    totals = {"waiting": 0, "running": 0, "idle": 0, "error": 0, "total": 0}
+    totals = {"waiting": 0, "running": 0, "idle": 0, "error": 0, "stopped": 0, "total": 0}
     per_profile = {}
     for profile in profiles:
         summary = get_status_summary(profile)
@@ -885,6 +885,7 @@ def create_telegram_bot(config: dict):
             "waiting": "\U0001f7e1",
             "idle": "\u26aa",
             "error": "\U0001f534",
+            "stopped": "\u23f9",
         }
 
         lines = []
@@ -1470,6 +1471,7 @@ def create_discord_bot(config: dict):
             "waiting": "\U0001f7e1",
             "idle": "\u26aa",
             "error": "\U0001f534",
+            "stopped": "\u23f9",
         }
 
         lines = []
@@ -1709,10 +1711,11 @@ async def heartbeat_loop(
                 running = sum(1 for s in scoped_sessions if s.get("status", "") == "running")
                 idle = sum(1 for s in scoped_sessions if s.get("status", "") == "idle")
                 error = sum(1 for s in scoped_sessions if s.get("status", "") == "error")
+                stopped = sum(1 for s in scoped_sessions if s.get("status", "") == "stopped")
 
                 log.info(
-                    "Heartbeat [%s/%s]: %d waiting, %d running, %d idle, %d error",
-                    name, profile, waiting, running, idle, error,
+                    "Heartbeat [%s/%s]: %d waiting, %d running, %d idle, %d error, %d stopped",
+                    name, profile, waiting, running, idle, error, stopped,
                 )
 
                 # Only trigger conductor if there are waiting or error sessions
@@ -1737,7 +1740,7 @@ async def heartbeat_loop(
 
                 parts = [
                     f"[HEARTBEAT] [{name}] Status: {waiting} waiting, "
-                    f"{running} running, {idle} idle, {error} error."
+                    f"{running} running, {idle} idle, {error} error, {stopped} stopped."
                 ]
                 if waiting_details:
                     parts.append(

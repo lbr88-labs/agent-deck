@@ -753,6 +753,8 @@ func statusToString(s Status) string {
 		return "idle"
 	case StatusError:
 		return "waiting" // Treat errors as needing attention
+	case StatusStopped:
+		return "inactive" // Stopped sessions are intentionally inactive
 	default:
 		return "waiting"
 	}

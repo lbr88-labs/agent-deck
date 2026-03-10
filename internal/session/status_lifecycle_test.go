@@ -14,7 +14,7 @@ import (
 // =============================================================================
 
 // TestStatusCycle_ShellSessionWithCommand verifies the full lifecycle:
-// StatusStarting (after Start with command) -> running/idle (after grace period + UpdateStatus) -> StatusError (after Kill)
+// StatusStarting (after Start with command) -> running/idle (after grace period + UpdateStatus) -> StatusStopped (after Kill)
 func TestStatusCycle_ShellSessionWithCommand(t *testing.T) {
 	skipIfNoTmuxServer(t)
 
@@ -47,8 +47,8 @@ func TestStatusCycle_ShellSessionWithCommand(t *testing.T) {
 	err = inst.Kill()
 	require.NoError(t, err, "Kill() should succeed")
 
-	// After Kill: should be StatusError
-	assert.Equal(t, StatusError, inst.Status, "after Kill() status should be error")
+	// After Kill: should be StatusStopped
+	assert.Equal(t, StatusStopped, inst.Status, "after Kill() status should be stopped")
 
 	// Tmux session should no longer exist
 	assert.False(t, inst.Exists(), "tmux session should not exist after Kill()")
@@ -384,7 +384,7 @@ func TestStatusPersistence_MultipleInstances(t *testing.T) {
 // TestStatusPersistence_EndToEnd is a full integration test that creates a real
 // tmux session, gets its status via UpdateStatus(), saves to SQLite, and verifies
 // the loaded status matches. Then kills the session, saves again, and verifies
-// StatusError is persisted.
+// StatusStopped is persisted.
 func TestStatusPersistence_EndToEnd(t *testing.T) {
 	skipIfNoTmuxServer(t)
 
@@ -421,17 +421,17 @@ func TestStatusPersistence_EndToEnd(t *testing.T) {
 	// Now kill the session
 	err = inst.Kill()
 	require.NoError(t, err, "Kill() should succeed")
-	assert.Equal(t, StatusError, inst.Status, "status should be error after Kill()")
+	assert.Equal(t, StatusStopped, inst.Status, "status should be stopped after Kill()")
 
-	// Save again with error status
+	// Save again with stopped status
 	err = s.SaveWithGroups([]*Instance{inst}, nil)
 	require.NoError(t, err, "SaveWithGroups after Kill should succeed")
 
-	// Load and verify error status is persisted
+	// Load and verify stopped status is persisted
 	loaded2, _, err := s.LoadWithGroups()
 	require.NoError(t, err, "LoadWithGroups after Kill should succeed")
 	require.Len(t, loaded2, 1, "should load 1 instance after Kill")
 
-	assert.Equal(t, StatusError, loaded2[0].Status,
-		"loaded status after Kill should be StatusError")
+	assert.Equal(t, StatusStopped, loaded2[0].Status,
+		"loaded status after Kill should be StatusStopped")
 }

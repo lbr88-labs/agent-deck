@@ -1604,6 +1604,7 @@ type statusCounts struct {
 	waiting int
 	idle    int
 	err     int
+	stopped int
 	total   int
 }
 
@@ -1621,6 +1622,8 @@ func countByStatus(instances []*session.Instance) statusCounts {
 			counts.idle++
 		case session.StatusError:
 			counts.err++
+		case session.StatusStopped:
+			counts.stopped++
 		}
 		counts.total++
 	}
@@ -1670,7 +1673,7 @@ func handleStatus(profile string, args []string) {
 
 	if len(instances) == 0 {
 		if *jsonOutput {
-			fmt.Println(`{"waiting": 0, "running": 0, "idle": 0, "error": 0, "total": 0}`)
+			fmt.Println(`{"waiting": 0, "running": 0, "idle": 0, "error": 0, "stopped": 0, "total": 0}`)
 		} else if *quiet || *quietShort {
 			fmt.Println("0")
 		} else {
@@ -1689,6 +1692,7 @@ func handleStatus(profile string, args []string) {
 			Running int `json:"running"`
 			Idle    int `json:"idle"`
 			Error   int `json:"error"`
+			Stopped int `json:"stopped"`
 			Total   int `json:"total"`
 		}
 		output, _ := json.Marshal(statusJSON{
@@ -1696,6 +1700,7 @@ func handleStatus(profile string, args []string) {
 			Running: counts.running,
 			Idle:    counts.idle,
 			Error:   counts.err,
+			Stopped: counts.stopped,
 			Total:   counts.total,
 		})
 		fmt.Println(string(output))
@@ -1728,6 +1733,7 @@ func handleStatus(profile string, args []string) {
 		printStatusGroup("WAITING", "◐", session.StatusWaiting)
 		printStatusGroup("RUNNING", "●", session.StatusRunning)
 		printStatusGroup("IDLE", "○", session.StatusIdle)
+		printStatusGroup("STOPPED", "■", session.StatusStopped)
 		printStatusGroup("ERROR", "✕", session.StatusError)
 
 		fmt.Printf("Total: %d sessions in profile '%s'\n", counts.total, storage.Profile())

@@ -330,6 +330,8 @@ func StatusSymbol(status session.Status) string {
 		return "○"
 	case session.StatusError:
 		return "✕"
+	case session.StatusStopped:
+		return "■"
 	default:
 		return "?"
 	}
@@ -346,6 +348,8 @@ func StatusString(status session.Status) string {
 		return "idle"
 	case session.StatusError:
 		return "error"
+	case session.StatusStopped:
+		return "stopped"
 	default:
 		return "unknown"
 	}

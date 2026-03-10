@@ -53,9 +53,9 @@ func TestSessionStart_SetsStartingStatus(t *testing.T) {
 		"Status should be StatusStarting immediately after Start() with a command")
 }
 
-// TestSessionStop_KillsAndSetsError verifies that Kill() terminates the tmux
-// session and sets Status to StatusError.
-func TestSessionStop_KillsAndSetsError(t *testing.T) {
+// TestSessionStop_KillsAndSetsStopped verifies that Kill() terminates the tmux
+// session and sets Status to StatusStopped.
+func TestSessionStop_KillsAndSetsStopped(t *testing.T) {
 	skipIfNoTmuxServer(t)
 
 	inst := NewInstance("test-stop-kills", "/tmp")
@@ -71,9 +71,9 @@ func TestSessionStop_KillsAndSetsError(t *testing.T) {
 	err = inst.Kill()
 	require.NoError(t, err, "Kill() should succeed")
 
-	// Verify status is error
-	assert.Equal(t, StatusError, inst.Status,
-		"Status should be StatusError after Kill()")
+	// Verify status is stopped
+	assert.Equal(t, StatusStopped, inst.Status,
+		"Status should be StatusStopped after Kill()")
 
 	// Verify Exists() returns false
 	assert.False(t, inst.Exists(), "Exists() should return false after Kill()")
@@ -104,8 +104,8 @@ func TestSessionStop_DoubleKill(t *testing.T) {
 	}, "Second Kill() should not panic")
 }
 
-// TestSessionStop_UpdateStatusAfterKill verifies that UpdateStatus() reports
-// StatusError after the session has been killed.
+// TestSessionStop_UpdateStatusAfterKill verifies that UpdateStatus() preserves
+// StatusStopped after the session has been intentionally killed.
 func TestSessionStop_UpdateStatusAfterKill(t *testing.T) {
 	skipIfNoTmuxServer(t)
 
@@ -124,8 +124,8 @@ func TestSessionStop_UpdateStatusAfterKill(t *testing.T) {
 	err = inst.UpdateStatus()
 	require.NoError(t, err, "UpdateStatus() should not error")
 
-	assert.Equal(t, StatusError, inst.Status,
-		"UpdateStatus() should report StatusError after Kill()")
+	assert.Equal(t, StatusStopped, inst.Status,
+		"UpdateStatus() should preserve StatusStopped after Kill()")
 }
 
 // TestSessionStart_NilTmuxSession verifies that Start() on a bare Instance

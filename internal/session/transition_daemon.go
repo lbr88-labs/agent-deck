@@ -348,7 +348,7 @@ func (d *TransitionDaemon) emitHookTransitionCandidates(
 
 func isNotifyTerminalStatus(status string) bool {
 	s := normalizeStatusString(status)
-	return s == string(StatusWaiting) || s == string(StatusError) || s == string(StatusIdle)
+	return s == string(StatusWaiting) || s == string(StatusError) || s == string(StatusIdle) || s == string(StatusStopped)
 }
 
 func terminalHookTransitionCandidate(tool string, hs *HookStatus) (hookTransitionCandidate, bool) {

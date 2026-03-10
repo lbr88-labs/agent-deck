@@ -110,6 +110,7 @@ func FilterByQuery(instances []*Instance, query string) []*Instance {
 		"running": StatusRunning,
 		"idle":    StatusIdle,
 		"error":   StatusError,
+		"stopped": StatusStopped,
 	}
 
 	// If query matches a status filter exactly, filter by status

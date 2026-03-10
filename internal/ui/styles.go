@@ -239,6 +239,7 @@ var (
 	SessionStatusWaiting  lipgloss.Style
 	SessionStatusIdle     lipgloss.Style
 	SessionStatusError    lipgloss.Style
+	SessionStatusStopped  lipgloss.Style
 	SessionStatusSelStyle lipgloss.Style
 
 	// Session title styles by state
@@ -490,6 +491,7 @@ func initStyles() {
 	SessionStatusWaiting = lipgloss.NewStyle().Foreground(ColorYellow)
 	SessionStatusIdle = lipgloss.NewStyle().Foreground(ColorTextDim)
 	SessionStatusError = lipgloss.NewStyle().Foreground(ColorRed)
+	SessionStatusStopped = lipgloss.NewStyle().Foreground(ColorTextDim)
 	SessionStatusSelStyle = lipgloss.NewStyle().Foreground(ColorBg).Background(ColorAccent)
 
 	// Session title styles by state

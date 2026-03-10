@@ -6516,7 +6516,7 @@ func (h *Home) countSessionStatuses() (running, waiting, idle, errored int) {
 			waiting++
 		case session.StatusIdle:
 			idle++
-		case session.StatusError:
+		case session.StatusError, session.StatusStopped:
 			errored++
 		}
 	}
@@ -8471,6 +8471,9 @@ func (h *Home) renderSessionItem(
 	case session.StatusError:
 		statusIcon = "✕"
 		statusStyle = SessionStatusError
+	case session.StatusStopped:
+		statusIcon = "■"
+		statusStyle = SessionStatusStopped
 	default:
 		statusIcon = "○"
 		statusStyle = SessionStatusIdle
@@ -9203,6 +9206,9 @@ func (h *Home) renderPreviewPane(width, height int) string {
 	case session.StatusError:
 		statusIcon = "✕"
 		statusColor = ColorRed
+	case session.StatusStopped:
+		statusIcon = "■"
+		statusColor = ColorTextDim
 	}
 
 	// Header with session name and status
@@ -9678,8 +9684,8 @@ func (h *Home) renderPreviewPane(width, height int) string {
 		// PreviewModeBoth: use config settings (default)
 	}
 
-	// Special handling for error state - show guidance instead of output
-	if selected.Status == session.StatusError {
+	// Special handling for error/stopped state - show guidance instead of output
+	if selected.Status == session.StatusError || selected.Status == session.StatusStopped {
 		errorHeader := renderSectionDivider("Session Inactive", width-4)
 		b.WriteString(errorHeader)
 		b.WriteString("\n\n")
@@ -10261,7 +10267,7 @@ func (h *Home) renderGroupPreview(group *session.Group, width, height int) strin
 			waiting++
 		case session.StatusIdle:
 			idle++
-		case session.StatusError:
+		case session.StatusError, session.StatusStopped:
 			errored++
 		}
 	}
@@ -10357,6 +10363,8 @@ func (h *Home) renderGroupPreview(group *session.Group, width, height int) strin
 				statusIcon, statusColor = "◐", ColorYellow
 			case session.StatusError:
 				statusIcon, statusColor = "✕", ColorRed
+			case session.StatusStopped:
+				statusIcon, statusColor = "■", ColorTextDim
 			}
 			status := lipgloss.NewStyle().Foreground(statusColor).Render(statusIcon)
 			name := lipgloss.NewStyle().Foreground(ColorText).Render(sess.Title)
@@ -10636,14 +10644,15 @@ func (h *Home) finishWorktree(inst *session.Instance, sessionID, sessionTitle, b
 	}
 }
 
-// getOtherActiveSessions returns sessions excluding the given ID and error-status sessions.
+// getOtherActiveSessions returns sessions excluding the given ID and error/stopped-status sessions.
 func (h *Home) getOtherActiveSessions(excludeID string) []*session.Instance {
 	var result []*session.Instance
 	for _, inst := range h.instances {
 		if inst.ID == excludeID {
 			continue
 		}
-		if inst.GetStatusThreadSafe() == session.StatusError {
+		s := inst.GetStatusThreadSafe()
+		if s == session.StatusError || s == session.StatusStopped {
 			continue
 		}
 		result = append(result, inst)

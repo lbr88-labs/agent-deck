@@ -44,6 +44,7 @@ const (
 	StatusIdle     Status = "idle"
 	StatusError    Status = "error"
 	StatusStarting Status = "starting" // Session is being created (tmux initializing)
+	StatusStopped  Status = "stopped"  // Session intentionally stopped by user (not crashed)
 )
 
 const wrapperPlaceholder = "{command}"
@@ -2113,23 +2114,32 @@ func (i *Instance) UpdateStatus() error {
 	}
 
 	if i.tmuxSession == nil {
-		i.Status = StatusError
+		if i.Status != StatusStopped {
+			i.Status = StatusError
+		}
 		return nil
 	}
 
-	// Optimization: Skip expensive Exists() check for sessions already in error status
+	// Optimization: Skip expensive Exists() check for sessions already in error/stopped status
 	// Ghost sessions (in JSON but not in tmux) only get rechecked every 30 seconds
 	// This reduces subprocess spawns from 74/sec to ~5/sec for 28 ghost sessions
-	if i.Status == StatusError && !i.lastErrorCheck.IsZero() &&
+	if (i.Status == StatusError || i.Status == StatusStopped) && !i.lastErrorCheck.IsZero() &&
 		time.Since(i.lastErrorCheck) < errorRecheckInterval {
-		return nil // Skip - still in error, checked recently
+		return nil // Skip - still in error/stopped, checked recently
 	}
 
 	// Check if tmux session exists
 	if !i.tmuxSession.Exists() {
-		i.Status = StatusError
-		i.lastErrorCheck = time.Now() // Record when we confirmed error
+		if i.Status != StatusStopped {
+			i.Status = StatusError
+		}
+		i.lastErrorCheck = time.Now() // Record when we confirmed error/stopped
 		return nil
+	}
+
+	// Session exists again (user manually started it) - clear stopped status
+	if i.Status == StatusStopped {
+		i.Status = StatusRunning
 	}
 
 	// Session exists - clear error check timestamp
@@ -3429,7 +3439,7 @@ func (i *Instance) Kill() error {
 		}
 	}
 
-	i.Status = StatusError
+	i.Status = StatusStopped
 
 	if tmuxErr != nil {
 		return fmt.Errorf("failed to kill tmux session: %w", tmuxErr)

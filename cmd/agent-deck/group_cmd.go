@@ -106,6 +106,7 @@ func handleGroupList(profile string, args []string) {
 			Waiting int `json:"waiting"`
 			Idle    int `json:"idle"`
 			Error   int `json:"error"`
+			Stopped int `json:"stopped"`
 		}
 
 		type groupJSON struct {
@@ -133,6 +134,8 @@ func handleGroupList(profile string, args []string) {
 							status.Idle++
 						case session.StatusError:
 							status.Error++
+						case session.StatusStopped:
+							status.Stopped++
 						}
 					}
 				}

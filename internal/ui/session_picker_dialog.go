@@ -38,7 +38,7 @@ func (d *SessionPickerDialog) Show(source *session.Instance, allInstances []*ses
 		if inst.ID == source.ID {
 			continue
 		}
-		if inst.Status == session.StatusError {
+		if inst.Status == session.StatusError || inst.Status == session.StatusStopped {
 			continue
 		}
 		d.sessions = append(d.sessions, inst)
