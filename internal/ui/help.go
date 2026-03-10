@@ -5,6 +5,8 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+
+	"github.com/asheshgoplani/agent-deck/internal/session"
 )
 
 // HelpOverlay shows keyboard shortcuts in a modal
@@ -144,6 +146,9 @@ func (h *HelpOverlay) View() string {
 	sendKey := h.key(hotkeySendOutput, "x")
 	execShellKey := h.key(hotkeyExecShell, "E")
 	notesKey := h.key(hotkeyEditNotes, "e")
+	if cfg, _ := session.LoadUserConfig(); cfg != nil && !cfg.GetShowNotes() {
+		notesKey = ""
+	}
 	worktreeKey := h.key(hotkeyWorktreeFinish, "W")
 	groupKey := h.key(hotkeyCreateGroup, "g")
 	undoKey := h.key(hotkeyUndoDelete, "Ctrl+Z")

@@ -821,6 +821,36 @@ func TestSettingsPanel_PreviewSettings_GetConfig(t *testing.T) {
 	}
 }
 
+func TestSettingsPanel_PreviewSettings_GetConfigPreservesHiddenFields(t *testing.T) {
+	panel := NewSettingsPanel()
+	panel.showOutput = false
+	panel.showAnalytics = true
+
+	showNotes := false
+	showTools := false
+	panel.originalConfig = &session.UserConfig{
+		Preview: session.PreviewSettings{
+			ShowNotes:        &showNotes,
+			NotesOutputSplit: 0.42,
+			Analytics: session.AnalyticsDisplaySettings{
+				ShowTools: &showTools,
+			},
+		},
+	}
+
+	config := panel.GetConfig()
+
+	if config.Preview.ShowNotes == nil || *config.Preview.ShowNotes {
+		t.Fatal("Preview.ShowNotes should be preserved as false")
+	}
+	if config.Preview.NotesOutputSplit != 0.42 {
+		t.Fatalf("Preview.NotesOutputSplit = %v, want 0.42", config.Preview.NotesOutputSplit)
+	}
+	if config.Preview.Analytics.ShowTools == nil || *config.Preview.Analytics.ShowTools {
+		t.Fatal("Preview.Analytics should preserve original hidden settings")
+	}
+}
+
 func TestSettingsPanel_PreviewSettings_ViewContains(t *testing.T) {
 	panel := NewSettingsPanel()
 	panel.SetSize(80, 50)

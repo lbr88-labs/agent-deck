@@ -821,6 +821,33 @@ func setFollowCwdOnAttachConfigForTest(t *testing.T, enabled *bool) {
 	t.Cleanup(session.ClearUserConfigCache)
 }
 
+func setPreviewShowNotesConfigForTest(t *testing.T, enabled *bool) {
+	t.Helper()
+
+	homeDir := t.TempDir()
+	t.Setenv("HOME", homeDir)
+
+	configDir := filepath.Join(homeDir, ".agent-deck")
+	if err := os.MkdirAll(configDir, 0o700); err != nil {
+		t.Fatalf("failed to create config directory: %v", err)
+	}
+
+	if enabled != nil {
+		value := "false"
+		if *enabled {
+			value = "true"
+		}
+		content := fmt.Sprintf("[preview]\nshow_notes = %s\n", value)
+		configPath := filepath.Join(configDir, session.UserConfigFileName)
+		if err := os.WriteFile(configPath, []byte(content), 0o600); err != nil {
+			t.Fatalf("failed to write config.toml: %v", err)
+		}
+	}
+
+	session.ClearUserConfigCache()
+	t.Cleanup(session.ClearUserConfigCache)
+}
+
 func TestFollowAttachReturnCwdEnabledUpdatesProjectPath(t *testing.T) {
 	enabled := true
 	setFollowCwdOnAttachConfigForTest(t, &enabled)
@@ -906,6 +933,31 @@ func TestFollowAttachReturnCwdRejectsInvalidPaths(t *testing.T) {
 				t.Fatalf("project path changed = %q, want %q", got, initialDir)
 			}
 		})
+	}
+}
+
+func TestHandleMainKeyEditNotesDisabledWhenShowNotesFalse(t *testing.T) {
+	disabled := false
+	setPreviewShowNotesConfigForTest(t, &disabled)
+
+	home := NewHome()
+	home.width = 100
+	home.height = 30
+
+	inst := session.NewInstance("notes-disabled", t.TempDir())
+	home.flatItems = []session.Item{{Type: session.ItemTypeSession, Session: inst}}
+	home.cursor = 0
+
+	model, _ := home.handleMainKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'e'}})
+	h, ok := model.(*Home)
+	if !ok {
+		t.Fatal("handleMainKey should return *Home")
+	}
+	if h.notesEditing {
+		t.Fatal("notes editor should remain disabled when show_notes=false")
+	}
+	if h.notesEditingSessionID != "" {
+		t.Fatalf("notesEditingSessionID = %q, want empty", h.notesEditingSessionID)
 	}
 }
 

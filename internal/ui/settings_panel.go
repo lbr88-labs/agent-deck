@@ -289,6 +289,9 @@ func (s *SettingsPanel) GetConfig() *session.UserConfig {
 		config.Tools = s.originalConfig.Tools
 		config.MCPPool = s.originalConfig.MCPPool
 		config.Docker = s.originalConfig.Docker
+		config.Preview.ShowNotes = s.originalConfig.Preview.ShowNotes
+		config.Preview.NotesOutputSplit = s.originalConfig.Preview.NotesOutputSplit
+		config.Preview.Analytics = s.originalConfig.Preview.Analytics
 		config.Profiles = s.originalConfig.Profiles
 		// Keep global Claude config when editing profile-specific override.
 		if s.claudeConfigIsScope {
