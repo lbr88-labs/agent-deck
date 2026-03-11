@@ -3892,6 +3892,19 @@ func UnbindKey(key string) error {
 	return nil
 }
 
+// BindMouseStatusRightDetach binds a mouse click on the status-right area to detach.
+// Only fires inside agentdeck sessions (guards against detaching the user's outer tmux).
+func BindMouseStatusRightDetach() error {
+	// Guard: only detach if current session is an agentdeck-managed session
+	script := `S=$(tmux display-message -p '#{session_name}'); case "$S" in agentdeck_*) tmux detach-client ;; esac`
+	return exec.Command("tmux", "bind", "-n", "MouseDown1StatusRight", "run-shell", script).Run()
+}
+
+// UnbindMouseStatusClicks removes mouse click bindings from the status bar.
+func UnbindMouseStatusClicks() {
+	_ = exec.Command("tmux", "unbind", "-n", "MouseDown1StatusRight").Run()
+}
+
 // GetActiveSession returns the session name the user is currently attached to.
 // Returns empty string and error if not attached to any session.
 func GetActiveSession() (string, error) {

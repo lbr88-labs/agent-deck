@@ -2795,8 +2795,9 @@ func (h *Home) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 			}
 			return h, nil
+		default:
+			return h.handleMouse(msg)
 		}
-		return h, nil
 
 	case loadSessionsMsg:
 		// Clear loading indicators and store file mtime for external change detection
@@ -3932,9 +3933,6 @@ func (h *Home) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return h, cmd
 		}
 		return h, nil
-
-	case tea.MouseMsg:
-		return h.handleMouse(msg)
 
 	case tea.KeyMsg:
 		// Track user activity for adaptive status updates

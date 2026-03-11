@@ -24,11 +24,11 @@ func TestCostEventWatcher(t *testing.T) {
 	time.Sleep(50 * time.Millisecond)
 
 	cf := costs.RawCostEvent{
-		InstanceID:  "inst-1",
-		Model:       "claude-sonnet-4-6",
-		InputTokens: 1000,
+		InstanceID:   "inst-1",
+		Model:        "claude-sonnet-4-6",
+		InputTokens:  1000,
 		OutputTokens: 500,
-		Timestamp:   time.Now().UnixNano(),
+		Timestamp:    time.Now().UnixNano(),
 	}
 	data, _ := json.Marshal(cf)
 	tmpPath := filepath.Join(dir, "inst-1_123.json.tmp")
