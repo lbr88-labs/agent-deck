@@ -3,6 +3,7 @@ package ui
 import (
 	"os"
 	"path/filepath"
+	"reflect"
 	"testing"
 
 	"github.com/asheshgoplani/agent-deck/internal/session"
@@ -182,6 +183,34 @@ func TestSettingsPanel_LoadConfig_DefaultTool(t *testing.T) {
 	}
 }
 
+func TestSettingsPanel_LoadConfig_CustomTools(t *testing.T) {
+	panel := NewSettingsPanel()
+
+	config := &session.UserConfig{
+		DefaultTool: "openclaw",
+		Tools: map[string]session.ToolDef{
+			"openclaw": {},
+			"zeta":     {},
+			"claude":   {},
+		},
+	}
+
+	panel.LoadConfig(config)
+
+	wantNames := []string{"Claude", "Gemini", "OpenCode", "Codex", "Pi", "Openclaw", "Zeta", "None"}
+	wantValues := []string{"claude", "gemini", "opencode", "codex", "pi", "openclaw", "zeta", ""}
+
+	if !reflect.DeepEqual(panel.toolNames, wantNames) {
+		t.Fatalf("toolNames = %#v, want %#v", panel.toolNames, wantNames)
+	}
+	if !reflect.DeepEqual(panel.toolValues, wantValues) {
+		t.Fatalf("toolValues = %#v, want %#v", panel.toolValues, wantValues)
+	}
+	if panel.selectedTool != 5 {
+		t.Fatalf("selectedTool = %d, want 5 for openclaw", panel.selectedTool)
+	}
+}
+
 func TestSettingsPanel_LoadConfig_SearchTier(t *testing.T) {
 	panel := NewSettingsPanel()
 
@@ -338,6 +367,21 @@ func TestSettingsPanel_GetConfig_ToolMapping(t *testing.T) {
 					tt.index, config.DefaultTool, tt.expected)
 			}
 		})
+	}
+}
+
+func TestSettingsPanel_GetConfig_CustomToolMapping(t *testing.T) {
+	panel := NewSettingsPanel()
+	panel.LoadConfig(&session.UserConfig{
+		Tools: map[string]session.ToolDef{
+			"openclaw": {},
+		},
+	})
+
+	panel.selectedTool = 5
+	config := panel.GetConfig()
+	if config.DefaultTool != "openclaw" {
+		t.Fatalf("DefaultTool: got %q, want %q", config.DefaultTool, "openclaw")
 	}
 }
 

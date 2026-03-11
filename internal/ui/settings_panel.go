@@ -2,6 +2,7 @@ package ui
 
 import (
 	"fmt"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -46,9 +47,13 @@ type SettingsPanel struct {
 	scrollOffset int // Scroll offset when content overflows terminal height
 	profile      string
 
+	// Dynamic tool lists (built-in + custom tools from config)
+	toolNames  []string
+	toolValues []string
+
 	// Setting values
 	selectedTheme       int // 0=dark, 1=light, 2=system
-	selectedTool        int // 0=claude, 1=gemini, 2=opencode, 3=codex, 4=pi, 5=none
+	selectedTool        int // index into toolNames/toolValues
 	dangerousMode       bool
 	claudeConfigDir     string
 	claudeConfigIsScope bool // true = profile override, false = global [claude]
@@ -77,10 +82,11 @@ type SettingsPanel struct {
 	originalConfig *session.UserConfig
 }
 
-// Tool names for radio selection
+// builtinToolNames and builtinToolValues are the built-in tools. Custom tools
+// from config are appended dynamically in LoadConfig.
 var (
-	toolNames  = []string{"Claude", "Gemini", "OpenCode", "Codex", "Pi", "None"}
-	toolValues = []string{"claude", "gemini", "opencode", "codex", "pi", ""}
+	builtinToolNames  = []string{"Claude", "Gemini", "OpenCode", "Codex", "Pi"}
+	builtinToolValues = []string{"claude", "gemini", "opencode", "codex", "pi"}
 )
 
 // Search tier names for radio selection
@@ -98,6 +104,8 @@ var (
 // NewSettingsPanel creates a new settings panel
 func NewSettingsPanel() *SettingsPanel {
 	return &SettingsPanel{
+		toolNames:           append(append([]string{}, builtinToolNames...), "None"),
+		toolValues:          append(append([]string{}, builtinToolValues...), ""),
 		logMaxSizeMB:        10,
 		logMaxLines:         10000,
 		removeOrphans:       true,
@@ -164,9 +172,12 @@ func (s *SettingsPanel) LoadConfig(config *session.UserConfig) {
 		s.selectedTheme = 0
 	}
 
+	// Rebuild tool lists: built-ins + custom tools + "None".
+	s.buildToolLists(config)
+
 	// Default tool
-	s.selectedTool = len(toolValues) - 1 // None by default
-	for i, val := range toolValues {
+	s.selectedTool = len(s.toolValues) - 1 // None by default
+	for i, val := range s.toolValues {
 		if val == config.DefaultTool {
 			s.selectedTool = i
 			break
@@ -227,6 +238,36 @@ func (s *SettingsPanel) LoadConfig(config *session.UserConfig) {
 	s.maintenanceEnabled = config.Maintenance.Enabled
 }
 
+func (s *SettingsPanel) buildToolLists(config *session.UserConfig) {
+	names := append([]string{}, builtinToolNames...)
+	values := append([]string{}, builtinToolValues...)
+
+	if len(config.Tools) > 0 {
+		builtins := map[string]bool{
+			"claude": true, "gemini": true, "opencode": true,
+			"codex": true, "pi": true, "shell": true, "cursor": true, "aider": true,
+		}
+		var custom []string
+		for name := range config.Tools {
+			if !builtins[name] {
+				custom = append(custom, name)
+			}
+		}
+		sort.Strings(custom)
+		for _, name := range custom {
+			display := strings.ToUpper(name[:1]) + name[1:]
+			names = append(names, display)
+			values = append(values, name)
+		}
+	}
+
+	names = append(names, "None")
+	values = append(values, "")
+
+	s.toolNames = names
+	s.toolValues = values
+}
+
 // GetConfig returns a UserConfig with current panel values
 func (s *SettingsPanel) GetConfig() *session.UserConfig {
 	config := &session.UserConfig{
@@ -241,8 +282,8 @@ func (s *SettingsPanel) GetConfig() *session.UserConfig {
 	}
 
 	// Default tool
-	if s.selectedTool >= 0 && s.selectedTool < len(toolValues) {
-		config.DefaultTool = toolValues[s.selectedTool]
+	if s.selectedTool >= 0 && s.selectedTool < len(s.toolValues) {
+		config.DefaultTool = s.toolValues[s.selectedTool]
 	}
 
 	// Claude settings
@@ -374,7 +415,7 @@ func (s *SettingsPanel) adjustValue(delta int) bool {
 
 	case SettingDefaultTool:
 		newVal := s.selectedTool + delta
-		if newVal >= 0 && newVal < len(toolNames) {
+		if newVal >= 0 && newVal < len(s.toolNames) {
 			s.selectedTool = newVal
 			changed = true
 		}
@@ -574,7 +615,7 @@ func (s *SettingsPanel) View() string {
 	// DEFAULT TOOL
 	content.WriteString(sectionStyle.Render("DEFAULT TOOL"))
 	content.WriteString("\n")
-	line := s.renderRadioGroup(toolNames, s.selectedTool, s.cursor == int(SettingDefaultTool))
+	line := s.renderRadioGroup(s.toolNames, s.selectedTool, s.cursor == int(SettingDefaultTool))
 	if s.cursor == int(SettingDefaultTool) {
 		line = highlightStyle.Render(line)
 	}
