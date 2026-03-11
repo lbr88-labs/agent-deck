@@ -99,11 +99,13 @@ func waitForStatusOrSkipOnAttachFailure(t *testing.T, conn *websocket.Conn, targ
 
 	deadline := time.Now().Add(8 * time.Second)
 	for time.Now().Before(deadline) {
-		_ = conn.SetReadDeadline(time.Now().Add(900 * time.Millisecond))
+		// gorilla/websocket connections cannot be reused after a read timeout, so
+		// use the overall deadline directly instead of repeated short deadlines.
+		_ = conn.SetReadDeadline(deadline)
 		msgType, payload, err := conn.ReadMessage()
 		if err != nil {
 			if isTimeout(err) {
-				continue
+				break
 			}
 			t.Fatalf("failed to read websocket message: %v", err)
 		}
@@ -134,11 +136,13 @@ func readBinaryUntilContains(conn *websocket.Conn, marker string, timeout time.D
 	combined := make([]byte, 0, 8192)
 
 	for time.Now().Before(deadline) {
-		_ = conn.SetReadDeadline(time.Now().Add(900 * time.Millisecond))
+		// gorilla/websocket connections cannot be reused after a read timeout, so
+		// use the overall deadline directly instead of repeated short deadlines.
+		_ = conn.SetReadDeadline(deadline)
 		msgType, payload, err := conn.ReadMessage()
 		if err != nil {
 			if isTimeout(err) {
-				continue
+				break
 			}
 			return string(combined), err
 		}
