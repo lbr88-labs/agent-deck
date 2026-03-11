@@ -5914,69 +5914,50 @@ func (h *Home) createSessionInGroupWithWorktreeAndOptions(
 		if multiRepoEnabled && len(additionalPaths) > 0 {
 			inst.MultiRepoEnabled = true
 			inst.AdditionalPaths = additionalPaths
-			// Create temp working directory (resolve symlinks for consistent path comparison on macOS)
-			tempDir := filepath.Join(os.TempDir(), "agent-deck-sessions", inst.ID)
-			if mkErr := os.MkdirAll(tempDir, 0755); mkErr != nil {
-				return sessionCreatedMsg{err: fmt.Errorf("failed to create multi-repo temp dir: %w", mkErr)}
-			}
-			if resolved, evalErr := filepath.EvalSymlinks(tempDir); evalErr == nil {
-				tempDir = resolved
-			}
-			inst.MultiRepoTempDir = tempDir
-			// Update tmux session working directory to temp dir
-			if inst.GetTmuxSession() != nil {
-				inst.GetTmuxSession().WorkDir = tempDir
-			}
+			allPaths := inst.AllProjectPaths()
 
-			// For non-Claude agents, create symlinks in temp dir so they can access repos from cwd
-			if !session.IsClaudeCompatible(tool) {
-				allPaths := inst.AllProjectPaths()
-				dirnames := session.DeduplicateDirnames(allPaths)
-				for i, p := range allPaths {
-					_ = os.Symlink(p, filepath.Join(tempDir, dirnames[i]))
-				}
-			}
-
-			// Multi-repo worktree: create per-repo worktrees when worktree is also enabled
 			if worktreeBranch != "" {
-				allPaths := inst.AllProjectPaths()
-				wtSettings := session.GetWorktreeSettings()
+				// Multi-repo + worktree: create a persistent parent dir with all worktrees inside.
+				// Layout: ~/.agent-deck/multi-repo-worktrees/<branch>-<id>/<repo-name>/
+				home, _ := os.UserHomeDir()
+				sanitizedBranch := strings.ReplaceAll(worktreeBranch, "/", "-")
+				sanitizedBranch = strings.ReplaceAll(sanitizedBranch, " ", "-")
+				parentDir := filepath.Join(home, ".agent-deck", "multi-repo-worktrees",
+					fmt.Sprintf("%s-%s", sanitizedBranch, inst.ID[:8]))
+				if mkErr := os.MkdirAll(parentDir, 0o755); mkErr != nil {
+					return sessionCreatedMsg{err: fmt.Errorf("failed to create multi-repo worktree dir: %w", mkErr)}
+				}
+				if resolved, evalErr := filepath.EvalSymlinks(parentDir); evalErr == nil {
+					parentDir = resolved
+				}
+				inst.MultiRepoTempDir = parentDir
+
+				// Create worktrees inside parentDir, named after each repo
+				dirnames := session.DeduplicateDirnames(allPaths)
 				var newProjectPath string
 				var newAdditionalPaths []string
 				for i, p := range allPaths {
+					wtPath := filepath.Join(parentDir, dirnames[i])
 					if git.IsGitRepo(p) {
 						repoRoot, rootErr := git.GetWorktreeBaseRoot(p)
 						if rootErr != nil {
 							uiLog.Warn("multi_repo_worktree_skip", slog.String("path", p), slog.String("error", rootErr.Error()))
+							// Copy path as-is into the parent dir via symlink
+							_ = os.Symlink(p, wtPath)
 							if i == 0 {
-								newProjectPath = p
+								newProjectPath = wtPath
 							} else {
-								newAdditionalPaths = append(newAdditionalPaths, p)
-							}
-							continue
-						}
-						wtPath := git.WorktreePath(git.WorktreePathOptions{
-							Branch:    worktreeBranch,
-							Location:  wtSettings.DefaultLocation,
-							RepoDir:   repoRoot,
-							SessionID: git.GeneratePathID(),
-							Template:  wtSettings.Template(),
-						})
-						if err := os.MkdirAll(filepath.Dir(wtPath), 0o755); err != nil {
-							uiLog.Warn("multi_repo_worktree_mkdir_fail", slog.String("error", err.Error()))
-							if i == 0 {
-								newProjectPath = p
-							} else {
-								newAdditionalPaths = append(newAdditionalPaths, p)
+								newAdditionalPaths = append(newAdditionalPaths, wtPath)
 							}
 							continue
 						}
 						if err := git.CreateWorktree(repoRoot, wtPath, worktreeBranch); err != nil {
 							uiLog.Warn("multi_repo_worktree_create_fail", slog.String("path", p), slog.String("error", err.Error()))
+							_ = os.Symlink(p, wtPath)
 							if i == 0 {
-								newProjectPath = p
+								newProjectPath = wtPath
 							} else {
-								newAdditionalPaths = append(newAdditionalPaths, p)
+								newAdditionalPaths = append(newAdditionalPaths, wtPath)
 							}
 							continue
 						}
@@ -5992,16 +5973,49 @@ func (h *Home) createSessionInGroupWithWorktreeAndOptions(
 							newAdditionalPaths = append(newAdditionalPaths, wtPath)
 						}
 					} else {
-						// Non-git paths used as-is
+						// Non-git paths: symlink into parent dir
+						_ = os.Symlink(p, wtPath)
 						if i == 0 {
-							newProjectPath = p
+							newProjectPath = wtPath
 						} else {
-							newAdditionalPaths = append(newAdditionalPaths, p)
+							newAdditionalPaths = append(newAdditionalPaths, wtPath)
 						}
 					}
 				}
 				inst.ProjectPath = newProjectPath
 				inst.AdditionalPaths = newAdditionalPaths
+			} else {
+				// Multi-repo without worktree: create a persistent parent dir with symlinks.
+				home, _ := os.UserHomeDir()
+				parentDir := filepath.Join(home, ".agent-deck", "multi-repo-worktrees", inst.ID[:8])
+				if mkErr := os.MkdirAll(parentDir, 0o755); mkErr != nil {
+					return sessionCreatedMsg{err: fmt.Errorf("failed to create multi-repo dir: %w", mkErr)}
+				}
+				if resolved, evalErr := filepath.EvalSymlinks(parentDir); evalErr == nil {
+					parentDir = resolved
+				}
+				inst.MultiRepoTempDir = parentDir
+
+				// Create symlinks for all paths
+				dirnames := session.DeduplicateDirnames(allPaths)
+				var newProjectPath string
+				var newAdditionalPaths []string
+				for i, p := range allPaths {
+					linkPath := filepath.Join(parentDir, dirnames[i])
+					_ = os.Symlink(p, linkPath)
+					if i == 0 {
+						newProjectPath = linkPath
+					} else {
+						newAdditionalPaths = append(newAdditionalPaths, linkPath)
+					}
+				}
+				inst.ProjectPath = newProjectPath
+				inst.AdditionalPaths = newAdditionalPaths
+			}
+
+			// Update tmux session working directory to the parent dir
+			if inst.GetTmuxSession() != nil {
+				inst.GetTmuxSession().WorkDir = inst.MultiRepoTempDir
 			}
 		}
 
@@ -6238,25 +6252,35 @@ func (h *Home) forkSessionCmdWithOptions(
 			if len(source.MultiRepoWorktrees) > 0 {
 				inst.MultiRepoWorktrees = append([]session.MultiRepoWorktree{}, source.MultiRepoWorktrees...)
 			}
-			tempDir := filepath.Join(os.TempDir(), "agent-deck-sessions", inst.ID)
-			if mkErr := os.MkdirAll(tempDir, 0755); mkErr != nil {
-				return sessionForkedMsg{err: fmt.Errorf("failed to create multi-repo temp dir: %w", mkErr), sourceID: sourceID}
+			// Create a new persistent dir for the fork with symlinks to shared worktrees
+			home, _ := os.UserHomeDir()
+			parentDir := filepath.Join(home, ".agent-deck", "multi-repo-worktrees", inst.ID[:8])
+			if mkErr := os.MkdirAll(parentDir, 0o755); mkErr != nil {
+				return sessionForkedMsg{err: fmt.Errorf("failed to create multi-repo dir: %w", mkErr), sourceID: sourceID}
 			}
-			if resolved, evalErr := filepath.EvalSymlinks(tempDir); evalErr == nil {
-				tempDir = resolved
+			if resolved, evalErr := filepath.EvalSymlinks(parentDir); evalErr == nil {
+				parentDir = resolved
 			}
-			inst.MultiRepoTempDir = tempDir
+			inst.MultiRepoTempDir = parentDir
 			if inst.GetTmuxSession() != nil {
-				inst.GetTmuxSession().WorkDir = tempDir
+				inst.GetTmuxSession().WorkDir = parentDir
 			}
-			// Recreate symlinks for non-Claude agents
-			if !session.IsClaudeCompatible(inst.Tool) {
-				allPaths := inst.AllProjectPaths()
-				dirnames := session.DeduplicateDirnames(allPaths)
-				for i, p := range allPaths {
-					_ = os.Symlink(p, filepath.Join(tempDir, dirnames[i]))
+			// Recreate symlinks/entries in new parent dir pointing to source worktree paths
+			allPaths := inst.AllProjectPaths()
+			dirnames := session.DeduplicateDirnames(allPaths)
+			var newProjectPath string
+			var newAdditionalPaths []string
+			for i, p := range allPaths {
+				linkPath := filepath.Join(parentDir, dirnames[i])
+				_ = os.Symlink(p, linkPath)
+				if i == 0 {
+					newProjectPath = linkPath
+				} else {
+					newAdditionalPaths = append(newAdditionalPaths, linkPath)
 				}
 			}
+			inst.ProjectPath = newProjectPath
+			inst.AdditionalPaths = newAdditionalPaths
 		}
 
 		if err := inst.Start(); err != nil {
