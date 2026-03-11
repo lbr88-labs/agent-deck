@@ -95,7 +95,7 @@ func (s *Session) themedStatusRight(themeStyle tmuxThemeStyle) string {
 	if folderName == "" || folderName == "." {
 		folderName = "~"
 	}
-	return fmt.Sprintf("#[fg=%s]ctrl+q detach#[default] │ 📁 %s | %s ", themeStyle.hintColor, s.DisplayName, folderName)
+	return fmt.Sprintf("#[fg=%s]ctrl+q/click detach#[default] │ 📁 %s | %s ", themeStyle.hintColor, s.DisplayName, folderName)
 }
 
 // ErrCaptureTimeout is returned when CapturePane exceeds its timeout.
@@ -3890,6 +3890,19 @@ func UnbindKey(key string) error {
 	// bind-key 1 select-window -t :1
 	_ = exec.Command("tmux", "bind-key", key, "select-window", "-t", ":"+key).Run()
 	return nil
+}
+
+// BindMouseStatusRightDetach binds a mouse click on the status-right area to detach.
+// Only fires inside agentdeck sessions (guards against detaching the user's outer tmux).
+func BindMouseStatusRightDetach() error {
+	// Guard: only detach if current session is an agentdeck-managed session
+	script := `S=$(tmux display-message -p '#{session_name}'); case "$S" in agentdeck_*) tmux detach-client ;; esac`
+	return exec.Command("tmux", "bind", "-n", "MouseDown1StatusRight", "run-shell", script).Run()
+}
+
+// UnbindMouseStatusClicks removes mouse click bindings from the status bar.
+func UnbindMouseStatusClicks() {
+	_ = exec.Command("tmux", "unbind", "-n", "MouseDown1StatusRight").Run()
 }
 
 // GetActiveSession returns the session name the user is currently attached to.
