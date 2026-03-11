@@ -1809,6 +1809,14 @@ func (i *Instance) Start() error {
 		sessionLog.Warn("set_instance_id_failed", slog.String("error", err.Error()))
 	}
 
+	// Propagate COLORFGBG into the tmux session environment so that any new
+	// shell or process spawned inside the session inherits the correct
+	// light/dark hint. The command prefix already exports it for the initial
+	// process, but set-environment covers subsequent shells/windows.
+	if colorfgbg := ThemeColorFGBG(); colorfgbg != "" {
+		_ = i.tmuxSession.SetEnvironment("COLORFGBG", colorfgbg)
+	}
+
 	// Capture MCPs that are now loaded (for sync tracking)
 	i.CaptureLoadedMCPs()
 
@@ -1895,6 +1903,13 @@ func (i *Instance) StartWithMessage(message string) error {
 	// This enables real-time status updates via Stop/SessionStart hooks
 	if err := i.tmuxSession.SetEnvironment("AGENTDECK_INSTANCE_ID", i.ID); err != nil {
 		sessionLog.Warn("set_instance_id_failed", slog.String("error", err.Error()))
+	}
+
+	// Propagate COLORFGBG into the tmux session environment so that any new
+	// shell or process spawned inside the session inherits the correct
+	// light/dark hint.
+	if colorfgbg := ThemeColorFGBG(); colorfgbg != "" {
+		_ = i.tmuxSession.SetEnvironment("COLORFGBG", colorfgbg)
 	}
 
 	// Capture MCPs that are now loaded (for sync tracking)

@@ -1465,6 +1465,27 @@ func (h *Home) startThemeWatcher() tea.Cmd {
 	return listenForThemeChange(h.themeWatcher)
 }
 
+// propagateThemeToSessions updates COLORFGBG in all running tmux sessions
+// so that terminal-aware tools pick up the new light/dark setting.
+func (h *Home) propagateThemeToSessions() {
+	colorfgbg := session.ThemeColorFGBG()
+	if colorfgbg == "" {
+		return
+	}
+	h.instancesMu.RLock()
+	instances := make([]*session.Instance, len(h.instances))
+	copy(instances, h.instances)
+	h.instancesMu.RUnlock()
+
+	go func() {
+		for _, inst := range instances {
+			if tmuxSess := inst.GetTmuxSession(); tmuxSess != nil && tmuxSess.Exists() {
+				_ = tmuxSess.SetEnvironment("COLORFGBG", colorfgbg)
+			}
+		}
+	}()
+}
+
 // fetchRemoteSessions fetches sessions from all configured remotes.
 func (h *Home) fetchRemoteSessions() tea.Msg {
 	config, err := session.LoadUserConfig()
@@ -3262,6 +3283,7 @@ func (h *Home) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			theme = "dark"
 		}
 		InitTheme(theme)
+		h.propagateThemeToSessions()
 		// IMPORTANT: Re-issue listener to keep watching for theme changes.
 		// Without this, the watcher silently disconnects.
 		return h, tea.Batch(listenForThemeChange(h.themeWatcher), tea.ClearScreen)
@@ -3804,6 +3826,7 @@ func (h *Home) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				h.stopThemeWatcher()
 				resolvedTheme := session.ResolveTheme()
 				InitTheme(resolvedTheme)
+				h.propagateThemeToSessions()
 				var themeCmd tea.Cmd
 				if config.Theme == "system" {
 					themeCmd = h.startThemeWatcher()

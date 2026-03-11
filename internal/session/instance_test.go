@@ -402,11 +402,12 @@ func TestBuildClaudeCommand(t *testing.T) {
 	// Note: --dangerously-skip-permissions is conditional on user config (dangerous_mode)
 	// The command should work with or without it depending on config
 
-	// Test with non-claude tool (should not modify)
+	// Test with non-claude tool (inner command should not be modified,
+	// though env prefix like COLORFGBG may be prepended by buildEnvSourceCommand)
 	shellInst := NewInstance("shell-test", "/tmp/test")
 	shellCmd := shellInst.buildClaudeCommand("bash")
-	if shellCmd != "bash" {
-		t.Errorf("Non-claude command should not be modified, got: %s", shellCmd)
+	if !strings.HasSuffix(shellCmd, "bash") {
+		t.Errorf("Non-claude command should end with 'bash', got: %s", shellCmd)
 	}
 }
 

@@ -229,6 +229,168 @@ func TestGetToolInlineEnv(t *testing.T) {
 	}
 }
 
+func TestThemeEnvExport(t *testing.T) {
+	// Save and restore original config cache + COLORFGBG env var
+	userConfigCacheMu.Lock()
+	origCache := userConfigCache
+	userConfigCacheMu.Unlock()
+	defer func() {
+		userConfigCacheMu.Lock()
+		userConfigCache = origCache
+		userConfigCacheMu.Unlock()
+	}()
+
+	tests := []struct {
+		name         string
+		theme        string
+		envCOLORFGBG string // parent terminal value (empty = unset)
+		wantContains string
+	}{
+		{
+			name:         "dark theme without parent env",
+			theme:        "dark",
+			envCOLORFGBG: "",
+			wantContains: "export COLORFGBG='15;0'",
+		},
+		{
+			name:         "light theme without parent env",
+			theme:        "light",
+			envCOLORFGBG: "",
+			wantContains: "export COLORFGBG='0;15'",
+		},
+		{
+			name:         "dark theme with matching parent env",
+			theme:        "dark",
+			envCOLORFGBG: "7;0",
+			wantContains: "export COLORFGBG='7;0'", // propagate parent's exact value
+		},
+		{
+			name:         "light theme with matching parent env",
+			theme:        "light",
+			envCOLORFGBG: "0;15",
+			wantContains: "export COLORFGBG='0;15'", // propagate parent's exact value
+		},
+		{
+			name:         "dark theme with mismatched parent env (parent says light)",
+			theme:        "dark",
+			envCOLORFGBG: "0;15",
+			wantContains: "export COLORFGBG='15;0'", // override with dark value
+		},
+		{
+			name:         "light theme with mismatched parent env (parent says dark)",
+			theme:        "light",
+			envCOLORFGBG: "15;0",
+			wantContains: "export COLORFGBG='0;15'", // override with light value
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Set up theme config
+			userConfigCacheMu.Lock()
+			userConfigCache = &UserConfig{
+				Theme: tt.theme,
+				MCPs:  make(map[string]MCPDef),
+			}
+			userConfigCacheMu.Unlock()
+
+			// Set or unset COLORFGBG
+			if tt.envCOLORFGBG != "" {
+				t.Setenv("COLORFGBG", tt.envCOLORFGBG)
+			} else {
+				t.Setenv("COLORFGBG", "")
+				os.Unsetenv("COLORFGBG")
+			}
+
+			result := themeEnvExport()
+			if result != tt.wantContains {
+				t.Errorf("themeEnvExport() = %q, want %q", result, tt.wantContains)
+			}
+		})
+	}
+}
+
+func TestThemeColorFGBG(t *testing.T) {
+	// Save and restore original config cache
+	userConfigCacheMu.Lock()
+	origCache := userConfigCache
+	userConfigCacheMu.Unlock()
+	defer func() {
+		userConfigCacheMu.Lock()
+		userConfigCache = origCache
+		userConfigCacheMu.Unlock()
+	}()
+
+	tests := []struct {
+		name     string
+		theme    string
+		envVal   string
+		expected string
+	}{
+		{"dark theme", "dark", "", "15;0"},
+		{"light theme", "light", "", "0;15"},
+		{"dark with matching parent", "dark", "7;0", "7;0"},
+		{"light with matching parent", "light", "0;8", "0;8"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			userConfigCacheMu.Lock()
+			userConfigCache = &UserConfig{
+				Theme: tt.theme,
+				MCPs:  make(map[string]MCPDef),
+			}
+			userConfigCacheMu.Unlock()
+
+			if tt.envVal != "" {
+				t.Setenv("COLORFGBG", tt.envVal)
+			} else {
+				t.Setenv("COLORFGBG", "")
+				os.Unsetenv("COLORFGBG")
+			}
+
+			result := ThemeColorFGBG()
+			if result != tt.expected {
+				t.Errorf("ThemeColorFGBG() = %q, want %q", result, tt.expected)
+			}
+		})
+	}
+}
+
+func TestBuildEnvSourceCommand_IncludesTheme(t *testing.T) {
+	// Save and restore original config cache
+	userConfigCacheMu.Lock()
+	origCache := userConfigCache
+	userConfigCacheMu.Unlock()
+	defer func() {
+		userConfigCacheMu.Lock()
+		userConfigCache = origCache
+		userConfigCacheMu.Unlock()
+	}()
+
+	// Ensure no parent COLORFGBG
+	t.Setenv("COLORFGBG", "")
+	os.Unsetenv("COLORFGBG")
+
+	// Set up light theme config
+	userConfigCacheMu.Lock()
+	userConfigCache = &UserConfig{
+		Theme: "light",
+		MCPs:  make(map[string]MCPDef),
+	}
+	userConfigCacheMu.Unlock()
+
+	inst := &Instance{Tool: "codex", ProjectPath: "/tmp"}
+	result := inst.buildEnvSourceCommand()
+
+	if !strings.Contains(result, "COLORFGBG") {
+		t.Errorf("buildEnvSourceCommand() = %q, should contain COLORFGBG", result)
+	}
+	if !strings.Contains(result, "0;15") {
+		t.Errorf("buildEnvSourceCommand() = %q, should contain light theme COLORFGBG value '0;15'", result)
+	}
+}
+
 func TestShellSettings_GetIgnoreMissingEnvFiles(t *testing.T) {
 	trueBool := true
 	falseBool := false
