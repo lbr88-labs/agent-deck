@@ -343,12 +343,13 @@ func TestInstance_buildGeminiCommand_CustomCommand(t *testing.T) {
 		GeminiSessionID: "session-123",
 	}
 
-	// Custom command (not "gemini") should be returned as-is
+	// Custom command (not "gemini") should be returned with only env prefix
+	// (COLORFGBG from theme propagation may be prepended)
 	customCmd := "gemini --custom-flag --another-option"
 	result := inst.buildGeminiCommand(customCmd)
 
-	if result != customCmd {
-		t.Errorf("Custom command should be returned as-is\nGot: %s\nWant: %s", result, customCmd)
+	if !strings.HasSuffix(result, customCmd) {
+		t.Errorf("Custom command should end with the original command\nGot: %s\nWant suffix: %s", result, customCmd)
 	}
 }
 
