@@ -1,32 +1,34 @@
 ---
 gsd_state_version: 1.0
-milestone: v1.2
-milestone_name: Conductor Reliability & Learnings Cleanup
-status: archived
-stopped_at: Milestone v1.2 archived
-last_updated: "2026-03-11T12:23:16.937Z"
-last_activity: 2026-03-11 -- Milestone v1.2 archived, ready for next milestone
+milestone: v1.3
+milestone_name: Session Reliability & Resume
+status: active
+stopped_at: null
+last_updated: "2026-03-12"
+last_activity: 2026-03-12 -- Milestone v1.3 started
 progress:
-  total_phases: 10
-  completed_phases: 10
-  total_plans: 21
-  completed_plans: 21
-  percent: 100
+  total_phases: 0
+  completed_phases: 0
+  total_plans: 0
+  completed_plans: 0
+  percent: 0
 ---
 
 # Project State
 
 ## Project Reference
 
-See: .planning/PROJECT.md (updated 2026-03-11)
+See: .planning/PROJECT.md (updated 2026-03-12)
 
 **Core value:** Reliable terminal session management for AI coding agents with conductor orchestration
-**Current focus:** Planning next milestone
+**Current focus:** v1.3 Session Reliability & Resume
 
 ## Current Position
 
-Milestone v1.2 archived. All 3 milestones (v1.0, v1.1, v1.2) shipped.
-Next step: `/gsd:new-milestone` to define v1.3 or v2.0.
+Phase: Not started (defining requirements)
+Plan: —
+Status: Defining requirements
+Last activity: 2026-03-12 — Milestone v1.3 started
 
 ## Accumulated Context
 
@@ -41,9 +43,10 @@ None.
 ### Blockers/Concerns
 
 - Exit 137 is a known Claude Code limitation. Mitigated via status gating, documented in conductor CLAUDE.md.
+- #266 (tmux set-environment in Docker) blocked by #320 (sandbox persistence). Will be unblocked by Phase 1.
 
 ## Session Continuity
 
-Last session: 2026-03-11
-Stopped at: Milestone v1.2 archived
+Last session: 2026-03-12
+Stopped at: Defining requirements for v1.3
 Resume file: None
