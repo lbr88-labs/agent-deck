@@ -554,6 +554,9 @@ func (i *Instance) buildClaudeCommandWithMessage(baseCommand, message string) st
 
 		// Pre-generate UUID in Go to avoid shell uuidgen (may be absent in Docker sandbox).
 		// CLAUDE_SESSION_ID is also propagated via host-side SetEnvironment after tmux start.
+		// Use `exec` before the final claude invocation so that when this compound
+		// command is wrapped in `bash -c` (for fish compatibility), exec replaces
+		// the bash process with claude, enabling proper job control (Ctrl+Z suspend / fg resume).
 		sessionUUID := generateUUID()
 		i.ClaudeSessionID = sessionUUID
 
@@ -561,7 +564,7 @@ func (i *Instance) buildClaudeCommandWithMessage(baseCommand, message string) st
 		// Use pre-generated literal UUID with --session-id flag.
 		// CLAUDE_SESSION_ID is propagated via host-side SetEnvironment after tmux start.
 		baseCmd = fmt.Sprintf(
-			`%s%s --session-id "%s"%s`,
+			`%sexec %s --session-id "%s"%s`,
 			bashExportPrefix, claudeCmd, sessionUUID, extraFlags)
 
 		// If message provided, append wait-and-send logic in background.
@@ -569,11 +572,13 @@ func (i *Instance) buildClaudeCommandWithMessage(baseCommand, message string) st
 			// Escape single quotes in message for bash
 			escapedMsg := strings.ReplaceAll(message, "'", "'\"'\"'")
 
+			// The background subshell runs independently; exec replaces
+			// the current shell with claude for proper job control.
 			baseCmd = fmt.Sprintf(
 				`(sleep 2; SESSION_NAME=$(tmux display-message -p '#S'); `+
 					`while ! tmux capture-pane -p -t "$SESSION_NAME" | tail -5 | grep -qE "^>"; do sleep 0.2; done; `+
 					`tmux send-keys -l -t "$SESSION_NAME" -- '%s' \; send-keys -t "$SESSION_NAME" Enter) & `+
-					`%s%s --session-id "%s"%s`,
+					`%sexec %s --session-id "%s"%s`,
 				escapedMsg,
 				bashExportPrefix, claudeCmd, sessionUUID, extraFlags)
 		}
@@ -4255,11 +4260,14 @@ func (i *Instance) buildClaudeForkCommandForTarget(target *Instance, opts *Claud
 
 	// Pre-generate UUID for forked session to avoid shell uuidgen dependency.
 	// CLAUDE_SESSION_ID is propagated via host-side SetEnvironment after tmux start.
+	// Use `exec` before claude so that when this compound command is wrapped
+	// in `bash -c` (for fish compatibility), claude replaces the bash process,
+	// enabling proper job control (Ctrl+Z suspend / fg resume).
 	forkUUID := generateUUID()
 	target.ClaudeSessionID = forkUUID
 	cmd := fmt.Sprintf(
 		`cd '%s' && `+
-			`%sclaude --session-id "%s" --resume %s --fork-session%s`,
+			`%sexec claude --session-id "%s" --resume %s --fork-session%s`,
 		workDir,
 		bashExportPrefix, forkUUID, i.ClaudeSessionID, extraFlags)
 	cmd, err := i.applyWrapper(cmd)
@@ -4950,7 +4958,11 @@ func (i *Instance) prepareCommand(cmd string) (string, string, error) {
 	if err != nil {
 		return "", "", err
 	}
-	if wrapped != "" {
+	// Only disable Ctrl+Z suspend for sandboxed sessions where the command
+	// runs as the pane's initial process (no interactive shell for job control).
+	// Non-sandbox sessions use send-keys into an interactive shell, so Ctrl+Z
+	// naturally suspends the process and the user can `fg` to resume.
+	if wrapped != "" && i.IsSandboxed() {
 		wrapped = wrapIgnoreSuspend(wrapped)
 	}
 	return wrapped, containerName, nil
