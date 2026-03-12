@@ -76,6 +76,7 @@ Deferred to v1.4+. Tracked but not in current roadmap.
 | STORE-01 | Phase 11 | Pending |
 | STORE-02 | Phase 11 | Pending |
 | STORE-03 | Phase 11 | Pending |
+| UX-03 | Phase 11 | Pending |
 | VIS-01 | Phase 12 | Pending |
 | VIS-02 | Phase 12 | Pending |
 | VIS-03 | Phase 12 | Pending |
@@ -86,13 +87,19 @@ Deferred to v1.4+. Tracked but not in current roadmap.
 | PLAT-02 | Phase 14 | Pending |
 | UX-01 | Phase 15 | Pending |
 | UX-02 | Phase 15 | Pending |
-| UX-03 | Phase 15 | Pending |
 
 **Coverage:**
 - v1.3 requirements: 14 total
 - Mapped to phases: 14
-- Unmapped: 0 ✓
+- Unmapped: 0
+
+**Phase distribution:**
+- Phase 11 (Storage Foundation): STORE-01, STORE-02, STORE-03, UX-03
+- Phase 12 (Session List Correctness): VIS-01, VIS-02, VIS-03
+- Phase 13 (Resume Deduplication): DEDUP-01, DEDUP-02, DEDUP-03
+- Phase 14 (Auto-Start TTY Fix): PLAT-01, PLAT-02
+- Phase 15 (Mouse Support & Settings Polish): UX-01, UX-02
 
 ---
 *Requirements defined: 2026-03-12*
-*Last updated: 2026-03-12 after initial definition*
+*Last updated: 2026-03-12 — UX-03 moved to Phase 11 (bundled with storage, zero risk, prevents deferral)*
