@@ -211,6 +211,9 @@ func NewSandboxConfig(imageOverride string) *SandboxConfig {
 	if imageOverride != "" {
 		image = imageOverride
 	}
+	if image == "" {
+		image = docker.DefaultImage()
+	}
 	cfg := &SandboxConfig{
 		Enabled: true,
 		Image:   image,

@@ -83,6 +83,10 @@ type InstanceData struct {
 	// MCP tracking (persisted for sync status display)
 	LoadedMCPNames []string `json:"loaded_mcp_names,omitempty"`
 
+	// Sandbox support
+	Sandbox          *SandboxConfig `json:"sandbox,omitempty"`
+	SandboxContainer string         `json:"sandbox_container,omitempty"`
+
 	// SSH remote support
 	SSHHost       string `json:"ssh_host,omitempty"`
 	SSHRemotePath string `json:"ssh_remote_path,omitempty"`
@@ -258,6 +262,14 @@ func (s *Storage) SaveWithGroups(instances []*Instance, groupTree *GroupTree) er
 		if inst.tmuxSession != nil {
 			tmuxName = inst.tmuxSession.Name
 		}
+		var sandboxJSON json.RawMessage
+		if inst.Sandbox != nil {
+			data, err := json.Marshal(inst.Sandbox)
+			if err != nil {
+				return fmt.Errorf("failed to marshal sandbox for %s: %w", inst.ID, err)
+			}
+			sandboxJSON = data
+		}
 
 		toolData := statedb.MarshalToolData(
 			inst.ClaudeSessionID, inst.ClaudeDetectedAt,
@@ -267,6 +279,7 @@ func (s *Storage) SaveWithGroups(instances []*Instance, groupTree *GroupTree) er
 			inst.CodexSessionID, inst.CodexDetectedAt,
 			inst.LatestPrompt, inst.Notes, inst.LoadedMCPNames,
 			inst.ToolOptionsJSON,
+			sandboxJSON, inst.SandboxContainer,
 			inst.SSHHost, inst.SSHRemotePath,
 		)
 
@@ -408,7 +421,9 @@ func (s *Storage) LoadLite() ([]*InstanceData, []*GroupData, error) {
 			codexSID, codexAt,
 			latestPrompt, notes, loadedMCPs,
 			toolOpts,
+			sandboxJSON, sandboxContainer,
 			sshHost2, sshRemotePath2 := statedb.UnmarshalToolData(r.ToolData)
+		sandboxCfg := decodeSandboxConfig(sandboxJSON)
 
 		instances[i] = &InstanceData{
 			ID:                 r.ID,
@@ -441,6 +456,8 @@ func (s *Storage) LoadLite() ([]*InstanceData, []*GroupData, error) {
 			Notes:              notes,
 			ToolOptionsJSON:    toolOpts,
 			LoadedMCPNames:     loadedMCPs,
+			Sandbox:            sandboxCfg,
+			SandboxContainer:   sandboxContainer,
 			SSHHost:            sshHost2,
 			SSHRemotePath:      sshRemotePath2,
 		}
@@ -494,7 +511,9 @@ func (s *Storage) LoadWithGroups() ([]*Instance, []*GroupData, error) {
 			codexSID, codexAt,
 			latestPrompt, notes, loadedMCPs,
 			toolOpts,
+			sandboxJSON, sandboxContainer,
 			sshHost, sshRemotePath := statedb.UnmarshalToolData(r.ToolData)
+		sandboxCfg := decodeSandboxConfig(sandboxJSON)
 
 		data.Instances[i] = &InstanceData{
 			ID:                 r.ID,
@@ -527,6 +546,8 @@ func (s *Storage) LoadWithGroups() ([]*Instance, []*GroupData, error) {
 			Notes:              notes,
 			ToolOptionsJSON:    toolOpts,
 			LoadedMCPNames:     loadedMCPs,
+			Sandbox:            sandboxCfg,
+			SandboxContainer:   sandboxContainer,
 			SSHHost:            sshHost,
 			SSHRemotePath:      sshRemotePath,
 		}
@@ -723,6 +744,8 @@ func (s *Storage) convertToInstances(data *StorageData) ([]*Instance, []*GroupDa
 			LatestPrompt:       instData.LatestPrompt,
 			Notes:              instData.Notes,
 			LoadedMCPNames:     instData.LoadedMCPNames,
+			Sandbox:            instData.Sandbox,
+			SandboxContainer:   instData.SandboxContainer,
 			SSHHost:            instData.SSHHost,
 			SSHRemotePath:      instData.SSHRemotePath,
 			tmuxSession:        tmuxSess,
@@ -758,4 +781,16 @@ func statusToString(s Status) string {
 	default:
 		return "waiting"
 	}
+}
+
+func decodeSandboxConfig(data json.RawMessage) *SandboxConfig {
+	if len(data) == 0 {
+		return nil
+	}
+
+	var cfg SandboxConfig
+	if err := json.Unmarshal(data, &cfg); err != nil {
+		return nil
+	}
+	return &cfg
 }

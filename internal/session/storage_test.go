@@ -256,3 +256,62 @@ func TestStorageSaveWithGroups_DedupsClaudeSessionIDs(t *testing.T) {
 		t.Fatalf("db newer session ID = %q, want empty", byID["new"].ClaudeSessionID)
 	}
 }
+
+func TestStorageSaveWithGroups_PersistsSandboxConfig(t *testing.T) {
+	s := newTestStorage(t)
+
+	cpu := "2.0"
+	mem := "4g"
+	instances := []*Instance{
+		{
+			ID:               "sandboxed-1",
+			Title:            "Sandboxed Session",
+			ProjectPath:      "/tmp/sandboxed",
+			GroupPath:        "grp",
+			Command:          "claude --dangerously-skip-permissions",
+			Tool:             "claude",
+			Status:           StatusIdle,
+			CreatedAt:        time.Now(),
+			Sandbox:          &SandboxConfig{Enabled: true, Image: "ghcr.io/example/sandbox:latest", CPULimit: &cpu, MemoryLimit: &mem},
+			SandboxContainer: "agent-deck-sandbox-sandboxed-1",
+		},
+	}
+
+	if err := s.SaveWithGroups(instances, nil); err != nil {
+		t.Fatalf("SaveWithGroups failed: %v", err)
+	}
+
+	lite, _, err := s.LoadLite()
+	if err != nil {
+		t.Fatalf("LoadLite failed: %v", err)
+	}
+	if len(lite) != 1 {
+		t.Fatalf("expected 1 lite instance, got %d", len(lite))
+	}
+	if lite[0].Sandbox == nil || !lite[0].Sandbox.Enabled {
+		t.Fatal("expected sandbox config to be restored in LoadLite")
+	}
+	if lite[0].Sandbox.Image != "ghcr.io/example/sandbox:latest" {
+		t.Fatalf("sandbox image = %q, want ghcr.io/example/sandbox:latest", lite[0].Sandbox.Image)
+	}
+	if lite[0].SandboxContainer != "agent-deck-sandbox-sandboxed-1" {
+		t.Fatalf("sandbox container = %q, want agent-deck-sandbox-sandboxed-1", lite[0].SandboxContainer)
+	}
+
+	loaded, _, err := s.LoadWithGroups()
+	if err != nil {
+		t.Fatalf("LoadWithGroups failed: %v", err)
+	}
+	if len(loaded) != 1 {
+		t.Fatalf("expected 1 loaded instance, got %d", len(loaded))
+	}
+	if !loaded[0].IsSandboxed() {
+		t.Fatal("expected loaded instance to remain sandboxed after SQLite round-trip")
+	}
+	if loaded[0].Sandbox == nil || loaded[0].Sandbox.Image != "ghcr.io/example/sandbox:latest" {
+		t.Fatalf("loaded sandbox image = %#v", loaded[0].Sandbox)
+	}
+	if loaded[0].SandboxContainer != "agent-deck-sandbox-sandboxed-1" {
+		t.Fatalf("loaded sandbox container = %q, want agent-deck-sandbox-sandboxed-1", loaded[0].SandboxContainer)
+	}
+}

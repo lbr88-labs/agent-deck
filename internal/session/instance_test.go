@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/asheshgoplani/agent-deck/internal/docker"
 	"github.com/stretchr/testify/require"
 )
 
@@ -2216,6 +2217,8 @@ func TestNewSandboxConfig(t *testing.T) {
 			require.Equal(t, tc.wantEnabled, cfg.Enabled)
 			if tc.imageOverride != "" {
 				require.Equal(t, tc.imageOverride, cfg.Image)
+			} else {
+				require.Equal(t, docker.DefaultImage(), cfg.Image)
 			}
 		})
 	}
