@@ -7,11 +7,13 @@
 
 Requirements for v1.3 Session Reliability & Resume. Each maps to roadmap phases.
 
-### Storage Persistence
+Rescoped 2026-03-12: removed completed items (#320, #318), added critical new issues (#324, #322), promoted items from future (#225, #266, #255, #216).
 
-- [ ] **STORE-01**: Sandbox config (Docker image, limits, auto_cleanup) survives save/reload/restart cycle without data loss (#320)
-- [ ] **STORE-02**: MarshalToolData refactored to accept struct parameter so compiler catches missing fields on future additions
-- [ ] **STORE-03**: Round-trip integration test verifies sandbox config persists through a fresh Storage instance (not same in-memory instance)
+### MCP Proxy Reliability
+
+- [ ] **MCP-01**: MCP socket proxy assigns unique request IDs per proxy instance to prevent collisions when multiple sessions share the same proxy (#324)
+- [ ] **MCP-02**: Request/response correlation uses session-scoped ID mapping so responses route to the correct caller (#324)
+- [ ] **MCP-03**: Integration test verifies two concurrent sessions issuing tool calls through a shared proxy receive correct responses without cross-talk
 
 ### Session Visibility
 
@@ -30,11 +32,32 @@ Requirements for v1.3 Session Reliability & Resume. Each maps to roadmap phases.
 - [ ] **PLAT-01**: Auto-start (agent-deck session start) works from non-interactive contexts on WSL/Linux; tool processes receive a PTY (#311)
 - [ ] **PLAT-02**: Resume after auto-start uses correct tool conversation ID (not agent-deck internal UUID) (#311)
 
+### Detection & Sandbox
+
+- [ ] **DET-01**: tmux set-environment works correctly inside Docker sandbox sessions now that sandbox config persistence is fixed (#266)
+- [ ] **DET-02**: OpenCode waiting status detection triggers correctly when OpenCode presents the question tool prompt (#255)
+
 ### UX Polish
 
 - [ ] **UX-01**: Mouse wheel scroll works in session list and other scrollable areas (settings, search, dialogs) (#262, #254)
-- [ ] **UX-02**: Settings panel shows custom tool icons from ToolDef in the default tool radio group (#318)
+- [ ] **UX-02**: Light theme renders correctly in Codex preview and live session views; no dark background bleed-through (#322)
 - [ ] **UX-03**: auto_cleanup option documented in README sandbox section with explanation of what gets cleaned and when (#228)
+- [ ] **UX-04**: Redundant heartbeat mechanisms consolidated into a single mechanism (systemd timer vs bridge.py heartbeat_loop) (#225)
+- [ ] **UX-05**: Existing git worktrees are detected and reused instead of creating new ones when a worktree for the target branch already exists (#216)
+
+### Comprehensive Testing
+
+- [ ] **TEST-01**: Integration tests cover all v1.3 fixes with regression assertions
+- [ ] **TEST-02**: MCP proxy concurrent session test passes under race detector
+- [ ] **TEST-03**: Session lifecycle test covers stopped/resumed/error transitions end-to-end
+- [ ] **TEST-04**: Light theme rendering test validates no hardcoded dark-only color values in preview/session views
+
+## Completed (v1.3 scope, already shipped)
+
+- [x] **~~STORE-01~~**: Sandbox config persistence (#320) — closed 2026-03-12
+- [x] **~~STORE-02~~**: MarshalToolData struct refactor (#320) — closed 2026-03-12
+- [x] **~~STORE-03~~**: Round-trip integration test for sandbox config (#320) — closed 2026-03-12
+- [x] **~~SET-01~~**: Settings panel custom tool icons (#318) — closed 2026-03-11
 
 ## Future Requirements
 
@@ -47,7 +70,6 @@ Deferred to v1.4+. Tracked but not in current roadmap.
 
 ### Infrastructure
 
-- **INFRA-01**: Redundant heartbeat mechanism cleanup (systemd timer vs bridge.py heartbeat_loop, #225)
 - **INFRA-02**: Custom env variables for conductor sessions (#256)
 - **INFRA-03**: Native session notification bridge without conductor (#211)
 
@@ -73,33 +95,42 @@ Deferred to v1.4+. Tracked but not in current roadmap.
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| STORE-01 | Phase 11 | Pending |
-| STORE-02 | Phase 11 | Pending |
-| STORE-03 | Phase 11 | Pending |
-| UX-03 | Phase 11 | Pending |
+| MCP-01 | Phase 11 | Pending |
+| MCP-02 | Phase 11 | Pending |
+| MCP-03 | Phase 11 | Pending |
 | VIS-01 | Phase 12 | Pending |
 | VIS-02 | Phase 12 | Pending |
 | VIS-03 | Phase 12 | Pending |
-| DEDUP-01 | Phase 13 | Pending |
-| DEDUP-02 | Phase 13 | Pending |
-| DEDUP-03 | Phase 13 | Pending |
-| PLAT-01 | Phase 14 | Pending |
-| PLAT-02 | Phase 14 | Pending |
+| DEDUP-01 | Phase 12 | Pending |
+| DEDUP-02 | Phase 12 | Pending |
+| DEDUP-03 | Phase 12 | Pending |
+| PLAT-01 | Phase 13 | Pending |
+| PLAT-02 | Phase 13 | Pending |
+| DET-01 | Phase 14 | Pending |
+| DET-02 | Phase 14 | Pending |
 | UX-01 | Phase 15 | Pending |
 | UX-02 | Phase 15 | Pending |
+| UX-03 | Phase 15 | Pending |
+| UX-04 | Phase 15 | Pending |
+| UX-05 | Phase 15 | Pending |
+| TEST-01 | Phase 16 | Pending |
+| TEST-02 | Phase 16 | Pending |
+| TEST-03 | Phase 16 | Pending |
+| TEST-04 | Phase 16 | Pending |
 
 **Coverage:**
-- v1.3 requirements: 14 total
-- Mapped to phases: 14
+- v1.3 requirements: 22 total (4 completed, 18 pending)
+- Mapped to phases: 22
 - Unmapped: 0
 
 **Phase distribution:**
-- Phase 11 (Storage Foundation): STORE-01, STORE-02, STORE-03, UX-03
-- Phase 12 (Session List Correctness): VIS-01, VIS-02, VIS-03
-- Phase 13 (Resume Deduplication): DEDUP-01, DEDUP-02, DEDUP-03
-- Phase 14 (Auto-Start TTY Fix): PLAT-01, PLAT-02
-- Phase 15 (Mouse Support & Settings Polish): UX-01, UX-02
+- Phase 11 (MCP Proxy Reliability): MCP-01, MCP-02, MCP-03
+- Phase 12 (Session List & Resume UX): VIS-01, VIS-02, VIS-03, DEDUP-01, DEDUP-02, DEDUP-03
+- Phase 13 (Auto-Start & Platform): PLAT-01, PLAT-02
+- Phase 14 (Detection & Sandbox): DET-01, DET-02
+- Phase 15 (Mouse, Theme & Polish): UX-01, UX-02, UX-03, UX-04, UX-05
+- Phase 16 (Comprehensive Testing): TEST-01, TEST-02, TEST-03, TEST-04
 
 ---
 *Requirements defined: 2026-03-12*
-*Last updated: 2026-03-12 — UX-03 moved to Phase 11 (bundled with storage, zero risk, prevents deferral)*
+*Last updated: 2026-03-12 — Rescoped: removed completed #320/#318, added #324/#322/#266/#255/#225/#216, added Phase 16 testing*

@@ -5,7 +5,7 @@
 - ~~**v1.0 Skills Reorganization & Stabilization**~~ -- Phases 1-3 (shipped 2026-03-06)
 - ~~**v1.1 Integration Testing**~~ -- Phases 4-6 (shipped 2026-03-07)
 - ~~**v1.2 Conductor Reliability & Learnings Cleanup**~~ -- Phases 7-10 (shipped 2026-03-07)
-- **v1.3 Session Reliability & Resume** -- Phases 11-15 (active)
+- **v1.3 Session Reliability & Resume** -- Phases 11-16 (active, rescoped 2026-03-12)
 
 ## Phases
 
@@ -43,66 +43,88 @@ Decimal phases appear between their surrounding integers in numeric order.
 
 </details>
 
-**v1.3 Session Reliability & Resume (Phases 11-15)**
+**v1.3 Session Reliability & Resume (Phases 11-16) — rescoped 2026-03-12**
 
-- [ ] **Phase 11: Storage Foundation** - Sandbox config persists through stop/restart; MarshalToolData refactored; auto_cleanup documented
-- [ ] **Phase 12: Session List Correctness** - Stopped sessions visible and resumable in main TUI with distinct styling
-- [ ] **Phase 13: Resume Deduplication** - Resuming a stopped session reuses the existing record, no duplicates
-- [ ] **Phase 14: Auto-Start TTY Fix** - Auto-start works on WSL/Linux from non-interactive contexts with correct conversation ID
-- [ ] **Phase 15: Mouse Support & Settings Polish** - Mouse wheel scroll and custom tool icons in settings panel
+Original scope had Phases 11-15. Rescoped after #320 and #318 closed, and new critical issues (#324, #322) emerged. Added #266 (unblocked by #320), #255, #225, #216 from backlog. Added Phase 16 for comprehensive testing.
+
+- [ ] **Phase 11: MCP Proxy Reliability** - Fix request ID collisions in shared MCP socket proxy (#324)
+- [ ] **Phase 12: Session List & Resume UX** - Stopped sessions visible with distinct styling; resume deduplication (#307, #224)
+- [ ] **Phase 13: Auto-Start & Platform** - WSL/Linux TTY fix for non-interactive auto-start (#311)
+- [ ] **Phase 14: Detection & Sandbox** - Docker tmux set-environment fix (#266); OpenCode waiting status (#255)
+- [ ] **Phase 15: Mouse, Theme & Polish** - Mouse scroll, light theme fix, docs, heartbeat cleanup, worktree reuse (#262, #254, #322, #228, #225, #216)
+- [ ] **Phase 16: Comprehensive Testing** - Integration tests for all v1.3 fixes, regression suite
 
 ## Phase Details
 
-### Phase 11: Storage Foundation
-**Goal:** Sandbox config survives the full stop/restart/reload cycle without data loss, and the serialization contract is compiler-enforced
-**Depends on:** Nothing (first phase of v1.3)
-**Requirements:** STORE-01, STORE-02, STORE-03, UX-03
+### Phase 11: MCP Proxy Reliability
+**Goal:** Multiple sessions sharing an MCP socket proxy can issue concurrent tool calls without request ID collisions or response cross-talk
+**Depends on:** Nothing (first phase of rescoped v1.3; critical production issue)
+**Requirements:** MCP-01, MCP-02, MCP-03
+**Issues:** #324
 **Success Criteria** (what must be TRUE):
-  1. User configures a Docker sandbox session, stops it, and restarts it; the container image, limits, and auto_cleanup setting are preserved exactly as set
-  2. A developer adding a new field to toolDataBlob gets a compile error if MarshalToolData is not updated, rather than silent data loss at runtime
-  3. A round-trip integration test against a fresh Storage instance (not the in-memory instance that saved) passes green
-  4. The README sandbox section documents the auto_cleanup option with a clear explanation of what gets cleaned and when
+  1. Two sessions sharing a proxy instance can issue concurrent tool calls and each receives only its own responses
+  2. Request IDs are unique per proxy instance (not per session), eliminating collisions
+  3. Response routing uses session-scoped ID mapping so a response never reaches the wrong caller
+  4. An integration test under the race detector verifies concurrent tool calls through a shared proxy
 **Plans:** TBD
 
-### Phase 12: Session List Correctness
-**Goal:** Users can see, identify, and take action on stopped sessions directly from the main TUI session list
+### Phase 12: Session List & Resume UX
+**Goal:** Users can see, identify, and resume stopped sessions directly from the main TUI without creating duplicate records
 **Depends on:** Phase 11
-**Requirements:** VIS-01, VIS-02, VIS-03
+**Requirements:** VIS-01, VIS-02, VIS-03, DEDUP-01, DEDUP-02, DEDUP-03
+**Issues:** #307, #224
 **Success Criteria** (what must be TRUE):
-  1. A stopped session appears in the main TUI session list rather than being hidden or silently excluded
-  2. A stopped session and an error session are visually distinguishable in the list (distinct styling)
-  3. The preview pane for a stopped session shows user-intentional stop context with a resume affordance; the preview pane for an error session shows crash context with different guidance
-  4. The conductor session picker dialog excludes stopped sessions from its list (correct filtering preserved), while the main list continues to show them
+  1. A stopped session appears in the main TUI session list with distinct styling from error sessions
+  2. The preview pane for a stopped session shows user-intentional stop context with a resume affordance; error sessions show crash context with different guidance
+  3. The conductor session picker excludes stopped sessions (correct filtering preserved)
+  4. Resuming a stopped session reuses the existing record (one entry, not two)
+  5. UpdateClaudeSessionsWithDedup runs immediately in memory at the resume call site
+  6. A concurrent-write integration test covering two Storage instances against the same SQLite file passes green
 **Plans:** TBD
 
-### Phase 13: Resume Deduplication
-**Goal:** Resuming a stopped session produces exactly one session record, not two; concurrent writes between Storage instances are safe
+### Phase 13: Auto-Start & Platform
+**Goal:** Users on WSL/Linux can run agent-deck session start from non-interactive contexts and tool processes receive a working PTY
 **Depends on:** Phase 12
-**Requirements:** DEDUP-01, DEDUP-02, DEDUP-03
-**Success Criteria** (what must be TRUE):
-  1. User resumes a stopped session and sees one entry in the session list, not two; the original record is reused rather than duplicated
-  2. Conductor session counts remain accurate after a resume (no phantom duplicate counted as an active session)
-  3. UpdateClaudeSessionsWithDedup runs immediately in memory at the resume call site, so the dedup is visible before the next persist cycle
-  4. A concurrent-write integration test covering two Storage instances against the same SQLite file passes green
-**Plans:** TBD
-
-### Phase 14: Auto-Start TTY Fix
-**Goal:** Users on WSL/Linux can run agent-deck session start from non-interactive contexts (scripts, cron, systemd) and tool processes receive a working PTY
-**Depends on:** Phase 13
 **Requirements:** PLAT-01, PLAT-02
+**Issues:** #311
 **Success Criteria** (what must be TRUE):
   1. Running agent-deck session start from a non-interactive shell on WSL/Linux starts the session without tool processes rejecting input due to a missing PTY
   2. After auto-starting and stopping a session on WSL/Linux, resuming it attaches to the correct tool conversation (identified by the tool conversation ID, not the agent-deck internal UUID)
 **Plans:** TBD
 
-### Phase 15: Mouse Support & Settings Polish
-**Goal:** Users can scroll with a mouse or trackpad in all scrollable areas, and custom tool icons appear in the settings panel
-**Depends on:** Phase 11 (independent of Phases 12-14; can be parallelized)
-**Requirements:** UX-01, UX-02
+### Phase 14: Detection & Sandbox
+**Goal:** Docker sandbox tmux environment propagation works correctly; OpenCode waiting status is detected
+**Depends on:** Phase 11 (sandbox persistence fix from #320 is prerequisite, already shipped)
+**Requirements:** DET-01, DET-02
+**Issues:** #266, #255
 **Success Criteria** (what must be TRUE):
-  1. Scrolling the mouse wheel or trackpad in the session list moves the selection up and down without requiring keyboard input
-  2. Mouse wheel scroll works in all other scrollable areas: settings panel, global search results, and dialogs
-  3. Custom tools added by the user display their configured icon in the settings panel default tool radio group, making them visually distinguishable from built-in tools
+  1. tmux set-environment inside a Docker sandbox session sets environment variables that are visible to spawned processes
+  2. OpenCode's question tool prompt triggers the "waiting" status detection, transitioning the session from "running" to "waiting"
+**Plans:** TBD
+
+### Phase 15: Mouse, Theme & Polish
+**Goal:** Mouse scroll works everywhere, light theme renders correctly, heartbeat is consolidated, worktree reuse works, docs updated
+**Depends on:** Phase 11 (independent of Phases 12-14; can be parallelized)
+**Requirements:** UX-01, UX-02, UX-03, UX-04, UX-05
+**Issues:** #262, #254, #322, #228, #225, #216
+**Success Criteria** (what must be TRUE):
+  1. Mouse wheel scroll works in session list, settings panel, global search results, and dialogs
+  2. Light theme renders correctly in Codex preview and live session views with no dark background bleed-through
+  3. The README sandbox section documents auto_cleanup with clear explanation
+  4. Redundant heartbeat mechanisms are consolidated into a single mechanism
+  5. When a git worktree already exists for a target branch, agent-deck detects and reuses it instead of creating a new one
+**Plans:** TBD
+
+### Phase 16: Comprehensive Testing
+**Goal:** All v1.3 fixes have integration tests; a regression suite prevents future breakage
+**Depends on:** Phases 11-15 (all implementation phases complete)
+**Requirements:** TEST-01, TEST-02, TEST-03, TEST-04
+**Success Criteria** (what must be TRUE):
+  1. Every fix in Phases 11-15 has at least one integration test asserting the correct behavior
+  2. MCP proxy concurrent session test passes under `go test -race`
+  3. Session lifecycle test covers the full stopped -> resumed -> running -> error transition chain
+  4. Light theme rendering test validates no hardcoded dark-only color values leak into preview or session views
+  5. All tests pass with `make test` and `make ci`
 **Plans:** TBD
 
 ## Progress
@@ -119,8 +141,9 @@ Decimal phases appear between their surrounding integers in numeric order.
 | 8. Heartbeat & CLI Fixes | v1.2 | 2/2 | Complete | 2026-03-07 |
 | 9. Process Stability | v1.2 | 2/2 | Complete | 2026-03-07 |
 | 10. Learnings Promotion | v1.2 | 2/2 | Complete | 2026-03-06 |
-| 11. Storage Foundation | v1.3 | 0/TBD | Not started | - |
-| 12. Session List Correctness | v1.3 | 0/TBD | Not started | - |
-| 13. Resume Deduplication | v1.3 | 0/TBD | Not started | - |
-| 14. Auto-Start TTY Fix | v1.3 | 0/TBD | Not started | - |
-| 15. Mouse Support & Settings Polish | v1.3 | 0/TBD | Not started | - |
+| 11. MCP Proxy Reliability | v1.3 | 0/TBD | Not started | - |
+| 12. Session List & Resume UX | v1.3 | 0/TBD | Not started | - |
+| 13. Auto-Start & Platform | v1.3 | 0/TBD | Not started | - |
+| 14. Detection & Sandbox | v1.3 | 0/TBD | Not started | - |
+| 15. Mouse, Theme & Polish | v1.3 | 0/TBD | Not started | - |
+| 16. Comprehensive Testing | v1.3 | 0/TBD | Not started | - |
