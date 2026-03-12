@@ -2716,5 +2716,106 @@ func TestInstance_SetAcknowledgedFromShared_WaitingApplied(t *testing.T) {
 	}
 }
 
+// TestUpdateStatus_ColdLoadHookFile verifies that UpdateStatus reads hook status
+// from disk when hookStatus is empty (CLI path without StatusFileWatcher).
+func TestUpdateStatus_ColdLoadHookFile(t *testing.T) {
+	tmpHome := t.TempDir()
+	t.Setenv("HOME", tmpHome)
+
+	inst := NewInstanceWithTool("cold-load-test", "/tmp/test", "claude")
+
+	// Write a hook status file to disk
+	hooksDir := GetHooksDir()
+	if err := os.MkdirAll(hooksDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	hookData := fmt.Sprintf(`{"status":"waiting","session_id":"cold-sess-1","event":"Stop","ts":%d}`, time.Now().Unix())
+	hookPath := filepath.Join(hooksDir, inst.ID+".json")
+	if err := os.WriteFile(hookPath, []byte(hookData), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Verify hookStatus starts empty
+	if inst.hookStatus != "" {
+		t.Fatalf("hookStatus should start empty, got %q", inst.hookStatus)
+	}
+
+	// Call UpdateStatus — it will fail early because tmux session doesn't exist,
+	// but the cold load fires before the tmux-exists check only if we've passed
+	// the tmuxSession nil check. Instead, verify readHookStatusFile directly.
+	hs := readHookStatusFile(inst.ID)
+	if hs == nil {
+		t.Fatal("readHookStatusFile returned nil, expected hook status from disk")
+	}
+	if hs.Status != "waiting" {
+		t.Errorf("hook status = %q, want waiting", hs.Status)
+	}
+	if hs.SessionID != "cold-sess-1" {
+		t.Errorf("hook session ID = %q, want cold-sess-1", hs.SessionID)
+	}
+}
+
+// TestUpdateStatus_ColdLoadResetsAcknowledged verifies that cold-loading a
+// "waiting" hook status resets the stale acknowledged flag from ReconnectSessionLazy.
+func TestUpdateStatus_ColdLoadResetsAcknowledged(t *testing.T) {
+	skipIfNoTmuxServer(t)
+	tmpHome := t.TempDir()
+	t.Setenv("HOME", tmpHome)
+
+	inst := NewInstanceWithTool("cold-ack-test", tmpHome, "claude")
+
+	// Create a real tmux session so UpdateStatus gets past the Exists() check
+	if err := inst.tmuxSession.Start("sleep 3600"); err != nil {
+		t.Fatalf("failed to start tmux session: %v", err)
+	}
+	defer func() { _ = inst.tmuxSession.Kill() }()
+
+	// Simulate what ReconnectSessionLazy does for previousStatus="idle"
+	inst.tmuxSession.Acknowledge()
+	if !inst.tmuxSession.IsAcknowledged() {
+		t.Fatal("precondition: acknowledged should be true after Acknowledge()")
+	}
+
+	// Write a hook status file showing "waiting"
+	hooksDir := GetHooksDir()
+	if err := os.MkdirAll(hooksDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	hookData := fmt.Sprintf(`{"status":"waiting","session_id":"sess-1","event":"Stop","ts":%d}`, time.Now().Unix())
+	if err := os.WriteFile(filepath.Join(hooksDir, inst.ID+".json"), []byte(hookData), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Wait for grace period to pass (1.5s)
+	time.Sleep(2 * time.Second)
+
+	// hookStatus is empty, so cold load should fire and reset acknowledged
+	inst.hookStatus = ""
+	_ = inst.UpdateStatus()
+
+	// After cold load with "waiting" status, acknowledged should be reset
+	if inst.tmuxSession.IsAcknowledged() {
+		t.Error("acknowledged should be false after cold-loading 'waiting' hook status")
+	}
+}
+
+// TestWriteHookSessionAnchor_InRestart verifies that WriteHookSessionAnchor
+// creates a .sid file with the correct session ID content.
+func TestWriteHookSessionAnchor_InRestart(t *testing.T) {
+	tmpHome := t.TempDir()
+	t.Setenv("HOME", tmpHome)
+
+	instanceID := "restart-sid-test"
+	sessionID := "restart-session-abc123"
+
+	WriteHookSessionAnchor(instanceID, sessionID)
+
+	got := ReadHookSessionAnchor(instanceID)
+	if got != sessionID {
+		t.Errorf("ReadHookSessionAnchor = %q, want %q", got, sessionID)
+	}
+}
+
 // Tests for hasUnsentComposerPrompt and currentComposerPrompt moved to
 // internal/send/send_test.go as part of send verification consolidation.

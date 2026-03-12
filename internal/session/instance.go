@@ -2163,6 +2163,22 @@ func (i *Instance) UpdateStatus() error {
 		i.lastKnownActivity = currentTS
 	}
 
+	// COLD LOAD: CLI doesn't run StatusFileWatcher, so hookStatus is always empty.
+	// Read the hook file from disk once to give CLI the same fast path as the TUI.
+	if i.hookStatus == "" && (IsClaudeCompatible(i.Tool) || i.Tool == "codex" || i.Tool == "gemini") {
+		if hs := readHookStatusFile(i.ID); hs != nil {
+			i.hookStatus = hs.Status
+			i.hookLastUpdate = hs.UpdatedAt
+			i.hookSessionID = hs.SessionID
+			// Reset stale acknowledged flag from ReconnectSessionLazy.
+			// Without this, sessions loaded from SQLite with previousStatus="idle"
+			// would report idle even when the hook file says waiting/running.
+			if i.tmuxSession != nil && (hs.Status == "running" || hs.Status == "waiting") {
+				i.tmuxSession.ResetAcknowledged()
+			}
+		}
+	}
+
 	// HOOK FAST PATH: hook-based status for tools that emit lifecycle events.
 	// Freshness is tool- and state-specific (e.g. Codex running vs waiting).
 	// When this path is stale/missing, control naturally falls through to tmux
@@ -3537,6 +3553,9 @@ func (i *Instance) Restart() error {
 
 		mcpLog.Debug("respawn_pane_claude_succeeded")
 
+		// Persist .sid sidecar so hook events after restart can be correlated
+		WriteHookSessionAnchor(i.ID, i.ClaudeSessionID)
+
 		// Re-capture MCPs after restart (they may have changed since session started)
 		i.CaptureLoadedMCPs()
 
@@ -3568,6 +3587,10 @@ func (i *Instance) Restart() error {
 		}
 
 		sessionLog.Info("restart_gemini_respawn_succeeded")
+
+		// Persist .sid sidecar so hook events after restart can be correlated
+		WriteHookSessionAnchor(i.ID, i.GeminiSessionID)
+
 		i.Status = StatusWaiting
 		return nil
 	}
@@ -3612,6 +3635,12 @@ func (i *Instance) Restart() error {
 		}
 
 		sessionLog.Info("restart_opencode_respawn_succeeded")
+
+		// Persist .sid sidecar so hook events after restart can be correlated
+		if i.OpenCodeSessionID != "" {
+			WriteHookSessionAnchor(i.ID, i.OpenCodeSessionID)
+		}
+
 		i.Status = StatusWaiting
 		return nil
 	}
@@ -3664,6 +3693,10 @@ func (i *Instance) Restart() error {
 		}
 
 		sessionLog.Info("restart_codex_respawn_succeeded")
+
+		// Persist .sid sidecar so hook events after restart can be correlated
+		WriteHookSessionAnchor(i.ID, i.CodexSessionID)
+
 		i.Status = StatusWaiting
 		return nil
 	}
