@@ -51,6 +51,12 @@ Rescoped 2026-03-12: removed completed items (#320, #318), added critical new is
 - [ ] **TEST-02**: MCP proxy concurrent session test passes under race detector
 - [ ] **TEST-03**: Session lifecycle test covers stopped/resumed/error transitions end-to-end
 - [ ] **TEST-04**: Light theme rendering test validates no hardcoded dark-only color values in preview/session views
+- [ ] **TEST-05**: Memory leak detection: run extended sessions (10+ min) and monitor RSS growth; flag if memory grows beyond 2x initial after GC
+- [ ] **TEST-06**: CPU usage monitoring: profile hot paths during idle polling and active sessions; CPU should be <5% when idle with 10 sessions
+- [ ] **TEST-07**: Resource cleanup verification: after session stop/delete, no orphaned tmux sessions, no leaked goroutines, no stale file handles
+- [ ] **TEST-08**: Regression test framework: every bug fix in Phases 11-15 gets a dedicated regression test that reproduces the original bug and verifies the fix
+- [ ] **TEST-09**: Cross-tool matrix: run the full test suite against Claude, Codex, Gemini, and OpenCode session types; each tool must pass status detection, send, and lifecycle tests
+- [ ] **TEST-10**: Concurrent stress test: 20+ simultaneous sessions with random operations (start, stop, send, fork); no races (go test -race), no deadlocks, no data corruption
 
 ## Completed (v1.3 scope, already shipped)
 
@@ -117,10 +123,16 @@ Deferred to v1.4+. Tracked but not in current roadmap.
 | TEST-02 | Phase 16 | Pending |
 | TEST-03 | Phase 16 | Pending |
 | TEST-04 | Phase 16 | Pending |
+| TEST-05 | Phase 16 | Pending |
+| TEST-06 | Phase 16 | Pending |
+| TEST-07 | Phase 16 | Pending |
+| TEST-08 | Phase 16 | Pending |
+| TEST-09 | Phase 16 | Pending |
+| TEST-10 | Phase 16 | Pending |
 
 **Coverage:**
-- v1.3 requirements: 22 total (4 completed, 18 pending)
-- Mapped to phases: 22
+- v1.3 requirements: 28 total (4 completed, 24 pending)
+- Mapped to phases: 28
 - Unmapped: 0
 
 **Phase distribution:**
@@ -129,7 +141,7 @@ Deferred to v1.4+. Tracked but not in current roadmap.
 - Phase 13 (Auto-Start & Platform): PLAT-01, PLAT-02
 - Phase 14 (Detection & Sandbox): DET-01, DET-02
 - Phase 15 (Mouse, Theme & Polish): UX-01, UX-02, UX-03, UX-04, UX-05
-- Phase 16 (Comprehensive Testing): TEST-01, TEST-02, TEST-03, TEST-04
+- Phase 16 (Comprehensive Testing): TEST-01, TEST-02, TEST-03, TEST-04, TEST-05, TEST-06, TEST-07, TEST-08, TEST-09, TEST-10
 
 ---
 *Requirements defined: 2026-03-12*

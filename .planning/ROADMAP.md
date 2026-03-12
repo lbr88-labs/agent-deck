@@ -116,15 +116,21 @@ Original scope had Phases 11-15. Rescoped after #320 and #318 closed, and new cr
 **Plans:** TBD
 
 ### Phase 16: Comprehensive Testing
-**Goal:** All v1.3 fixes have integration tests; a regression suite prevents future breakage
+**Goal:** Agent-deck is perfectly tested: every fix has a regression test, performance is validated, resource leaks are impossible, and all tool types are covered
 **Depends on:** Phases 11-15 (all implementation phases complete)
-**Requirements:** TEST-01, TEST-02, TEST-03, TEST-04
+**Requirements:** TEST-01, TEST-02, TEST-03, TEST-04, TEST-05, TEST-06, TEST-07, TEST-08, TEST-09, TEST-10
 **Success Criteria** (what must be TRUE):
   1. Every fix in Phases 11-15 has at least one integration test asserting the correct behavior
   2. MCP proxy concurrent session test passes under `go test -race`
   3. Session lifecycle test covers the full stopped -> resumed -> running -> error transition chain
   4. Light theme rendering test validates no hardcoded dark-only color values leak into preview or session views
-  5. All tests pass with `make test` and `make ci`
+  5. Memory leak detection: extended sessions (10+ min) show RSS stays below 2x initial after forced GC
+  6. CPU profiling: idle polling with 10 sessions uses <5% CPU; hot paths in active sessions are documented
+  7. Resource cleanup: after session stop/delete, zero orphaned tmux sessions, zero leaked goroutines, zero stale file handles
+  8. Regression framework: every bug fix in Phases 11-15 has a dedicated test that first reproduces the original failure condition, then asserts the fix
+  9. Cross-tool matrix: full test suite passes for Claude, Codex, Gemini, and OpenCode session types covering status detection, send, and lifecycle
+  10. Concurrent stress test: 20+ simultaneous sessions with randomized operations (start, stop, send, fork) pass under `go test -race` with no deadlocks or data corruption
+  11. All tests pass with `make test` and `make ci`
 **Plans:** TBD
 
 ## Progress
