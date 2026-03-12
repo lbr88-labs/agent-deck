@@ -2134,7 +2134,7 @@ func (h *Home) backgroundStatusUpdate() {
 	// Feed hook statuses from watcher to instances (enables hook fast path in UpdateStatus)
 	if h.hookWatcher != nil {
 		for _, inst := range instances {
-			if session.IsClaudeCompatible(inst.Tool) || inst.Tool == "codex" {
+			if session.IsClaudeCompatible(inst.Tool) || inst.Tool == "codex" || inst.Tool == "gemini" {
 				if hs := h.hookWatcher.GetHookStatus(inst.ID); hs != nil {
 					inst.UpdateHookStatus(hs)
 				}
@@ -3172,6 +3172,30 @@ func (h *Home) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		h.remoteSessionsMu.Unlock()
 		h.rebuildFlatItems()
 		return h, nil
+
+	case remoteSessionDeletedMsg:
+		if msg.err != nil {
+			h.setError(fmt.Errorf("failed to delete remote session: %w", msg.err))
+			return h, nil
+		}
+		h.setError(fmt.Errorf("deleted '%s' on %s", msg.title, msg.remoteName))
+		return h, h.fetchRemoteSessions
+
+	case remoteSessionClosedMsg:
+		if msg.err != nil {
+			h.setError(fmt.Errorf("failed to close remote session: %w", msg.err))
+			return h, nil
+		}
+		h.setError(fmt.Errorf("closed '%s' on %s", msg.title, msg.remoteName))
+		return h, h.fetchRemoteSessions
+
+	case remoteSessionRestartedMsg:
+		if msg.err != nil {
+			h.setError(fmt.Errorf("failed to restart remote session: %w", msg.err))
+			return h, nil
+		}
+		h.setError(fmt.Errorf("restarted '%s' on %s", msg.title, msg.remoteName))
+		return h, h.fetchRemoteSessions
 
 	case MaintenanceCompleteMsg:
 		return h, func() tea.Msg {
@@ -4878,6 +4902,8 @@ func (h *Home) handleMainKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			item := h.flatItems[h.cursor]
 			if item.Type == session.ItemTypeSession && item.Session != nil {
 				h.confirmDialog.ShowDeleteSession(item.Session.ID, item.Session.Title, item.Session.IsSandboxed())
+			} else if item.Type == session.ItemTypeRemoteSession && item.RemoteSession != nil {
+				h.confirmDialog.ShowDeleteRemoteSession(item.RemoteName, item.RemoteSession.ID, item.RemoteSession.Title)
 			} else if item.Type == session.ItemTypeGroup && item.Path != session.DefaultGroupPath {
 				h.confirmDialog.ShowDeleteGroup(item.Path, item.Group.Name)
 			}
@@ -4890,6 +4916,8 @@ func (h *Home) handleMainKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			item := h.flatItems[h.cursor]
 			if item.Type == session.ItemTypeSession && item.Session != nil {
 				h.confirmDialog.ShowCloseSession(item.Session.ID, item.Session.Title, item.Session.IsSandboxed())
+			} else if item.Type == session.ItemTypeRemoteSession && item.RemoteSession != nil {
+				h.confirmDialog.ShowCloseRemoteSession(item.RemoteName, item.RemoteSession.ID, item.RemoteSession.Title)
 			}
 		}
 		return h, nil
@@ -4931,31 +4959,55 @@ func (h *Home) handleMainKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return h, nil
 
 	case "y":
-		// Toggle Gemini YOLO mode (requires restart)
+		// Toggle YOLO mode for Gemini or Codex sessions (requires restart)
 		if h.cursor < len(h.flatItems) {
 			item := h.flatItems[h.cursor]
-			if item.Type == session.ItemTypeSession && item.Session != nil && item.Session.Tool == "gemini" {
+			if item.Type == session.ItemTypeSession && item.Session != nil {
 				inst := item.Session
-				// Determine current YOLO state
-				currentYolo := false
-				if inst.GeminiYoloMode != nil {
-					currentYolo = *inst.GeminiYoloMode
-				} else {
-					// Fall back to global config
-					userConfig, _ := session.LoadUserConfig()
-					if userConfig != nil {
-						currentYolo = userConfig.Gemini.YoloMode
+				toggled := false
+
+				switch inst.Tool {
+				case "gemini":
+					currentYolo := false
+					if inst.GeminiYoloMode != nil {
+						currentYolo = *inst.GeminiYoloMode
+					} else {
+						userConfig, _ := session.LoadUserConfig()
+						if userConfig != nil {
+							currentYolo = userConfig.Gemini.YoloMode
+						}
 					}
+					newYolo := !currentYolo
+					inst.GeminiYoloMode = &newYolo
+					toggled = true
+
+				case "codex":
+					currentYolo := false
+					opts := inst.GetCodexOptions()
+					if opts != nil && opts.YoloMode != nil {
+						currentYolo = *opts.YoloMode
+					} else {
+						userConfig, _ := session.LoadUserConfig()
+						if userConfig != nil {
+							currentYolo = userConfig.Codex.YoloMode
+						}
+					}
+					newYolo := !currentYolo
+					if opts == nil {
+						opts = &session.CodexOptions{}
+					}
+					opts.YoloMode = &newYolo
+					_ = inst.SetCodexOptions(opts)
+					toggled = true
 				}
-				// Toggle: set per-session override to opposite of current
-				newYolo := !currentYolo
-				inst.GeminiYoloMode = &newYolo
-				h.saveInstances()
-				// If session is running, it needs restart to apply
-				if inst.GetStatusThreadSafe() == session.StatusRunning ||
-					inst.GetStatusThreadSafe() == session.StatusWaiting {
-					h.resumingSessions[inst.ID] = time.Now()
-					return h, h.restartSession(inst)
+
+				if toggled {
+					h.saveInstances()
+					if inst.GetStatusThreadSafe() == session.StatusRunning ||
+						inst.GetStatusThreadSafe() == session.StatusWaiting {
+						h.resumingSessions[inst.ID] = time.Now()
+						return h, h.restartSession(inst)
+					}
 				}
 			}
 		}
@@ -4976,6 +5028,8 @@ func (h *Home) handleMainKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 					h.resumingSessions[item.Session.ID] = time.Now()
 					return h, h.restartSession(item.Session)
 				}
+			} else if item.Type == session.ItemTypeRemoteSession && item.RemoteSession != nil {
+				return h, h.restartRemoteSession(item.RemoteName, item.RemoteSession.ID, item.RemoteSession.Title)
 			}
 		}
 		return h, nil
@@ -5007,6 +5061,9 @@ func (h *Home) handleMainKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return h, nil
 
 	case "e":
+		if config, _ := session.LoadUserConfig(); config != nil && !config.GetShowNotes() {
+			return h, nil
+		}
 		if h.getLayoutMode() == LayoutModeSingle {
 			h.setError(fmt.Errorf("notes editor is unavailable in single-column layout"))
 			return h, nil
@@ -5227,6 +5284,18 @@ func (h *Home) handleConfirmDialogKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				h.instancesMu.Unlock()
 				h.rebuildFlatItems()
 				h.saveInstances()
+			case ConfirmDeleteRemoteSession:
+				sessionID := h.confirmDialog.GetTargetID()
+				remoteName := h.confirmDialog.GetRemoteName()
+				title := h.confirmDialog.targetName
+				h.confirmDialog.Hide()
+				return h, h.deleteRemoteSession(remoteName, sessionID, title)
+			case ConfirmCloseRemoteSession:
+				sessionID := h.confirmDialog.GetTargetID()
+				remoteName := h.confirmDialog.GetRemoteName()
+				title := h.confirmDialog.targetName
+				h.confirmDialog.Hide()
+				return h, h.closeRemoteSession(remoteName, sessionID, title)
 			}
 			h.confirmDialog.Hide()
 			return h, nil
@@ -6400,6 +6469,114 @@ func (h *Home) restartSession(inst *session.Instance) tea.Cmd {
 	}
 }
 
+type remoteSessionDeletedMsg struct {
+	remoteName string
+	sessionID  string
+	title      string
+	err        error
+}
+
+type remoteSessionClosedMsg struct {
+	remoteName string
+	sessionID  string
+	title      string
+	err        error
+}
+
+type remoteSessionRestartedMsg struct {
+	remoteName string
+	sessionID  string
+	title      string
+	err        error
+}
+
+// deleteRemoteSession deletes a remote session and refreshes the remote list.
+func (h *Home) deleteRemoteSession(remoteName, sessionID, title string) tea.Cmd {
+	return func() tea.Msg {
+		config, err := session.LoadUserConfig()
+		if err != nil || config == nil || config.Remotes == nil {
+			return remoteSessionDeletedMsg{
+				remoteName: remoteName,
+				sessionID:  sessionID,
+				title:      title,
+				err:        fmt.Errorf("failed to load remote config"),
+			}
+		}
+		rc, ok := config.Remotes[remoteName]
+		if !ok {
+			return remoteSessionDeletedMsg{
+				remoteName: remoteName,
+				sessionID:  sessionID,
+				title:      title,
+				err:        fmt.Errorf("remote '%s' not found", remoteName),
+			}
+		}
+		runner := session.NewSSHRunner(remoteName, rc)
+		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		defer cancel()
+		err = runner.DeleteSession(ctx, sessionID)
+		return remoteSessionDeletedMsg{remoteName: remoteName, sessionID: sessionID, title: title, err: err}
+	}
+}
+
+// closeRemoteSession stops a remote session process without deleting metadata.
+func (h *Home) closeRemoteSession(remoteName, sessionID, title string) tea.Cmd {
+	return func() tea.Msg {
+		config, err := session.LoadUserConfig()
+		if err != nil || config == nil || config.Remotes == nil {
+			return remoteSessionClosedMsg{
+				remoteName: remoteName,
+				sessionID:  sessionID,
+				title:      title,
+				err:        fmt.Errorf("failed to load remote config"),
+			}
+		}
+		rc, ok := config.Remotes[remoteName]
+		if !ok {
+			return remoteSessionClosedMsg{
+				remoteName: remoteName,
+				sessionID:  sessionID,
+				title:      title,
+				err:        fmt.Errorf("remote '%s' not found", remoteName),
+			}
+		}
+		runner := session.NewSSHRunner(remoteName, rc)
+		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		defer cancel()
+		err = runner.StopSession(ctx, sessionID)
+		return remoteSessionClosedMsg{remoteName: remoteName, sessionID: sessionID, title: title, err: err}
+	}
+}
+
+// restartRemoteSession restarts a remote session.
+func (h *Home) restartRemoteSession(remoteName, sessionID, title string) tea.Cmd {
+	return func() tea.Msg {
+		config, err := session.LoadUserConfig()
+		if err != nil || config == nil || config.Remotes == nil {
+			return remoteSessionRestartedMsg{
+				remoteName: remoteName,
+				sessionID:  sessionID,
+				title:      title,
+				err:        fmt.Errorf("failed to load remote config"),
+			}
+		}
+		rc, ok := config.Remotes[remoteName]
+		if !ok {
+			return remoteSessionRestartedMsg{
+				remoteName: remoteName,
+				sessionID:  sessionID,
+				title:      title,
+				err:        fmt.Errorf("remote '%s' not found", remoteName),
+			}
+		}
+		runner := session.NewSSHRunner(remoteName, rc)
+		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+		defer cancel()
+		err = runner.RestartSession(ctx, sessionID)
+		return remoteSessionRestartedMsg{remoteName: remoteName, sessionID: sessionID, title: title, err: err}
+	}
+}
+
 // attachSession attaches to a session using custom PTY with Ctrl+Q detection
 func (h *Home) attachSession(inst *session.Instance) tea.Cmd {
 	tmuxSess := inst.GetTmuxSession()
@@ -6674,7 +6851,7 @@ func (h *Home) countSessionStatuses() (running, waiting, idle, errored int) {
 			waiting++
 		case session.StatusIdle:
 			idle++
-		case session.StatusError:
+		case session.StatusError, session.StatusStopped:
 			errored++
 		}
 	}
@@ -7863,6 +8040,9 @@ func (h *Home) renderHelpBarMinimal() string {
 	mcpKey := h.actionKey(hotkeyMCPManager)
 	skillsKey := h.actionKey(hotkeySkillsManager)
 	notesKey := h.actionKey(hotkeyEditNotes)
+	if cfg, _ := session.LoadUserConfig(); cfg != nil && !cfg.GetShowNotes() {
+		notesKey = ""
+	}
 	if h.jumpMode {
 		contextKeys = keyStyle.Render("a-z") + " " + keyStyle.Render("esc")
 		if h.jumpBuffer != "" {
@@ -8097,6 +8277,9 @@ func (h *Home) renderHelpBarFull() string {
 	sendKey := h.actionKey(hotkeySendOutput)
 	execShellKey := h.actionKey(hotkeyExecShell)
 	notesKey := h.actionKey(hotkeyEditNotes)
+	if cfg, _ := session.LoadUserConfig(); cfg != nil && !cfg.GetShowNotes() {
+		notesKey = ""
+	}
 	undoKey := h.actionKey(hotkeyUndoDelete)
 
 	// Determine context-specific hints grouped by action type
@@ -8629,6 +8812,9 @@ func (h *Home) renderSessionItem(
 	case session.StatusError:
 		statusIcon = "✕"
 		statusStyle = SessionStatusError
+	case session.StatusStopped:
+		statusIcon = "■"
+		statusStyle = SessionStatusStopped
 	default:
 		statusIcon = "○"
 		statusStyle = SessionStatusIdle
@@ -8673,9 +8859,17 @@ func (h *Home) renderSessionItem(
 	title := titleStyle.Render(inst.Title)
 	tool := toolStyle.Render(" " + instTool)
 
-	// YOLO badge for Gemini sessions with YOLO mode enabled
+	// YOLO badge for Gemini/Codex sessions with YOLO mode enabled
 	yoloBadge := ""
+	showYolo := false
 	if instTool == "gemini" && inst.GeminiYoloMode != nil && *inst.GeminiYoloMode {
+		showYolo = true
+	} else if instTool == "codex" {
+		if opts := inst.GetCodexOptions(); opts != nil && opts.YoloMode != nil && *opts.YoloMode {
+			showYolo = true
+		}
+	}
+	if showYolo {
 		yoloStyle := lipgloss.NewStyle().Foreground(ColorYellow).Bold(true)
 		if selected {
 			yoloStyle = SessionStatusSelStyle
@@ -9365,6 +9559,9 @@ func (h *Home) renderPreviewPane(width, height int) string {
 	case session.StatusError:
 		statusIcon = "✕"
 		statusColor = ColorRed
+	case session.StatusStopped:
+		statusIcon = "■"
+		statusColor = ColorTextDim
 	}
 
 	// Header with session name and status
@@ -9841,6 +10038,7 @@ func (h *Home) renderPreviewPane(width, height int) string {
 	showAnalytics := config != nil && config.GetShowAnalytics() &&
 		(session.IsClaudeCompatible(selected.Tool) || selected.Tool == "gemini")
 	showOutput := config == nil || config.GetShowOutput() // Default to true if config fails
+	showNotes := config == nil || config.GetShowNotes()   // Default to true if config fails
 	notesOutputSplit := 0.33
 	if config != nil {
 		notesOutputSplit = config.Preview.GetNotesOutputSplit()
@@ -9857,8 +10055,8 @@ func (h *Home) renderPreviewPane(width, height int) string {
 		// PreviewModeBoth: use config settings (default)
 	}
 
-	// Special handling for error state - show guidance instead of output
-	if selected.Status == session.StatusError {
+	// Special handling for error/stopped state - show guidance instead of output
+	if selected.Status == session.StatusError || selected.Status == session.StatusStopped {
 		errorHeader := renderSectionDivider("Session Inactive", width-4)
 		b.WriteString(errorHeader)
 		b.WriteString("\n\n")
@@ -9948,10 +10146,12 @@ func (h *Home) renderPreviewPane(width, height int) string {
 	}
 
 	remainingLines := height - (strings.Count(b.String(), "\n") + 1)
-	notesLines := notesSectionLineBudget(remainingLines, showOutput || isStartingUp, notesOutputSplit)
-	if notesLines > 0 {
-		b.WriteString(h.renderNotesSection(selected, width, notesLines))
-		b.WriteString("\n")
+	if showNotes {
+		notesLines := notesSectionLineBudget(remainingLines, showOutput || isStartingUp, notesOutputSplit)
+		if notesLines > 0 {
+			b.WriteString(h.renderNotesSection(selected, width, notesLines))
+			b.WriteString("\n")
+		}
 	}
 
 	// If output is disabled AND not starting up, return early
@@ -10440,7 +10640,7 @@ func (h *Home) renderGroupPreview(group *session.Group, width, height int) strin
 			waiting++
 		case session.StatusIdle:
 			idle++
-		case session.StatusError:
+		case session.StatusError, session.StatusStopped:
 			errored++
 		}
 	}
@@ -10536,6 +10736,8 @@ func (h *Home) renderGroupPreview(group *session.Group, width, height int) strin
 				statusIcon, statusColor = "◐", ColorYellow
 			case session.StatusError:
 				statusIcon, statusColor = "✕", ColorRed
+			case session.StatusStopped:
+				statusIcon, statusColor = "■", ColorTextDim
 			}
 			status := lipgloss.NewStyle().Foreground(statusColor).Render(statusIcon)
 			name := lipgloss.NewStyle().Foreground(ColorText).Render(sess.Title)
@@ -10815,14 +11017,15 @@ func (h *Home) finishWorktree(inst *session.Instance, sessionID, sessionTitle, b
 	}
 }
 
-// getOtherActiveSessions returns sessions excluding the given ID and error-status sessions.
+// getOtherActiveSessions returns sessions excluding the given ID and error/stopped-status sessions.
 func (h *Home) getOtherActiveSessions(excludeID string) []*session.Instance {
 	var result []*session.Instance
 	for _, inst := range h.instances {
 		if inst.ID == excludeID {
 			continue
 		}
-		if inst.GetStatusThreadSafe() == session.StatusError {
+		s := inst.GetStatusThreadSafe()
+		if s == session.StatusError || s == session.StatusStopped {
 			continue
 		}
 		result = append(result, inst)

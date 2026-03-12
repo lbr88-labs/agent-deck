@@ -785,6 +785,10 @@ func handleConductorStatus(_ string, args []string) {
 		os.Exit(1)
 	}
 
+	// Auto-migrate before status check so stale heartbeat scripts self-heal even
+	// when conductors are globally disabled in config.
+	runAutoMigration(*jsonOutput)
+
 	settings := session.GetConductorSettings()
 	if !settings.Enabled {
 		if *jsonOutput {
@@ -795,9 +799,6 @@ func handleConductorStatus(_ string, args []string) {
 		}
 		return
 	}
-
-	// Auto-migrate before status check
-	runAutoMigration(*jsonOutput)
 
 	// Get conductors to display
 	var conductors []session.ConductorMeta

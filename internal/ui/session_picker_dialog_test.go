@@ -68,6 +68,24 @@ func TestShow_FiltersErrorSessions(t *testing.T) {
 	}
 }
 
+func TestShow_FiltersStoppedSessions(t *testing.T) {
+	d := NewSessionPickerDialog()
+	instances := []*session.Instance{
+		{ID: "id-1", Title: "source", Tool: "claude", Status: session.StatusRunning},
+		{ID: "id-2", Title: "good", Tool: "claude", Status: session.StatusWaiting},
+		{ID: "id-3", Title: "stopped", Tool: "claude", Status: session.StatusStopped},
+	}
+
+	d.Show(instances[0], instances)
+
+	if len(d.sessions) != 1 {
+		t.Errorf("expected 1 session (stopped filtered out), got %d", len(d.sessions))
+	}
+	if d.sessions[0].Title != "good" {
+		t.Errorf("expected 'good', got '%s'", d.sessions[0].Title)
+	}
+}
+
 func TestShow_EmptyAfterFilter(t *testing.T) {
 	d := NewSessionPickerDialog()
 	instances := []*session.Instance{

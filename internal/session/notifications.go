@@ -200,6 +200,8 @@ func statusColor(status Status) string {
 		return "#787fa0" // dim/muted
 	case StatusError:
 		return "#f7768e" // red
+	case StatusStopped:
+		return "#787fa0" // dim/muted (same as idle)
 	default:
 		return "#787fa0"
 	}
@@ -216,7 +218,7 @@ func (nm *NotificationManager) formatBarMinimal() string {
 		parts = append(parts, colored)
 	}
 	// Render remaining statuses in a consistent order.
-	for _, s := range []Status{StatusWaiting, StatusIdle, StatusError} {
+	for _, s := range []Status{StatusWaiting, StatusIdle, StatusStopped, StatusError} {
 		if n := nm.statusCounts[s]; n > 0 {
 			colored := fmt.Sprintf("#[fg=%s]%s %d#[default]", statusColor(s), statusIcon(s), n)
 			parts = append(parts, colored)
@@ -239,6 +241,8 @@ func statusIcon(status Status) string {
 		return "○"
 	case StatusError:
 		return "✕"
+	case StatusStopped:
+		return "■"
 	default:
 		return "○"
 	}

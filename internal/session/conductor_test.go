@@ -533,13 +533,15 @@ func TestBridgeTemplate_ConfigLoadsAllowedUserIDs(t *testing.T) {
 	}
 }
 
-func TestBridgeTemplate_HeartbeatSelectsOnePerProfile(t *testing.T) {
+func TestBridgeTemplate_HeartbeatScopesToConductorGroups(t *testing.T) {
 	template := conductorBridgePy
 
 	patterns := []string{
 		"def select_heartbeat_conductors(conductors: list[dict]) -> list[dict]:",
 		"conductors = select_heartbeat_conductors(all_conductors)",
-		"Multiple conductors may share a profile. Heartbeat auto-actions are profile-wide,",
+		`s_group = s.get("group", "") or ""`,
+		`if s_group != name and not s_group.startswith(f"{name}/"):`,
+		`for s in scoped_sessions:`,
 	}
 
 	for _, pattern := range patterns {

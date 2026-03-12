@@ -821,6 +821,33 @@ func setFollowCwdOnAttachConfigForTest(t *testing.T, enabled *bool) {
 	t.Cleanup(session.ClearUserConfigCache)
 }
 
+func setPreviewShowNotesConfigForTest(t *testing.T, enabled *bool) {
+	t.Helper()
+
+	homeDir := t.TempDir()
+	t.Setenv("HOME", homeDir)
+
+	configDir := filepath.Join(homeDir, ".agent-deck")
+	if err := os.MkdirAll(configDir, 0o700); err != nil {
+		t.Fatalf("failed to create config directory: %v", err)
+	}
+
+	if enabled != nil {
+		value := "false"
+		if *enabled {
+			value = "true"
+		}
+		content := fmt.Sprintf("[preview]\nshow_notes = %s\n", value)
+		configPath := filepath.Join(configDir, session.UserConfigFileName)
+		if err := os.WriteFile(configPath, []byte(content), 0o600); err != nil {
+			t.Fatalf("failed to write config.toml: %v", err)
+		}
+	}
+
+	session.ClearUserConfigCache()
+	t.Cleanup(session.ClearUserConfigCache)
+}
+
 func TestFollowAttachReturnCwdEnabledUpdatesProjectPath(t *testing.T) {
 	enabled := true
 	setFollowCwdOnAttachConfigForTest(t, &enabled)
@@ -906,6 +933,31 @@ func TestFollowAttachReturnCwdRejectsInvalidPaths(t *testing.T) {
 				t.Fatalf("project path changed = %q, want %q", got, initialDir)
 			}
 		})
+	}
+}
+
+func TestHandleMainKeyEditNotesDisabledWhenShowNotesFalse(t *testing.T) {
+	disabled := false
+	setPreviewShowNotesConfigForTest(t, &disabled)
+
+	home := NewHome()
+	home.width = 100
+	home.height = 30
+
+	inst := session.NewInstance("notes-disabled", t.TempDir())
+	home.flatItems = []session.Item{{Type: session.ItemTypeSession, Session: inst}}
+	home.cursor = 0
+
+	model, _ := home.handleMainKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'e'}})
+	h, ok := model.(*Home)
+	if !ok {
+		t.Fatal("handleMainKey should return *Home")
+	}
+	if h.notesEditing {
+		t.Fatal("notes editor should remain disabled when show_notes=false")
+	}
+	if h.notesEditingSessionID != "" {
+		t.Fatalf("notesEditingSessionID = %q, want empty", h.notesEditingSessionID)
 	}
 }
 
@@ -1041,6 +1093,87 @@ func TestDeleteHotkeyRemapAndCloseUnbind(t *testing.T) {
 	if got := h.confirmDialog.GetConfirmType(); got != ConfirmDeleteSession {
 		t.Fatalf("confirm type after remapped delete = %v, want %v", got, ConfirmDeleteSession)
 	}
+}
+
+func TestRemoteDeleteAndCloseUseDistinctActions(t *testing.T) {
+	home := NewHome()
+	home.width = 100
+	home.height = 30
+
+	remote := session.RemoteSessionInfo{ID: "remote-123", Title: "remote-session", RemoteName: "myserver"}
+	home.flatItems = []session.Item{{Type: session.ItemTypeRemoteSession, RemoteSession: &remote, RemoteName: "myserver"}}
+	home.cursor = 0
+
+	model, _ := home.handleMainKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'d'}})
+	h, ok := model.(*Home)
+	if !ok {
+		t.Fatal("handleMainKey should return *Home")
+	}
+	if !h.confirmDialog.IsVisible() {
+		t.Fatal("delete should show confirmation dialog")
+	}
+	if got := h.confirmDialog.GetConfirmType(); got != ConfirmDeleteRemoteSession {
+		t.Fatalf("confirm type after delete = %v, want %v", got, ConfirmDeleteRemoteSession)
+	}
+	if got := h.confirmDialog.GetRemoteName(); got != "myserver" {
+		t.Fatalf("remote name after delete = %q, want %q", got, "myserver")
+	}
+
+	h.confirmDialog.Hide()
+
+	model, _ = h.handleMainKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'D'}})
+	h, ok = model.(*Home)
+	if !ok {
+		t.Fatal("handleMainKey should return *Home")
+	}
+	if !h.confirmDialog.IsVisible() {
+		t.Fatal("close should show confirmation dialog")
+	}
+	if got := h.confirmDialog.GetConfirmType(); got != ConfirmCloseRemoteSession {
+		t.Fatalf("confirm type after close = %v, want %v", got, ConfirmCloseRemoteSession)
+	}
+	if got := h.confirmDialog.GetRemoteName(); got != "myserver" {
+		t.Fatalf("remote name after close = %q, want %q", got, "myserver")
+	}
+}
+
+func TestRemoteRestartReturnsRemoteCommand(t *testing.T) {
+	home := NewHome()
+	home.width = 100
+	home.height = 30
+
+	remote := session.RemoteSessionInfo{ID: "remote-123", Title: "remote-session", RemoteName: "myserver"}
+	home.flatItems = []session.Item{{Type: session.ItemTypeRemoteSession, RemoteSession: &remote, RemoteName: "myserver"}}
+	home.cursor = 0
+
+	model, cmd := home.handleMainKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'R'}})
+	h, ok := model.(*Home)
+	if !ok {
+		t.Fatal("handleMainKey should return *Home")
+	}
+	if cmd == nil {
+		t.Fatal("restart should return a command")
+	}
+
+	msg := cmd()
+	restartMsg, ok := msg.(remoteSessionRestartedMsg)
+	if !ok {
+		t.Fatalf("command returned %T, want remoteSessionRestartedMsg", msg)
+	}
+	if restartMsg.remoteName != "myserver" {
+		t.Fatalf("remoteName = %q, want %q", restartMsg.remoteName, "myserver")
+	}
+	if restartMsg.sessionID != "remote-123" {
+		t.Fatalf("sessionID = %q, want %q", restartMsg.sessionID, "remote-123")
+	}
+	if restartMsg.title != "remote-session" {
+		t.Fatalf("title = %q, want %q", restartMsg.title, "remote-session")
+	}
+	if restartMsg.err == nil {
+		t.Fatal("expected error when remote config is unavailable")
+	}
+
+	_ = h
 }
 
 func TestRenderHelpBarTiny(t *testing.T) {

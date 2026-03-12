@@ -6,13 +6,25 @@ import (
 	"github.com/asheshgoplani/agent-deck/internal/session"
 )
 
-func applyGeminiCLIYoloOverride(inst *session.Instance, enabled bool) error {
+func applyCLIYoloOverride(inst *session.Instance, enabled bool) error {
 	if !enabled || inst == nil {
 		return nil
 	}
-	if inst.Tool != "gemini" {
-		return fmt.Errorf("--yolo only works with Gemini sessions (-c gemini)")
+	switch inst.Tool {
+	case "gemini":
+		inst.SetGeminiYoloMode(true)
+	case "codex":
+		yolo := true
+		opts := inst.GetCodexOptions()
+		if opts == nil {
+			opts = &session.CodexOptions{}
+		}
+		opts.YoloMode = &yolo
+		if err := inst.SetCodexOptions(opts); err != nil {
+			return err
+		}
+	default:
+		return fmt.Errorf("--yolo only works with Gemini or Codex sessions")
 	}
-	inst.SetGeminiYoloMode(true)
 	return nil
 }

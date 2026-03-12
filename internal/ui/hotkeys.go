@@ -1,38 +1,39 @@
 package ui
 
 import (
+	"sort"
 	"strings"
 	"unicode"
 )
 
 const (
-	hotkeyQuit             = "quit"
-	hotkeyNewSession       = "new_session"
-	hotkeyQuickCreate      = "quick_create"
-	hotkeyRename           = "rename"
-	hotkeyRestart          = "restart"
-	hotkeyDelete           = "delete"
-	hotkeyCloseSession     = "close_session"
-	hotkeyUndoDelete       = "undo_delete"
-	hotkeyMoveToGroup      = "move_to_group"
-	hotkeyMCPManager       = "mcp_manager"
-	hotkeySkillsManager    = "skills_manager"
-	hotkeyTogglePreview    = "toggle_preview"
-	hotkeyMarkUnread       = "mark_unread"
-	hotkeyToggleGeminiYolo = "toggle_gemini_yolo"
-	hotkeyQuickFork        = "quick_fork"
-	hotkeyForkWithOptions  = "fork_with_options"
-	hotkeyCopyOutput       = "copy_output"
-	hotkeySendOutput       = "send_output"
-	hotkeyExecShell        = "exec_shell"
-	hotkeyEditNotes        = "edit_notes"
-	hotkeyWorktreeFinish   = "worktree_finish"
-	hotkeyCreateGroup      = "create_group"
-	hotkeySearch           = "search"
-	hotkeyHelp             = "help"
-	hotkeySettings         = "settings"
-	hotkeyImport           = "import"
-	hotkeyReload           = "reload"
+	hotkeyQuit            = "quit"
+	hotkeyNewSession      = "new_session"
+	hotkeyQuickCreate     = "quick_create"
+	hotkeyRename          = "rename"
+	hotkeyRestart         = "restart"
+	hotkeyDelete          = "delete"
+	hotkeyCloseSession    = "close_session"
+	hotkeyUndoDelete      = "undo_delete"
+	hotkeyMoveToGroup     = "move_to_group"
+	hotkeyMCPManager      = "mcp_manager"
+	hotkeySkillsManager   = "skills_manager"
+	hotkeyTogglePreview   = "toggle_preview"
+	hotkeyMarkUnread      = "mark_unread"
+	hotkeyToggleYolo      = "toggle_yolo"
+	hotkeyQuickFork       = "quick_fork"
+	hotkeyForkWithOptions = "fork_with_options"
+	hotkeyCopyOutput      = "copy_output"
+	hotkeySendOutput      = "send_output"
+	hotkeyExecShell       = "exec_shell"
+	hotkeyEditNotes       = "edit_notes"
+	hotkeyWorktreeFinish  = "worktree_finish"
+	hotkeyCreateGroup     = "create_group"
+	hotkeySearch          = "search"
+	hotkeyHelp            = "help"
+	hotkeySettings        = "settings"
+	hotkeyImport          = "import"
+	hotkeyReload          = "reload"
 )
 
 var hotkeyActionOrder = []string{
@@ -49,7 +50,7 @@ var hotkeyActionOrder = []string{
 	hotkeySkillsManager,
 	hotkeyTogglePreview,
 	hotkeyMarkUnread,
-	hotkeyToggleGeminiYolo,
+	hotkeyToggleYolo,
 	hotkeyQuickFork,
 	hotkeyForkWithOptions,
 	hotkeyCopyOutput,
@@ -66,33 +67,33 @@ var hotkeyActionOrder = []string{
 }
 
 var defaultHotkeyBindings = map[string]string{
-	hotkeyQuit:             "q",
-	hotkeyNewSession:       "n",
-	hotkeyQuickCreate:      "N",
-	hotkeyRename:           "r",
-	hotkeyRestart:          "R",
-	hotkeyDelete:           "d",
-	hotkeyCloseSession:     "D",
-	hotkeyUndoDelete:       "ctrl+z",
-	hotkeyMoveToGroup:      "M",
-	hotkeyMCPManager:       "m",
-	hotkeySkillsManager:    "s",
-	hotkeyTogglePreview:    "v",
-	hotkeyMarkUnread:       "u",
-	hotkeyToggleGeminiYolo: "y",
-	hotkeyQuickFork:        "f",
-	hotkeyForkWithOptions:  "F",
-	hotkeyCopyOutput:       "c",
-	hotkeySendOutput:       "x",
-	hotkeyExecShell:        "E",
-	hotkeyEditNotes:        "e",
-	hotkeyWorktreeFinish:   "W",
-	hotkeyCreateGroup:      "g",
-	hotkeySearch:           "/",
-	hotkeyHelp:             "?",
-	hotkeySettings:         "S",
-	hotkeyImport:           "i",
-	hotkeyReload:           "ctrl+r",
+	hotkeyQuit:            "q",
+	hotkeyNewSession:      "n",
+	hotkeyQuickCreate:     "N",
+	hotkeyRename:          "r",
+	hotkeyRestart:         "R",
+	hotkeyDelete:          "d",
+	hotkeyCloseSession:    "D",
+	hotkeyUndoDelete:      "ctrl+z",
+	hotkeyMoveToGroup:     "M",
+	hotkeyMCPManager:      "m",
+	hotkeySkillsManager:   "s",
+	hotkeyTogglePreview:   "v",
+	hotkeyMarkUnread:      "u",
+	hotkeyToggleYolo:      "y",
+	hotkeyQuickFork:       "f",
+	hotkeyForkWithOptions: "F",
+	hotkeyCopyOutput:      "c",
+	hotkeySendOutput:      "x",
+	hotkeyExecShell:       "E",
+	hotkeyEditNotes:       "e",
+	hotkeyWorktreeFinish:  "W",
+	hotkeyCreateGroup:     "g",
+	hotkeySearch:          "/",
+	hotkeyHelp:            "?",
+	hotkeySettings:        "S",
+	hotkeyImport:          "i",
+	hotkeyReload:          "ctrl+r",
 }
 
 var hotkeyActionDefaultTriggers = map[string][]string{
@@ -102,25 +103,52 @@ var hotkeyActionDefaultTriggers = map[string][]string{
 	hotkeyWorktreeFinish:  {"W", "shift+w"},
 }
 
+// renamedHotkeys maps old action names to new names for backward compatibility.
+var renamedHotkeys = map[string]string{
+	"toggle_gemini_yolo": hotkeyToggleYolo,
+}
+
 func resolveHotkeys(overrides map[string]string) map[string]string {
 	bindings := make(map[string]string, len(defaultHotkeyBindings))
 	for action, key := range defaultHotkeyBindings {
 		bindings[action] = key
 	}
 
-	for action, key := range overrides {
+	overrideActions := make([]string, 0, len(overrides))
+	for action := range overrides {
+		overrideActions = append(overrideActions, action)
+	}
+	sort.Strings(overrideActions)
+
+	canonicalOverrides := make(map[string]string, len(overrides))
+	for _, action := range overrideActions {
+		key := overrides[action]
 		normalizedAction := strings.TrimSpace(strings.ToLower(action))
-		if _, ok := defaultHotkeyBindings[normalizedAction]; !ok {
-			continue
-		}
-
 		normalizedKey := strings.TrimSpace(key)
-		if normalizedKey == "" {
-			delete(bindings, normalizedAction)
+
+		if _, ok := defaultHotkeyBindings[normalizedAction]; ok {
+			canonicalOverrides[normalizedAction] = normalizedKey
+		}
+	}
+	for _, action := range overrideActions {
+		key := overrides[action]
+		normalizedAction := strings.TrimSpace(strings.ToLower(action))
+		newName, ok := renamedHotkeys[normalizedAction]
+		if !ok {
 			continue
 		}
+		if _, exists := canonicalOverrides[newName]; exists {
+			continue
+		}
+		canonicalOverrides[newName] = strings.TrimSpace(key)
+	}
 
-		bindings[normalizedAction] = normalizedKey
+	for action, key := range canonicalOverrides {
+		if key == "" {
+			delete(bindings, action)
+			continue
+		}
+		bindings[action] = key
 	}
 
 	return bindings

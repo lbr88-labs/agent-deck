@@ -22,6 +22,27 @@ func TestResolveHotkeysOverridesAndUnbinds(t *testing.T) {
 	}
 }
 
+func TestResolveHotkeysPrefersCanonicalNameOverLegacyRename(t *testing.T) {
+	bindings := resolveHotkeys(map[string]string{
+		"toggle_gemini_yolo": "g",
+		"toggle_yolo":        "y",
+	})
+
+	if got := bindings[hotkeyToggleYolo]; got != "y" {
+		t.Fatalf("toggle_yolo binding = %q, want %q", got, "y")
+	}
+}
+
+func TestResolveHotkeysMapsLegacyRenameWhenCanonicalAbsent(t *testing.T) {
+	bindings := resolveHotkeys(map[string]string{
+		"toggle_gemini_yolo": "g",
+	})
+
+	if got := bindings[hotkeyToggleYolo]; got != "g" {
+		t.Fatalf("toggle_yolo binding = %q, want %q", got, "g")
+	}
+}
+
 func TestBuildHotkeyLookupRemapAndUnbind(t *testing.T) {
 	bindings := resolveHotkeys(map[string]string{
 		"delete": "backspace",

@@ -533,12 +533,15 @@ show_analytics = false
 func TestPreviewSettingsDefaults(t *testing.T) {
 	cfg := &UserConfig{}
 
-	// Default: output ON, analytics OFF
+	// Default: output ON, analytics OFF, notes ON
 	if !cfg.GetShowOutput() {
 		t.Error("GetShowOutput should default to true")
 	}
 	if cfg.GetShowAnalytics() {
 		t.Error("GetShowAnalytics should default to false")
+	}
+	if !cfg.GetShowNotes() {
+		t.Error("GetShowNotes should default to true")
 	}
 }
 
@@ -595,6 +598,32 @@ show_output = true
 	// When not set, ShowAnalytics should default to false
 	if config.GetShowAnalytics() {
 		t.Error("GetShowAnalytics should default to false when not set")
+	}
+	if !config.GetShowNotes() {
+		t.Error("GetShowNotes should default to true when not set")
+	}
+}
+
+func TestPreviewSettingsShowNotesExplicitFalse(t *testing.T) {
+	dir := t.TempDir()
+	configPath := filepath.Join(dir, "config.toml")
+
+	content := `
+[preview]
+show_notes = false
+`
+	if err := os.WriteFile(configPath, []byte(content), 0o644); err != nil {
+		t.Fatalf("Failed to write config file: %v", err)
+	}
+
+	var config UserConfig
+	_, err := toml.DecodeFile(configPath, &config)
+	if err != nil {
+		t.Fatalf("Failed to decode: %v", err)
+	}
+
+	if config.GetShowNotes() {
+		t.Error("GetShowNotes should be false when explicitly disabled")
 	}
 }
 

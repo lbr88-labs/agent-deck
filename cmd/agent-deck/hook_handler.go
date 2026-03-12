@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/asheshgoplani/agent-deck/internal/session"
@@ -33,10 +34,18 @@ type hookStatusFile struct {
 //   - "running" = Claude is actively processing (green)
 //   - "waiting" = Claude is at the prompt, waiting for user input (orange)
 //   - "dead"    = Session ended
+//
+// Gemini mappings:
+//   - "BeforeAgent" = running
+//   - "AfterAgent"  = waiting
 func mapEventToStatus(event string) string {
 	switch event {
 	case "SessionStart":
 		return "waiting" // Claude at initial prompt, waiting for user input
+	case "BeforeAgent":
+		return "running" // Gemini received user input and is processing
+	case "AfterAgent":
+		return "waiting" // Gemini completed response, back to waiting
 	case "UserPromptSubmit":
 		return "running" // User sent prompt, Claude is processing
 	case "Stop":
@@ -112,6 +121,13 @@ func writeHookStatus(instanceID, status, sessionID, event string) {
 		return
 	}
 
+	sessionID = strings.TrimSpace(sessionID)
+	// Preserve legacy hook JSON semantics: empty stays empty.
+	// Persist non-empty session IDs in a sidecar, to be used only when reading.
+	if sessionID != "" {
+		session.WriteHookSessionAnchor(instanceID, sessionID)
+	}
+
 	statusFile := hookStatusFile{
 		Status:    status,
 		SessionID: sessionID,
@@ -130,6 +146,29 @@ func writeHookStatus(instanceID, status, sessionID, event string) {
 		return
 	}
 	_ = os.Rename(tmpPath, filePath)
+
+	// Clear sticky session mapping when the upstream session is explicitly ended.
+	if isTerminalHookEvent(event) {
+		session.ClearHookSessionAnchor(instanceID)
+	}
+}
+
+func isTerminalHookEvent(event string) bool {
+	norm := strings.ToLower(strings.TrimSpace(event))
+	if norm == "" {
+		return false
+	}
+	norm = strings.NewReplacer(".", "", "-", "", "_", "", "/", "", " ", "").Replace(norm)
+	// Explicit terminal event allowlist. Keep this narrow to avoid clearing
+	// sidecar on ordinary non-terminal "Stop"/turn-complete style events.
+	switch norm {
+	case "sessionend", "sessionended", "sessionclose", "sessionclosed", "sessiondone", "sessionexit", "sessionexited",
+		"threadend", "threadended", "threadterminate", "threadterminated", "threadclose", "threadclosed",
+		"threaddone", "threadexit", "threadexited":
+		return true
+	default:
+		return false
+	}
 }
 
 // getHooksDir returns the path to the hooks status directory.
@@ -151,7 +190,8 @@ func cleanStaleHookFiles() {
 
 	cutoff := time.Now().Add(-24 * time.Hour)
 	for _, entry := range entries {
-		if entry.IsDir() || filepath.Ext(entry.Name()) != ".json" {
+		ext := filepath.Ext(entry.Name())
+		if entry.IsDir() || (ext != ".json" && ext != ".sid") {
 			continue
 		}
 		info, err := entry.Info()

@@ -16,6 +16,13 @@ import (
 
 var pipeLog = logging.ForComponent("pipe")
 
+const (
+	controlPipeConnectAttempts  = 3
+	controlPipeHandshakeTimeout = 4 * time.Second
+	controlPipeCommandTimeout   = 5 * time.Second
+	controlPipeRetryBackoff     = 150 * time.Millisecond
+)
+
 // ControlPipe wraps a persistent `tmux -C attach-session -t <name>` process.
 // It provides event-driven output detection via %output events and
 // zero-subprocess command execution through the stdin/stdout pipe.
@@ -56,9 +63,32 @@ type commandResponse struct {
 }
 
 // NewControlPipe starts a tmux control mode pipe attached to the given session.
-// Blocks until the initial handshake completes (or 2s timeout), so the pipe is
-// ready for SendCommand immediately after return.
+// Blocks until the initial handshake completes (or a short timeout), so the pipe
+// is ready for SendCommand immediately after return. Retries a few times to
+// smooth over transient tmux/control-mode startup failures.
 func NewControlPipe(sessionName string) (*ControlPipe, error) {
+	var lastErr error
+	for attempt := 1; attempt <= controlPipeConnectAttempts; attempt++ {
+		cp, err := newControlPipeOnce(sessionName)
+		if err == nil {
+			return cp, nil
+		}
+		lastErr = err
+		if attempt == controlPipeConnectAttempts {
+			break
+		}
+		pipeLog.Debug(
+			"pipe_connect_retry",
+			slog.String("session", sessionName),
+			slog.Int("attempt", attempt),
+			slog.String("error", err.Error()),
+		)
+		time.Sleep(time.Duration(attempt) * controlPipeRetryBackoff)
+	}
+	return nil, lastErr
+}
+
+func newControlPipeOnce(sessionName string) (*ControlPipe, error) {
 	cmd := exec.Command("tmux", "-C", "attach-session", "-t", sessionName)
 	// Put in own process group so we can kill the entire group on shutdown
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
@@ -99,8 +129,9 @@ func NewControlPipe(sessionName string) (*ControlPipe, error) {
 	select {
 	case <-cp.ready:
 	case <-cp.done:
+		cp.Close()
 		return nil, fmt.Errorf("pipe died during handshake for session %s", sessionName)
-	case <-time.After(2 * time.Second):
+	case <-time.After(controlPipeHandshakeTimeout):
 		// Timeout waiting for handshake, but pipe may still work
 		pipeLog.Debug("pipe_handshake_timeout", slog.String("session", sessionName))
 	}
@@ -220,7 +251,7 @@ func (cp *ControlPipe) reader() {
 
 // SendCommand sends a command through the control mode pipe and waits for the response.
 // Commands are serialized via cmdMu. Returns the response text or an error.
-// Timeout is 3 seconds to match the existing CapturePane subprocess timeout.
+// Timeout is slightly relaxed to reduce false negatives when tmux is busy.
 func (cp *ControlPipe) SendCommand(command string) (string, error) {
 	cp.mu.RLock()
 	if !cp.alive {
@@ -251,8 +282,8 @@ func (cp *ControlPipe) SendCommand(command string) (string, error) {
 			return "", resp.err
 		}
 		return resp.output, nil
-	case <-time.After(3 * time.Second):
-		return "", fmt.Errorf("command timed out after 3s: %s", command)
+	case <-time.After(controlPipeCommandTimeout):
+		return "", fmt.Errorf("command timed out after %s: %s", controlPipeCommandTimeout, command)
 	case <-cp.done:
 		return "", fmt.Errorf("pipe closed during command: %s", command)
 	}

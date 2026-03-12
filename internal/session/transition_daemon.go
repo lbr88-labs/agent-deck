@@ -107,7 +107,7 @@ func (d *TransitionDaemon) syncProfile(profile string) time.Duration {
 	hookCandidates := make(map[string]hookTransitionCandidate, len(instances))
 	for _, inst := range instances {
 		byID[inst.ID] = inst
-		if IsClaudeCompatible(inst.Tool) || inst.Tool == "codex" {
+		if IsClaudeCompatible(inst.Tool) || inst.Tool == "codex" || inst.Tool == "gemini" {
 			if hs := d.hookStatusForInstance(inst.ID); hs != nil {
 				inst.UpdateHookStatus(hs)
 				if candidate, ok := terminalHookTransitionCandidate(inst.Tool, hs); ok {
@@ -348,7 +348,7 @@ func (d *TransitionDaemon) emitHookTransitionCandidates(
 
 func isNotifyTerminalStatus(status string) bool {
 	s := normalizeStatusString(status)
-	return s == string(StatusWaiting) || s == string(StatusError) || s == string(StatusIdle)
+	return s == string(StatusWaiting) || s == string(StatusError) || s == string(StatusIdle) || s == string(StatusStopped)
 }
 
 func terminalHookTransitionCandidate(tool string, hs *HookStatus) (hookTransitionCandidate, bool) {

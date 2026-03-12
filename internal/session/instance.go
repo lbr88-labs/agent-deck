@@ -33,6 +33,9 @@ var (
 	sessionLog                  = logging.ForComponent(logging.CompSession)
 	mcpLog                      = logging.ForComponent(logging.CompMCP)
 	codexSessionIDPathPatternRE = regexp.MustCompile(`/.codex/sessions/\S*/rollout-\S*-([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\.jsonl`)
+	uuidPatternRE               = regexp.MustCompile(`[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}`)
+	geminiPromptRE              = regexp.MustCompile(`^(>|>>>|\$|❯|➜|gemini>)\s*$`)
+	shellPromptRE               = regexp.MustCompile(`^[\s]*(>|>>>|\$|❯|➜|#|%)\s*$`)
 )
 
 // Status represents the current state of a session
@@ -44,6 +47,7 @@ const (
 	StatusIdle     Status = "idle"
 	StatusError    Status = "error"
 	StatusStarting Status = "starting" // Session is being created (tmux initializing)
+	StatusStopped  Status = "stopped"  // Session intentionally stopped by user (not crashed)
 )
 
 const wrapperPlaceholder = "{command}"
@@ -275,6 +279,9 @@ func NewSandboxConfig(imageOverride string) *SandboxConfig {
 	image := dockerSettings.DefaultImage
 	if imageOverride != "" {
 		image = imageOverride
+	}
+	if image == "" {
+		image = docker.DefaultImage()
 	}
 	cfg := &SandboxConfig{
 		Enabled: true,
@@ -1092,7 +1099,7 @@ func (i *Instance) queryCodexSession(excludeIDs map[string]bool, allowUnscoped b
 		return ""
 	}
 
-	uuidPattern := regexp.MustCompile(`[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}`)
+	uuidPattern := uuidPatternRE
 
 	var bestScopedID string
 	var bestScopedTime time.Time
@@ -2199,23 +2206,32 @@ func (i *Instance) UpdateStatus() error {
 	}
 
 	if i.tmuxSession == nil {
-		i.Status = StatusError
+		if i.Status != StatusStopped {
+			i.Status = StatusError
+		}
 		return nil
 	}
 
-	// Optimization: Skip expensive Exists() check for sessions already in error status
+	// Optimization: Skip expensive Exists() check for sessions already in error/stopped status
 	// Ghost sessions (in JSON but not in tmux) only get rechecked every 30 seconds
 	// This reduces subprocess spawns from 74/sec to ~5/sec for 28 ghost sessions
-	if i.Status == StatusError && !i.lastErrorCheck.IsZero() &&
+	if (i.Status == StatusError || i.Status == StatusStopped) && !i.lastErrorCheck.IsZero() &&
 		time.Since(i.lastErrorCheck) < errorRecheckInterval {
-		return nil // Skip - still in error, checked recently
+		return nil // Skip - still in error/stopped, checked recently
 	}
 
 	// Check if tmux session exists
 	if !i.tmuxSession.Exists() {
-		i.Status = StatusError
-		i.lastErrorCheck = time.Now() // Record when we confirmed error
+		if i.Status != StatusStopped {
+			i.Status = StatusError
+		}
+		i.lastErrorCheck = time.Now() // Record when we confirmed error/stopped
 		return nil
+	}
+
+	// Session exists again (user manually started it) - clear stopped status
+	if i.Status == StatusStopped {
+		i.Status = StatusRunning
 	}
 
 	// Session exists - clear error check timestamp
@@ -2235,7 +2251,9 @@ func (i *Instance) UpdateStatus() error {
 
 	// HOOK FAST PATH: hook-based status for tools that emit lifecycle events.
 	// Freshness is tool- and state-specific (e.g. Codex running vs waiting).
-	if (IsClaudeCompatible(i.Tool) || i.Tool == "codex") &&
+	// When this path is stale/missing, control naturally falls through to tmux
+	// polling and tool-specific session sync (tmux env/process-files/disk).
+	if (IsClaudeCompatible(i.Tool) || i.Tool == "codex" || i.Tool == "gemini") &&
 		i.hookStatus != "" &&
 		time.Since(i.hookLastUpdate) < hookFastPathFreshnessForTool(i.Tool, i.hookStatus) {
 		switch i.hookStatus {
@@ -2280,6 +2298,11 @@ func (i *Instance) UpdateStatus() error {
 				if i.hookSessionID != i.CodexSessionID {
 					i.CodexSessionID = i.hookSessionID
 					i.CodexDetectedAt = time.Now()
+				}
+			case i.Tool == "gemini":
+				if i.hookSessionID != i.GeminiSessionID {
+					i.GeminiSessionID = i.hookSessionID
+					i.GeminiDetectedAt = time.Now()
 				}
 			}
 		}
@@ -2521,47 +2544,71 @@ func (i *Instance) UpdateHookStatus(status *HookStatus) {
 	i.hookStatus = status.Status
 	i.hookLastUpdate = status.UpdatedAt
 
-	// Sync session ID from hook if provided.
-	if status.SessionID == "" {
+	// Resolve session ID from hook payload first, then sidecar anchor.
+	sessionID := strings.TrimSpace(status.SessionID)
+	if sessionID == "" {
+		sessionID = ReadHookSessionAnchor(i.ID)
+	}
+	if sessionID == "" {
 		return
 	}
 
 	switch {
 	case IsClaudeCompatible(i.Tool):
-		if status.SessionID == i.ClaudeSessionID {
+		if sessionID == i.ClaudeSessionID {
 			return
 		}
 		// Quality gate: only accept if the hook session has conversation data,
 		// OR if the current session ID is empty (first detection).
-		if i.ClaudeSessionID == "" || sessionHasConversationData(status.SessionID, i.ProjectPath) {
+		if i.ClaudeSessionID == "" || sessionHasConversationData(sessionID, i.ProjectPath) {
 			sessionLog.Debug("claude_session_update_from_hook",
 				slog.String("old_id", i.ClaudeSessionID),
-				slog.String("new_id", status.SessionID),
+				slog.String("new_id", sessionID),
 				slog.String("event", status.Event),
 			)
-			i.ClaudeSessionID = status.SessionID
+			i.ClaudeSessionID = sessionID
 			i.ClaudeDetectedAt = time.Now()
-			i.hookSessionID = status.SessionID
+			i.hookSessionID = sessionID
 
 			if i.tmuxSession != nil && i.tmuxSession.Exists() {
-				_ = i.tmuxSession.SetEnvironment("CLAUDE_SESSION_ID", status.SessionID)
+				_ = i.tmuxSession.SetEnvironment("CLAUDE_SESSION_ID", sessionID)
 			}
 		}
 	case i.Tool == "codex":
-		if status.SessionID == i.CodexSessionID {
+		if sessionID == i.CodexSessionID {
 			return
 		}
 		sessionLog.Debug("codex_session_update_from_hook",
 			slog.String("old_id", i.CodexSessionID),
-			slog.String("new_id", status.SessionID),
+			slog.String("new_id", sessionID),
 			slog.String("event", status.Event),
 		)
-		i.CodexSessionID = status.SessionID
+		i.CodexSessionID = sessionID
 		i.CodexDetectedAt = time.Now()
-		i.hookSessionID = status.SessionID
+		i.hookSessionID = sessionID
 
 		if i.tmuxSession != nil && i.tmuxSession.Exists() {
-			_ = i.tmuxSession.SetEnvironment("CODEX_SESSION_ID", status.SessionID)
+			_ = i.tmuxSession.SetEnvironment("CODEX_SESSION_ID", sessionID)
+		}
+	case i.Tool == "gemini":
+		if sessionID == i.GeminiSessionID {
+			return
+		}
+		// Quality gate: only accept when candidate session appears valid on disk,
+		// OR when current session is empty (first detection/bootstrap).
+		if i.GeminiSessionID == "" || geminiSessionHasConversationData(sessionID, i.ProjectPath) {
+			sessionLog.Debug("gemini_session_update_from_hook",
+				slog.String("old_id", i.GeminiSessionID),
+				slog.String("new_id", sessionID),
+				slog.String("event", status.Event),
+			)
+			i.GeminiSessionID = sessionID
+			i.GeminiDetectedAt = time.Now()
+			i.hookSessionID = sessionID
+
+			if i.tmuxSession != nil && i.tmuxSession.Exists() {
+				_ = i.tmuxSession.SetEnvironment("GEMINI_SESSION_ID", sessionID)
+			}
 		}
 	}
 }
@@ -3395,7 +3442,7 @@ func parseGeminiOutput(content string) (*ResponseOutput, error) {
 
 		// Detect prompt line (end of response when reading backwards)
 		// Common prompts: "> ", ">>> ", "$", "❯", "➜"
-		isPrompt := regexp.MustCompile(`^(>|>>>|\$|❯|➜|gemini>)\s*$`).MatchString(trimmed)
+		isPrompt := geminiPromptRE.MatchString(trimmed)
 
 		if isPrompt && inResponse {
 			// We've found the start of the response block
@@ -3441,7 +3488,7 @@ func parseGenericOutput(content, tool string) (*ResponseOutput, error) {
 	// before a prompt character
 	var responseLines []string
 	inResponse := false
-	promptPattern := regexp.MustCompile(`^[\s]*(>|>>>|\$|❯|➜|#|%)\s*$`)
+	promptPattern := shellPromptRE
 
 	for idx := len(lines) - 1; idx >= 0; idx-- {
 		line := lines[idx]
@@ -3515,7 +3562,7 @@ func (i *Instance) Kill() error {
 		}
 	}
 
-	i.Status = StatusError
+	i.Status = StatusStopped
 
 	if tmuxErr != nil {
 		return fmt.Errorf("failed to kill tmux session: %w", tmuxErr)
@@ -4473,6 +4520,47 @@ func (i *Instance) regenerateMCPConfig() error {
 		mcpLog.Debug("regen_local_mcp_succeeded", slog.String("title", i.Title), slog.Int("mcp_count", len(localMCPs)))
 	}
 	return nil
+}
+
+// geminiSessionHasConversationData checks whether a Gemini session file exists
+// and contains at least one message record.
+//
+// Returns true on read/parse errors as a safe fallback, matching Claude quality-gate
+// behavior (avoid dropping potentially valid sessions due to transient I/O issues).
+func geminiSessionHasConversationData(sessionID, projectPath string) bool {
+	sessionID = strings.TrimSpace(sessionID)
+	if sessionID == "" || len(sessionID) < 8 {
+		return false
+	}
+
+	sessionsDir := GetGeminiSessionsDir(projectPath)
+	pattern := filepath.Join(sessionsDir, "session-*-"+sessionID[:8]+".json")
+	filePath, _ := findNewestFile(pattern)
+	if filePath == "" {
+		filePath = findGeminiSessionInAllProjects(sessionID)
+	}
+	if filePath == "" {
+		return false
+	}
+
+	data, err := os.ReadFile(filePath)
+	if err != nil {
+		return true
+	}
+
+	var payload struct {
+		SessionID string            `json:"sessionId"`
+		Messages  []json.RawMessage `json:"messages"`
+	}
+	if err := json.Unmarshal(data, &payload); err != nil {
+		return true
+	}
+
+	// If full ID is present in file and mismatches, treat candidate as invalid.
+	if payload.SessionID != "" && payload.SessionID != sessionID {
+		return false
+	}
+	return len(payload.Messages) > 0
 }
 
 // sessionHasConversationData checks if a Claude session file contains actual
