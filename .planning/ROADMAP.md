@@ -108,7 +108,10 @@ Plans:
 **Success Criteria** (what must be TRUE):
   1. tmux set-environment inside a Docker sandbox session sets environment variables that are visible to spawned processes
   2. OpenCode's question tool prompt triggers the "waiting" status detection, transitioning the session from "running" to "waiting"
-**Plans:** TBD
+**Plans:** 2 plans
+Plans:
+- [ ] 14-01-PLAN.md — Host-side tmux set-environment for sandbox sessions (DET-01)
+- [ ] 14-02-PLAN.md — OpenCode question tool and permission approval prompt detection (DET-02)
 
 ### Phase 15: Mouse, Theme & Polish
 **Goal:** Mouse scroll works everywhere, light theme renders correctly, heartbeat is consolidated, worktree reuse works, docs updated
@@ -162,6 +165,6 @@ Plans:
 | 11. MCP Proxy Reliability | v1.3 | 0/1 | Not started | - |
 | 12. Session List & Resume UX | v1.3 | 2/2 | Complete | 2026-03-13 |
 | 13. Auto-Start & Platform | v1.3 | 0/2 | Not started | - |
-| 14. Detection & Sandbox | v1.3 | 0/TBD | Not started | - |
+| 14. Detection & Sandbox | v1.3 | 0/2 | Not started | - |
 | 15. Mouse, Theme & Polish | v1.3 | 0/3 | Not started | - |
 | 16. Comprehensive Testing | v1.3 | 0/TBD | Not started | - |
