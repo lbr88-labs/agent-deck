@@ -2617,6 +2617,19 @@ func TestBuildStatusBarArgs(t *testing.T) {
 			wantKeys:        []string{"status", "status-style", "status-left-length", "status-right", "status-right-length"},
 			skipKeys:        nil,
 		},
+		{
+			name:        "all managed keys overridden - returns nil",
+			sessionName: "test-sess",
+			displayName: "my-project",
+			workDir:     "/home/user/my-project",
+			optionOverrides: map[string]string{
+				"status": "2", "status-style": "bg=#000",
+				"status-left-length": "50", "status-right": "custom",
+				"status-right-length": "100",
+			},
+			wantKeys: nil,
+			skipKeys: nil,
+		},
 	}
 
 	for _, tt := range tests {
@@ -2629,6 +2642,12 @@ func TestBuildStatusBarArgs(t *testing.T) {
 				injectStatusLine: true,
 			}
 			args := s.buildStatusBarArgs()
+
+			if tt.wantKeys == nil && tt.skipKeys == nil {
+				assert.Nil(t, args, "args should be nil when all managed keys are overridden")
+				return
+			}
+
 			require.NotNil(t, args, "args should not be nil when injectStatusLine is true")
 
 			// Extract the set of option keys from the args.
