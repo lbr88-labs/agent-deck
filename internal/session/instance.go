@@ -2876,6 +2876,37 @@ func (i *Instance) SyncSessionIDsToTmux() {
 	}
 }
 
+// SyncSessionIDsFromTmux reads tool session IDs from the tmux environment
+// into the Instance struct. This is the reverse of SyncSessionIDsToTmux.
+// Used in the stop path to capture IDs that may not have been saved during
+// start (e.g., if PostStartSync timed out but the tool started late).
+// Only updates fields where the tmux env has a non-empty value; does not
+// blank existing IDs if the tmux env is missing the variable.
+func (i *Instance) SyncSessionIDsFromTmux() {
+	if i.tmuxSession == nil || !i.tmuxSession.Exists() {
+		return
+	}
+
+	if id, err := i.tmuxSession.GetEnvironment("CLAUDE_SESSION_ID"); err == nil && id != "" {
+		i.ClaudeSessionID = id
+		if i.ClaudeDetectedAt.IsZero() {
+			i.ClaudeDetectedAt = time.Now()
+		}
+	}
+
+	if id, err := i.tmuxSession.GetEnvironment("GEMINI_SESSION_ID"); err == nil && id != "" {
+		i.GeminiSessionID = id
+	}
+
+	if id, err := i.tmuxSession.GetEnvironment("OPENCODE_SESSION_ID"); err == nil && id != "" {
+		i.OpenCodeSessionID = id
+	}
+
+	if id, err := i.tmuxSession.GetEnvironment("CODEX_SESSION_ID"); err == nil && id != "" {
+		i.CodexSessionID = id
+	}
+}
+
 // ResponseOutput represents a parsed response from an agent session
 type ResponseOutput struct {
 	Tool      string `json:"tool"`                 // Tool type (claude, gemini, etc.)
