@@ -95,7 +95,7 @@ Plans:
 **Success Criteria** (what must be TRUE):
   1. Running agent-deck session start from a non-interactive shell on WSL/Linux starts the session without tool processes rejecting input due to a missing PTY
   2. After auto-starting and stopping a session on WSL/Linux, resuming it attaches to the correct tool conversation (identified by the tool conversation ID, not the agent-deck internal UUID)
-**Plans:** 2 plans
+**Plans:** 3 plans
 Plans:
 - [ ] 13-01-PLAN.md — Pane-ready detection before SendKeysAndEnter in tmux Start() (PLAT-01)
 - [ ] 13-02-PLAN.md — SyncSessionIDsFromTmux before Kill in stop path (PLAT-02)

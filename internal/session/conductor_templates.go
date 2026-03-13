@@ -1816,6 +1816,27 @@ def create_discord_bot(config: dict):
 # ---------------------------------------------------------------------------
 
 
+def _os_heartbeat_daemon_installed() -> bool:
+    """Check if an OS-level heartbeat daemon (launchd or systemd) is installed."""
+    import platform
+    home = os.path.expanduser("~")
+    if platform.system() == "Darwin":
+        # Check for any launchd plist matching the heartbeat pattern
+        agents_dir = os.path.join(home, "Library", "LaunchAgents")
+        if os.path.isdir(agents_dir):
+            for f in os.listdir(agents_dir):
+                if f.startswith("com.agentdeck.conductor-heartbeat.") and f.endswith(".plist"):
+                    return True
+    else:
+        # Check for any systemd timer matching the heartbeat pattern
+        timers_dir = os.path.join(home, ".config", "systemd", "user")
+        if os.path.isdir(timers_dir):
+            for f in os.listdir(timers_dir):
+                if f.startswith("agent-deck-conductor-heartbeat-") and f.endswith(".timer"):
+                    return True
+    return False
+
+
 async def heartbeat_loop(
     config: dict, telegram_bot=None, slack_app=None, slack_channel_id=None,
     discord_bot=None, discord_channel_id=None,
@@ -1824,6 +1845,10 @@ async def heartbeat_loop(
     global_interval = config["heartbeat_interval"]
     if global_interval <= 0:
         log.info("Heartbeat disabled (interval=0)")
+        return
+
+    if _os_heartbeat_daemon_installed():
+        log.info("OS heartbeat daemon detected, bridge heartbeat loop disabled (avoiding double-trigger)")
         return
 
     interval_seconds = global_interval * 60
