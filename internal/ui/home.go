@@ -9871,26 +9871,78 @@ func (h *Home) renderPreviewPane(width, height int) string {
 		// PreviewModeBoth: use config settings (default)
 	}
 
-	// Special handling for error/stopped state - show guidance instead of output
-	if selected.Status == session.StatusError || selected.Status == session.StatusStopped {
-		errorHeader := renderSectionDivider("Session Inactive", width-4)
-		b.WriteString(errorHeader)
+	// Special handling for stopped state - user-intentional stop with resume guidance
+	if selected.Status == session.StatusStopped {
+		stoppedHeader := renderSectionDivider("Session Stopped", width-4)
+		b.WriteString(stoppedHeader)
 		b.WriteString("\n\n")
 
-		// Warning icon and message
 		warnStyle := lipgloss.NewStyle().Foreground(ColorYellow)
 		dimStyle := lipgloss.NewStyle().Foreground(ColorText)
 		keyStyle := lipgloss.NewStyle().Foreground(ColorAccent).Bold(true)
 
-		b.WriteString(warnStyle.Render("⚠ No tmux session running"))
+		b.WriteString(warnStyle.Render("■ Session stopped by user"))
+		b.WriteString("\n\n")
+		b.WriteString(dimStyle.Render("You stopped this session intentionally."))
+		b.WriteString("\n")
+		b.WriteString(dimStyle.Render("The session record is preserved for resuming."))
+		b.WriteString("\n\n")
+		b.WriteString(dimStyle.Render("Actions:"))
+		b.WriteString("\n")
+		if restartKey := h.actionKey(hotkeyRestart); restartKey != "" {
+			b.WriteString("  ")
+			b.WriteString(keyStyle.Render(restartKey))
+			b.WriteString(dimStyle.Render(" Resume  - restart with session resume"))
+			b.WriteString("\n")
+		}
+		if deleteKey := h.actionKey(hotkeyDelete); deleteKey != "" {
+			b.WriteString("  ")
+			b.WriteString(keyStyle.Render(deleteKey))
+			b.WriteString(dimStyle.Render(" Delete  - remove from list"))
+			b.WriteString("\n")
+		}
+		b.WriteString("  ")
+		b.WriteString(keyStyle.Render("Enter"))
+		b.WriteString(dimStyle.Render(" - attach (will auto-start)"))
+		b.WriteString("\n")
+
+		// Pad output to exact height to prevent layout shifts
+		content := b.String()
+		lines := strings.Split(content, "\n")
+		lineCount := len(lines)
+
+		if lineCount < height {
+			for i := lineCount; i < height; i++ {
+				content += "\n"
+			}
+		}
+
+		if len(content) > 0 && content[len(content)-1] == '\n' {
+			content = content[:len(content)-1]
+		}
+
+		return content
+	}
+
+	// Special handling for error state - crash/unexpected failure with diagnostic guidance
+	if selected.Status == session.StatusError {
+		errorHeader := renderSectionDivider("Session Error", width-4)
+		b.WriteString(errorHeader)
+		b.WriteString("\n\n")
+
+		warnStyle := lipgloss.NewStyle().Foreground(ColorYellow)
+		dimStyle := lipgloss.NewStyle().Foreground(ColorText)
+		keyStyle := lipgloss.NewStyle().Foreground(ColorAccent).Bold(true)
+
+		b.WriteString(warnStyle.Render("✕ No tmux session running"))
 		b.WriteString("\n\n")
 		b.WriteString(dimStyle.Render("This can happen if:"))
 		b.WriteString("\n")
-		b.WriteString(dimStyle.Render("  • Session was added but not yet started"))
+		b.WriteString(dimStyle.Render("  - Session was added but not yet started"))
 		b.WriteString("\n")
-		b.WriteString(dimStyle.Render("  • tmux server was restarted"))
+		b.WriteString(dimStyle.Render("  - tmux server was restarted"))
 		b.WriteString("\n")
-		b.WriteString(dimStyle.Render("  • Terminal was closed or system rebooted"))
+		b.WriteString(dimStyle.Render("  - Terminal was closed or system rebooted"))
 		b.WriteString("\n\n")
 		b.WriteString(dimStyle.Render("Actions:"))
 		b.WriteString("\n")
