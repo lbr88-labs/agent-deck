@@ -461,12 +461,12 @@ func (i *Instance) buildClaudeCommandWithMessage(baseCommand, message string) st
 					return fmt.Sprintf(`%s%s --resume %s%s`,
 						configDirPrefix, claudeCmd, opts.ResumeSessionID, extraFlags)
 				}
-				// Session was never interacted with - use --session-id with same UUID
-				// This handles the case where session was started but no message was sent
+				// Session was never interacted with - use --session-id with same UUID.
+				// CLAUDE_SESSION_ID is propagated via host-side SyncSessionIDsToTmux after start.
 				bashExportPrefix := i.buildBashExportPrefix()
 				return fmt.Sprintf(
-					`tmux set-environment CLAUDE_SESSION_ID "%s"; %s%s --session-id "%s"%s`,
-					opts.ResumeSessionID, bashExportPrefix, claudeCmd, opts.ResumeSessionID, extraFlags)
+					`%s%s --session-id "%s"%s`,
+					bashExportPrefix, claudeCmd, opts.ResumeSessionID, extraFlags)
 			}
 			// No session ID provided - use -r flag for interactive picker
 			return fmt.Sprintf(`%s%s -r%s`, configDirPrefix, claudeCmd, extraFlags)
@@ -483,30 +483,30 @@ func (i *Instance) buildClaudeCommandWithMessage(baseCommand, message string) st
 		//
 		bashExportPrefix := i.buildBashExportPrefix()
 
-		var baseCmd string
-		// Pre-generate UUID and use --session-id flag (instant, no API call)
-		// Note: --session-id works for new sessions as of Claude CLI 2.1.x
-		baseCmd = fmt.Sprintf(
-			`session_id=$(uuidgen | tr '[:upper:]' '[:lower:]'); `+
-				`tmux set-environment CLAUDE_SESSION_ID "$session_id"; `+
-				`%s%s --session-id "$session_id"%s`,
-			bashExportPrefix, claudeCmd, extraFlags)
+		// Pre-generate UUID in Go to avoid shell uuidgen (may be absent in Docker sandbox).
+		// CLAUDE_SESSION_ID is also propagated via host-side SetEnvironment after tmux start.
+		sessionUUID := generateUUID()
+		i.ClaudeSessionID = sessionUUID
 
-		// If message provided, append wait-and-send logic
+		var baseCmd string
+		// Use pre-generated literal UUID with --session-id flag.
+		// CLAUDE_SESSION_ID is propagated via host-side SetEnvironment after tmux start.
+		baseCmd = fmt.Sprintf(
+			`%s%s --session-id "%s"%s`,
+			bashExportPrefix, claudeCmd, sessionUUID, extraFlags)
+
+		// If message provided, append wait-and-send logic in background.
 		if message != "" {
 			// Escape single quotes in message for bash
 			escapedMsg := strings.ReplaceAll(message, "'", "'\"'\"'")
 
-			// Pre-generate UUID, then wait-and-send message in background
 			baseCmd = fmt.Sprintf(
-				`session_id=$(uuidgen | tr '[:upper:]' '[:lower:]'); `+
-					`tmux set-environment CLAUDE_SESSION_ID "$session_id"; `+
-					`(sleep 2; SESSION_NAME=$(tmux display-message -p '#S'); `+
+				`(sleep 2; SESSION_NAME=$(tmux display-message -p '#S'); `+
 					`while ! tmux capture-pane -p -t "$SESSION_NAME" | tail -5 | grep -qE "^>"; do sleep 0.2; done; `+
-					`tmux send-keys -l -t "$SESSION_NAME" -- '%s' \\; send-keys -t "$SESSION_NAME" Enter) & `+
-					`%s%s --session-id "$session_id"%s`,
+					`tmux send-keys -l -t "$SESSION_NAME" -- '%s' \; send-keys -t "$SESSION_NAME" Enter) & `+
+					`%s%s --session-id "%s"%s`,
 				escapedMsg,
-				bashExportPrefix, claudeCmd, extraFlags)
+				bashExportPrefix, claudeCmd, sessionUUID, extraFlags)
 		}
 
 		return baseCmd
@@ -584,10 +584,8 @@ func (i *Instance) buildGeminiCommand(baseCommand string) string {
 	}
 
 	yoloFlag := ""
-	yoloEnv := "false"
 	if yoloMode {
 		yoloFlag = " --yolo"
-		yoloEnv = "true"
 	}
 
 	// Determine model flag
@@ -606,10 +604,10 @@ func (i *Instance) buildGeminiCommand(baseCommand string) string {
 	if baseCommand == "gemini" {
 		// If we already have a session ID, use simple resume
 		if i.GeminiSessionID != "" {
+			// GEMINI_YOLO_MODE and GEMINI_SESSION_ID are propagated via host-side
+			// SetEnvironment after tmux start. No inline tmux set-environment.
 			return envPrefix + fmt.Sprintf(
-				"tmux set-environment GEMINI_YOLO_MODE %s; tmux set-environment GEMINI_SESSION_ID %s; gemini --resume %s%s%s",
-				yoloEnv,
-				i.GeminiSessionID,
+				"gemini --resume %s%s%s",
 				i.GeminiSessionID,
 				yoloFlag,
 				modelFlag,
@@ -619,9 +617,9 @@ func (i *Instance) buildGeminiCommand(baseCommand string) string {
 		// Start Gemini fresh - session ID will be captured when user interacts
 		// The previous capture-resume approach (gemini --output-format json ".") would hang
 		// because Gemini processes the "." prompt which takes too long
+		// GEMINI_YOLO_MODE is propagated via host-side SetEnvironment after tmux start.
 		return envPrefix + fmt.Sprintf(
-			`tmux set-environment GEMINI_YOLO_MODE %s; gemini%s%s`,
-			yoloEnv,
+			`gemini%s%s`,
 			yoloFlag,
 			modelFlag,
 		)
@@ -650,10 +648,11 @@ func (i *Instance) buildOpenCodeCommand(baseCommand string) string {
 	if baseCommand == "opencode" {
 		extraFlags := i.buildOpenCodeExtraFlags()
 
-		// If we already have a session ID, use resume with -s flag
+		// If we already have a session ID, use resume with -s flag.
+		// OPENCODE_SESSION_ID is propagated via host-side SetEnvironment after tmux start.
 		if i.OpenCodeSessionID != "" {
-			return envPrefix + fmt.Sprintf("tmux set-environment OPENCODE_SESSION_ID %s; opencode -s %s%s",
-				i.OpenCodeSessionID, i.OpenCodeSessionID, extraFlags)
+			return envPrefix + fmt.Sprintf("opencode -s %s%s",
+				i.OpenCodeSessionID, extraFlags)
 		}
 
 		// Start OpenCode fresh - session ID will be captured async after startup
@@ -730,10 +729,11 @@ func (i *Instance) buildCodexCommand(baseCommand string) string {
 
 	// If baseCommand is just "codex", handle specially
 	if baseCommand == "codex" {
-		// If we already have a session ID, use resume
+		// If we already have a session ID, use resume.
+		// CODEX_SESSION_ID is propagated via host-side SetEnvironment after tmux start.
 		if i.CodexSessionID != "" {
-			return envPrefix + fmt.Sprintf("tmux set-environment CODEX_SESSION_ID %s; codex%s resume %s",
-				i.CodexSessionID, yoloFlag, i.CodexSessionID)
+			return envPrefix + fmt.Sprintf("codex%s resume %s",
+				yoloFlag, i.CodexSessionID)
 		}
 
 		// Start Codex fresh - session ID will be captured async after startup
@@ -1622,10 +1622,10 @@ func (i *Instance) buildGenericCommand(baseCommand string) string {
 		dangerousFlag = " " + toolDef.DangerousFlag
 	}
 
-	// If we have an existing session ID, just resume
+	// If we have an existing session ID, just resume.
+	// The session ID env var is propagated via host-side SetEnvironment after tmux start.
 	if existingSessionID != "" {
-		return envPrefix + fmt.Sprintf("tmux set-environment %s %s && %s %s %s%s",
-			toolDef.SessionIDEnv, existingSessionID,
+		return envPrefix + fmt.Sprintf("%s %s %s%s",
 			baseCommand, toolDef.ResumeFlag, existingSessionID, dangerousFlag)
 	}
 
@@ -1643,17 +1643,15 @@ func (i *Instance) buildGenericCommand(baseCommand string) string {
 	// Pattern:
 	// 1. Run tool with minimal prompt to get session ID
 	// 2. Extract ID using jq
-	// 3. Store in tmux environment
-	// 4. Resume that session
+	// 3. Resume that session
+	// Note: session ID env var is set via host-side SyncSessionIDsToTmux() once detected.
 	// Fallback: If capture fails, start tool fresh
 	return envPrefix + fmt.Sprintf(
 		`session_id=$(%s %s "." 2>/dev/null | jq -r '%s' 2>/dev/null) || session_id=""; `+
 			`if [ -n "$session_id" ] && [ "$session_id" != "null" ]; then `+
-			`tmux set-environment %s "$session_id"; `+
 			`%s %s "$session_id"%s; `+
 			`else %s%s; fi`,
 		baseCommand, toolDef.OutputFormatFlag, toolDef.SessionIDJsonPath,
-		toolDef.SessionIDEnv,
 		baseCommand, toolDef.ResumeFlag, dangerousFlag,
 		baseCommand, dangerousFlag)
 }
@@ -1809,6 +1807,26 @@ func (i *Instance) Start() error {
 		sessionLog.Warn("set_instance_id_failed", slog.String("error", err.Error()))
 	}
 
+	// Propagate tool session IDs into the tmux environment (host-side, works for both
+	// sandbox and non-sandbox sessions). This replaces the previous approach of embedding
+	// "tmux set-environment" calls in the shell command string, which silently failed
+	// inside Docker sandbox containers that have no access to the host tmux socket.
+	if i.ClaudeSessionID != "" {
+		_ = i.tmuxSession.SetEnvironment("CLAUDE_SESSION_ID", i.ClaudeSessionID)
+	}
+	if i.GeminiSessionID != "" {
+		_ = i.tmuxSession.SetEnvironment("GEMINI_SESSION_ID", i.GeminiSessionID)
+	}
+	if i.Tool == "gemini" {
+		yoloVal := "false"
+		if i.GeminiYoloMode != nil && *i.GeminiYoloMode {
+			yoloVal = "true"
+		}
+		_ = i.tmuxSession.SetEnvironment("GEMINI_YOLO_MODE", yoloVal)
+	}
+	// OpenCode and Codex IDs are detected asynchronously; SyncSessionIDsToTmux() handles
+	// propagation once they are available.
+
 	// Propagate COLORFGBG into the tmux session environment so that any new
 	// shell or process spawned inside the session inherits the correct
 	// light/dark hint. The command prefix already exports it for the initial
@@ -1903,6 +1921,22 @@ func (i *Instance) StartWithMessage(message string) error {
 	// This enables real-time status updates via Stop/SessionStart hooks
 	if err := i.tmuxSession.SetEnvironment("AGENTDECK_INSTANCE_ID", i.ID); err != nil {
 		sessionLog.Warn("set_instance_id_failed", slog.String("error", err.Error()))
+	}
+
+	// Propagate tool session IDs into the tmux environment (host-side, works for both
+	// sandbox and non-sandbox sessions).
+	if i.ClaudeSessionID != "" {
+		_ = i.tmuxSession.SetEnvironment("CLAUDE_SESSION_ID", i.ClaudeSessionID)
+	}
+	if i.GeminiSessionID != "" {
+		_ = i.tmuxSession.SetEnvironment("GEMINI_SESSION_ID", i.GeminiSessionID)
+	}
+	if i.Tool == "gemini" {
+		yoloVal := "false"
+		if i.GeminiYoloMode != nil && *i.GeminiYoloMode {
+			yoloVal = "true"
+		}
+		_ = i.tmuxSession.SetEnvironment("GEMINI_YOLO_MODE", yoloVal)
 	}
 
 	// Propagate COLORFGBG into the tmux session environment so that any new
@@ -3601,8 +3635,8 @@ func (i *Instance) Restart() error {
 
 		var rawCmd string
 		if i.OpenCodeSessionID != "" {
-			rawCmd = fmt.Sprintf("tmux set-environment OPENCODE_SESSION_ID %s && opencode -s %s",
-				i.OpenCodeSessionID, i.OpenCodeSessionID)
+			// OPENCODE_SESSION_ID is propagated via host-side SetEnvironment after tmux start.
+			rawCmd = fmt.Sprintf("opencode -s %s", i.OpenCodeSessionID)
 		} else {
 			rawCmd = "opencode"
 			i.OpenCodeStartedAt = time.Now().UnixMilli()
@@ -3688,14 +3722,13 @@ func (i *Instance) Restart() error {
 		toolDef := GetToolDef(i.Tool)
 		sessionID := i.GetGenericSessionID()
 
+		// The session ID env var is propagated via host-side SetEnvironment after tmux start.
 		var rawCmd string
 		if toolDef.DangerousMode && toolDef.DangerousFlag != "" {
-			rawCmd = fmt.Sprintf("tmux set-environment %s %s && %s %s %s %s",
-				toolDef.SessionIDEnv, sessionID,
+			rawCmd = fmt.Sprintf("%s %s %s %s",
 				i.Command, toolDef.ResumeFlag, sessionID, toolDef.DangerousFlag)
 		} else {
-			rawCmd = fmt.Sprintf("tmux set-environment %s %s && %s %s %s",
-				toolDef.SessionIDEnv, sessionID,
+			rawCmd = fmt.Sprintf("%s %s %s",
 				i.Command, toolDef.ResumeFlag, sessionID)
 		}
 		resumeCmd, containerName, err := i.prepareCommand(rawCmd)
@@ -3744,9 +3777,8 @@ func (i *Instance) Restart() error {
 	} else if i.Tool == "gemini" && i.GeminiSessionID != "" {
 		command = i.buildGeminiCommand("gemini")
 	} else if i.Tool == "opencode" && i.OpenCodeSessionID != "" {
-		// Set OPENCODE_SESSION_ID in tmux env so detection works after restart
-		command = fmt.Sprintf("tmux set-environment OPENCODE_SESSION_ID %s && opencode -s %s",
-			i.OpenCodeSessionID, i.OpenCodeSessionID)
+		// OPENCODE_SESSION_ID is propagated via host-side SetEnvironment after tmux start.
+		command = fmt.Sprintf("opencode -s %s", i.OpenCodeSessionID)
 	} else if i.Tool == "codex" && i.CodexSessionID != "" {
 		command = i.buildCodexCommand("codex")
 	} else {
@@ -3805,6 +3837,11 @@ func (i *Instance) Restart() error {
 		sessionLog.Warn("set_instance_id_failed", slog.String("error", err.Error()))
 	}
 
+	// Propagate all known tool session IDs to the tmux environment (host-side).
+	// This covers Restart() which uses buildClaudeResumeCommand() and similar
+	// builders that no longer embed "tmux set-environment" in the shell string.
+	i.SyncSessionIDsToTmux()
+
 	// Re-capture MCPs after restart
 	i.CaptureLoadedMCPs()
 
@@ -3830,7 +3867,7 @@ func (i *Instance) Restart() error {
 
 // buildClaudeResumeCommand builds the claude resume command with proper config options
 // Respects: CLAUDE_CONFIG_DIR, dangerous_mode from user config
-// IMPORTANT: Also sets CLAUDE_SESSION_ID in tmux environment so detection works after restart
+// CLAUDE_SESSION_ID is set via host-side SetEnvironment (called by SyncSessionIDsToTmux after restart)
 func (i *Instance) buildClaudeResumeCommand() string {
 	// Get the configured Claude command (e.g., "claude", "cdw", "cdp")
 	// If a custom command is set, we skip CLAUDE_CONFIG_DIR prefix since the alias handles it
@@ -3878,18 +3915,16 @@ func (i *Instance) buildClaudeResumeCommand() string {
 		dangerousFlag = " --allow-dangerously-skip-permissions"
 	}
 
-	// Build the command with tmux environment update.
-	// This ensures CLAUDE_SESSION_ID is set in tmux env after restart,
-	// so GetSessionIDFromTmux() works correctly and detects the session.
-	// Use ";" (not "&&") so the tool command runs even if tmux set-environment
-	// fails — inside a Docker sandbox there is no tmux server.
+	// CLAUDE_SESSION_ID is propagated via host-side SetEnvironment (SyncSessionIDsToTmux)
+	// after the tmux session is restarted. No inline tmux set-environment in the shell string
+	// (which silently fails inside Docker sandbox containers).
 	if useResume {
-		return fmt.Sprintf("tmux set-environment CLAUDE_SESSION_ID %s 2>/dev/null; %s%s --resume %s%s",
-			i.ClaudeSessionID, configDirPrefix, claudeCmd, i.ClaudeSessionID, dangerousFlag)
+		return fmt.Sprintf("%s%s --resume %s%s",
+			configDirPrefix, claudeCmd, i.ClaudeSessionID, dangerousFlag)
 	}
 	// Session was never interacted with - use --session-id to create fresh session.
-	return fmt.Sprintf("tmux set-environment CLAUDE_SESSION_ID %s 2>/dev/null; %s%s --session-id %s%s",
-		i.ClaudeSessionID, configDirPrefix, claudeCmd, i.ClaudeSessionID, dangerousFlag)
+	return fmt.Sprintf("%s%s --session-id %s%s",
+		configDirPrefix, claudeCmd, i.ClaudeSessionID, dangerousFlag)
 }
 
 // SetGeminiModel sets the Gemini model for this session and triggers a restart if running.
@@ -4038,16 +4073,15 @@ func (i *Instance) buildClaudeForkCommandForTarget(target *Instance, opts *Claud
 	// Build extra flags from options (for fork, we use ToArgsForFork which excludes session mode)
 	extraFlags := i.buildClaudeExtraFlags(opts)
 
-	// Pre-generate UUID for forked session and use --session-id flag
-	// Note: --session-id works for new/forked sessions as of Claude CLI 2.1.x
-	// Note: Path is single-quoted to handle spaces and special characters
+	// Pre-generate UUID for forked session to avoid shell uuidgen dependency.
+	// CLAUDE_SESSION_ID is propagated via host-side SetEnvironment after tmux start.
+	forkUUID := generateUUID()
+	target.ClaudeSessionID = forkUUID
 	cmd := fmt.Sprintf(
 		`cd '%s' && `+
-			`session_id=$(uuidgen | tr '[:upper:]' '[:lower:]'); `+
-			`tmux set-environment CLAUDE_SESSION_ID "$session_id"; `+
-			`%sclaude --session-id "$session_id" --resume %s --fork-session%s`,
+			`%sclaude --session-id "%s" --resume %s --fork-session%s`,
 		workDir,
-		bashExportPrefix, i.ClaudeSessionID, extraFlags)
+		bashExportPrefix, forkUUID, i.ClaudeSessionID, extraFlags)
 	cmd, err := i.applyWrapper(cmd)
 	if err != nil {
 		return "", err
@@ -4179,7 +4213,7 @@ else
   sed -i "s/%s/$new_id/g" "$tmpfile" || { echo "Sed failed"; exit 1; }
 fi
 opencode import "$tmpfile" 2>&1 || { echo "Import failed"; exit 1; }
-tmux set-environment OPENCODE_SESSION_ID "$new_id"
+# OPENCODE_SESSION_ID is propagated via host-side SetEnvironment after tmux start.
 echo "Forked to: $new_id"
 opencode -s "$new_id"%s
 `, workDir, workDir, envPrefix, i.OpenCodeSessionID,
@@ -4928,6 +4962,21 @@ func buildExecCommand(ctr *docker.Container, userCfg *UserConfig, toolCommand st
 	// Wrap toolCommand in bash -c inside the container so it is passed as a single
 	// shell-quoted argument, preventing injection of shell metacharacters.
 	return docker.ShellJoinArgs(append(prefix, "bash", "-c", toolCommand))
+}
+
+// generateUUID generates a cryptographically random UUID v4 as a lowercase string.
+// Pre-generating in Go (instead of using shell $(uuidgen)) ensures the ID is immediately
+// known to the Instance and avoids Docker-sandbox failures where uuidgen is unavailable.
+func generateUUID() string {
+	b := make([]byte, 16)
+	if _, err := rand.Read(b); err != nil {
+		// Fallback: timestamp-based placeholder; unique but not a valid UUID v4.
+		return fmt.Sprintf("00000000-0000-4000-8000-%012x", time.Now().UnixNano())
+	}
+	b[6] = (b[6] & 0x0f) | 0x40 // version 4
+	b[8] = (b[8] & 0x3f) | 0x80 // variant bits (RFC 4122)
+	return fmt.Sprintf("%08x-%04x-%04x-%04x-%012x",
+		b[0:4], b[4:6], b[6:8], b[8:10], b[10:16])
 }
 
 // generateID generates a unique session ID

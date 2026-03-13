@@ -166,8 +166,8 @@ func TestOpenCodeBuildCommand(t *testing.T) {
 			name:              "Resume with existing session ID",
 			baseCommand:       "opencode",
 			openCodeSessionID: "ses_ABC123",
-			wantContains:      []string{"opencode -s ses_ABC123", "tmux set-environment OPENCODE_SESSION_ID ses_ABC123"},
-			wantNotContains:   []string{},
+			wantContains:      []string{"opencode -s ses_ABC123"},
+			wantNotContains:   []string{"tmux set-environment"},
 		},
 		{
 			name:              "Custom command passes through unchanged",

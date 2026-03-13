@@ -6,6 +6,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"reflect"
+	"regexp"
 	"strings"
 	"sync"
 	"testing"
@@ -129,15 +130,15 @@ func TestInstance_Fork(t *testing.T) {
 		t.Errorf("Fork() failed: %v", err)
 	}
 
-	// Command should use uuidgen + --session-id pattern (instant, no API call)
+	// Command should use Go-side UUID + --session-id pattern (no shell uuidgen dependency)
 	// When not explicitly configured, CLAUDE_CONFIG_DIR should NOT be set
 	// (allows shell environment to take precedence)
 	if strings.Contains(cmd, "CLAUDE_CONFIG_DIR=") {
 		t.Errorf("Fork() should NOT set CLAUDE_CONFIG_DIR when not explicitly configured, got: %s", cmd)
 	}
-	// Step 1: Pre-generate UUID with uuidgen
-	if !strings.Contains(cmd, "uuidgen") {
-		t.Errorf("Fork() should use uuidgen for session ID, got: %s", cmd)
+	// Must NOT use shell uuidgen (replaced with Go-side generateUUID())
+	if strings.Contains(cmd, "uuidgen") {
+		t.Errorf("Fork() should NOT use shell uuidgen (replaced with Go-side UUID), got: %s", cmd)
 	}
 	// Should NOT use -p "." or jq (old capture-resume pattern)
 	if strings.Contains(cmd, `-p "."`) {
@@ -146,17 +147,22 @@ func TestInstance_Fork(t *testing.T) {
 	if strings.Contains(cmd, "jq") {
 		t.Errorf("Fork() should NOT use jq (old pattern), got: %s", cmd)
 	}
-	// Step 2: Use --session-id flag with pre-generated UUID
-	if !strings.Contains(cmd, `--session-id "$session_id"`) {
+	// Must use --session-id flag with a literal Go-generated UUID
+	if !strings.Contains(cmd, "--session-id") {
 		t.Errorf("Fork() should use --session-id flag, got: %s", cmd)
 	}
-	// Step 3: Include --resume with parent ID and --fork-session
+	// Must NOT use shell variable substitution for session ID
+	if strings.Contains(cmd, `--session-id "$session_id"`) {
+		t.Errorf("Fork() should NOT use shell variable for session ID, got: %s", cmd)
+	}
+	// Include --resume with parent ID and --fork-session
 	if !strings.Contains(cmd, "--resume abc-123 --fork-session") {
 		t.Errorf("Fork() should include resume and fork-session flags, got: %s", cmd)
 	}
-	// Step 4: Store session ID in tmux environment
-	if !strings.Contains(cmd, "tmux set-environment CLAUDE_SESSION_ID") {
-		t.Errorf("Fork() should store session ID in tmux env, got: %s", cmd)
+	// CLAUDE_SESSION_ID must NOT be embedded in the shell command string;
+	// it is propagated via host-side SetEnvironment after tmux start.
+	if strings.Contains(cmd, "tmux set-environment CLAUDE_SESSION_ID") {
+		t.Errorf("Fork() should NOT embed tmux set-environment (use host-side SetEnvironment), got: %s", cmd)
 	}
 }
 
@@ -373,19 +379,23 @@ func TestBuildClaudeCommand(t *testing.T) {
 		t.Errorf("Should NOT contain CLAUDE_CONFIG_DIR when not explicitly configured, got: %s", cmd)
 	}
 
-	// Should use pre-generated UUID pattern with uuidgen
-	if !strings.Contains(cmd, "uuidgen") {
-		t.Errorf("Should use uuidgen for UUID generation, got: %s", cmd)
+	// Must NOT use shell uuidgen (replaced with Go-side generateUUID())
+	if strings.Contains(cmd, "uuidgen") {
+		t.Errorf("Should NOT use shell uuidgen (replaced with Go-side UUID), got: %s", cmd)
 	}
 
-	// Should store session ID in tmux environment
-	if !strings.Contains(cmd, "tmux set-environment CLAUDE_SESSION_ID") {
-		t.Errorf("Should store session ID in tmux env, got: %s", cmd)
+	// CLAUDE_SESSION_ID must NOT be in the shell command string;
+	// it is propagated via host-side SetEnvironment after tmux start.
+	if strings.Contains(cmd, "tmux set-environment CLAUDE_SESSION_ID") {
+		t.Errorf("Should NOT embed tmux set-environment (use host-side SetEnvironment), got: %s", cmd)
 	}
 
-	// Should use --session-id flag for new sessions
-	if !strings.Contains(cmd, `--session-id "$session_id"`) {
+	// Should use --session-id flag for new sessions with a literal UUID (not $session_id)
+	if !strings.Contains(cmd, "--session-id") {
 		t.Errorf("Should use --session-id flag for new sessions, got: %s", cmd)
+	}
+	if strings.Contains(cmd, `--session-id "$session_id"`) {
+		t.Errorf("Should NOT use shell variable for session ID, got: %s", cmd)
 	}
 
 	// Should NOT use capture-resume pattern anymore
@@ -436,12 +446,16 @@ func TestBuildClaudeCommand_ExplicitConfig(t *testing.T) {
 		t.Errorf("Should contain CLAUDE_CONFIG_DIR when explicitly configured, got: %s", cmd)
 	}
 
-	// Should use --session-id pattern with explicit config
-	if !strings.Contains(cmd, `--session-id "$session_id"`) {
+	// Should use --session-id flag with a literal Go-generated UUID
+	if !strings.Contains(cmd, "--session-id") {
 		t.Errorf("Should use --session-id flag with explicit config, got: %s", cmd)
 	}
-	if !strings.Contains(cmd, "uuidgen") {
-		t.Errorf("Should use uuidgen with explicit config, got: %s", cmd)
+	if strings.Contains(cmd, `--session-id "$session_id"`) {
+		t.Errorf("Should NOT use shell variable for session ID, got: %s", cmd)
+	}
+	// Must NOT use shell uuidgen (replaced with Go-side generateUUID())
+	if strings.Contains(cmd, "uuidgen") {
+		t.Errorf("Should NOT use shell uuidgen (replaced with Go-side UUID), got: %s", cmd)
 	}
 }
 
@@ -481,9 +495,12 @@ config_dir = "~/.claude-work"
 		t.Errorf("Should include CLAUDE_CONFIG_DIR for capture-resume commands, got: %s", cmd)
 	}
 
-	// Should use --session-id pattern (pre-generated UUID, instant start)
-	if !strings.Contains(cmd, `--session-id "$session_id"`) {
+	// Should use --session-id with a literal Go-generated UUID (not shell variable)
+	if !strings.Contains(cmd, "--session-id") {
 		t.Errorf("Should use --session-id flag for instant start pattern, got: %s", cmd)
+	}
+	if strings.Contains(cmd, `--session-id "$session_id"`) {
+		t.Errorf("Should NOT use shell variable for session ID, got: %s", cmd)
 	}
 }
 
@@ -536,10 +553,10 @@ func TestCreateForkedInstance_SessionIDPattern(t *testing.T) {
 		t.Fatalf("CreateForkedInstance() failed: %v", err)
 	}
 
-	// Command SHOULD use uuidgen + --session-id pattern (instant, no API call)
-	// Step 1: Pre-generate UUID with uuidgen
-	if !strings.Contains(cmd, "uuidgen") {
-		t.Errorf("Fork command should use uuidgen for session ID, got: %s", cmd)
+	// Command should use Go-side UUID + --session-id pattern (no shell uuidgen dependency)
+	// Must NOT use shell uuidgen (replaced with Go-side generateUUID())
+	if strings.Contains(cmd, "uuidgen") {
+		t.Errorf("Fork command should NOT use shell uuidgen (replaced with Go-side UUID), got: %s", cmd)
 	}
 	// Should NOT use -p "." or jq (old capture-resume pattern)
 	if strings.Contains(cmd, `-p "."`) {
@@ -548,23 +565,26 @@ func TestCreateForkedInstance_SessionIDPattern(t *testing.T) {
 	if strings.Contains(cmd, "jq") {
 		t.Errorf("Fork command should NOT use jq (old pattern), got: %s", cmd)
 	}
-	// Step 2: Use --session-id flag with pre-generated UUID
-	if !strings.Contains(cmd, `--session-id "$session_id"`) {
+	// Must use --session-id flag with a literal Go-generated UUID
+	if !strings.Contains(cmd, "--session-id") {
 		t.Errorf("Fork command should use --session-id flag, got: %s", cmd)
 	}
-	// Step 3: Include --resume with parent ID and --fork-session
+	if strings.Contains(cmd, `--session-id "$session_id"`) {
+		t.Errorf("Fork command should NOT use shell variable for session ID, got: %s", cmd)
+	}
+	// Include --resume with parent ID and --fork-session
 	if !strings.Contains(cmd, "--resume parent-abc-123 --fork-session") {
 		t.Errorf("Fork command should contain --resume with parent ID and --fork-session, got: %s", cmd)
 	}
-	// Step 4: Store session ID in tmux environment
-	if !strings.Contains(cmd, "tmux set-environment CLAUDE_SESSION_ID") {
-		t.Errorf("Fork command should store session ID in tmux env, got: %s", cmd)
+	// CLAUDE_SESSION_ID must NOT be embedded in the shell command string;
+	// it is propagated via host-side SetEnvironment after tmux start.
+	if strings.Contains(cmd, "tmux set-environment CLAUDE_SESSION_ID") {
+		t.Errorf("Fork command should NOT embed tmux set-environment (use host-side SetEnvironment), got: %s", cmd)
 	}
 
-	// Forked instance should have empty ClaudeSessionID initially
-	// (will be populated from tmux env after start)
-	if forked.ClaudeSessionID != "" {
-		t.Errorf("Forked instance should have empty ClaudeSessionID initially, got: %s", forked.ClaudeSessionID)
+	// Forked instance should have its ClaudeSessionID set to the pre-generated UUID.
+	if forked.ClaudeSessionID == "" {
+		t.Errorf("Forked instance should have ClaudeSessionID pre-set by generateUUID()")
 	}
 
 	if forked.Tool != "claude" {
@@ -1249,12 +1269,13 @@ func TestBuildGeminiCommand(t *testing.T) {
 	// "gemini --output-format json ." would hang processing the prompt
 	cmd := inst.buildGeminiCommand("gemini")
 
-	// Should set YOLO mode env and start fresh
-	if !strings.Contains(cmd, "GEMINI_YOLO_MODE") {
-		t.Error("Should set GEMINI_YOLO_MODE env var")
-	}
+	// Should start Gemini fresh (no inline tmux set-environment; host-side SetEnvironment handles it)
 	if !strings.Contains(cmd, "gemini") {
 		t.Errorf("Should start gemini fresh for new session, got %q", cmd)
+	}
+	// GEMINI_YOLO_MODE is now propagated via host-side SetEnvironment, not in the shell string
+	if strings.Contains(cmd, "tmux set-environment GEMINI_YOLO_MODE") {
+		t.Errorf("buildGeminiCommand should NOT embed 'tmux set-environment GEMINI_YOLO_MODE' in shell string, got %q", cmd)
 	}
 	// Should NOT use capture-resume pattern for new sessions
 	if strings.Contains(cmd, "--output-format json") {
@@ -1264,18 +1285,15 @@ func TestBuildGeminiCommand(t *testing.T) {
 		t.Error("Should NOT use --resume for new sessions without session ID")
 	}
 
-	// With session ID, should use simple resume with YOLO env var
+	// With session ID, should use simple resume (no inline tmux set-environment)
 	inst.GeminiSessionID = "abc-123-def"
 	cmd = inst.buildGeminiCommand("gemini")
 	if !strings.Contains(cmd, "gemini --resume abc-123-def") {
 		t.Errorf("buildGeminiCommand('gemini') should contain resume command, got %q", cmd)
 	}
-	if !strings.Contains(cmd, "GEMINI_YOLO_MODE") {
-		t.Errorf("buildGeminiCommand('gemini') should set GEMINI_YOLO_MODE env, got %q", cmd)
-	}
-	// Resume should set GEMINI_SESSION_ID in tmux env
-	if !strings.Contains(cmd, "tmux set-environment GEMINI_SESSION_ID abc-123-def") {
-		t.Errorf("buildGeminiCommand('gemini') should set GEMINI_SESSION_ID in tmux env on resume, got %q", cmd)
+	// GEMINI_YOLO_MODE and GEMINI_SESSION_ID are now propagated via host-side SetEnvironment
+	if strings.Contains(cmd, "tmux set-environment") {
+		t.Errorf("buildGeminiCommand('gemini') should NOT embed 'tmux set-environment' in shell string, got %q", cmd)
 	}
 
 	// With explicit model set, should include --model flag
@@ -1538,8 +1556,9 @@ func TestInstance_ForkOpenCode(t *testing.T) {
 	if !strings.Contains(script, "ses_abc123def456ffe1234567890abcd") {
 		t.Errorf("Fork script should include original session ID, got: %s", script)
 	}
-	if !strings.Contains(script, "tmux set-environment OPENCODE_SESSION_ID") {
-		t.Errorf("Fork script should set tmux environment, got: %s", script)
+	// tmux set-environment removed: host-side SetEnvironment handles propagation
+	if strings.Contains(script, "tmux set-environment") {
+		t.Errorf("Fork script should NOT contain tmux set-environment (host-side handles it), got: %s", script)
 	}
 }
 
@@ -2719,3 +2738,75 @@ func TestInstance_SetAcknowledgedFromShared_WaitingApplied(t *testing.T) {
 
 // Tests for hasUnsentComposerPrompt and currentComposerPrompt moved to
 // internal/send/send_test.go as part of send verification consolidation.
+
+// TestGenerateUUID verifies that generateUUID returns a valid lowercase UUID v4.
+func TestGenerateUUID(t *testing.T) {
+	uuidRE := regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$`)
+	id := generateUUID()
+	if !uuidRE.MatchString(id) {
+		t.Errorf("generateUUID() = %q, does not match UUID v4 pattern", id)
+	}
+	// Must be all lowercase
+	if id != strings.ToLower(id) {
+		t.Errorf("generateUUID() = %q, must be lowercase", id)
+	}
+}
+
+// TestGenerateUUID_Uniqueness verifies that two calls return different values.
+func TestGenerateUUID_Uniqueness(t *testing.T) {
+	a := generateUUID()
+	b := generateUUID()
+	if a == b {
+		t.Errorf("generateUUID() returned same value twice: %q", a)
+	}
+}
+
+// TestBuildClaudeCommandNoUuidgen verifies that the built command does not use
+// shell-based uuidgen or $( substitution for the session ID.
+func TestBuildClaudeCommandNoUuidgen(t *testing.T) {
+	inst := NewInstanceWithTool("uuid-test", "/tmp/test", "claude")
+	cmd := inst.buildClaudeCommand("claude")
+
+	if strings.Contains(cmd, "uuidgen") {
+		t.Errorf("command must NOT use shell uuidgen (replaced with Go-side UUID):\n  cmd: %q", cmd)
+	}
+	if strings.Contains(cmd, "session_id=$(") {
+		t.Errorf("command must NOT use $( shell substitution for session ID:\n  cmd: %q", cmd)
+	}
+}
+
+// TestBuildClaudeCommandHasSessionID verifies that the built command embeds a
+// literal UUID in the --session-id flag. CLAUDE_SESSION_ID is set via host-side
+// SetEnvironment after session start (not embedded in the shell command string).
+func TestBuildClaudeCommandHasSessionID(t *testing.T) {
+	inst := NewInstanceWithTool("uuid-literal-test", "/tmp/test", "claude")
+	cmd := inst.buildClaudeCommand("claude")
+
+	if !strings.Contains(cmd, "--session-id") {
+		t.Errorf("command must include --session-id flag:\n  cmd: %q", cmd)
+	}
+	// tmux set-environment must NOT be in the shell command string;
+	// CLAUDE_SESSION_ID is propagated via host-side SetEnvironment after tmux start.
+	if strings.Contains(cmd, "tmux set-environment CLAUDE_SESSION_ID") {
+		t.Errorf("command must NOT embed tmux set-environment (use host-side SetEnvironment):\n  cmd: %q", cmd)
+	}
+}
+
+// TestForkCommandNoUuidgen verifies that Fork() does not use shell uuidgen.
+func TestForkCommandNoUuidgen(t *testing.T) {
+	inst := NewInstance("fork-uuid-test", "/tmp/test")
+	inst.ClaudeSessionID = "parent-session-id"
+	inst.ClaudeDetectedAt = time.Now()
+
+	cmd, err := inst.Fork("forked", "")
+	if err != nil {
+		t.Fatalf("Fork() failed: %v", err)
+	}
+
+	if strings.Contains(cmd, "uuidgen") {
+		t.Errorf("Fork command must NOT use shell uuidgen (replaced with Go-side UUID):\n  cmd: %q", cmd)
+	}
+	if strings.Contains(cmd, "session_id=$(") {
+		t.Errorf("Fork command must NOT use $( shell substitution:\n  cmd: %q", cmd)
+	}
+}
