@@ -11,15 +11,15 @@ Rescoped 2026-03-12: removed completed items (#320, #318), added critical new is
 
 ### MCP Proxy Reliability
 
-- [ ] **MCP-01**: MCP socket proxy assigns unique request IDs per proxy instance to prevent collisions when multiple sessions share the same proxy (#324)
-- [ ] **MCP-02**: Request/response correlation uses session-scoped ID mapping so responses route to the correct caller (#324)
-- [ ] **MCP-03**: Integration test verifies two concurrent sessions issuing tool calls through a shared proxy receive correct responses without cross-talk
+- [x] **MCP-01**: MCP socket proxy assigns unique request IDs per proxy instance to prevent collisions when multiple sessions share the same proxy (#324)
+- [x] **MCP-02**: Request/response correlation uses session-scoped ID mapping so responses route to the correct caller (#324)
+- [x] **MCP-03**: Integration test verifies two concurrent sessions issuing tool calls through a shared proxy receive correct responses without cross-talk
 
 ### Session Visibility
 
-- [ ] **VIS-01**: Stopped sessions appear in main TUI session list with distinct styling from error sessions (#307)
-- [ ] **VIS-02**: Preview pane differentiates stopped (user-intentional) from error (crash) with distinct action guidance and resume affordance (#307)
-- [ ] **VIS-03**: Session picker dialog correctly filters stopped sessions for conductor flows (stopped excluded from conductor picker, visible in main list)
+- [x] **VIS-01**: Stopped sessions appear in main TUI session list with distinct styling from error sessions (#307)
+- [x] **VIS-02**: Preview pane differentiates stopped (user-intentional) from error (crash) with distinct action guidance and resume affordance (#307)
+- [x] **VIS-03**: Session picker dialog correctly filters stopped sessions for conductor flows (stopped excluded from conductor picker, visible in main list)
 
 ### Resume Deduplication
 
@@ -101,12 +101,12 @@ Deferred to v1.4+. Tracked but not in current roadmap.
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| MCP-01 | Phase 11 | Pending |
-| MCP-02 | Phase 11 | Pending |
-| MCP-03 | Phase 11 | Pending |
-| VIS-01 | Phase 12 | Pending |
-| VIS-02 | Phase 12 | Pending |
-| VIS-03 | Phase 12 | Pending |
+| MCP-01 | Phase 11 | Complete |
+| MCP-02 | Phase 11 | Complete |
+| MCP-03 | Phase 11 | Complete |
+| VIS-01 | Phase 12 | Complete |
+| VIS-02 | Phase 12 | Complete |
+| VIS-03 | Phase 12 | Complete |
 | DEDUP-01 | Phase 12 | Pending |
 | DEDUP-02 | Phase 12 | Pending |
 | DEDUP-03 | Phase 12 | Pending |
