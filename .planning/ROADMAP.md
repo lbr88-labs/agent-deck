@@ -48,7 +48,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 Original scope had Phases 11-15. Rescoped after #320 and #318 closed, and new critical issues (#324, #322) emerged. Added #266 (unblocked by #320), #255, #225, #216 from backlog. Added Phase 16 for comprehensive testing.
 
 - [ ] **Phase 11: MCP Proxy Reliability** - Fix request ID collisions in shared MCP socket proxy (#324)
-- [ ] **Phase 12: Session List & Resume UX** - Stopped sessions visible with distinct styling; resume deduplication (#307, #224)
+- [x] **Phase 12: Session List & Resume UX** - Stopped sessions visible with distinct styling; resume deduplication (#307, #224) (completed 2026-03-13)
 - [ ] **Phase 13: Auto-Start & Platform** - WSL/Linux TTY fix for non-interactive auto-start (#311)
 - [ ] **Phase 14: Detection & Sandbox** - Docker tmux set-environment fix (#266); OpenCode waiting status (#255)
 - [ ] **Phase 15: Mouse, Theme & Polish** - Mouse scroll, light theme fix, docs, heartbeat cleanup, worktree reuse (#262, #254, #322, #228, #225, #216)
@@ -82,7 +82,7 @@ Plans:
   4. Resuming a stopped session reuses the existing record (one entry, not two)
   5. UpdateClaudeSessionsWithDedup runs immediately in memory at the resume call site
   6. A concurrent-write integration test covering two Storage instances against the same SQLite file passes green
-**Plans:** 2 plans
+**Plans:** 2/2 plans complete
 Plans:
 - [ ] 12-01-PLAN.md — Preview pane stopped vs error differentiation (VIS-01, VIS-02, VIS-03)
 - [ ] 12-02-PLAN.md — In-memory dedup at resume site and concurrent storage test (DEDUP-01, DEDUP-02, DEDUP-03)
@@ -153,7 +153,7 @@ Plans:
 | 9. Process Stability | v1.2 | 2/2 | Complete | 2026-03-07 |
 | 10. Learnings Promotion | v1.2 | 2/2 | Complete | 2026-03-06 |
 | 11. MCP Proxy Reliability | v1.3 | 0/1 | Not started | - |
-| 12. Session List & Resume UX | v1.3 | 0/2 | Not started | - |
+| 12. Session List & Resume UX | 2/2 | Complete    | 2026-03-13 | - |
 | 13. Auto-Start & Platform | v1.3 | 0/TBD | Not started | - |
 | 14. Detection & Sandbox | v1.3 | 0/TBD | Not started | - |
 | 15. Mouse, Theme & Polish | v1.3 | 0/TBD | Not started | - |
