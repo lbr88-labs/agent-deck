@@ -95,7 +95,10 @@ Plans:
 **Success Criteria** (what must be TRUE):
   1. Running agent-deck session start from a non-interactive shell on WSL/Linux starts the session without tool processes rejecting input due to a missing PTY
   2. After auto-starting and stopping a session on WSL/Linux, resuming it attaches to the correct tool conversation (identified by the tool conversation ID, not the agent-deck internal UUID)
-**Plans:** TBD
+**Plans:** 2 plans
+Plans:
+- [ ] 13-01-PLAN.md — Pane-ready detection before SendKeysAndEnter in tmux Start() (PLAT-01)
+- [ ] 13-02-PLAN.md — SyncSessionIDsFromTmux before Kill in stop path (PLAT-02)
 
 ### Phase 14: Detection & Sandbox
 **Goal:** Docker sandbox tmux environment propagation works correctly; OpenCode waiting status is detected
@@ -156,8 +159,8 @@ Plans:
 | 9. Process Stability | v1.2 | 2/2 | Complete | 2026-03-07 |
 | 10. Learnings Promotion | v1.2 | 2/2 | Complete | 2026-03-06 |
 | 11. MCP Proxy Reliability | v1.3 | 0/1 | Not started | - |
-| 12. Session List & Resume UX | 2/2 | Complete   | 2026-03-13 | - |
-| 13. Auto-Start & Platform | v1.3 | 0/TBD | Not started | - |
+| 12. Session List & Resume UX | v1.3 | 2/2 | Complete | 2026-03-13 |
+| 13. Auto-Start & Platform | v1.3 | 0/2 | Not started | - |
 | 14. Detection & Sandbox | v1.3 | 0/TBD | Not started | - |
 | 15. Mouse, Theme & Polish | v1.3 | 0/2 | Not started | - |
 | 16. Comprehensive Testing | v1.3 | 0/TBD | Not started | - |
