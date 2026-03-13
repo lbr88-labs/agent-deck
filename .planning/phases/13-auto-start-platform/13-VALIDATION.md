@@ -19,7 +19,7 @@ created: 2026-03-13
 |----------|-------|
 | **Framework** | Go testing + testify (existing) |
 | **Config file** | None (go test flags) |
-| **Quick run command** | `go test -race -v ./internal/tmux/... ./internal/session/... -run TestPaneReady\|TestSyncSessionIDs\|TestStopSavesSessionID\|TestGenerateUUID\|TestBuildClaudeCommandNoUuidgen` |
+| **Quick run command** | `go test -race -v ./internal/tmux/... ./internal/session/... -run TestPaneReady\|TestSyncSessionIDs\|TestStopSavesSessionID\|TestGenerateUUID\|TestBuildClaudeCommandNoUuidgen\|TestBuildForkCommandNoUuidgen` |
 | **Full suite command** | `make test` |
 | **Estimated runtime** | ~15 seconds |
 
@@ -40,11 +40,11 @@ created: 2026-03-13
 |---------|------|------|-------------|-----------|-------------------|-------------|--------|
 | 13-01-01 | 01 | 1 | PLAT-01 | unit | `go test -race -v ./internal/tmux/... -run TestIsPaneShellReady` | W0 (TDD) | pending |
 | 13-01-02 | 01 | 1 | PLAT-01 | unit+integration | `go test -race -v ./internal/tmux/... -run TestWaitForPaneReady` | W0 (TDD) | pending |
+| 13-01-03 | 01 | 1 | PLAT-01 | unit | `go test -race -v ./internal/session/... -run TestGenerateUUID` | W0 (TDD) | pending |
+| 13-01-04 | 01 | 1 | PLAT-01 | unit | `go test -race -v ./internal/session/... -run TestBuildClaudeCommandNoUuidgen` | W0 (TDD) | pending |
+| 13-01-05 | 01 | 1 | PLAT-01 | unit | `go test -race -v ./internal/session/... -run TestBuildForkCommandNoUuidgen` | W0 (TDD) | pending |
 | 13-02-01 | 02 | 2 | PLAT-02 | unit | `go test -race -v ./internal/session/... -run TestSyncSessionIDsFromTmux` | W0 (TDD) | pending |
 | 13-02-02 | 02 | 2 | PLAT-02 | integration | `go test -race -v ./internal/session/... -run TestStopSavesSessionID` | W0 (TDD) | pending |
-| 13-03-01 | 03 | 1 | PLAT-01 | unit | `go test -race -v ./internal/session/... -run TestGenerateUUID` | W0 (TDD) | pending |
-| 13-03-02 | 03 | 1 | PLAT-01 | unit | `go test -race -v ./internal/session/... -run TestBuildClaudeCommandNoUuidgen` | W0 (TDD) | pending |
-| 13-03-03 | 03 | 1 | PLAT-01 | unit | `go test -race -v ./internal/session/... -run TestBuildForkCommandNoUuidgen` | W0 (TDD) | pending |
 
 *Status: pending / green / red / flaky*
 
