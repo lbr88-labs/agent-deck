@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 	"sync"
@@ -10287,11 +10288,20 @@ func (h *Home) renderPreviewPane(width, height int) string {
 		consecutiveEmpty := 0
 		const maxConsecutiveEmpty = 2 // Allow up to 2 consecutive empty lines
 
+		isLightTheme := GetCurrentTheme() == ThemeLight
 		for _, line := range lines {
 			// Strip dangerous control characters (\r, \b, etc.) but preserve
 			// ANSI escape sequences (ESC = 0x1b) so colors and formatting
 			// from the captured terminal output pass through to display.
 			safeLine := stripControlCharsPreserveANSI(line)
+
+			// In light theme, remove background color ANSI sequences that
+			// cause dark background bands to bleed through (e.g., tool output
+			// uses ESC[40m..ESC[47m which remain dark on a light background).
+			// Foreground colors and text formatting are preserved.
+			if isLightTheme {
+				safeLine = stripANSIBackground(safeLine)
+			}
 
 			// Check if visually empty (strip ANSI for this check)
 			stripped := ansi.Strip(safeLine)
@@ -10480,6 +10490,21 @@ func stripControlCharsPreserveANSI(s string) string {
 		}
 		return r
 	}, s)
+}
+
+// ansiBackgroundRE matches ANSI background color escape sequences:
+//   - ESC[40m..ESC[47m  — standard 8-color backgrounds
+//   - ESC[100m..ESC[107m — bright/high-intensity backgrounds
+//   - ESC[48;...m        — 256-color and true-color backgrounds (ESC[48;5;Nm / ESC[48;2;R;G;Bm)
+//   - ESC[49m            — default background reset
+var ansiBackgroundRE = regexp.MustCompile(`\x1b\[(?:4[0-7]|10[0-7]|48;[0-9;]+|49)m`)
+
+// stripANSIBackground removes ANSI background color sequences from a line
+// while preserving all other ANSI sequences (foreground colors, bold, italic,
+// underline). Used in light theme to prevent dark background bleed-through
+// from captured tmux pane output.
+func stripANSIBackground(s string) string {
+	return ansiBackgroundRE.ReplaceAllString(s, "")
 }
 
 // truncatePath shortens a path to fit within maxLen display width
