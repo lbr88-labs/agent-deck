@@ -3,14 +3,14 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: planning
-stopped_at: Completed 14-01-PLAN.md (Remove tmux set-environment from command builders)
-last_updated: "2026-03-13T07:39:21.152Z"
+stopped_at: Completed 13-01-PLAN.md (Auto-Start Platform Fix)
+last_updated: "2026-03-13T07:44:35.538Z"
 last_activity: "2026-03-12 — Milestone rescoped: removed completed #320/#318, added #324/#322/#266/#255/#225/#216"
 progress:
   total_phases: 6
   completed_phases: 2
   total_plans: 11
-  completed_plans: 6
+  completed_plans: 7
   percent: 0
 ---
 
@@ -63,6 +63,7 @@ Full decision log in PROJECT.md Key Decisions table.
 - [Phase 15-mouse-theme-polish]: Heartbeat OS daemon guard uses filesystem glob (launchd plist / systemd timer) rather than config lookup for robustness
 - [Phase 14-detection-sandbox]: Pulse chars only indicate busy when no prompt-indicating strings present; authoritative busy strings always take priority over pulse char guard
 - [Phase 14-detection-sandbox]: Apply tmux set-environment removal universally (not conditionally on IsSandboxed()) — host-side SetEnvironment is idempotent for non-sandbox sessions
+- [Phase 13-auto-start-platform]: generateUUID uses crypto/rand directly (no google/uuid dependency); pane-ready timeout non-fatal with Warn logging; tmux set-environment removed from shell strings entirely
 
 ### v1.3 Phase Notes
 
@@ -115,6 +116,6 @@ None.
 
 ## Session Continuity
 
-Last session: 2026-03-13T07:39:21.149Z
-Stopped at: Completed 14-01-PLAN.md (Remove tmux set-environment from command builders)
+Last session: 2026-03-13T07:44:35.536Z
+Stopped at: Completed 13-01-PLAN.md (Auto-Start Platform Fix)
 Resume file: None
