@@ -95,7 +95,7 @@ Plans:
 **Success Criteria** (what must be TRUE):
   1. Running agent-deck session start from a non-interactive shell on WSL/Linux starts the session without tool processes rejecting input due to a missing PTY
   2. After auto-starting and stopping a session on WSL/Linux, resuming it attaches to the correct tool conversation (identified by the tool conversation ID, not the agent-deck internal UUID)
-**Plans:** 1/3 plans executed
+**Plans:** 2/3 plans executed
 Plans:
 - [ ] 13-01-PLAN.md — Pane-ready detection + Go-side UUID generation replacing shell uuidgen (PLAT-01)
 - [ ] 13-02-PLAN.md — SyncSessionIDsFromTmux before Kill in stop path (PLAT-02)
@@ -164,7 +164,7 @@ Plans:
 | 10. Learnings Promotion | v1.2 | 2/2 | Complete | 2026-03-06 |
 | 11. MCP Proxy Reliability | v1.3 | 0/1 | Not started | - |
 | 12. Session List & Resume UX | v1.3 | 2/2 | Complete | 2026-03-13 |
-| 13. Auto-Start & Platform | 1/3 | In Progress|  | - |
+| 13. Auto-Start & Platform | 2/3 | In Progress|  | - |
 | 14. Detection & Sandbox | 2/2 | Complete   | 2026-03-13 | - |
 | 15. Mouse, Theme & Polish | 2/3 | In Progress|  | - |
 | 16. Comprehensive Testing | v1.3 | 0/TBD | Not started | - |

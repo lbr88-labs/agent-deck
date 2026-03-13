@@ -3,14 +3,14 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: planning
-stopped_at: Completed 13-01-PLAN.md (Auto-Start Platform Fix)
-last_updated: "2026-03-13T07:44:35.538Z"
+stopped_at: Completed 13-02-PLAN.md (Sync Session IDs from Tmux)
+last_updated: "2026-03-13T07:53:25.087Z"
 last_activity: "2026-03-12 — Milestone rescoped: removed completed #320/#318, added #324/#322/#266/#255/#225/#216"
 progress:
   total_phases: 6
   completed_phases: 2
   total_plans: 11
-  completed_plans: 7
+  completed_plans: 8
   percent: 0
 ---
 
@@ -64,6 +64,8 @@ Full decision log in PROJECT.md Key Decisions table.
 - [Phase 14-detection-sandbox]: Pulse chars only indicate busy when no prompt-indicating strings present; authoritative busy strings always take priority over pulse char guard
 - [Phase 14-detection-sandbox]: Apply tmux set-environment removal universally (not conditionally on IsSandboxed()) — host-side SetEnvironment is idempotent for non-sandbox sessions
 - [Phase 13-auto-start-platform]: generateUUID uses crypto/rand directly (no google/uuid dependency); pane-ready timeout non-fatal with Warn logging; tmux set-environment removed from shell strings entirely
+- [Phase 13-auto-start-platform]: SyncSessionIDsFromTmux: Restart path does not need SyncSessionIDsFromTmux since Restart() uses respawn-pane atomically without destroying tmux session
+- [Phase 13-auto-start-platform]: SyncSessionIDsFromTmux: ClaudeDetectedAt only set when zero to preserve existing timestamps for fork eligibility
 
 ### v1.3 Phase Notes
 
@@ -116,6 +118,6 @@ None.
 
 ## Session Continuity
 
-Last session: 2026-03-13T07:44:35.536Z
-Stopped at: Completed 13-01-PLAN.md (Auto-Start Platform Fix)
+Last session: 2026-03-13T07:53:25.085Z
+Stopped at: Completed 13-02-PLAN.md (Sync Session IDs from Tmux)
 Resume file: None

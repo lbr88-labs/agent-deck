@@ -30,7 +30,7 @@ Rescoped 2026-03-12: removed completed items (#320, #318), added critical new is
 ### Platform Reliability
 
 - [x] **PLAT-01**: Auto-start (agent-deck session start) works from non-interactive contexts on WSL/Linux; tool processes receive a PTY (#311)
-- [ ] **PLAT-02**: Resume after auto-start uses correct tool conversation ID (not agent-deck internal UUID) (#311)
+- [x] **PLAT-02**: Resume after auto-start uses correct tool conversation ID (not agent-deck internal UUID) (#311)
 
 ### Detection & Sandbox
 
@@ -111,7 +111,7 @@ Deferred to v1.4+. Tracked but not in current roadmap.
 | DEDUP-02 | Phase 12 | Complete |
 | DEDUP-03 | Phase 12 | Complete |
 | PLAT-01 | Phase 13 | Complete |
-| PLAT-02 | Phase 13 | Pending |
+| PLAT-02 | Phase 13 | Complete |
 | DET-01 | Phase 14 | Complete |
 | DET-02 | Phase 14 | Complete |
 | UX-01 | Phase 15 | Complete |
