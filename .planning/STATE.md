@@ -3,14 +3,14 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: planning
-stopped_at: Completed 15-01-PLAN.md (Mouse Scroll and Light Theme Fix)
-last_updated: "2026-03-13T07:07:09.653Z"
+stopped_at: Completed 15-02-PLAN.md (Documentation, Heartbeat Consolidation, Worktree Reuse)
+last_updated: "2026-03-13T07:15:59.858Z"
 last_activity: "2026-03-12 — Milestone rescoped: removed completed #320/#318, added #324/#322/#266/#255/#225/#216"
 progress:
   total_phases: 6
   completed_phases: 1
-  total_plans: 8
-  completed_plans: 3
+  total_plans: 10
+  completed_plans: 4
   percent: 0
 ---
 
@@ -59,6 +59,8 @@ Full decision log in PROJECT.md Key Decisions table.
 - [Phase 12]: Dedup call placed outside saveInstances() under explicit instancesMu.Lock() to avoid re-entrant lock deadlock
 - [Phase 15-mouse-theme-polish]: Mouse wheel routing uses overlay priority guard in Home.Update(); ScrollUp/ScrollDown helpers on SettingsPanel and MCPDialog; tea.MouseButtonWheelUp/Down (not deprecated constants)
 - [Phase 15-mouse-theme-polish]: ANSI background stripping in preview pane uses compiled regexp covering standard/bright/256-color/truecolor backgrounds; applied per-line only when ThemeLight active
+- [Phase 15-mouse-theme-polish]: Worktree reuse silently updates worktreePath to existing path rather than erroring, keeping session WorktreePath accurate
+- [Phase 15-mouse-theme-polish]: Heartbeat OS daemon guard uses filesystem glob (launchd plist / systemd timer) rather than config lookup for robustness
 
 ### v1.3 Phase Notes
 
@@ -111,6 +113,6 @@ None.
 
 ## Session Continuity
 
-Last session: 2026-03-13T07:06:38.053Z
-Stopped at: Completed 15-01-PLAN.md (Mouse Scroll and Light Theme Fix)
+Last session: 2026-03-13T07:15:59.856Z
+Stopped at: Completed 15-02-PLAN.md (Documentation, Heartbeat Consolidation, Worktree Reuse)
 Resume file: None
