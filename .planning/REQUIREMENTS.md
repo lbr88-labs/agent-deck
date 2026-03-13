@@ -23,9 +23,9 @@ Rescoped 2026-03-12: removed completed items (#320, #318), added critical new is
 
 ### Resume Deduplication
 
-- [ ] **DEDUP-01**: Resuming a stopped session reuses the existing session record instead of creating a new duplicate entry (#224)
-- [ ] **DEDUP-02**: UpdateClaudeSessionsWithDedup runs in-memory immediately at resume site, not only at persist time (#224)
-- [ ] **DEDUP-03**: Concurrent-write integration test covers two Storage instances against the same SQLite file
+- [x] **DEDUP-01**: Resuming a stopped session reuses the existing session record instead of creating a new duplicate entry (#224)
+- [x] **DEDUP-02**: UpdateClaudeSessionsWithDedup runs in-memory immediately at resume site, not only at persist time (#224)
+- [x] **DEDUP-03**: Concurrent-write integration test covers two Storage instances against the same SQLite file
 
 ### Platform Reliability
 
@@ -107,9 +107,9 @@ Deferred to v1.4+. Tracked but not in current roadmap.
 | VIS-01 | Phase 12 | Complete |
 | VIS-02 | Phase 12 | Complete |
 | VIS-03 | Phase 12 | Complete |
-| DEDUP-01 | Phase 12 | Pending |
-| DEDUP-02 | Phase 12 | Pending |
-| DEDUP-03 | Phase 12 | Pending |
+| DEDUP-01 | Phase 12 | Complete |
+| DEDUP-02 | Phase 12 | Complete |
+| DEDUP-03 | Phase 12 | Complete |
 | PLAT-01 | Phase 13 | Pending |
 | PLAT-02 | Phase 13 | Pending |
 | DET-01 | Phase 14 | Pending |

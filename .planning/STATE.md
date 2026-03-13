@@ -3,13 +3,13 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: planning
-stopped_at: Completed 12-session-list-resume-ux-12-01-PLAN.md
-last_updated: "2026-03-13T06:55:43.872Z"
+stopped_at: Completed 12-02-PLAN.md (Resume Dedup)
+last_updated: "2026-03-13T06:58:11.782Z"
 last_activity: "2026-03-12 — Milestone rescoped: removed completed #320/#318, added #324/#322/#266/#255/#225/#216"
 progress:
   total_phases: 6
   completed_phases: 1
-  total_plans: 4
+  total_plans: 5
   completed_plans: 2
   percent: 0
 ---
@@ -56,6 +56,7 @@ Last activity: 2026-03-12 — Milestone rescoped: removed completed #320/#318, a
 
 Full decision log in PROJECT.md Key Decisions table.
 - [Phase 12-session-list-resume-ux]: Split combined StatusError||StatusStopped preview block into two separate status-checked blocks: stopped gets user-intent messaging, error gets crash-diagnostic messaging
+- [Phase 12]: Dedup call placed outside saveInstances() under explicit instancesMu.Lock() to avoid re-entrant lock deadlock
 
 ### v1.3 Phase Notes
 
@@ -108,6 +109,6 @@ None.
 
 ## Session Continuity
 
-Last session: 2026-03-13T06:55:43.869Z
-Stopped at: Completed 12-session-list-resume-ux-12-01-PLAN.md
+Last session: 2026-03-13T06:58:11.779Z
+Stopped at: Completed 12-02-PLAN.md (Resume Dedup)
 Resume file: None
