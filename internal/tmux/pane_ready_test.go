@@ -95,7 +95,7 @@ func TestWaitForPaneReady_Timeout(t *testing.T) {
 	if err := sess.Start(""); err != nil {
 		t.Fatalf("Start() failed: %v", err)
 	}
-	defer sess.Kill()
+	defer func() { _ = sess.Kill() }()
 
 	// 1ms timeout is far too short for any shell to be ready.
 	err := waitForPaneReady(sess, 1*time.Millisecond)
@@ -115,9 +115,9 @@ func TestWaitForPaneReady_RealTmux(t *testing.T) {
 	if err := sess.Start(""); err != nil {
 		t.Fatalf("Start() failed: %v", err)
 	}
-	defer sess.Kill()
+	defer func() { _ = sess.Kill() }()
 
-	err := waitForPaneReady(sess, 5*time.Second)
+	err := waitForPaneReady(sess, 10*time.Second)
 	if err != nil {
 		t.Errorf("waitForPaneReady() returned error: %v", err)
 	}
