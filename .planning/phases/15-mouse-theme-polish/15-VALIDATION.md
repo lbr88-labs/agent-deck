@@ -2,7 +2,7 @@
 phase: 15
 slug: mouse-theme-polish
 status: draft
-nyquist_compliant: false
+nyquist_compliant: true
 wave_0_complete: false
 created: 2026-03-13
 ---
@@ -38,25 +38,25 @@ created: 2026-03-13
 
 | Task ID | Plan | Wave | Requirement | Test Type | Automated Command | File Exists | Status |
 |---------|------|------|-------------|-----------|-------------------|-------------|--------|
-| 15-01-01 | 01 | 1 | UX-01 | unit | `go test -race -v -run TestMouseScroll ./internal/ui/...` | ❌ W0 | ⬜ pending |
-| 15-01-02 | 01 | 1 | UX-01 | unit | `go test -race -v -run TestSettingsPanelScroll ./internal/ui/...` | ❌ W0 | ⬜ pending |
-| 15-01-03 | 01 | 1 | UX-01 | unit | `go test -race -v -run TestGlobalSearchMouseScroll ./internal/ui/...` | ❌ W0 | ⬜ pending |
-| 15-02-01 | 02 | 1 | UX-02 | unit | `go test -race -v -run TestLightThemePreview ./internal/ui/...` | ❌ W0 | ⬜ pending |
-| 15-03-01 | 03 | 1 | UX-03 | manual | — (doc review) | n/a | ⬜ pending |
-| 15-04-01 | 04 | 1 | UX-04 | unit | `go test -race -v -run TestBridgeHeartbeat ./...` | ❌ W0 | ⬜ pending |
-| 15-05-01 | 05 | 1 | UX-05 | unit | `go test -race -v -run TestWorktreeReuse ./internal/git/...` | ❌ W0 | ⬜ pending |
+| 15-00-01 | 00 | 0 | UX-01, UX-02 | stub | `go test -list "TestMouseScroll\|TestLightTheme" ./internal/ui/...` | 15-00 creates | ⬜ pending |
+| 15-00-02 | 00 | 0 | UX-05 | stub+unit | `go test -race -v -run TestWorktreeReuse ./internal/git/...` | 15-00 creates | ⬜ pending |
+| 15-01-01 | 01 | 1 | UX-01 | unit | `go test -race -v -run TestMouseScroll ./internal/ui/...` | ✅ W0 | ⬜ pending |
+| 15-01-02 | 01 | 1 | UX-02 | unit | `go test -race -v -run TestLightThemePreview ./internal/ui/...` | ✅ W0 | ⬜ pending |
+| 15-02-01 | 02 | 2 | UX-03 | grep | `grep -q "auto_cleanup" README.md` | n/a | ⬜ pending |
+| 15-02-02 | 02 | 2 | UX-04 | parse+grep | `python3 -c "ast.parse(...)" && grep -c '_os_heartbeat_daemon_installed' ...` | n/a | ⬜ pending |
+| 15-02-03 | 02 | 2 | UX-05 | unit | `go test -race -v -run TestWorktreeReuse ./internal/git/...` | ✅ W0 | ⬜ pending |
 
-*Status: ⬜ pending · ✅ green · ❌ red · ⚠️ flaky*
+*Status: ⬜ pending / ✅ green / ❌ red / ⚠️ flaky*
 
 ---
 
-## Wave 0 Requirements
+## Wave 0 Requirements (Plan 15-00)
 
-- [ ] `internal/ui/mouse_scroll_test.go` — stubs for UX-01 (mouse wheel on session list, settings, global search)
-- [ ] `internal/ui/light_theme_test.go` — stubs for UX-02 (light theme preview rendering, no dark bleed)
+- [ ] `internal/ui/mouse_scroll_test.go` — stubs for UX-01 (mouse wheel on session list, settings, global search, MCP dialog)
+- [ ] `internal/ui/light_theme_test.go` — stubs for UX-02 (light theme preview rendering, stripANSIBackground)
 - [ ] `internal/git/worktree_reuse_test.go` — stubs for UX-05 (GetWorktreeForBranch reuse path)
 
-*UX-03 is documentation only. UX-04 is Python (conductor/bridge.py): manual verification or shell integration test.*
+*UX-03 is documentation only. UX-04 is Python (conductor/bridge.py): verified by parse + grep for template drift.*
 
 ---
 
@@ -72,9 +72,9 @@ created: 2026-03-13
 
 ## Validation Sign-Off
 
-- [ ] All tasks have `<automated>` verify or Wave 0 dependencies
-- [ ] Sampling continuity: no 3 consecutive tasks without automated verify
-- [ ] Wave 0 covers all MISSING references
+- [x] All tasks have `<automated>` verify or Wave 0 dependencies
+- [x] Sampling continuity: no 3 consecutive tasks without automated verify
+- [x] Wave 0 covers all MISSING references
 - [ ] No watch-mode flags
 - [ ] Feedback latency < 30s
 - [ ] `nyquist_compliant: true` set in frontmatter
