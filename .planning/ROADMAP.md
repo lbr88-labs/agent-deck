@@ -159,7 +159,7 @@ Plans:
 | 9. Process Stability | v1.2 | 2/2 | Complete | 2026-03-07 |
 | 10. Learnings Promotion | v1.2 | 2/2 | Complete | 2026-03-06 |
 | 11. MCP Proxy Reliability | v1.3 | 0/1 | Not started | - |
-| 12. Session List & Resume UX | v1.3 | 2/2 | Complete | 2026-03-13 |
+| 12. Session List & Resume UX | v1.3 | Complete    | 2026-03-13 | 2026-03-13 |
 | 13. Auto-Start & Platform | v1.3 | 0/2 | Not started | - |
 | 14. Detection & Sandbox | v1.3 | 0/TBD | Not started | - |
 | 15. Mouse, Theme & Polish | 1/3 | In Progress|  | - |
