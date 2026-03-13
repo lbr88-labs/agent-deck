@@ -1730,7 +1730,12 @@ auto_cleanup = true
 # Default: true (agent-deck injects its own status bar with session info)
 # inject_status_line = false
 # Override tmux options applied to every session (applied after defaults)
+# Options matching agent-deck's managed keys (status, status-style,
+# status-left-length, status-right, status-right-length) will cause agent-deck
+# to skip its default for that key, letting your value take full effect.
 # options = { "allow-passthrough" = "all", "history-limit" = "50000" }
+# Example: keep agent-deck notifications but use a 2-line status bar
+# options = { "status" = "2" }
 
 # ============================================================================
 # MCP Server Definitions
