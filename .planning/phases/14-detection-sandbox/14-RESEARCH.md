@@ -1,24 +1,24 @@
 # Phase 14: Detection & Sandbox - Research
 
 **Researched:** 2026-03-13
-**Domain:** Docker sandbox tmux environment propagation, OpenCode status detection
+**Domain:** Docker sandbox tmux environment propagation; OpenCode question tool waiting status detection
 **Confidence:** HIGH
 
 ## Summary
 
-Phase 14 addresses two independent but contained bugs. DET-01 is a structural flaw: commands built by `buildClaudeCommand`, `buildOpenCodeCommand`, `buildCodexCommand`, and `buildGenericCommand` embed `tmux set-environment` calls that run **inside the Docker container** (via `docker exec`), but the tmux server lives on the **host**. The container's `/tmp` is a tmpfs — the host's Unix domain socket at `/tmp/tmux-<uid>/default` is unreachable from inside the container. The fix is to move environment variable stores to the host side before the `docker exec` wrapper, or call `tmux set-environment` from Go immediately after session start (which already partially happens in `Instance.Start()`). The `#320` sandbox config persistence fix is already merged, removing one blocker.
+Phase 14 has two tightly scoped, independent fixes. DET-01 resolves a structural flaw: commands built by `buildClaudeCommand`, `buildOpenCodeCommand`, `buildGeminiCommand`, `buildCodexCommand`, and `buildClaudeResumeCommand` embed `tmux set-environment` calls that execute **inside the Docker container** (via `docker exec`), but the tmux server lives on the **host**. The container has no access to the host Unix domain socket at `/tmp/tmux-<uid>/default`, so every `tmux set-environment` silently fails (confirmed by issue #266). Claude still launches because the separator is `;`, not `&&`, but `CLAUDE_SESSION_ID` and its equivalents are never stored. The `#320` sandbox config persistence fix (STORE-01 through STORE-03, Phase 11) is already merged, unblocking DET-01.
 
-DET-02 is a pattern-coverage gap: OpenCode's `question` tool renders a UI with `↑↓ select`, `enter submit`, `esc dismiss` in the help bar, but none of these strings are in OpenCode's `PromptPatterns`. The existing detector checks `"press enter to send"` and `"Ask anything"` (normal idle state) but misses the question-tool waiting state. Additionally, users report false positives — the tool sometimes shows busy when it is actually idle — suggesting that some busy-indicator patterns fire on static content.
+DET-02 is a pattern-coverage gap: OpenCode's `question` tool renders a selection UI with unique help-bar text (`"enter submit"`, `"esc dismiss"`, `"↑↓ select"`), none of which are in `DefaultRawPatterns("opencode").PromptPatterns`. The existing detector only covers the normal idle state (`"Ask anything"`, `"press enter to send"`). Additionally, issue #255 reports false-positive busy detection where sessions appear green (running) when they are actually waiting.
 
-**Primary recommendation:** For DET-01 use host-side `tmux set-environment` via the Go API (already called in `Start()`) instead of embedding `tmux set-environment` inside the shell command string that docker exec runs. For DET-02 add `"enter submit"` and `"esc dismiss"` to OpenCode's `PromptPatterns` in `patterns.go`.
+**Primary recommendation:** For DET-01, pre-generate all session IDs in Go on the host and call `i.tmuxSession.SetEnvironment(key, id)` after `tmuxSession.Start()` returns — removing `tmux set-environment` from all embedded shell strings. For DET-02, add `"enter submit"`, `"esc dismiss"`, and `"↑↓ select"` to `PromptPatterns` in `DefaultRawPatterns("opencode")` and mirror them in `detector.go`'s `HasPrompt` opencode case.
 
 <phase_requirements>
 ## Phase Requirements
 
 | ID | Description | Research Support |
 |----|-------------|-----------------|
-| DET-01 | tmux set-environment works correctly inside Docker sandbox sessions now that sandbox config persistence is fixed (#266) | Root cause confirmed: all `tmux set-environment` calls embedded in command strings are executed inside `docker exec` and cannot reach the host tmux socket. Fix: remove these calls from the shell command strings and rely on the Go-side `SetEnvironment` calls that happen after `tmuxSession.Start()` returns. |
-| DET-02 | OpenCode waiting status detection triggers correctly when OpenCode presents the question tool prompt (#255) | Root cause confirmed: `PromptPatterns` for opencode miss the question tool help-bar strings (`"enter submit"`, `"esc dismiss"`). False-positive busy also reported; spinner chars `█ ▓ ▒ ░` may appear in static UI elements. |
+| DET-01 | tmux set-environment works correctly inside Docker sandbox sessions now that sandbox config persistence is fixed (#266) | Root cause confirmed: all 7 `tmux set-environment` calls embedded in command strings execute inside `docker exec` where no tmux socket is reachable. Fix: strip these calls from embedded shell strings; call `i.tmuxSession.SetEnvironment()` from the Go host side after session start. |
+| DET-02 | OpenCode waiting status detection triggers correctly when OpenCode presents the question tool prompt (#255) | Root cause confirmed: `PromptPatterns` for opencode do not include question-tool help-bar strings. Current detector only matches normal-idle patterns. Fix: add question-tool patterns to `DefaultRawPatterns("opencode")` and `detector.go`. |
 </phase_requirements>
 
 ## Standard Stack
@@ -26,133 +26,306 @@ DET-02 is a pattern-coverage gap: OpenCode's `question` tool renders a UI with `
 ### Core
 | Library | Version | Purpose | Why Standard |
 |---------|---------|---------|--------------|
-| Go standard library | 1.24+ | Command execution, env manipulation | Already used throughout |
-| `internal/tmux` | local | tmux session and environment abstraction | All tmux operations go through this package |
-| `internal/session` | local | Session lifecycle, command building | All tool-specific command construction is here |
+| Go stdlib `os/exec` | 1.24 | UUID pre-generation on host (`exec.Command("uuidgen")`) | Already used for `generateID()` and `randomString()` in `instance.go` |
+| `internal/tmux.Session.SetEnvironment` | local | Host-side tmux env store after session start | Already used for `AGENTDECK_INSTANCE_ID` and `COLORFGBG` at `instance.go:1806` |
+| `internal/tmux/patterns.go` | local | `DefaultRawPatterns(toolName)` pattern tables | Canonical source for all tool detection patterns |
+| `internal/tmux/detector.go` | local | `PromptDetector.HasPrompt()` logic | Existing `hasOpencodeBusyIndicator` guard must remain; add prompt patterns below it |
 
 ### No New Dependencies
 
-Both fixes are pure logic changes within existing packages. No new libraries are required.
+Both fixes are pure logic changes within existing packages. No new libraries required.
 
 ## Architecture Patterns
 
 ### DET-01: tmux set-environment in Docker Sandbox
 
-#### Root Cause — Confirmed
+#### Root Cause Confirmed
 
-`buildClaudeCommand` generates a shell string like:
+`buildClaudeCommandWithMessage` generates a shell string like:
+
+```bash
+session_id=$(uuidgen | tr '[:upper:]' '[:lower:]'); \
+  tmux set-environment CLAUDE_SESSION_ID "$session_id"; \
+  claude --session-id "$session_id"
+```
+
+`prepareCommand()` then wraps this entire string in `docker exec`:
+
+```bash
+docker exec -it -e TERM=xterm-256color <container> bash -c '<above string>'
+```
+
+`tmux set-environment` inside the container cannot connect to the host socket. The `;` separator ensures Claude launches anyway, but `CLAUDE_SESSION_ID` is never written to the tmux environment — `GetSessionIDFromTmux()` finds nothing.
+
+**`buildClaudeResumeCommand` already acknowledges the problem** (line 3884):
 
 ```go
-`session_id=$(uuidgen | tr '[:upper:]' '[:lower:]'); `+
-    `tmux set-environment CLAUDE_SESSION_ID "$session_id"; `+
-    `AGENTDECK_INSTANCE_ID=... claude --session-id "$session_id"`
+// Use ";" (not "&&") so the tool command runs even if tmux set-environment
+// fails — inside a Docker sandbox there is no tmux server.
 ```
 
-This string becomes the `toolCommand` argument to `buildExecCommand`, which wraps it as:
+This is a workaround, not a fix. The `2>/dev/null;` suppressor silences the error but the env var is still not set.
 
-```
-docker exec -it -e TERM=... <container> bash -c '<above string>'
-```
+**All 7 affected call sites in `instance.go`:**
 
-The `tmux set-environment` subprocess inside the container cannot connect to `/tmp/tmux-<uid>/default` on the host. The `;` separator ensures Claude still launches, but `CLAUDE_SESSION_ID` is never stored — so `GetSessionIDFromTmux()` finds nothing.
-
-**Affected command builders (all have the same pattern):**
-
-| Function | Env var set in shell string | File |
+| Function / path | Env var | Approx line |
 |---|---|---|
-| `buildClaudeCommandWithMessage` | `CLAUDE_SESSION_ID` | instance.go:491 |
-| `buildClaudeResumeCommand` | `CLAUDE_SESSION_ID` | instance.go:3887 |
-| `buildOpenCodeCommand` | `OPENCODE_SESSION_ID` | instance.go:655 |
-| `Restart()` — opencode respawn path | `OPENCODE_SESSION_ID` | instance.go:3604 |
-| `Restart()` — fallback opencode | `OPENCODE_SESSION_ID` | instance.go:3748 |
-| `Restart()` — generic tool | tool-specific env var | instance.go:3693 |
-| `buildGenericCommand` | tool-specific env var | instance.go:1652 |
-
-#### Why the Current `Start()` SetEnvironment Calls Do NOT Fully Solve It
-
-After `tmuxSession.Start()` returns, `Instance.Start()` already calls:
-
-```go
-i.tmuxSession.SetEnvironment("AGENTDECK_INSTANCE_ID", i.ID)
-i.tmuxSession.SetEnvironment("COLORFGBG", colorfgbg)
-```
-
-These calls run on the **host** and work correctly. However, `CLAUDE_SESSION_ID` / `OPENCODE_SESSION_ID` etc. are generated **inside** the shell string, so the Go side never knows the value to store. The fix must either:
-
-1. **Generate session IDs on the host** (before `docker exec`) and pass them in via `-e`, then call `tmux set-environment` from Go after `Start()` returns.
-2. **Strip the `tmux set-environment` calls from all sandbox command strings** and replace them with host-side Go calls.
-
-Option 1 is the recommended approach from issue #266 and is architecturally cleaner.
+| `buildClaudeCommandWithMessage` — new session | `CLAUDE_SESSION_ID` | 491 |
+| `buildClaudeCommandWithMessage` — message with send | `CLAUDE_SESSION_ID` | 503 |
+| `buildClaudeCommandWithMessage` — resume | `CLAUDE_SESSION_ID` | 468 |
+| `buildClaudeResumeCommand` — resume | `CLAUDE_SESSION_ID` | 3887 |
+| `buildClaudeResumeCommand` — session-id | `CLAUDE_SESSION_ID` | 3891 |
+| `buildOpenCodeCommand` — resume with ID | `OPENCODE_SESSION_ID` | 655 |
+| `buildGeminiCommand` — resume with ID | `GEMINI_SESSION_ID` | 610 |
+| `buildGeminiCommand` — fresh start | `GEMINI_YOLO_MODE` | 623 |
+| `buildCodexCommand` — resume with ID | `CODEX_SESSION_ID` | 735 |
+| Opencode respawn path in `Restart()` | `OPENCODE_SESSION_ID` | 3604, 3748 |
 
 #### Recommended Fix Pattern
 
-For Claude new sessions (the most common case):
+**For resume commands (session ID already known in Go):** Remove `tmux set-environment X Y;` from the command string. After `tmuxSession.Start()` returns, call `i.tmuxSession.SetEnvironment("X", Y)` from Go. The session ID is already stored on the `Instance` field before `Start()` is called.
 
 ```go
-// BEFORE (current): generates UUID inside container, calls tmux set-environment inside container
-`session_id=$(uuidgen | tr '[:upper:]' '[:lower:]'); `+
-    `tmux set-environment CLAUDE_SESSION_ID "$session_id"; `+
-    `claude --session-id "$session_id"`
+// BEFORE (buildClaudeResumeCommand, current):
+return fmt.Sprintf("tmux set-environment CLAUDE_SESSION_ID %s 2>/dev/null; %s%s --resume %s%s",
+    i.ClaudeSessionID, configDirPrefix, claudeCmd, i.ClaudeSessionID, dangerousFlag)
 
-// AFTER (fix): UUID generated in Go, passed via -e to docker exec, tmux set-environment called from Go
-// Step 1 (in buildClaudeCommandWithMessage when IsSandboxed):
-sessionID := newUUID()
-i.pendingSessionID = sessionID   // stored on Instance before Start() is called
-// or: return command without tmux set-environment, with --session-id hardcoded
-
-// Step 2 (in buildExecCommand or via -e flag):
-docker exec -e CLAUDE_SESSION_ID=<id> ... bash -c 'claude --session-id "$CLAUDE_SESSION_ID"'
-
-// Step 3 (in Start() after tmuxSession.Start() returns):
-i.tmuxSession.SetEnvironment("CLAUDE_SESSION_ID", sessionID)
-i.ClaudeSessionID = sessionID
+// AFTER:
+return fmt.Sprintf("%s%s --resume %s%s", configDirPrefix, claudeCmd, i.ClaudeSessionID, dangerousFlag)
+// And in Start()/Restart() after tmuxSession.Start():
+_ = i.tmuxSession.SetEnvironment("CLAUDE_SESSION_ID", i.ClaudeSessionID)
 ```
 
-The simpler approach (option 2, avoid embedding in docker): for sandbox sessions, strip `tmux set-environment ...` from the shell string and instead generate the ID on the host, pass it via an inline env var, and call `SetEnvironment` from Go. This requires `buildClaudeCommandWithMessage` to be sandbox-aware (or use a pre-generated ID argument).
+**For new Claude sessions (UUID generated in shell):** The UUID is currently generated with `$(uuidgen | tr '[:upper:]' '[:lower:]')` inside the shell string. Pre-generate it in Go:
 
-For resume commands (`buildClaudeResumeCommand`), the session ID is already known on the host (`i.ClaudeSessionID`), so simply removing the `tmux set-environment` from the shell string and keeping the Go-side `SetEnvironment` is sufficient.
+```go
+// In Instance.Start() or buildClaudeCommandWithMessage, pre-generate the ID:
+out, _ := exec.Command("uuidgen").Output()
+sessionID := strings.ToLower(strings.TrimSpace(string(out)))
 
-**Key code path to follow:**
+// Pass as literal into command string (no shell expansion needed):
+baseCmd = fmt.Sprintf(
+    `%s%s --session-id "%s"%s`,
+    bashExportPrefix, claudeCmd, sessionID, extraFlags)
+
+// After tmuxSession.Start() succeeds:
+i.ClaudeSessionID = sessionID
+_ = i.tmuxSession.SetEnvironment("CLAUDE_SESSION_ID", sessionID)
+```
+
+**For OpenCode, Gemini, Codex:** Session IDs are already known in Go before the command string is built. Simply remove the `tmux set-environment` prefix from the string and add a `SetEnvironment` call in the post-start path.
+
+**Key code path:**
 
 ```
 Instance.Start()
-  → buildClaudeCommand()           // builds shell string with embedded tmux set-env
-  → prepareCommand()               // applies wrapper, SSH, sandbox wrapping
+  → buildClaudeCommand()           // builds command string WITHOUT tmux set-env
+  → prepareCommand()               // wrapper, SSH, sandbox wrapping
       → wrapForSandbox()           // wraps in docker exec
   → tmuxSession.Start(command)     // runs docker exec
-  → tmuxSession.SetEnvironment()   // host-side: correct, but missing CLAUDE_SESSION_ID
+  → tmuxSession.SetEnvironment()   // HOST-SIDE: stores CLAUDE_SESSION_ID correctly
 ```
+
+The existing pattern at `instance.go:1806` (setting `AGENTDECK_INSTANCE_ID` and `COLORFGBG`) already follows this exact pattern — this fix makes session IDs consistent with it.
+
+#### Sandbox-Only vs. Universal Fix
+
+Issue #266 comments suggest applying the fix uniformly to all sessions (not just sandboxed ones) for simplicity. Non-sandbox sessions are not harmed by calling `SetEnvironment` from Go — the host-side tmux call is idempotent. The fix should be universal: clean up all `tmux set-environment` prefixes from command strings and rely solely on host-side Go calls.
 
 ### DET-02: OpenCode Question Tool Detection
 
-#### Root Cause — Confirmed
+#### Root Cause Confirmed
 
-When OpenCode's `question` tool is active, the terminal shows a selection UI with this help bar:
+When OpenCode's `question` tool is active, the terminal pane shows a selection UI. The help bar at the bottom renders:
 
 ```
 ↑↓ select     enter submit     esc dismiss
 ```
 
-The current OpenCode `PromptPatterns` in `DefaultRawPatterns("opencode")` are:
+This text is **exclusive to the question-tool waiting state** and does not appear during normal processing. The existing detector does not check for any of these strings.
+
+Current `DefaultRawPatterns("opencode").PromptPatterns` (line 66):
 
 ```go
 PromptPatterns: []string{"Ask anything", "press enter to send"},
 ```
 
-The `HasPrompt` method for opencode also checks:
-- `"open code"` (inline in `detector.go:57`)
-- Lines ending with `>`
-
-None of these match the question tool UI.
-
-The `PromptDetector.HasPrompt` for opencode also checks `hasOpencodeBusyIndicator` first. If that returns true, it returns `false` regardless of prompt patterns. The busy indicator checks for pulse spinner chars `█ ▓ ▒ ░` — these are part of OpenCode's Bubble Tea UI and may appear in static UI elements (not just active processing), causing false-positive busy detection.
-
-#### Recommended Fix Pattern
-
-Add the question tool help-bar strings to `DefaultRawPatterns("opencode")`:
+Current `HasPrompt` for opencode in `detector.go` (line 49–58):
 
 ```go
-// Source: internal/tmux/patterns.go DefaultRawPatterns("opencode")
+if d.hasOpencodeBusyIndicator(content) {
+    return false
+}
+return strings.Contains(content, "press enter to send") ||
+    strings.Contains(content, "Ask anything") ||
+    strings.Contains(content, "open code") ||
+    d.hasLineEndingWith(content, ">")
+```
+
+Neither checks for question-tool help-bar strings.
+
+#### Recommended Fix
+
+Add question-tool patterns to `DefaultRawPatterns("opencode")`:
+
+```go
+// Source: internal/tmux/patterns.go DefaultRawPatterns() opencode case
+PromptPatterns: []string{
+    "Ask anything",
+    "press enter to send",
+    "enter submit",   // question tool help bar (exclusive to waiting state)
+    "esc dismiss",    // question tool help bar (exclusive to waiting state)
+},
+```
+
+Update `detector.go`'s `HasPrompt` opencode case to check the new strings:
+
+```go
+if d.hasOpencodeBusyIndicator(content) {
+    return false
+}
+return strings.Contains(content, "press enter to send") ||
+    strings.Contains(content, "Ask anything") ||
+    strings.Contains(content, "open code") ||
+    strings.Contains(content, "enter submit") ||  // question tool
+    strings.Contains(content, "esc dismiss") ||   // question tool
+    d.hasLineEndingWith(content, ">")
+```
+
+The `hasOpencodeBusyIndicator` guard remains unchanged. If the pulse spinner (`█ ▓ ▒ ░`) or `"esc interrupt"` is present, the busy check fires first and `HasPrompt` returns false regardless.
+
+#### False Positive Busy Detection
+
+Issue #255 also mentions sessions appearing busy (green) when actually idle. The likely cause: block characters `░` or `▓` appear in static OpenCode UI decorations (progress bars, borders). The `hasOpencodeBusyIndicator` at `detector.go:421` checks for these chars anywhere in the content.
+
+The conservative fix is to check spinner chars only when accompanied by a busy text string on the same line (rather than anywhere in the full pane content). However, since no regression data exists and the primary ask is the question-tool detection, the false-positive fix is secondary. Flag as a follow-up if the simple prompt-pattern addition does not resolve the symptom.
+
+### Recommended Project Structure (No New Files)
+
+```
+internal/session/
+└── instance.go          # DET-01: remove tmux set-environment from all 7 call sites,
+                         # add host-side SetEnvironment calls in Start() and Restart()
+internal/tmux/
+├── patterns.go          # DET-02: add question-tool patterns to DefaultRawPatterns("opencode")
+└── detector.go          # DET-02: add question-tool pattern checks to HasPrompt opencode case
+```
+
+Test files to extend/add:
+
+```
+internal/tmux/
+└── status_fixes_test.go  # Add: VALIDATION 8.0 for opencode question tool detection
+internal/session/
+└── instance_test.go      # Add: TestBuildClaudeCommand_NoTmuxSetEnv (sandbox + non-sandbox)
+                          #      TestBuildOpenCodeCommand_NoTmuxSetEnv
+                          #      TestBuildGeminiCommand_NoTmuxSetEnv
+                          #      TestBuildCodexCommand_NoTmuxSetEnv
+internal/integration/
+└── detection_test.go     # Add: TestDetection_OpenCodeQuestionTool
+```
+
+### Anti-Patterns to Avoid
+
+- **Keeping `2>/dev/null;` after removing `tmux set-environment`:** Once the call is removed from the shell string, the suppressor becomes dead code. Remove it.
+- **Guarding the fix with `if i.IsSandboxed()`:** Non-sandbox sessions are not harmed by the host-side `SetEnvironment` pattern and benefit from cleaner command strings.
+- **Calling `SetEnvironment` before `tmuxSession.Start()`:** The tmux session does not exist yet. Always call after `Start()` returns without error.
+- **Broad OpenCode prompt patterns (e.g., "Build", "Plan"):** These strings are visible in the OpenCode TUI header at all times, causing false positives. Only add patterns exclusive to the idle/question-tool state.
+
+## Don't Hand-Roll
+
+| Problem | Don't Build | Use Instead | Why |
+|---------|-------------|-------------|-----|
+| UUID generation for session IDs | Custom UUID generator or `crypto/rand` hex | `exec.Command("uuidgen").Output()` on host | Consistent with platform behavior; already used elsewhere in codebase |
+| Docker env var injection | Manual `-e KEY=VALUE` string building | `collectDockerEnvVars` + `ExecPrefixWithEnv` in `buildExecCommand` | Already handles env forwarding correctly |
+| tmux environment store | New subprocess call | `Session.SetEnvironment(key, value)` | Already handles `-t` flag, env-cache invalidation, and error reporting |
+
+**Key insight:** `Session.SetEnvironment()` exists precisely for this use case. The original approach of embedding `tmux set-environment` inside command strings was written before sandbox wrapping existed. Now that `wrapForSandbox()` / `prepareCommand()` exist, the call should live outside the container command.
+
+## Common Pitfalls
+
+### Pitfall 1: Resume Paths Are Duplicated Across `Start()` and `Restart()`
+
+**What goes wrong:** Fixing `buildClaudeCommand` but missing the `Restart()` respawn paths (lines 3604, 3748) leaves sandbox sessions broken after the first restart.
+**Why it happens:** Session ID propagation is duplicated across multiple code paths in `instance.go`.
+**How to avoid:** Grep for all `tmux set-environment` occurrences in `instance.go` and apply the fix to every one. There are at least 7 confirmed call sites.
+**Warning signs:** Session tracking works on first start but breaks after restart in sandbox.
+
+### Pitfall 2: Claude New-Session UUID Sequencing
+
+**What goes wrong:** If UUID generation stays in the shell string (`$(uuidgen ...)`), there is nothing to pass to `SetEnvironment` on the Go side. The fix requires pre-generating in Go.
+**Why it happens:** The current shell-expansion approach avoids threading the ID through the Go call chain, but it breaks in sandbox.
+**How to avoid:** Pre-generate `sessionID` in Go before calling `buildClaudeCommand`. Pass the literal UUID into the command string and call `SetEnvironment` on the host after `Start()` returns.
+**Warning signs:** `CLAUDE_SESSION_ID` is empty after sandbox session start.
+
+### Pitfall 3: OpenCode Async Detection Depends on tmux Env
+
+**What goes wrong:** `detectOpenCodeSessionAsync` reads from tmux env via `GetEnvironment("OPENCODE_SESSION_ID")`. If the shell string previously set this env var (even though it failed in sandbox), removing it without adding a Go-side `SetEnvironment` breaks the async detection.
+**Why it happens:** The async detection relies on tmux env as a rendezvous point.
+**How to avoid:** After `Start()` / `Restart()` succeeds, call `i.tmuxSession.SetEnvironment("OPENCODE_SESSION_ID", i.OpenCodeSessionID)` before returning. The async detection path will then find the value correctly.
+
+### Pitfall 4: OpenCode Question-Tool Patterns Causing False Positives
+
+**What goes wrong:** "enter submit" or "esc dismiss" might appear in non-question-tool context (e.g., some other TUI element).
+**Why it happens:** OpenCode renders multiple overlapping panels; text can collide.
+**How to avoid:** The `hasOpencodeBusyIndicator` guard takes priority. Test the new patterns against realistic pane captures of both busy and idle states. The existing `TestOpencodeBusyGuard` test suite in `status_fixes_test.go` must still pass with no regressions.
+**Warning signs:** `TestOpencodeBusyGuard` fails on "busy" cases after adding new patterns.
+
+## Code Examples
+
+### `Session.SetEnvironment` — already exists, no changes:
+
+```go
+// Source: internal/tmux/tmux.go:904-917
+func (s *Session) SetEnvironment(key, value string) error {
+    cmd := exec.Command("tmux", "set-environment", "-t", s.Name, key, value)
+    err := cmd.Run()
+    if err == nil {
+        s.envCacheMu.Lock()
+        if s.envCache != nil {
+            delete(s.envCache, key)
+        }
+        s.envCacheMu.Unlock()
+    }
+    return err
+}
+```
+
+### Existing host-side SetEnvironment pattern (reference model for DET-01):
+
+```go
+// Source: internal/session/instance.go ~line 1806 (in Start(), after tmuxSession.Start())
+// Set AGENTDECK_INSTANCE_ID for Claude hooks to identify this session
+if err := i.tmuxSession.SetEnvironment("AGENTDECK_INSTANCE_ID", i.ID); err != nil {
+    sessionLog.Warn("set_instance_id_failed", slog.String("error", err.Error()))
+}
+```
+
+### Current `buildClaudeResumeCommand` (with workaround comment):
+
+```go
+// Source: internal/session/instance.go:3884-3892
+// Use ";" (not "&&") so the tool command runs even if tmux set-environment
+// fails — inside a Docker sandbox there is no tmux server.
+if useResume {
+    return fmt.Sprintf("tmux set-environment CLAUDE_SESSION_ID %s 2>/dev/null; %s%s --resume %s%s",
+        i.ClaudeSessionID, configDirPrefix, claudeCmd, i.ClaudeSessionID, dangerousFlag)
+}
+```
+
+After DET-01 fix, this becomes:
+
+```go
+if useResume {
+    return fmt.Sprintf("%s%s --resume %s%s", configDirPrefix, claudeCmd, i.ClaudeSessionID, dangerousFlag)
+}
+// Caller (Start/Restart) handles: _ = i.tmuxSession.SetEnvironment("CLAUDE_SESSION_ID", i.ClaudeSessionID)
+```
+
+### Current OpenCode prompt patterns (before fix):
+
+```go
+// Source: internal/tmux/patterns.go:56-68
 case "opencode":
     return &RawPatterns{
         BusyPatterns: []string{
@@ -163,221 +336,140 @@ case "opencode":
             "building tool call...",
             "waiting for tool response...",
         },
-        PromptPatterns: []string{
-            "Ask anything",
-            "press enter to send",
-            "enter submit",     // ADD: question tool help bar
-            "esc dismiss",      // ADD: question tool help bar
-        },
-        SpinnerChars: []string{"█", "▓", "▒", "░"},
+        PromptPatterns: []string{"Ask anything", "press enter to send"},
+        SpinnerChars:   []string{"█", "▓", "▒", "░"},
     }
 ```
 
-The two strings `"enter submit"` and `"esc dismiss"` are unique to the question-tool waiting state and will not appear during busy processing. The existing `hasOpencodeBusyIndicator` check in `HasPrompt` ensures that if the pulse spinner is running, busy takes priority over this new prompt detection.
+After DET-02 fix:
 
-For the permission approval case (second screenshot in issue #255), the help bar shows similar navigation patterns. Investigate whether `"↑↓ select"` and `"enter submit"` also appear on the permission dialog and add them together.
-
-#### False Positive Investigation
-
-The false positive case (issue reports session appears busy when idle) may be caused by:
-1. The `░` or `▓` characters appearing in OpenCode's static UI elements (e.g., progress bars, decorative elements).
-2. The `"Waiting for tool response..."` busy string matching stale terminal content after the tool completes.
-
-The false-positive fix approach: check that pulse spinner chars only match when accompanied by the spinner being recently active (already partially implemented via `SpinnerActivityTracker`), or add a grace period check similar to how Claude's spinner tracking works.
-
-### Recommended Project Structure (unchanged)
-
-```
-internal/session/
-  instance.go           # DET-01: modify buildClaudeCommandWithMessage, buildOpenCodeCommand,
-                        #   buildClaudeResumeCommand (strip tmux set-env from sandbox commands)
-internal/tmux/
-  patterns.go           # DET-02: add question-tool prompt patterns to opencode case
-  detector.go           # DET-02: potentially adjust hasOpencodeBusyIndicator for false positives
-```
-
-## Don't Hand-Roll
-
-| Problem | Don't Build | Use Instead | Why |
-|---------|-------------|-------------|-----|
-| UUID generation for session IDs | Custom UUID generator | `uuidgen` on host via `exec.Command` or `crypto/rand` hex string | Already used in `generateID()` and `randomString()` |
-| Docker env var injection | Manual string building | `docker exec -e KEY=VALUE` (already done in `collectDockerEnvVars`) | `buildExecCommand` already handles `-e` flags via `collectDockerEnvVars` |
-| tmux env store | Subprocess call inside container | `Session.SetEnvironment()` Go API from host | Works correctly on host, confirmed by existing tests |
-
-## Common Pitfalls
-
-### Pitfall 1: Generating Session IDs Before Sandbox Wrapping
-**What goes wrong:** If session ID is generated in `buildClaudeCommand` but the sandbox wrapping happens in `prepareCommand`, there is a sequencing problem — the ID needs to be known before `prepareCommand` but `buildClaudeCommand` is called before `prepareCommand`.
-**Why it happens:** The current architecture generates the ID inside the shell string, which avoids this timing issue.
-**How to avoid:** Pre-generate the ID in `Instance.Start()` before calling `buildClaudeCommand`, store it on the instance, then have `buildClaudeCommandWithMessage` use `i.pendingClaudeSessionID` when non-empty. After `tmuxSession.Start()` returns, call `SetEnvironment`.
-**Alternative:** For sandbox sessions only, replace `$(uuidgen ...)` with a hardcoded ID by detecting `i.IsSandboxed()` in `buildClaudeCommandWithMessage`.
-
-### Pitfall 2: Non-Sandbox Sessions Must Not Change
-**What goes wrong:** Modifying the `tmux set-environment` call for all sessions (not just sandbox) would break session tracking for normal sessions, where the command runs in the host's tmux context and `tmux set-environment` works fine.
-**Why it happens:** Overly broad refactoring.
-**How to avoid:** The fix must be conditional on `i.IsSandboxed()`. Non-sandbox sessions keep the existing `tmux set-environment` in-shell behavior.
-
-### Pitfall 3: OpenCode False Positive Busy State
-**What goes wrong:** Adding `"enter submit"` to PromptPatterns while keeping `░` in SpinnerChars means the busy check still runs first. If `░` appears in a static progress bar, the busy check fires and the prompt check is skipped.
-**Why it happens:** OpenCode renders block characters as UI decoration, not only as spinners.
-**How to avoid:** If false positives persist after adding prompt patterns, narrow the busy check to require BOTH a spinner char AND a busy text string (e.g., only fire when `░` appears on the SAME line as a busy task string). This is a secondary concern; adding prompt patterns may be sufficient.
-
-### Pitfall 4: Resume Paths in Restart()
-**What goes wrong:** `Restart()` has multiple code paths that call `tmux set-environment` inside shell strings (the respawn-pane paths at lines 3604 and 3748). If only `buildClaudeCommand` is fixed but not the `Restart()` paths, the bug persists after the first restart.
-**Why it happens:** Session ID propagation is duplicated across multiple code paths.
-**How to avoid:** Audit all `tmux set-environment` occurrences in `instance.go` and apply the same fix. There are at least 7 call sites identified above.
-
-### Pitfall 5: Sandbox OpenCode/Codex Session Detection
-**What goes wrong:** For OpenCode and Codex, the session ID is detected asynchronously after startup (`detectOpenCodeSessionAsync`, `detectCodexSessionAsync`). The async detection uses `tmux GetEnvironment` to retrieve the ID set by the shell string. If the shell string no longer calls `tmux set-environment`, the async detection will find nothing.
-**Why it happens:** The async detection reads from tmux env, which previously was set inside the container (failing) but with the fix becomes set from Go after `Start()`.
-**How to avoid:** After generating the session ID on the host and calling `SetEnvironment("OPENCODE_SESSION_ID", id)` from Go, the async detection via `GetEnvironment("OPENCODE_SESSION_ID")` will work correctly.
-
-## Code Examples
-
-### Existing SetEnvironment Pattern (HOST-SIDE, correct)
 ```go
-// Source: internal/session/instance.go lines 1806-1818
-// Set AGENTDECK_INSTANCE_ID for Claude hooks to identify this session
-if err := i.tmuxSession.SetEnvironment("AGENTDECK_INSTANCE_ID", i.ID); err != nil {
-    sessionLog.Warn("set_instance_id_failed", slog.String("error", err.Error()))
-}
-// Propagate COLORFGBG into the tmux session environment
-if colorfgbg := ThemeColorFGBG(); colorfgbg != "" {
-    _ = i.tmuxSession.SetEnvironment("COLORFGBG", colorfgbg)
-}
-```
-
-### Existing docker exec -e Pattern (for passing env vars to container)
-```go
-// Source: internal/session/instance.go buildExecCommand()
-func buildExecCommand(ctr *docker.Container, userCfg *UserConfig, toolCommand string) string {
-    var userNames []string
-    if userCfg != nil {
-        userNames = userCfg.Docker.Environment
-    }
-    runtimeEnv := collectDockerEnvVars(userNames)
-    var prefix []string
-    if len(runtimeEnv) > 0 {
-        prefix = ctr.ExecPrefixWithEnv(runtimeEnv)
-    } else {
-        prefix = ctr.ExecPrefix()
-    }
-    return docker.ShellJoinArgs(append(prefix, "bash", "-c", toolCommand))
-}
-```
-
-### Existing buildClaudeResumeCommand Comment (already handles sandbox awareness)
-```go
-// Source: internal/session/instance.go lines 3884-3892
-// Use ";" (not "&&") so the tool command runs even if tmux set-environment
-// fails — inside a Docker sandbox there is no tmux server.
-if useResume {
-    return fmt.Sprintf("tmux set-environment CLAUDE_SESSION_ID %s 2>/dev/null; %s%s --resume %s%s",
-        i.ClaudeSessionID, configDirPrefix, claudeCmd, i.ClaudeSessionID, dangerousFlag)
-}
-```
-
-This comment shows the existing code is already aware of the problem but only silences the error. The fix should eliminate the call entirely for sandbox sessions.
-
-### OpenCode Prompt Patterns to Add
-```go
-// Source: internal/tmux/patterns.go DefaultRawPatterns()
-// Question tool help bar: "↑↓ select   enter submit   esc dismiss"
 PromptPatterns: []string{
     "Ask anything",
     "press enter to send",
-    "enter submit",   // question tool navigation help
-    "esc dismiss",    // question tool cancel affordance
+    "enter submit",   // question tool help bar
+    "esc dismiss",    // question tool help bar
 },
 ```
 
-### Test for tmux set-environment (existing, reference)
+### Existing OpenCode HasPrompt (before fix):
+
 ```go
-// Source: internal/tmux/tmux_test.go lines 2247-2262
-err = sess.SetEnvironment("TEST_VAR", "test_value_123")
-// ... then:
-value, err := sess.GetEnvironment("TEST_VAR")
-// value == "test_value_123"
+// Source: internal/tmux/detector.go:39-58
+case "opencode":
+    if d.hasOpencodeBusyIndicator(content) {
+        return false
+    }
+    return strings.Contains(content, "press enter to send") ||
+        strings.Contains(content, "Ask anything") ||
+        strings.Contains(content, "open code") ||
+        d.hasLineEndingWith(content, ">")
+```
+
+After DET-02 fix:
+
+```go
+case "opencode":
+    if d.hasOpencodeBusyIndicator(content) {
+        return false
+    }
+    return strings.Contains(content, "press enter to send") ||
+        strings.Contains(content, "Ask anything") ||
+        strings.Contains(content, "open code") ||
+        strings.Contains(content, "enter submit") ||
+        strings.Contains(content, "esc dismiss") ||
+        d.hasLineEndingWith(content, ">")
 ```
 
 ## State of the Art
 
 | Old Approach | Current Approach | When Changed | Impact |
 |--------------|------------------|--------------|--------|
-| Sandbox config not persisted | Sandbox config persisted (PR #320) | 2026-03-12 | DET-01 is now unblocked; sandbox sessions can be restored with correct config |
-| `tmux set-environment` embedded in shell string (works for host sessions) | Same — has never worked inside Docker | Still broken | Root cause of DET-01 |
+| Sandbox config not persisted | Persisted in SQLite (STORE-01 to STORE-03) | 2026-03-12 (#320) | DET-01 now unblocked |
+| `tmux set-environment` in container command string | Should be host-side `SetEnvironment` call | This phase (DET-01) | Eliminates silent env-var loss for all sandbox sessions |
+| OpenCode detection only covers normal idle state | Should also cover question-tool selection UI | This phase (DET-02) | Sessions transition to "waiting" (orange) when agent asks a question |
 
 **Deprecated/outdated:**
-- Using `$(uuidgen)` inside `docker exec` shell strings: works on host but not in sandbox; must be replaced with host-side generation for sandbox sessions.
+- `2>/dev/null;` suppressor in `buildClaudeResumeCommand` (line 3887): workaround for the socket-absent problem. Remove after DET-01 fix.
 
 ## Open Questions
 
-1. **Which of the two fix strategies for DET-01 is simpler?**
-   - What we know: Strategy A (pre-generate ID on host, pass via `-e`) requires threading the ID through `buildClaudeCommandWithMessage` → `buildExecCommand`, and calling `SetEnvironment` from Go. Strategy B (strip `tmux set-environment` from shell strings and rely entirely on Go-side `SetEnvironment`) requires knowing the session ID before the shell string is built.
-   - What's unclear: For Claude new sessions, the UUID is currently generated inside the shell string with `$(uuidgen ...)`. Moving this to Go side requires generating a UUID in Go code and threading it into the command builder. The simplest path: add a `preGeneratedSessionID` field to `Instance` (or take it as a function parameter), set it before calling `buildClaudeCommand`, pass it into the shell string as a literal (not generated at runtime), and call `SetEnvironment` from Go.
-   - Recommendation: Generate UUID in Go, pass into command builders as a literal, call `SetEnvironment` from host. This is the cleanest separation.
+1. **Exact question-tool prompt strings in current OpenCode versions**
+   - What we know: Issue #255 confirms `"↑↓ select"`, `"enter submit"`, `"esc dismiss"` in the help bar. The sst/opencode TypeScript rewrite has `question.ts`. The opencode-ai/opencode original (Go, archived Sept 2025) used Bubble Tea components.
+   - What is unclear: Whether these strings match exactly in current released versions (agent-deck users may be on either the original or the rewrite).
+   - Recommendation: Add `"enter submit"` and `"esc dismiss"` as starting point. After ship, add a regression test using a real pane capture from a live question-tool interaction.
 
-2. **Does the OpenCode question tool also use `"esc interrupt"` in the help bar?**
-   - What we know: From the issue screenshot, the help bar shows `↑↓ select`, `enter submit`, `esc dismiss`. The `hasOpencodeBusyIndicator` checks for `"esc interrupt"` and `"esc to exit"`, which should NOT match `"esc dismiss"`.
-   - What's unclear: Whether permission approval dialogs also use `"enter submit"` or different text.
-   - Recommendation: Add both strings to `PromptPatterns`. Validate against the screenshots in the issue.
+2. **UUID pre-generation in sandboxed Claude new sessions**
+   - What we know: `uuidgen` exists on macOS host. The container may not have `uuidgen`.
+   - What is unclear: Whether any edge case in session ID format handling breaks if the UUID comes from Go vs. from `uuidgen | tr '[:upper:]' '[:lower:]'`.
+   - Recommendation: Use `exec.Command("uuidgen").Output()` with `strings.ToLower(strings.TrimSpace(...))` to exactly replicate the current behavior.
 
-3. **Are there other call sites for `tmux set-environment` inside docker exec that are missing from the audit?**
-   - What we know: 7 call sites identified. Grep confirms these are all in `instance.go`.
-   - Recommendation: After applying the fix, run `grep -n "tmux set-environment" internal/session/instance.go` and verify all remaining occurrences are either host-side Go calls or are guarded by `!i.IsSandboxed()`.
+3. **Scope of fix: sandbox-only vs. all sessions**
+   - What we know: The bug only manifests in sandbox sessions. Non-sandbox sessions have the host tmux server reachable.
+   - What is unclear: Whether applying the fix uniformly (remove `tmux set-environment` from all command strings) might subtly change non-sandbox behavior.
+   - Recommendation: Apply universally. `Session.SetEnvironment()` on the host is equivalent to `tmux set-environment` in the shell for non-sandbox sessions. Removes divergent code paths.
 
 ## Validation Architecture
 
 ### Test Framework
 | Property | Value |
 |----------|-------|
-| Framework | Go testing + `go test -race` |
-| Config file | none (uses TestMain profile isolation) |
-| Quick run command | `go test -race -v ./internal/session/... ./internal/tmux/...` |
+| Framework | Go testing + testify/assert, `go test -race` |
+| Config file | none (`TestMain` enforces `AGENTDECK_PROFILE=_test`) |
+| Quick run command | `go test -race -v ./internal/session/... ./internal/tmux/... -run 'TestOpencode\|TestBuildClaude\|TestBuildOpenCode\|TestBuildGemini\|TestBuildCodex'` |
 | Full suite command | `go test -race -v ./...` |
 
 ### Phase Requirements → Test Map
 | Req ID | Behavior | Test Type | Automated Command | File Exists? |
 |--------|----------|-----------|-------------------|-------------|
-| DET-01 | tmux set-environment called from host (not inside container) for sandbox sessions | unit | `go test -race -v -run TestSandbox ./internal/session/...` | ❌ Wave 0 |
-| DET-01 | Session ID is accessible via GetEnvironment after Start() for sandbox sessions | unit | `go test -race -v -run TestSandbox ./internal/session/...` | ❌ Wave 0 |
-| DET-02 | OpenCode question tool prompt detected as waiting status | unit | `go test -race -v -run TestOpenCode ./internal/tmux/...` | ❌ Wave 0 |
-| DET-02 | OpenCode permission approval prompt detected as waiting status | unit | `go test -race -v -run TestOpenCode ./internal/tmux/...` | ❌ Wave 0 |
-| DET-02 | OpenCode busy state not false-positived on static UI | unit | `go test -race -v -run TestOpenCode ./internal/tmux/...` | ❌ Wave 0 |
+| DET-01 | `buildClaudeCommandWithMessage` (new session) command string does NOT contain `tmux set-environment` | unit | `go test ./internal/session/... -run TestBuildClaudeCommand_NoTmuxSetEnv -v` | ❌ Wave 0 |
+| DET-01 | `buildOpenCodeCommand` with session ID command string does NOT contain `tmux set-environment` | unit | `go test ./internal/session/... -run TestBuildOpenCodeCommand_NoTmuxSetEnv -v` | ❌ Wave 0 |
+| DET-01 | `buildGeminiCommand` with session ID command string does NOT contain `tmux set-environment` | unit | `go test ./internal/session/... -run TestBuildGeminiCommand_NoTmuxSetEnv -v` | ❌ Wave 0 |
+| DET-01 | `buildCodexCommand` with session ID command string does NOT contain `tmux set-environment` | unit | `go test ./internal/session/... -run TestBuildCodexCommand_NoTmuxSetEnv -v` | ❌ Wave 0 |
+| DET-01 | `buildClaudeResumeCommand` does NOT contain `tmux set-environment` or `2>/dev/null` | unit | `go test ./internal/session/... -run TestBuildClaudeResumeCommand_NoTmuxSetEnv -v` | ❌ Wave 0 |
+| DET-02 | `HasPrompt("opencode")` returns true for question-tool content with `"enter submit"` | unit | `go test ./internal/tmux/... -run TestOpencodeBusyGuard -v` | ✅ (extend existing test) |
+| DET-02 | `HasPrompt("opencode")` returns true for content with `"esc dismiss"` | unit | `go test ./internal/tmux/... -run TestOpencodeBusyGuard -v` | ✅ (extend existing test) |
+| DET-02 | `HasPrompt("opencode")` returns false for busy content that also contains `"enter submit"` | unit | `go test ./internal/tmux/... -run TestOpencodeBusyGuard -v` | ✅ (extend existing test) |
+| DET-02 | `DefaultRawPatterns("opencode").PromptPatterns` includes question-tool strings | unit | `go test ./internal/tmux/... -run TestDefaultRawPatterns_OpenCode -v` | ✅ (extend existing test) |
+| DET-02 | Integration: `TestDetection_OpenCodeQuestionTool` passes for question-tool pane content | integration | `go test ./internal/integration/... -run TestDetection_OpenCodeQuestionTool -v` | ❌ Wave 0 |
 
 ### Sampling Rate
-- **Per task commit:** `go test -race -v ./internal/session/... ./internal/tmux/...`
-- **Per wave merge:** `go test -race -v ./...`
+- **Per task commit:** `go test -race ./internal/tmux/... -run TestOpencode` and `go test -race ./internal/session/... -run TestBuild`
+- **Per wave merge:** `go test -race ./internal/tmux/... ./internal/session/... ./internal/integration/...`
 - **Phase gate:** Full suite green before `/gsd:verify-work`
 
 ### Wave 0 Gaps
-- [ ] `internal/session/sandbox_env_test.go` — tests that `buildClaudeCommandWithMessage` does NOT contain `tmux set-environment` for sandbox sessions, and that `SetEnvironment` is called from Go side (REQ: DET-01)
-- [ ] `internal/tmux/opencode_detection_test.go` — tests that `HasPrompt("opencode", ...)` returns true for question-tool help bar content (REQ: DET-02)
-- [ ] `internal/session/testmain_test.go` — already exists, ensures `AGENTDECK_PROFILE=_test`
+- [ ] `internal/session/instance_test.go` — add `TestBuildClaudeCommand_NoTmuxSetEnv`, `TestBuildOpenCodeCommand_NoTmuxSetEnv`, `TestBuildGeminiCommand_NoTmuxSetEnv`, `TestBuildCodexCommand_NoTmuxSetEnv`, `TestBuildClaudeResumeCommand_NoTmuxSetEnv`
+- [ ] `internal/integration/detection_test.go` — add `TestDetection_OpenCodeQuestionTool`
+- [ ] `internal/tmux/status_fixes_test.go` — extend with VALIDATION 8.0 section covering question-tool prompt cases
+
+*(Existing test infrastructure in `testmain_test.go` files already ensures profile isolation — no framework gaps.)*
 
 ## Sources
 
 ### Primary (HIGH confidence)
-- Direct code reading: `internal/session/instance.go` — all `buildClaudeCommand*`, `buildOpenCodeCommand`, `Restart()`, `wrapForSandbox`, `buildExecCommand` functions
-- Direct code reading: `internal/tmux/patterns.go` — `DefaultRawPatterns("opencode")` and existing PromptPatterns
-- Direct code reading: `internal/tmux/detector.go` — `hasOpencodeBusyIndicator`, `HasPrompt` for opencode
-- GitHub issue #266 — detailed root cause and suggested fix from reporter
-- GitHub issue #255 — screenshots showing question tool and permission approval waiting states
+- `internal/session/instance.go` (direct source read) — all 7+ `tmux set-environment` call sites; `buildClaudeCommand`, `buildOpenCodeCommand`, `buildGeminiCommand`, `buildCodexCommand`, `buildClaudeResumeCommand`, `prepareCommand`, `wrapForSandbox`, `buildExecCommand`, `SetEnvironment` usage pattern at line 1806
+- `internal/tmux/tmux.go` (direct source read) — `SetEnvironment(key, value)` implementation at line 904
+- `internal/tmux/detector.go` (direct source read) — `HasPrompt` opencode case, `hasOpencodeBusyIndicator`
+- `internal/tmux/patterns.go` (direct source read) — `DefaultRawPatterns("opencode")` at line 56
+- `internal/tmux/status_fixes_test.go` (direct source read) — VALIDATION 7.0 opencode busy-guard tests at line 765
+- GitHub issue #266 (fetched) — root cause confirmed: tmux socket unreachable from container; UUID pre-generation on host recommended
+- GitHub issue #255 (fetched) — confirmed: question tool shows arrow-key selection with `"enter submit"` / `"esc dismiss"` help bar; waiting state not detected
 
 ### Secondary (MEDIUM confidence)
-- GitHub issue #255 comments — additional cases (permission approval, false positive busy)
-- Existing test `TestOpenCodeBuildCommand` in `internal/session/opencode_test.go` — confirms `tmux set-environment OPENCODE_SESSION_ID` is embedded in the command string for resume
+- `internal/session/opencode_test.go` (direct source read) — `TestOpenCodeBuildCommand` confirms `tmux set-environment OPENCODE_SESSION_ID` appears in resume command string
+- `internal/tmux/tmux_test.go` (direct source read) — existing OpenCode `HasPrompt` test cases at line 224
 
 ### Tertiary (LOW confidence)
-- OpenCode source code not directly inspected — question tool UI strings inferred from issue screenshots
+- sst/opencode repository — `question.ts` confirmed to exist; exact terminal rendering strings not confirmed due to rate limiting. Patterns inferred from issue #255 screenshots and common Bubble Tea list component conventions.
 
 ## Metadata
 
 **Confidence breakdown:**
-- Root cause DET-01: HIGH — confirmed by reading all relevant code paths and issue report
-- Root cause DET-02: HIGH — confirmed by reading patterns.go, detector.go, and issue screenshots
-- Fix approach DET-01: MEDIUM — strategy is clear but precise implementation requires choosing between two valid approaches (pre-generate vs strip-and-store)
-- Fix approach DET-02: HIGH — simple string addition to existing patterns array
+- DET-01 root cause: HIGH — confirmed by reading all affected code paths, `buildExecCommand`, and issue #266
+- DET-01 fix architecture: HIGH — host-side `SetEnvironment` pattern already established at line 1806
+- DET-02 root cause: HIGH — confirmed by reading `patterns.go`, `detector.go`, and issue #255
+- DET-02 fix (patterns): MEDIUM — `"enter submit"` and `"esc dismiss"` from issue report; exact strings not verified against a live terminal capture. Should be treated as a starting point that may need refinement.
 
 **Research date:** 2026-03-13
-**Valid until:** 2026-04-13 (stable domain — OpenCode TUI changes may affect prompt strings)
+**Valid until:** 2026-04-13 (OpenCode TUI changes frequently; verify prompt strings against installed version before implementation)
