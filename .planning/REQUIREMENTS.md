@@ -39,8 +39,8 @@ Rescoped 2026-03-12: removed completed items (#320, #318), added critical new is
 
 ### UX Polish
 
-- [ ] **UX-01**: Mouse wheel scroll works in session list and other scrollable areas (settings, search, dialogs) (#262, #254)
-- [ ] **UX-02**: Light theme renders correctly in Codex preview and live session views; no dark background bleed-through (#322)
+- [x] **UX-01**: Mouse wheel scroll works in session list and other scrollable areas (settings, search, dialogs) (#262, #254)
+- [x] **UX-02**: Light theme renders correctly in Codex preview and live session views; no dark background bleed-through (#322)
 - [ ] **UX-03**: auto_cleanup option documented in README sandbox section with explanation of what gets cleaned and when (#228)
 - [ ] **UX-04**: Redundant heartbeat mechanisms consolidated into a single mechanism (systemd timer vs bridge.py heartbeat_loop) (#225)
 - [ ] **UX-05**: Existing git worktrees are detected and reused instead of creating new ones when a worktree for the target branch already exists (#216)
@@ -114,8 +114,8 @@ Deferred to v1.4+. Tracked but not in current roadmap.
 | PLAT-02 | Phase 13 | Pending |
 | DET-01 | Phase 14 | Pending |
 | DET-02 | Phase 14 | Pending |
-| UX-01 | Phase 15 | Pending |
-| UX-02 | Phase 15 | Pending |
+| UX-01 | Phase 15 | Complete |
+| UX-02 | Phase 15 | Complete |
 | UX-03 | Phase 15 | Pending |
 | UX-04 | Phase 15 | Pending |
 | UX-05 | Phase 15 | Pending |

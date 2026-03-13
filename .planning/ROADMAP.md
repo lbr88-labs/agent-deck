@@ -121,7 +121,7 @@ Plans:
   3. The README sandbox section documents auto_cleanup with clear explanation
   4. Redundant heartbeat mechanisms are consolidated into a single mechanism
   5. When a git worktree already exists for a target branch, agent-deck detects and reuses it instead of creating a new one
-**Plans:** 2 plans
+**Plans:** 1/3 plans executed
 Plans:
 - [ ] 15-01-PLAN.md — Mouse wheel scroll support and light theme preview fix (UX-01, UX-02)
 - [ ] 15-02-PLAN.md — auto_cleanup docs, heartbeat consolidation, worktree reuse (UX-03, UX-04, UX-05)
@@ -162,5 +162,5 @@ Plans:
 | 12. Session List & Resume UX | v1.3 | 2/2 | Complete | 2026-03-13 |
 | 13. Auto-Start & Platform | v1.3 | 0/2 | Not started | - |
 | 14. Detection & Sandbox | v1.3 | 0/TBD | Not started | - |
-| 15. Mouse, Theme & Polish | v1.3 | 0/2 | Not started | - |
+| 15. Mouse, Theme & Polish | 1/3 | In Progress|  | - |
 | 16. Comprehensive Testing | v1.3 | 0/TBD | Not started | - |
