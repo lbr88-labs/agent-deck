@@ -49,7 +49,7 @@ Original scope had Phases 11-15. Rescoped after #320 and #318 closed, and new cr
 
 - [ ] **Phase 11: MCP Proxy Reliability** - Fix request ID collisions in shared MCP socket proxy (#324)
 - [x] **Phase 12: Session List & Resume UX** - Stopped sessions visible with distinct styling; resume deduplication (#307, #224) (completed 2026-03-13)
-- [ ] **Phase 13: Auto-Start & Platform** - WSL/Linux TTY fix for non-interactive auto-start (#311)
+- [x] **Phase 13: Auto-Start & Platform** - WSL/Linux TTY fix for non-interactive auto-start (#311) (completed 2026-03-13)
 - [x] **Phase 14: Detection & Sandbox** - Docker tmux set-environment fix (#266); OpenCode waiting status (#255) (completed 2026-03-13)
 - [ ] **Phase 15: Mouse, Theme & Polish** - Mouse scroll, light theme fix, docs, heartbeat cleanup, worktree reuse (#262, #254, #322, #228, #225, #216)
 - [ ] **Phase 16: Comprehensive Testing** - Integration tests for all v1.3 fixes, regression suite
@@ -95,7 +95,7 @@ Plans:
 **Success Criteria** (what must be TRUE):
   1. Running agent-deck session start from a non-interactive shell on WSL/Linux starts the session without tool processes rejecting input due to a missing PTY
   2. After auto-starting and stopping a session on WSL/Linux, resuming it attaches to the correct tool conversation (identified by the tool conversation ID, not the agent-deck internal UUID)
-**Plans:** 2/3 plans executed
+**Plans:** 2/3 plans complete
 Plans:
 - [ ] 13-01-PLAN.md — Pane-ready detection + Go-side UUID generation replacing shell uuidgen (PLAT-01)
 - [ ] 13-02-PLAN.md — SyncSessionIDsFromTmux before Kill in stop path (PLAT-02)
@@ -164,7 +164,7 @@ Plans:
 | 10. Learnings Promotion | v1.2 | 2/2 | Complete | 2026-03-06 |
 | 11. MCP Proxy Reliability | v1.3 | 0/1 | Not started | - |
 | 12. Session List & Resume UX | v1.3 | 2/2 | Complete | 2026-03-13 |
-| 13. Auto-Start & Platform | 2/3 | In Progress|  | - |
+| 13. Auto-Start & Platform | 2/3 | Complete    | 2026-03-13 | - |
 | 14. Detection & Sandbox | 2/2 | Complete   | 2026-03-13 | - |
 | 15. Mouse, Theme & Polish | 2/3 | In Progress|  | - |
 | 16. Comprehensive Testing | v1.3 | 0/TBD | Not started | - |
