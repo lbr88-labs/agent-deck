@@ -22,6 +22,7 @@ import (
 	"golang.org/x/sync/singleflight"
 
 	"github.com/asheshgoplani/agent-deck/internal/logging"
+	"github.com/asheshgoplani/agent-deck/internal/platform"
 )
 
 var (
@@ -1169,6 +1170,25 @@ func (s *Session) Start(command string) error {
 	// Configure status bar with session info for easy identification
 	// Shows: session title on left, project folder on right
 	s.ConfigureStatusBar()
+
+	// Wait for the pane shell to be ready before sending the command via send-keys.
+	// On WSL/Linux non-interactive contexts, pane initialisation can take 100-500ms and
+	// sending keys before the shell is ready causes them to be silently swallowed.
+	// Non-fatal best-effort guard: if the timeout expires, log a warning and continue
+	// anyway (degraded path, same as the behaviour before this guard was added).
+	if command != "" && !startWithInitialProcess {
+		paneReadyTimeout := 2 * time.Second
+		if platform.IsWSL() {
+			paneReadyTimeout = 5 * time.Second
+		}
+		if err := waitForPaneReady(s, paneReadyTimeout); err != nil {
+			statusLog.Warn("pane_ready_timeout",
+				slog.String("session", s.Name),
+				slog.String("timeout", paneReadyTimeout.String()),
+				slog.String("error", err.Error()),
+			)
+		}
+	}
 
 	// Legacy behavior for non-sandbox sessions: start shell first, then send command.
 	if command != "" && !startWithInitialProcess {
