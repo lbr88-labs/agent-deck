@@ -179,19 +179,25 @@ func handleLaunch(profile string, args []string) {
 			Template:  wtSettings.Template(),
 		})
 
-		if err := os.MkdirAll(filepath.Dir(worktreePath), 0o755); err != nil {
-			out.Error(fmt.Sprintf("failed to create parent directory: %v", err), ErrCodeInvalidOperation)
-			os.Exit(1)
-		}
+		// Check for an existing worktree for this branch before creating a new one
+		if existingPath, err := git.GetWorktreeForBranch(repoRoot, wtBranch); err == nil && existingPath != "" {
+			fmt.Fprintf(os.Stderr, "Reusing existing worktree at %s for branch %s\n", existingPath, wtBranch)
+			worktreePath = existingPath
+		} else {
+			if err := os.MkdirAll(filepath.Dir(worktreePath), 0o755); err != nil {
+				out.Error(fmt.Sprintf("failed to create parent directory: %v", err), ErrCodeInvalidOperation)
+				os.Exit(1)
+			}
 
-		if _, err := os.Stat(worktreePath); err == nil {
-			out.Error(fmt.Sprintf("worktree already exists at %s", worktreePath), ErrCodeInvalidOperation)
-			os.Exit(1)
-		}
+			if _, err := os.Stat(worktreePath); err == nil {
+				out.Error(fmt.Sprintf("worktree already exists at %s", worktreePath), ErrCodeInvalidOperation)
+				os.Exit(1)
+			}
 
-		if err := git.CreateWorktree(repoRoot, worktreePath, wtBranch); err != nil {
-			out.Error(fmt.Sprintf("failed to create worktree: %v", err), ErrCodeInvalidOperation)
-			os.Exit(1)
+			if err := git.CreateWorktree(repoRoot, worktreePath, wtBranch); err != nil {
+				out.Error(fmt.Sprintf("failed to create worktree: %v", err), ErrCodeInvalidOperation)
+				os.Exit(1)
+			}
 		}
 
 		worktreeRepoRoot = repoRoot

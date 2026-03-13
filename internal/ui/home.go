@@ -5987,11 +5987,18 @@ func (h *Home) createSessionInGroupWithWorktreeAndOptions(
 		if worktreePath != "" && worktreeRepoRoot != "" && worktreeBranch != "" {
 			// Worktree creation can be slow on large repos; keep it in async cmd path
 			// so the TUI remains responsive.
-			if err := os.MkdirAll(filepath.Dir(worktreePath), 0o755); err != nil {
-				return sessionCreatedMsg{err: fmt.Errorf("failed to create parent directory: %w", err)}
-			}
-			if err := git.CreateWorktree(worktreeRepoRoot, worktreePath, worktreeBranch); err != nil {
-				return sessionCreatedMsg{err: fmt.Errorf("failed to create worktree: %w", err)}
+			//
+			// Check for an existing worktree for this branch before creating a new one.
+			if existingPath, err := git.GetWorktreeForBranch(worktreeRepoRoot, worktreeBranch); err == nil && existingPath != "" {
+				uiLog.Info("worktree_reuse", slog.String("branch", worktreeBranch), slog.String("path", existingPath))
+				worktreePath = existingPath
+			} else {
+				if err := os.MkdirAll(filepath.Dir(worktreePath), 0o755); err != nil {
+					return sessionCreatedMsg{err: fmt.Errorf("failed to create parent directory: %w", err)}
+				}
+				if err := git.CreateWorktree(worktreeRepoRoot, worktreePath, worktreeBranch); err != nil {
+					return sessionCreatedMsg{err: fmt.Errorf("failed to create worktree: %w", err)}
+				}
 			}
 			path = worktreePath
 		}
@@ -6242,11 +6249,18 @@ func (h *Home) forkSessionCmdWithOptions(
 		if opts != nil && opts.WorktreePath != "" && opts.WorktreeRepoRoot != "" && opts.WorktreeBranch != "" {
 			// Worktree creation can be slow on large repos; keep it in async cmd path
 			// so the TUI remains responsive.
-			if err := os.MkdirAll(filepath.Dir(opts.WorktreePath), 0o755); err != nil {
-				return sessionForkedMsg{err: fmt.Errorf("failed to create directory: %w", err), sourceID: sourceID}
-			}
-			if err := git.CreateWorktree(opts.WorktreeRepoRoot, opts.WorktreePath, opts.WorktreeBranch); err != nil {
-				return sessionForkedMsg{err: fmt.Errorf("worktree creation failed: %w", err), sourceID: sourceID}
+			//
+			// Check for an existing worktree for this branch before creating a new one.
+			if existingPath, err := git.GetWorktreeForBranch(opts.WorktreeRepoRoot, opts.WorktreeBranch); err == nil && existingPath != "" {
+				uiLog.Info("worktree_reuse", slog.String("branch", opts.WorktreeBranch), slog.String("path", existingPath))
+				opts.WorktreePath = existingPath
+			} else {
+				if err := os.MkdirAll(filepath.Dir(opts.WorktreePath), 0o755); err != nil {
+					return sessionForkedMsg{err: fmt.Errorf("failed to create directory: %w", err), sourceID: sourceID}
+				}
+				if err := git.CreateWorktree(opts.WorktreeRepoRoot, opts.WorktreePath, opts.WorktreeBranch); err != nil {
+					return sessionForkedMsg{err: fmt.Errorf("worktree creation failed: %w", err), sourceID: sourceID}
+				}
 			}
 		}
 
