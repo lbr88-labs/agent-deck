@@ -17,9 +17,9 @@ created: 2026-03-13
 
 | Property | Value |
 |----------|-------|
-| **Framework** | Go testing + `go test -race` |
-| **Config file** | none (uses TestMain profile isolation) |
-| **Quick run command** | `go test -race -v ./internal/session/... ./internal/tmux/...` |
+| **Framework** | Go testing + testify/assert, `go test -race` |
+| **Config file** | none (`TestMain` enforces `AGENTDECK_PROFILE=_test`) |
+| **Quick run command** | `go test -race -v ./internal/session/... ./internal/tmux/... -run 'TestOpencode\|TestBuildClaude\|TestBuildOpenCode\|TestBuildGemini\|TestBuildCodex'` |
 | **Full suite command** | `go test -race -v ./...` |
 | **Estimated runtime** | ~30 seconds |
 
@@ -27,8 +27,8 @@ created: 2026-03-13
 
 ## Sampling Rate
 
-- **After every task commit:** Run `go test -race -v ./internal/session/... ./internal/tmux/...`
-- **After every plan wave:** Run `go test -race -v ./...`
+- **After every task commit:** Run `go test -race ./internal/tmux/... -run TestOpencode` and `go test -race ./internal/session/... -run TestBuild`
+- **After every plan wave:** Run `go test -race -v ./internal/tmux/... ./internal/session/...`
 - **Before `/gsd:verify-work`:** Full suite must be green
 - **Max feedback latency:** 30 seconds
 
@@ -38,11 +38,14 @@ created: 2026-03-13
 
 | Task ID | Plan | Wave | Requirement | Test Type | Automated Command | File Exists | Status |
 |---------|------|------|-------------|-----------|-------------------|-------------|--------|
-| 14-01-01 | 01 | 1 | DET-01 | unit | `go test -race -v -run TestSandbox ./internal/session/...` | ❌ W0 | ⬜ pending |
-| 14-01-02 | 01 | 1 | DET-01 | unit | `go test -race -v -run TestSandbox ./internal/session/...` | ❌ W0 | ⬜ pending |
-| 14-02-01 | 02 | 1 | DET-02 | unit | `go test -race -v -run TestOpenCode ./internal/tmux/...` | ❌ W0 | ⬜ pending |
-| 14-02-02 | 02 | 1 | DET-02 | unit | `go test -race -v -run TestOpenCode ./internal/tmux/...` | ❌ W0 | ⬜ pending |
-| 14-02-03 | 02 | 1 | DET-02 | unit | `go test -race -v -run TestOpenCode ./internal/tmux/...` | ❌ W0 | ⬜ pending |
+| 14-01-01 | 01 | 1 | DET-01 | unit | `go test ./internal/session/... -run TestBuildClaudeCommand_NoTmuxSetEnv -v` | ❌ W0 | ⬜ pending |
+| 14-01-02 | 01 | 1 | DET-01 | unit | `go test ./internal/session/... -run TestBuildOpenCodeCommand_NoTmuxSetEnv -v` | ❌ W0 | ⬜ pending |
+| 14-01-03 | 01 | 1 | DET-01 | unit | `go test ./internal/session/... -run TestBuildGeminiCommand_NoTmuxSetEnv -v` | ❌ W0 | ⬜ pending |
+| 14-01-04 | 01 | 1 | DET-01 | unit | `go test ./internal/session/... -run TestBuildCodexCommand_NoTmuxSetEnv -v` | ❌ W0 | ⬜ pending |
+| 14-01-05 | 01 | 1 | DET-01 | unit | `go test ./internal/session/... -run TestBuildClaudeResumeCommand_NoTmuxSetEnv -v` | ❌ W0 | ⬜ pending |
+| 14-02-01 | 02 | 1 | DET-02 | unit | `go test ./internal/tmux/... -run TestOpencodeBusyGuard -v` | ✅ (extend) | ⬜ pending |
+| 14-02-02 | 02 | 1 | DET-02 | unit | `go test ./internal/tmux/... -run TestDefaultRawPatterns_OpenCode -v` | ✅ (extend) | ⬜ pending |
+| 14-02-03 | 02 | 1 | DET-02 | integration | `go test ./internal/tmux/... -run TestDetection_OpenCodeQuestionTool -v` | ❌ W0 | ⬜ pending |
 
 *Status: ⬜ pending · ✅ green · ❌ red · ⚠️ flaky*
 
@@ -50,8 +53,9 @@ created: 2026-03-13
 
 ## Wave 0 Requirements
 
-- [ ] `internal/session/sandbox_env_test.go` — tests that command builders do NOT embed `tmux set-environment` for sandbox sessions, and that `SetEnvironment` is called from host side (DET-01)
-- [ ] `internal/tmux/opencode_detection_test.go` — tests that `HasPrompt("opencode", ...)` returns true for question-tool help bar content (DET-02)
+- [ ] `internal/session/instance_test.go` — add `TestBuildClaudeCommand_NoTmuxSetEnv`, `TestBuildOpenCodeCommand_NoTmuxSetEnv`, `TestBuildGeminiCommand_NoTmuxSetEnv`, `TestBuildCodexCommand_NoTmuxSetEnv`, `TestBuildClaudeResumeCommand_NoTmuxSetEnv`
+- [ ] `internal/tmux/status_fixes_test.go` — extend with VALIDATION 8.0 section covering question-tool prompt cases
+- [ ] `internal/tmux/status_fixes_test.go` — add `TestDetection_OpenCodeQuestionTool` integration test
 
 *Existing infrastructure: `internal/session/testmain_test.go` and `internal/tmux/testmain_test.go` already provide profile isolation.*
 
@@ -61,8 +65,8 @@ created: 2026-03-13
 
 | Behavior | Requirement | Why Manual | Test Instructions |
 |----------|-------------|------------|-------------------|
-| Docker sandbox session picks up env vars set by host tmux | DET-01 | Requires running Docker sandbox environment | 1. Start a sandbox session 2. Check `tmux show-environment` shows session ID 3. Verify spawned process can read it |
-| OpenCode question tool shows "waiting" in agent-deck | DET-02 | Requires running OpenCode with question tool trigger | 1. Start OpenCode session 2. Trigger question tool 3. Verify agent-deck shows "waiting" status |
+| Docker sandbox session env propagation end-to-end | DET-01 | Requires running Docker sandbox with tmux | 1. Start sandbox session 2. Run `tmux show-environment -t <session> CLAUDE_SESSION_ID` 3. Verify UUID returned |
+| OpenCode question tool visual transition | DET-02 | Requires running OpenCode with question tool active | 1. Start OpenCode session 2. Trigger question tool 3. Verify session transitions from green (running) to orange (waiting) |
 
 ---
 
