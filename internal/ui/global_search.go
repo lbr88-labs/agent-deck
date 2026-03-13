@@ -198,6 +198,21 @@ func (gs *GlobalSearch) Update(msg tea.Msg) (*GlobalSearch, tea.Cmd) {
 		}
 		return gs, nil
 
+	case tea.MouseMsg:
+		switch msg.Button {
+		case tea.MouseButtonWheelUp:
+			if gs.cursor > 0 {
+				gs.cursor--
+				gs.previewScroll = 0
+			}
+		case tea.MouseButtonWheelDown:
+			if gs.cursor < len(gs.results)-1 {
+				gs.cursor++
+				gs.previewScroll = 0
+			}
+		}
+		return gs, nil
+
 	case tea.KeyMsg:
 		switch msg.String() {
 		case "esc":

@@ -149,6 +149,20 @@ func (s *SettingsPanel) NeedsRestart() bool {
 	return s.needsRestart
 }
 
+// ScrollUp moves the settings cursor up by one (mouse wheel support).
+func (s *SettingsPanel) ScrollUp() {
+	if s.visible && s.cursor > 0 {
+		s.cursor--
+	}
+}
+
+// ScrollDown moves the settings cursor down by one (mouse wheel support).
+func (s *SettingsPanel) ScrollDown() {
+	if s.visible && s.cursor < settingsCount-1 {
+		s.cursor++
+	}
+}
+
 // SetSize sets the panel dimensions
 func (s *SettingsPanel) SetSize(width, height int) {
 	s.width = width

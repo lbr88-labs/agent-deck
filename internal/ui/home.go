@@ -2654,6 +2654,62 @@ func (h *Home) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		h.geminiModelDialog.SetSize(msg.Width, msg.Height)
 		return h, nil
 
+	case tea.MouseMsg:
+		// Route mouse wheel events to the active scrollable area.
+		// Priority: setup wizard > settings > help > global search > MCP dialog > new/fork dialogs > main list.
+		// Non-wheel events are silently ignored (O(1), no blocking I/O).
+		switch msg.Button {
+		case tea.MouseButtonWheelUp, tea.MouseButtonWheelDown:
+			if h.setupWizard.IsVisible() {
+				return h, nil
+			}
+			if h.settingsPanel.IsVisible() {
+				if msg.Button == tea.MouseButtonWheelUp {
+					h.settingsPanel.ScrollUp()
+				} else {
+					h.settingsPanel.ScrollDown()
+				}
+				return h, nil
+			}
+			if h.helpOverlay.IsVisible() {
+				return h, nil
+			}
+			if h.globalSearch.IsVisible() {
+				var cmd tea.Cmd
+				h.globalSearch, cmd = h.globalSearch.Update(msg)
+				return h, cmd
+			}
+			if h.mcpDialog.IsVisible() {
+				if msg.Button == tea.MouseButtonWheelUp {
+					h.mcpDialog.ScrollUp()
+				} else {
+					h.mcpDialog.ScrollDown()
+				}
+				return h, nil
+			}
+			if h.newDialog.IsVisible() || h.forkDialog.IsVisible() {
+				return h, nil
+			}
+			// Main session list scroll
+			if msg.Button == tea.MouseButtonWheelUp {
+				if h.cursor > 0 {
+					h.cursor--
+					h.syncViewport()
+					h.markNavigationActivity()
+					return h, h.fetchSelectedPreview()
+				}
+			} else {
+				if h.cursor < len(h.flatItems)-1 {
+					h.cursor++
+					h.syncViewport()
+					h.markNavigationActivity()
+					return h, h.fetchSelectedPreview()
+				}
+			}
+			return h, nil
+		}
+		return h, nil
+
 	case loadSessionsMsg:
 		// Clear loading indicators and store file mtime for external change detection
 		h.reloadMu.Lock()
