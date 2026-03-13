@@ -110,8 +110,8 @@ Plans:
   2. OpenCode's question tool prompt triggers the "waiting" status detection, transitioning the session from "running" to "waiting"
 **Plans:** 2 plans
 Plans:
-- [ ] 14-01-PLAN.md — Host-side tmux set-environment for sandbox sessions (DET-01)
-- [ ] 14-02-PLAN.md — OpenCode question tool and permission approval prompt detection (DET-02)
+- [ ] 14-01-PLAN.md — Remove tmux set-environment from command strings, use host-side SetEnvironment (DET-01)
+- [ ] 14-02-PLAN.md — OpenCode question tool prompt detection with false-positive prevention (DET-02)
 
 ### Phase 15: Mouse, Theme & Polish
 **Goal:** Mouse scroll works everywhere, light theme renders correctly, heartbeat is consolidated, worktree reuse works, docs updated
