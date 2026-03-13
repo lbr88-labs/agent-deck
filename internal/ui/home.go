@@ -325,6 +325,10 @@ type Home struct {
 		timestamp                       time.Time   // For time-based expiration
 	}
 
+	// Full repaint mode: issue tea.ClearScreen every tick to avoid
+	// incremental redraw drift in terminals with unicode grapheme widths
+	fullRepaint bool
+
 	// Reusable string builder for View() to reduce allocations
 	viewBuilder strings.Builder
 
@@ -665,6 +669,13 @@ func NewHomeWithProfileAndMode(profile string) *Home {
 	h.sessionRenderSnapshot.Store(make(map[string]sessionRenderState))
 
 	h.reloadHotkeysFromConfig()
+
+	// Cache full-repaint setting (config.toml [display] full_repaint or AGENTDECK_REPAINT=full)
+	if cfg, _ := session.LoadUserConfig(); cfg != nil {
+		h.fullRepaint = cfg.Display.GetFullRepaint()
+	} else {
+		h.fullRepaint = (session.DisplaySettings{}).GetFullRepaint()
+	}
 
 	// Keep settings panel profile-aware so profile overrides (e.g., Claude config dir)
 	// are displayed and edited in the correct scope.
@@ -3825,7 +3836,11 @@ func (h *Home) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			h.previewCacheMu.Unlock()
 		}
-		return h, tea.Batch(h.tick(), previewCmd, remoteFetchCmd)
+		cmds := []tea.Cmd{h.tick(), previewCmd, remoteFetchCmd}
+		if h.fullRepaint {
+			cmds = append(cmds, tea.ClearScreen)
+		}
+		return h, tea.Batch(cmds...)
 
 	case globalSearchDebounceMsg, globalSearchResultsMsg:
 		// Route async global search messages to the global search component

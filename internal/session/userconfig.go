@@ -120,6 +120,9 @@ type UserConfig struct {
 
 	// OpenClaw defines OpenClaw gateway integration settings
 	OpenClaw OpenClawSettings `toml:"openclaw"`
+
+	// Display defines rendering and display settings
+	Display DisplaySettings `toml:"display"`
 }
 
 // OpenClawSettings configures the OpenClaw gateway connection.
@@ -916,6 +919,26 @@ type MaintenanceSettings struct {
 	// Enabled enables the maintenance worker (default: false)
 	// Prunes Gemini logs, cleans old backups, archives bloated sessions
 	Enabled bool `toml:"enabled"`
+}
+
+// DisplaySettings controls TUI rendering behavior.
+type DisplaySettings struct {
+	// FullRepaint forces a full screen clear on every render cycle instead of
+	// incremental redraws. Enable this if you see vertical drift or rendering
+	// artifacts in terminals that use unicode grapheme-cluster widths (e.g.
+	// Ghostty 1.3+ with grapheme-width-method=unicode).
+	// Can also be enabled via AGENTDECK_REPAINT=full env var.
+	// Default: false
+	FullRepaint bool `toml:"full_repaint"`
+}
+
+// GetFullRepaint returns whether full-repaint mode is active, checking
+// the env var AGENTDECK_REPAINT=full as an override.
+func (d DisplaySettings) GetFullRepaint() bool {
+	if strings.EqualFold(os.Getenv("AGENTDECK_REPAINT"), "full") {
+		return true
+	}
+	return d.FullRepaint
 }
 
 // Default user config (empty maps)
