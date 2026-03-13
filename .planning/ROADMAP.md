@@ -82,7 +82,10 @@ Plans:
   4. Resuming a stopped session reuses the existing record (one entry, not two)
   5. UpdateClaudeSessionsWithDedup runs immediately in memory at the resume call site
   6. A concurrent-write integration test covering two Storage instances against the same SQLite file passes green
-**Plans:** TBD
+**Plans:** 2 plans
+Plans:
+- [ ] 12-01-PLAN.md — Preview pane stopped vs error differentiation (VIS-01, VIS-02, VIS-03)
+- [ ] 12-02-PLAN.md — In-memory dedup at resume site and concurrent storage test (DEDUP-01, DEDUP-02, DEDUP-03)
 
 ### Phase 13: Auto-Start & Platform
 **Goal:** Users on WSL/Linux can run agent-deck session start from non-interactive contexts and tool processes receive a working PTY
@@ -150,7 +153,7 @@ Plans:
 | 9. Process Stability | v1.2 | 2/2 | Complete | 2026-03-07 |
 | 10. Learnings Promotion | v1.2 | 2/2 | Complete | 2026-03-06 |
 | 11. MCP Proxy Reliability | v1.3 | 0/1 | Not started | - |
-| 12. Session List & Resume UX | v1.3 | 0/TBD | Not started | - |
+| 12. Session List & Resume UX | v1.3 | 0/2 | Not started | - |
 | 13. Auto-Start & Platform | v1.3 | 0/TBD | Not started | - |
 | 14. Detection & Sandbox | v1.3 | 0/TBD | Not started | - |
 | 15. Mouse, Theme & Polish | v1.3 | 0/TBD | Not started | - |
