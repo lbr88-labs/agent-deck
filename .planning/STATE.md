@@ -3,14 +3,14 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: planning
-stopped_at: Completed 15-02-PLAN.md (Documentation, Heartbeat Consolidation, Worktree Reuse)
-last_updated: "2026-03-13T07:15:59.858Z"
+stopped_at: Completed 14-02-PLAN.md (OpenCode Question Tool Detection)
+last_updated: "2026-03-13T07:22:51.984Z"
 last_activity: "2026-03-12 — Milestone rescoped: removed completed #320/#318, added #324/#322/#266/#255/#225/#216"
 progress:
   total_phases: 6
   completed_phases: 1
-  total_plans: 10
-  completed_plans: 4
+  total_plans: 11
+  completed_plans: 5
   percent: 0
 ---
 
@@ -61,6 +61,7 @@ Full decision log in PROJECT.md Key Decisions table.
 - [Phase 15-mouse-theme-polish]: ANSI background stripping in preview pane uses compiled regexp covering standard/bright/256-color/truecolor backgrounds; applied per-line only when ThemeLight active
 - [Phase 15-mouse-theme-polish]: Worktree reuse silently updates worktreePath to existing path rather than erroring, keeping session WorktreePath accurate
 - [Phase 15-mouse-theme-polish]: Heartbeat OS daemon guard uses filesystem glob (launchd plist / systemd timer) rather than config lookup for robustness
+- [Phase 14-detection-sandbox]: Pulse chars only indicate busy when no prompt-indicating strings present; authoritative busy strings always take priority over pulse char guard
 
 ### v1.3 Phase Notes
 
@@ -113,6 +114,6 @@ None.
 
 ## Session Continuity
 
-Last session: 2026-03-13T07:15:59.856Z
-Stopped at: Completed 15-02-PLAN.md (Documentation, Heartbeat Consolidation, Worktree Reuse)
+Last session: 2026-03-13T07:22:51.978Z
+Stopped at: Completed 14-02-PLAN.md (OpenCode Question Tool Detection)
 Resume file: None

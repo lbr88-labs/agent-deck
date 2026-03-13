@@ -35,7 +35,7 @@ Rescoped 2026-03-12: removed completed items (#320, #318), added critical new is
 ### Detection & Sandbox
 
 - [ ] **DET-01**: tmux set-environment works correctly inside Docker sandbox sessions now that sandbox config persistence is fixed (#266)
-- [ ] **DET-02**: OpenCode waiting status detection triggers correctly when OpenCode presents the question tool prompt (#255)
+- [x] **DET-02**: OpenCode waiting status detection triggers correctly when OpenCode presents the question tool prompt (#255)
 
 ### UX Polish
 
@@ -113,7 +113,7 @@ Deferred to v1.4+. Tracked but not in current roadmap.
 | PLAT-01 | Phase 13 | Pending |
 | PLAT-02 | Phase 13 | Pending |
 | DET-01 | Phase 14 | Pending |
-| DET-02 | Phase 14 | Pending |
+| DET-02 | Phase 14 | Complete |
 | UX-01 | Phase 15 | Complete |
 | UX-02 | Phase 15 | Complete |
 | UX-03 | Phase 15 | Complete |

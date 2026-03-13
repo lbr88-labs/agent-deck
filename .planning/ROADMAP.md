@@ -108,7 +108,7 @@ Plans:
 **Success Criteria** (what must be TRUE):
   1. tmux set-environment inside a Docker sandbox session sets environment variables that are visible to spawned processes
   2. OpenCode's question tool prompt triggers the "waiting" status detection, transitioning the session from "running" to "waiting"
-**Plans:** 2 plans
+**Plans:** 1/2 plans executed
 Plans:
 - [ ] 14-01-PLAN.md — Remove tmux set-environment from command strings, use host-side SetEnvironment (DET-01)
 - [ ] 14-02-PLAN.md — OpenCode question tool prompt detection with false-positive prevention (DET-02)
@@ -165,6 +165,6 @@ Plans:
 | 11. MCP Proxy Reliability | v1.3 | 0/1 | Not started | - |
 | 12. Session List & Resume UX | v1.3 | 2/2 | Complete | 2026-03-13 |
 | 13. Auto-Start & Platform | v1.3 | 0/2 | Not started | - |
-| 14. Detection & Sandbox | v1.3 | 0/2 | Not started | - |
+| 14. Detection & Sandbox | 1/2 | In Progress|  | - |
 | 15. Mouse, Theme & Polish | 2/3 | In Progress|  | - |
 | 16. Comprehensive Testing | v1.3 | 0/TBD | Not started | - |
