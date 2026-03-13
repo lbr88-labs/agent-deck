@@ -463,12 +463,12 @@ func (p *Pool) RegisterExternalSocket(name, socketPath string) error {
 		return nil // Already registered
 	}
 
-	// Create a SocketProxy that points to the external socket (no process to manage)
+	// Create a SocketProxy that points to the external socket (no process to manage).
+	// nextID and idMap zero values are ready to use without explicit initialization.
 	proxy := &SocketProxy{
 		name:       name,
 		socketPath: socketPath,
 		clients:    make(map[string]net.Conn),
-		requestMap: make(map[interface{}]string),
 		ctx:        p.ctx,
 		Status:     StatusRunning, // External socket is alive
 		// mcpProcess is nil - we don't own this process

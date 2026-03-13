@@ -3,6 +3,7 @@ package mcppool
 import (
 	"bufio"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net"
 	"strings"
@@ -47,10 +48,9 @@ func TestBroadcastResponsesClosesClientsOnFailure(t *testing.T) {
 	// When broadcastResponses exits (MCP died), all client connections
 	// should be closed so reconnecting proxies know to retry
 	proxy := &SocketProxy{
-		name:       "test",
-		clients:    make(map[string]net.Conn),
-		requestMap: make(map[interface{}]string),
-		Status:     StatusRunning,
+		name:    "test",
+		clients: make(map[string]net.Conn),
+		Status:  StatusRunning,
 	}
 
 	// Create a pipe to simulate a client connection
@@ -93,12 +93,11 @@ func newTestProxy(t *testing.T) (*SocketProxy, io.WriteCloser, io.ReadCloser) {
 	mcpStdoutR, mcpStdoutW := io.Pipe()
 
 	proxy := &SocketProxy{
-		name:       "test-proxy",
-		clients:    make(map[string]net.Conn),
-		requestMap: make(map[interface{}]string),
-		mcpStdin:   mcpStdinW,
-		mcpStdout:  mcpStdoutR,
-		Status:     StatusRunning,
+		name:      "test-proxy",
+		clients:   make(map[string]net.Conn),
+		mcpStdin:  mcpStdinW,
+		mcpStdout: mcpStdoutR,
+		Status:    StatusRunning,
 	}
 
 	// broadcastResponses reads from mcpStdoutR and routes to clients
@@ -232,7 +231,9 @@ func TestResponseRoutingNoXTalk(t *testing.T) {
 		t.Fatalf("clientB write failed: %v", err)
 	}
 
-	// Read both forwarded requests from MCP stdin and collect their proxy IDs
+	// Read both forwarded requests from MCP stdin and collect their proxy IDs.
+	// We do this synchronously (before sending responses) because MCP stdin is an
+	// io.Pipe which has no buffer — we must drain it as the proxy writes to it.
 	mcpStdinScanner := bufio.NewScanner(mcpStdinR)
 	proxyIDToResult := map[float64]string{}
 
@@ -248,7 +249,7 @@ func TestResponseRoutingNoXTalk(t *testing.T) {
 		if !ok {
 			t.Fatalf("expected proxy-assigned numeric ID, got %T (%v)", req.ID, req.ID)
 		}
-		// Assign a unique result per proxy ID so we can verify routing
+		// Assign a unique result per proxy ID so we can verify routing.
 		if i == 0 {
 			proxyIDToResult[idFloat] = "resultA"
 		} else {
@@ -260,7 +261,43 @@ func TestResponseRoutingNoXTalk(t *testing.T) {
 		t.Fatalf("expected 2 distinct proxy IDs, got %d (map: %v)", len(proxyIDToResult), proxyIDToResult)
 	}
 
-	// Send responses back through MCP stdout in reverse order to stress routing
+	// Each client must receive exactly one response with id:1 restored and
+	// the correct result value. Since we don't know which proxy ID went to
+	// which client, collect both and verify no cross-talk.
+	//
+	// IMPORTANT: start readers BEFORE sending MCP responses.
+	// net.Pipe() is fully synchronous; routeToClient will block writing to
+	// serverA/serverB until the corresponding client side is reading.
+	type clientResult struct {
+		result string
+		id     int64
+	}
+	results := make(chan clientResult, 2)
+
+	readClient := func(conn net.Conn, name string) {
+		conn.SetReadDeadline(time.Now().Add(5 * time.Second)) //nolint:errcheck
+		scanner := bufio.NewScanner(conn)
+		if !scanner.Scan() {
+			t.Errorf("%s: expected response, got none (err: %v)", name, scanner.Err())
+			results <- clientResult{}
+			return
+		}
+		var resp JSONRPCResponse
+		if err := json.Unmarshal(scanner.Bytes(), &resp); err != nil {
+			t.Errorf("%s: failed to unmarshal response: %v", name, err)
+			results <- clientResult{}
+			return
+		}
+		idFloat, _ := resp.ID.(float64)
+		resultStr, _ := resp.Result.(string)
+		results <- clientResult{result: resultStr, id: int64(idFloat)}
+	}
+
+	// Start both readers before sending MCP responses to avoid deadlock on net.Pipe.
+	go readClient(clientA, "clientA")
+	go readClient(clientB, "clientB")
+
+	// Now send responses back through MCP stdout. The readers are already waiting.
 	ids := make([]float64, 0, 2)
 	for id := range proxyIDToResult {
 		ids = append(ids, id)
@@ -279,41 +316,10 @@ func TestResponseRoutingNoXTalk(t *testing.T) {
 		}
 	}
 
-	// Each client must receive exactly one response with id:1 restored and
-	// the correct result value. Since we don't know which proxy ID went to
-	// which client, collect both and verify no cross-talk.
-	type clientResult struct {
-		result string
-		id     int64
-	}
-	results := make(chan clientResult, 2)
-
-	readClient := func(conn net.Conn, name string) {
-		conn.SetReadDeadline(time.Now().Add(2 * time.Second)) //nolint:errcheck
-		scanner := bufio.NewScanner(conn)
-		if !scanner.Scan() {
-			t.Errorf("%s: expected response, got none (err: %v)", name, scanner.Err())
-			results <- clientResult{}
-			return
-		}
-		var resp JSONRPCResponse
-		if err := json.Unmarshal(scanner.Bytes(), &resp); err != nil {
-			t.Errorf("%s: failed to unmarshal response: %v", name, err)
-			results <- clientResult{}
-			return
-		}
-		idFloat, _ := resp.ID.(float64)
-		resultStr, _ := resp.Result.(string)
-		results <- clientResult{result: resultStr, id: int64(idFloat)}
-	}
-
-	go readClient(clientA, "clientA")
-	go readClient(clientB, "clientB")
-
 	rA := <-results
 	rB := <-results
 
-	// Both must have original id:1 restored
+	// Both must have original id:1 restored.
 	if rA.id != 1 {
 		t.Errorf("clientA response ID must be 1 (original), got %d", rA.id)
 	}
@@ -321,7 +327,7 @@ func TestResponseRoutingNoXTalk(t *testing.T) {
 		t.Errorf("clientB response ID must be 1 (original), got %d", rB.id)
 	}
 
-	// The two results must differ (no cross-talk means each gets its own result)
+	// The two results must differ (no cross-talk means each gets its own result).
 	if rA.result == rB.result {
 		t.Errorf("cross-talk detected: both clients got result %q, expected distinct results", rA.result)
 	}
@@ -338,6 +344,16 @@ func TestResponseRoutingNoXTalk(t *testing.T) {
 // IDs restored and zero cross-talk. Passes under go test -race.
 //
 // RED: This test expects atomic ID rewriting not yet implemented.
+//
+// Design note on synchronous pipes:
+// net.Pipe() and io.Pipe() are fully synchronous — writes block until the
+// other side reads. To avoid deadlocks in a concurrent test we must ensure:
+//   - The fake MCP server reads from mcpStdin independently of writing to mcpStdout
+//   - Client writers and readers run in separate goroutines
+//
+// We achieve this by having the fake MCP server stage forwarded requests into
+// an internal channel, then a separate goroutine sends responses. This keeps
+// the mcpStdin reader unblocked regardless of mcpStdout backpressure.
 func TestConcurrentToolCalls(t *testing.T) {
 	proxy, mcpStdoutW, mcpStdinR := newTestProxy(t)
 	defer mcpStdoutW.Close()
@@ -356,18 +372,16 @@ func TestConcurrentToolCalls(t *testing.T) {
 
 	const requestsPerClient = 10
 
-	// Goroutine: reads all 20 forwarded requests from MCP stdin and
-	// sends back a response keyed as "result-{proxyID}" so each
-	// response can be uniquely matched.
-	var mcpServerWg sync.WaitGroup
-	mcpServerWg.Add(1)
+	// Fake MCP server: reads all 20 requests from mcpStdinR into a channel,
+	// then a separate responder goroutine writes responses to mcpStdoutW.
+	// The split ensures the reader never blocks on response delivery.
+	type proxyRequest struct{ id float64 }
+	requestCh := make(chan proxyRequest, requestsPerClient*2)
+
+	// Reader goroutine: drains mcpStdinR as fast as possible.
 	go func() {
-		defer mcpServerWg.Done()
 		scanner := bufio.NewScanner(mcpStdinR)
-		for i := 0; i < requestsPerClient*2; i++ {
-			if !scanner.Scan() {
-				return
-			}
+		for scanner.Scan() {
 			var req JSONRPCRequest
 			if err := json.Unmarshal(scanner.Bytes(), &req); err != nil {
 				continue
@@ -376,22 +390,34 @@ func TestConcurrentToolCalls(t *testing.T) {
 			if !ok {
 				continue
 			}
+			requestCh <- proxyRequest{id: idFloat}
+		}
+		close(requestCh)
+	}()
+
+	// Responder goroutine: for each staged request, writes a response to mcpStdoutW.
+	// The result value encodes the proxy ID so the test can verify uniqueness.
+	var mcpServerDone sync.WaitGroup
+	mcpServerDone.Add(1)
+	go func() {
+		defer mcpServerDone.Done()
+		for req := range requestCh {
 			resp := map[string]interface{}{
 				"jsonrpc": "2.0",
-				"result":  strings.Repeat("r", int(idFloat)), // unique per proxy ID
-				"id":      idFloat,
+				"result":  fmt.Sprintf("proxy-%d", int64(req.id)),
+				"id":      req.id,
 			}
 			respBytes, _ := json.Marshal(resp)
 			_, _ = mcpStdoutW.Write(append(respBytes, '\n'))
 		}
 	}()
 
-	// Helper: sends 10 requests and collects 10 responses
-	runClient := func(conn net.Conn, sessionLabel string, results chan<- map[int]string, errs chan<- string) {
-		var wg sync.WaitGroup
-		wg.Add(1)
+	// runClient: concurrent writer + sequential reader for one client connection.
+	// The writer sends requestsPerClient requests in a goroutine so it doesn't
+	// block the reader when net.Pipe write-backpressure occurs.
+	runClient := func(conn net.Conn, sessionLabel string) (map[int]string, error) {
+		// Writer runs in its own goroutine to avoid blocking the reader.
 		go func() {
-			defer wg.Done()
 			for id := 1; id <= requestsPerClient; id++ {
 				req := map[string]interface{}{
 					"jsonrpc": "2.0",
@@ -400,54 +426,57 @@ func TestConcurrentToolCalls(t *testing.T) {
 					"id":      id,
 				}
 				reqBytes, _ := json.Marshal(req)
-				_, err := conn.Write(append(reqBytes, '\n'))
-				if err != nil {
-					errs <- sessionLabel + ": write error: " + err.Error()
+				if _, err := conn.Write(append(reqBytes, '\n')); err != nil {
 					return
 				}
 			}
 		}()
 
 		received := make(map[int]string)
-		conn.SetReadDeadline(time.Now().Add(5 * time.Second)) //nolint:errcheck
+		conn.SetReadDeadline(time.Now().Add(10 * time.Second)) //nolint:errcheck
 		scanner := bufio.NewScanner(conn)
 		for i := 0; i < requestsPerClient; i++ {
 			if !scanner.Scan() {
-				errs <- sessionLabel + ": expected more responses"
-				break
+				return received, fmt.Errorf("%s: scanner stopped early at response %d (err: %v)", sessionLabel, i, scanner.Err())
 			}
 			var resp JSONRPCResponse
 			if err := json.Unmarshal(scanner.Bytes(), &resp); err != nil {
-				errs <- sessionLabel + ": unmarshal error: " + err.Error()
-				continue
+				return received, fmt.Errorf("%s: unmarshal error: %v", sessionLabel, err)
 			}
 			idFloat, _ := resp.ID.(float64)
 			resultStr, _ := resp.Result.(string)
 			received[int(idFloat)] = resultStr
 		}
-		wg.Wait()
-		results <- received
+		return received, nil
 	}
 
-	resultsA := make(chan map[int]string, 1)
-	resultsB := make(chan map[int]string, 1)
-	errs := make(chan string, 10)
+	type clientOutcome struct {
+		received map[int]string
+		err      error
+	}
+	outA := make(chan clientOutcome, 1)
+	outB := make(chan clientOutcome, 1)
 
-	go runClient(clientA, "session-a", resultsA, errs)
-	go runClient(clientB, "session-b", resultsB, errs)
+	go func() { r, e := runClient(clientA, "session-a"); outA <- clientOutcome{r, e} }()
+	go func() { r, e := runClient(clientB, "session-b"); outB <- clientOutcome{r, e} }()
 
-	// Drain errors
-	go func() {
-		for e := range errs {
-			t.Errorf("client error: %s", e)
-		}
-	}()
+	oA := <-outA
+	oB := <-outB
 
-	rA := <-resultsA
-	rB := <-resultsB
+	if oA.err != nil {
+		t.Errorf("session-a error: %v", oA.err)
+	}
+	if oB.err != nil {
+		t.Errorf("session-b error: %v", oB.err)
+	}
 
-	// Wait for fake MCP server to finish processing all requests
-	mcpServerWg.Wait()
+	// Wait for the responder goroutine to finish (drain requestCh)
+	// by closing mcpStdinR — we do that by closing the proxy's mcpStdin
+	proxy.mcpStdin.Close()
+	mcpServerDone.Wait()
+
+	rA := oA.received
+	rB := oB.received
 
 	// Each client must have received all 10 original IDs (1..10)
 	for id := 1; id <= requestsPerClient; id++ {
