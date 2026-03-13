@@ -66,7 +66,9 @@ Original scope had Phases 11-15. Rescoped after #320 and #318 closed, and new cr
   2. Request IDs are unique per proxy instance (not per session), eliminating collisions
   3. Response routing uses session-scoped ID mapping so a response never reaches the wrong caller
   4. An integration test under the race detector verifies concurrent tool calls through a shared proxy
-**Plans:** TBD
+**Plans:** 1 plan
+Plans:
+- [ ] 11-01-PLAN.md — Atomic ID rewriting in SocketProxy with concurrent integration tests
 
 ### Phase 12: Session List & Resume UX
 **Goal:** Users can see, identify, and resume stopped sessions directly from the main TUI without creating duplicate records
@@ -147,7 +149,7 @@ Original scope had Phases 11-15. Rescoped after #320 and #318 closed, and new cr
 | 8. Heartbeat & CLI Fixes | v1.2 | 2/2 | Complete | 2026-03-07 |
 | 9. Process Stability | v1.2 | 2/2 | Complete | 2026-03-07 |
 | 10. Learnings Promotion | v1.2 | 2/2 | Complete | 2026-03-06 |
-| 11. MCP Proxy Reliability | v1.3 | 0/TBD | Not started | - |
+| 11. MCP Proxy Reliability | v1.3 | 0/1 | Not started | - |
 | 12. Session List & Resume UX | v1.3 | 0/TBD | Not started | - |
 | 13. Auto-Start & Platform | v1.3 | 0/TBD | Not started | - |
 | 14. Detection & Sandbox | v1.3 | 0/TBD | Not started | - |
