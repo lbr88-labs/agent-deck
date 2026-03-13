@@ -3,14 +3,14 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: planning
-stopped_at: Completed 14-02-PLAN.md (OpenCode Question Tool Detection)
-last_updated: "2026-03-13T07:22:51.984Z"
+stopped_at: Completed 14-01-PLAN.md (Remove tmux set-environment from command builders)
+last_updated: "2026-03-13T07:39:21.152Z"
 last_activity: "2026-03-12 — Milestone rescoped: removed completed #320/#318, added #324/#322/#266/#255/#225/#216"
 progress:
   total_phases: 6
-  completed_phases: 1
+  completed_phases: 2
   total_plans: 11
-  completed_plans: 5
+  completed_plans: 6
   percent: 0
 ---
 
@@ -62,6 +62,7 @@ Full decision log in PROJECT.md Key Decisions table.
 - [Phase 15-mouse-theme-polish]: Worktree reuse silently updates worktreePath to existing path rather than erroring, keeping session WorktreePath accurate
 - [Phase 15-mouse-theme-polish]: Heartbeat OS daemon guard uses filesystem glob (launchd plist / systemd timer) rather than config lookup for robustness
 - [Phase 14-detection-sandbox]: Pulse chars only indicate busy when no prompt-indicating strings present; authoritative busy strings always take priority over pulse char guard
+- [Phase 14-detection-sandbox]: Apply tmux set-environment removal universally (not conditionally on IsSandboxed()) — host-side SetEnvironment is idempotent for non-sandbox sessions
 
 ### v1.3 Phase Notes
 
@@ -114,6 +115,6 @@ None.
 
 ## Session Continuity
 
-Last session: 2026-03-13T07:22:51.978Z
-Stopped at: Completed 14-02-PLAN.md (OpenCode Question Tool Detection)
+Last session: 2026-03-13T07:39:21.149Z
+Stopped at: Completed 14-01-PLAN.md (Remove tmux set-environment from command builders)
 Resume file: None
