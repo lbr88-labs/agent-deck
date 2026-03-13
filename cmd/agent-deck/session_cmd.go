@@ -269,6 +269,12 @@ func handleSessionStop(profile string, args []string) {
 		os.Exit(1)
 	}
 
+	// Capture tool conversation IDs from tmux env before killing the session.
+	// This ensures IDs are saved to storage even if PostStartSync timed out
+	// during start (e.g., tool started late on slow WSL2 machines).
+	// Must happen before Kill() because tmux show-environment fails on dead sessions.
+	inst.SyncSessionIDsFromTmux()
+
 	// Stop the session by killing the tmux session
 	if err := inst.Kill(); err != nil {
 		out.Error(fmt.Sprintf("failed to stop session: %v", err), ErrCodeInvalidOperation)
