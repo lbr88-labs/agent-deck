@@ -3154,6 +3154,10 @@ func (h *Home) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				// Refresh the loaded MCPs to match the new config
 				inst.CaptureLoadedMCPs()
 			}
+			// Run dedup in-memory before saving, mirroring sessionCreatedMsg pattern (line ~2864)
+			h.instancesMu.Lock()
+			session.UpdateClaudeSessionsWithDedup(h.instances)
+			h.instancesMu.Unlock()
 			h.invalidatePreviewCache(msg.sessionID)
 			// Save the updated session state (new tmux session name)
 			h.saveInstances()
