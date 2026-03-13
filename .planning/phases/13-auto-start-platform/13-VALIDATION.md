@@ -2,12 +2,12 @@
 phase: 13
 slug: auto-start-platform
 status: draft
-nyquist_compliant: false
-wave_0_complete: false
+nyquist_compliant: true
+wave_0_complete: true
 created: 2026-03-13
 ---
 
-# Phase 13 — Validation Strategy
+# Phase 13 -- Validation Strategy
 
 > Per-phase validation contract for feedback sampling during execution.
 
@@ -19,7 +19,7 @@ created: 2026-03-13
 |----------|-------|
 | **Framework** | Go testing + testify (existing) |
 | **Config file** | None (go test flags) |
-| **Quick run command** | `go test -race -v ./internal/tmux/... ./internal/session/... -run TestPaneReady\|TestSyncSessionIDs\|TestStopSavesSessionID` |
+| **Quick run command** | `go test -race -v ./internal/tmux/... ./internal/session/... -run TestPaneReady\|TestSyncSessionIDs\|TestStopSavesSessionID\|TestGenerateUUID\|TestBuildClaudeCommandNoUuidgen` |
 | **Full suite command** | `make test` |
 | **Estimated runtime** | ~15 seconds |
 
@@ -27,7 +27,7 @@ created: 2026-03-13
 
 ## Sampling Rate
 
-- **After every task commit:** Run `go test -race -v ./internal/tmux/... ./internal/session/... -run TestPaneReady\|TestSyncSessionIDs\|TestStopSavesSessionID`
+- **After every task commit:** Run `go test -race -v ./internal/tmux/... ./internal/session/... -run TestPaneReady\|TestSyncSessionIDs\|TestStopSavesSessionID\|TestGenerateUUID\|TestBuildClaudeCommandNoUuidgen\|TestBuildForkCommandNoUuidgen`
 - **After every plan wave:** Run `make test`
 - **Before `/gsd:verify-work`:** Full suite must be green
 - **Max feedback latency:** 15 seconds
@@ -38,23 +38,27 @@ created: 2026-03-13
 
 | Task ID | Plan | Wave | Requirement | Test Type | Automated Command | File Exists | Status |
 |---------|------|------|-------------|-----------|-------------------|-------------|--------|
-| 13-01-01 | 01 | 1 | PLAT-01 | unit | `go test -race -v ./internal/tmux/... -run TestIsPaneShellReady` | ❌ W0 | ⬜ pending |
-| 13-01-02 | 01 | 1 | PLAT-01 | unit | `go test -race -v ./internal/tmux/... -run TestWaitForPaneReady` | ❌ W0 | ⬜ pending |
-| 13-01-03 | 01 | 1 | PLAT-01 | integration | `go test -race -v ./internal/tmux/... -run TestStartWithPaneReady` | ❌ W0 | ⬜ pending |
-| 13-02-01 | 02 | 1 | PLAT-02 | unit | `go test -race -v ./internal/session/... -run TestSyncSessionIDsFromTmux` | ❌ W0 | ⬜ pending |
-| 13-02-02 | 02 | 1 | PLAT-02 | unit/integration | `go test -race -v ./internal/session/... -run TestStopSavesSessionID` | ❌ W0 | ⬜ pending |
+| 13-01-01 | 01 | 1 | PLAT-01 | unit | `go test -race -v ./internal/tmux/... -run TestIsPaneShellReady` | W0 (TDD) | pending |
+| 13-01-02 | 01 | 1 | PLAT-01 | unit+integration | `go test -race -v ./internal/tmux/... -run TestWaitForPaneReady` | W0 (TDD) | pending |
+| 13-02-01 | 02 | 2 | PLAT-02 | unit | `go test -race -v ./internal/session/... -run TestSyncSessionIDsFromTmux` | W0 (TDD) | pending |
+| 13-02-02 | 02 | 2 | PLAT-02 | integration | `go test -race -v ./internal/session/... -run TestStopSavesSessionID` | W0 (TDD) | pending |
+| 13-03-01 | 03 | 1 | PLAT-01 | unit | `go test -race -v ./internal/session/... -run TestGenerateUUID` | W0 (TDD) | pending |
+| 13-03-02 | 03 | 1 | PLAT-01 | unit | `go test -race -v ./internal/session/... -run TestBuildClaudeCommandNoUuidgen` | W0 (TDD) | pending |
+| 13-03-03 | 03 | 1 | PLAT-01 | unit | `go test -race -v ./internal/session/... -run TestBuildForkCommandNoUuidgen` | W0 (TDD) | pending |
 
-*Status: ⬜ pending · ✅ green · ❌ red · ⚠️ flaky*
+*Status: pending / green / red / flaky*
 
 ---
 
-## Wave 0 Requirements
+## Wave 0 Strategy
 
-- [ ] `internal/tmux/pane_ready_test.go` — stubs for PLAT-01 (isPaneShellReady, waitForPaneReady)
-- [ ] `internal/session/instance_test.go` additions — stubs for PLAT-02 (SyncSessionIDsFromTmux, stop-saves-id)
-- Note: Tests requiring a running tmux server must call `skipIfNoTmuxServer(t)` per project convention
+All plans use `tdd="true"` on code-producing tasks. This means each task writes failing tests FIRST (RED), then implements to pass them (GREEN). This is equivalent to Wave 0 test scaffolding but integrated into the task execution flow rather than as a separate pre-step. The TDD discipline ensures:
 
-*Existing infrastructure covers framework and test runner; only new test files/additions needed.*
+1. Tests exist BEFORE implementation code
+2. Tests fail initially (proving they test real behavior, not tautologies)
+3. Implementation is driven by test expectations
+
+This approach is validated as nyquist-compliant because every code-producing task has explicit `<behavior>` blocks defining test expectations, and every `<verify>` block contains an automated test command.
 
 ---
 
@@ -69,11 +73,11 @@ created: 2026-03-13
 
 ## Validation Sign-Off
 
-- [ ] All tasks have `<automated>` verify or Wave 0 dependencies
-- [ ] Sampling continuity: no 3 consecutive tasks without automated verify
-- [ ] Wave 0 covers all MISSING references
-- [ ] No watch-mode flags
-- [ ] Feedback latency < 15s
-- [ ] `nyquist_compliant: true` set in frontmatter
+- [x] All tasks have `<automated>` verify with behavioral test commands
+- [x] Sampling continuity: no 3 consecutive tasks without automated verify
+- [x] Wave 0 covered via TDD task structure (tests written before implementation)
+- [x] No watch-mode flags
+- [x] Feedback latency < 15s
+- [x] `nyquist_compliant: true` set in frontmatter
 
 **Approval:** pending
