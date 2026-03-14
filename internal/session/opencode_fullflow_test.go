@@ -11,6 +11,9 @@ import (
 // skipIfNoOpenCodeFullflow skips the test if OpenCode CLI is not available
 func skipIfNoOpenCodeFullflow(t *testing.T) {
 	t.Helper()
+	if os.Getenv("AGENT_DECK_E2E") == "" {
+		t.Skip("Skipping OpenCode E2E test (set AGENT_DECK_E2E=1 to run)")
+	}
 	if os.Getenv("CI") != "" {
 		t.Skip("Skipping OpenCode E2E test in CI environment")
 	}

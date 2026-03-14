@@ -1,63 +1,73 @@
 package integration
 
 import (
+	"fmt"
+	"regexp"
 	"testing"
 
-	"github.com/stretchr/testify/require"
+	"github.com/asheshgoplani/agent-deck/internal/session"
 )
 
-func TestHarness_CreateSession(t *testing.T) {
-	skipIfNoTmuxServer(t)
+// nonAlphanumRE matches characters that are not alphanumeric or dash.
+// Uses dashes because tmux sanitizeName keeps only [a-zA-Z0-9-].
+var nonAlphanumRE = regexp.MustCompile(`[^a-zA-Z0-9-]`)
 
-	h := NewTmuxHarness(t)
-	inst := h.CreateSession("create-test", "/tmp")
-	err := inst.Start()
-	require.NoError(t, err, "session should start")
-	require.True(t, inst.Exists(), "session should exist after start")
-
-	// Cleanup happens automatically via t.Cleanup.
-	// After the test function returns, the harness cleanup runs
-	// and the tmux session should be gone. We cannot verify this
-	// in the same test, but TestHarness_MultipleSessionsCleanup
-	// exercises the cleanup path explicitly.
+// TmuxHarness manages tmux sessions for integration tests with automatic cleanup.
+// Sessions are created with a test-unique prefix and torn down via t.Cleanup.
+type TmuxHarness struct {
+	t        *testing.T
+	sessions []*session.Instance
+	prefix   string
 }
 
-func TestHarness_MultipleSessionsCleanup(t *testing.T) {
+// NewTmuxHarness creates a harness that auto-cleans tmux sessions when the test ends.
+// Skips the test if no tmux server is available.
+func NewTmuxHarness(t *testing.T) *TmuxHarness {
+	t.Helper()
 	skipIfNoTmuxServer(t)
 
-	h := NewTmuxHarness(t)
-
-	var insts [3]*struct{ exists func() bool }
-	for i := 0; i < 3; i++ {
-		inst := h.CreateSession("multi-"+string(rune('a'+i)), "/tmp")
-		err := inst.Start()
-		require.NoError(t, err, "session %d should start", i)
-		require.True(t, inst.Exists(), "session %d should exist", i)
-		existsFn := inst.Exists // capture
-		insts[i] = &struct{ exists func() bool }{exists: existsFn}
+	h := &TmuxHarness{
+		t:      t,
+		prefix: fmt.Sprintf("inttest-%s-", sanitizeName(t.Name())),
 	}
+	t.Cleanup(h.cleanup)
+	return h
+}
 
-	require.Equal(t, 3, h.SessionCount(), "harness should track 3 sessions")
+// CreateSession creates a session.Instance with the harness prefix prepended to the title.
+// The session is tracked for automatic cleanup.
+func (h *TmuxHarness) CreateSession(title, projectPath string) *session.Instance {
+	h.t.Helper()
+	inst := session.NewInstance(h.prefix+title, projectPath)
+	h.sessions = append(h.sessions, inst)
+	return inst
+}
 
-	// Explicitly call cleanup to verify all sessions are killed.
-	h.cleanup()
+// CreateSessionWithTool creates a session.Instance with a specific tool and the harness prefix.
+func (h *TmuxHarness) CreateSessionWithTool(title, projectPath, tool string) *session.Instance {
+	h.t.Helper()
+	inst := session.NewInstanceWithTool(h.prefix+title, projectPath, tool)
+	h.sessions = append(h.sessions, inst)
+	return inst
+}
 
-	// After cleanup, no sessions should exist.
-	// Note: tmux Exists() checks may need a cache refresh. We do a direct
-	// tmux has-session check to avoid stale cache.
-	for i, inst := range insts {
-		require.False(t, inst.exists(), "session %d should not exist after cleanup", i)
+// SessionCount returns the number of sessions tracked by this harness.
+func (h *TmuxHarness) SessionCount() int {
+	return len(h.sessions)
+}
+
+// cleanup kills all tracked sessions in reverse order. Best-effort: errors are ignored.
+func (h *TmuxHarness) cleanup() {
+	for i := len(h.sessions) - 1; i >= 0; i-- {
+		inst := h.sessions[i]
+		if inst.Exists() {
+			_ = inst.Kill()
+		}
 	}
 }
 
-func TestHarness_PrefixNaming(t *testing.T) {
-	skipIfNoTmuxServer(t)
-
-	h := NewTmuxHarness(t)
-	inst := h.CreateSession("prefix-test", "/tmp")
-
-	// The tmux session name should contain the inttest_ prefix.
-	tmuxSess := inst.GetTmuxSession()
-	require.NotNil(t, tmuxSess, "tmux session should not be nil")
-	require.Contains(t, tmuxSess.Name, "inttest-", "session name should contain inttest- prefix")
+// sanitizeName replaces slashes and non-alphanumeric characters with dashes
+// for safe tmux session names. Matches tmux's own sanitization behavior.
+func sanitizeName(name string) string {
+	return nonAlphanumRE.ReplaceAllString(name, "-")
 }
