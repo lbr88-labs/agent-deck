@@ -29,6 +29,7 @@ var proxyLog = logging.ForComponent(logging.CompPool)
 type idMapping struct {
 	sessionID  string
 	originalID interface{}
+	sentAt     time.Time // For round-trip latency tracking (debug mode only)
 }
 
 // SocketProxy wraps a stdio MCP process with a Unix socket
@@ -306,9 +307,14 @@ func (p *SocketProxy) handleClient(sessionID string, conn net.Conn) {
 			// This prevents collisions when multiple sessions send requests with
 			// the same ID (e.g., Claude Code always starts at id:1).
 			proxyID := p.nextID.Add(1)
+			var sentAt time.Time
+			if logging.IsDebugEnabled() {
+				sentAt = time.Now()
+			}
 			p.idMap.Store(proxyID, idMapping{
 				sessionID:  sessionID,
 				originalID: req.ID,
+				sentAt:     sentAt,
 			})
 			req.ID = proxyID
 			if rewritten, err := json.Marshal(req); err == nil {
@@ -318,6 +324,11 @@ func (p *SocketProxy) handleClient(sessionID string, conn net.Conn) {
 
 		_, _ = p.mcpStdin.Write(line)
 		_, _ = p.mcpStdin.Write([]byte("\n"))
+
+		logging.Aggregate(logging.CompPool, "mcp_request",
+			slog.String("mcp", p.name),
+			slog.String("client", sessionID),
+			slog.String("method", req.Method))
 	}
 }
 
@@ -400,6 +411,21 @@ func (p *SocketProxy) routeToClient(responseID interface{}, line []byte) {
 	}
 
 	mapping := val.(idMapping)
+
+	// Track round-trip latency (debug mode only)
+	if !mapping.sentAt.IsZero() {
+		rtt := time.Since(mapping.sentAt)
+		logging.Aggregate(logging.CompPool, "mcp_rtt",
+			slog.String("mcp", p.name),
+			slog.String("client", mapping.sessionID),
+			slog.Duration("rtt", rtt))
+		if rtt > 1*time.Second {
+			proxyLog.Warn("slow_mcp_rtt",
+				slog.String("mcp", p.name),
+				slog.String("client", mapping.sessionID),
+				slog.Duration("rtt", rtt))
+		}
+	}
 
 	// Restore the original client-supplied ID before forwarding the response.
 	var resp JSONRPCResponse

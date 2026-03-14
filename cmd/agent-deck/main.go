@@ -284,6 +284,9 @@ func main() {
 		case "notify-daemon":
 			handleNotifyDaemon(args[1:])
 			return
+		case "debug-dump":
+			handleDebugDump()
+			return
 		}
 	}
 
@@ -2179,6 +2182,7 @@ func printHelp() {
 	fmt.Println("  conductor        Manage conductor meta-agent orchestration")
 	fmt.Println("  profile          Manage profiles")
 	fmt.Println("  update           Check for and install updates")
+	fmt.Println("  debug-dump       Dump debug ring buffer to file for sharing")
 	fmt.Println("  uninstall        Uninstall Agent Deck")
 	fmt.Println("  version          Show version")
 	fmt.Println("  help             Show this help")
@@ -2316,6 +2320,36 @@ func detectTool(cmd string) string {
 }
 
 // handleUninstall removes agent-deck from the system
+func handleDebugDump() {
+	baseDir, err := session.GetAgentDeckDir()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: cannot determine agent-deck dir: %v\n", err)
+		os.Exit(1)
+	}
+
+	// Initialize logging just enough to populate the ring buffer from the log file
+	logging.Init(logging.Config{
+		Debug:  true,
+		LogDir: baseDir,
+		Level:  "debug",
+	})
+	defer logging.Shutdown()
+
+	dumpPath := filepath.Join(baseDir, fmt.Sprintf("debug-dump-%d.jsonl", time.Now().Unix()))
+	if err := logging.DumpRingBuffer(dumpPath); err != nil {
+		fmt.Fprintf(os.Stderr, "Error: failed to dump ring buffer: %v\n", err)
+		os.Exit(1)
+	}
+
+	// Also check if the debug.log file exists and report its path
+	debugLogPath := filepath.Join(baseDir, "debug.log")
+	if info, statErr := os.Stat(debugLogPath); statErr == nil {
+		fmt.Printf("Debug log: %s (%.1f MB)\n", debugLogPath, float64(info.Size())/(1024*1024))
+	}
+	fmt.Printf("Ring buffer dumped to: %s\n", dumpPath)
+	fmt.Println("Share this file when reporting lag or stuck issues.")
+}
+
 func handleUninstall(args []string) {
 	fs := flag.NewFlagSet("uninstall", flag.ExitOnError)
 	keepData := fs.Bool("keep-data", false, "Keep ~/.agent-deck/ (sessions, config, logs)")

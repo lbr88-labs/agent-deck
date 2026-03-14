@@ -6,6 +6,8 @@ import (
 	"log/slog"
 	"path/filepath"
 	"sync"
+	"sync/atomic"
+	"time"
 
 	"gopkg.in/natefinch/lumberjack.v2"
 )
@@ -61,11 +63,13 @@ type Config struct {
 }
 
 var (
-	globalLogger *slog.Logger
-	globalRing   *RingBuffer
-	globalAgg    *Aggregator
-	globalMu     sync.RWMutex
-	lumberjackW  *lumberjack.Logger
+	globalLogger  *slog.Logger
+	globalRing    *RingBuffer
+	globalAgg     *Aggregator
+	globalSlowOps *SlowOpDetector
+	globalMu      sync.RWMutex
+	lumberjackW   *lumberjack.Logger
+	debugEnabled  atomic.Bool // Set once during Init, read lock-free thereafter
 )
 
 // Init initializes the global logging system.
@@ -101,6 +105,9 @@ func Init(cfg Config) {
 	case "error":
 		level = slog.LevelError
 	}
+
+	// Store debug flag for lock-free reads
+	debugEnabled.Store(cfg.Debug)
 
 	// If not in debug mode and no explicit log dir, discard everything
 	if !cfg.Debug && cfg.LogDir == "" {
@@ -147,6 +154,11 @@ func Init(cfg Config) {
 	// pprof
 	if cfg.PprofEnabled {
 		startPprof()
+	}
+
+	// Slow operation detector (debug mode only)
+	if cfg.Debug {
+		globalSlowOps = NewSlowOpDetector(3*time.Second, 1*time.Second)
 	}
 }
 
@@ -230,11 +242,57 @@ func DumpRingBuffer(path string) error {
 	return ring.DumpToFile(path)
 }
 
+// IsDebugEnabled returns true if debug mode was enabled during Init.
+// Lock-free atomic read, safe for hot paths.
+func IsDebugEnabled() bool {
+	return debugEnabled.Load()
+}
+
+// TraceOp starts a timed span for a named operation. Call the returned function
+// to finish the span. If elapsed exceeds warnThreshold, logs at Warn level;
+// otherwise logs at Debug level. Returns a zero-cost no-op when debug is off.
+//
+// Usage:
+//
+//	finish := logging.TraceOp(myLog, "capture_pane", 200*time.Millisecond,
+//	    slog.String("session", name))
+//	defer finish()
+func TraceOp(logger *slog.Logger, op string, warnThreshold time.Duration, attrs ...slog.Attr) func() {
+	if !debugEnabled.Load() {
+		return func() {}
+	}
+	start := time.Now()
+	return func() {
+		elapsed := time.Since(start)
+		args := make([]any, 0, len(attrs)*2+2)
+		args = append(args, slog.Duration("elapsed", elapsed))
+		for _, a := range attrs {
+			args = append(args, a)
+		}
+		if elapsed > warnThreshold {
+			logger.Warn("slow_"+op, args...)
+		} else {
+			logger.Debug(op, args...)
+		}
+	}
+}
+
+// SlowOps returns the global slow-operation detector. Returns nil when debug is off.
+func SlowOps() *SlowOpDetector {
+	globalMu.RLock()
+	defer globalMu.RUnlock()
+	return globalSlowOps
+}
+
 // Shutdown flushes the aggregator and closes writers.
 func Shutdown() {
 	globalMu.Lock()
 	defer globalMu.Unlock()
 
+	if globalSlowOps != nil {
+		globalSlowOps.Stop()
+		globalSlowOps = nil
+	}
 	if globalAgg != nil {
 		globalAgg.Stop()
 		globalAgg = nil
