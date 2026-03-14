@@ -9531,9 +9531,11 @@ func (h *Home) renderPreviewPane(width, height int) string {
 	}
 
 	// Session info header box
+	// Cache status once to avoid races with background status updates
+	selectedStatus := selected.GetStatusThreadSafe()
 	statusIcon := "○"
 	statusColor := ColorTextDim
-	switch selected.Status {
+	switch selectedStatus {
 	case session.StatusRunning:
 		statusIcon = "●"
 		statusColor = ColorGreen
@@ -9549,7 +9551,7 @@ func (h *Home) renderPreviewPane(width, height int) string {
 	}
 
 	// Header with session name and status
-	statusBadge := lipgloss.NewStyle().Foreground(statusColor).Render(statusIcon + " " + string(selected.Status))
+	statusBadge := lipgloss.NewStyle().Foreground(statusColor).Render(statusIcon + " " + string(selectedStatus))
 	nameStyle := lipgloss.NewStyle().Bold(true).Foreground(ColorAccent)
 	b.WriteString(nameStyle.Render(selected.Title))
 	b.WriteString("  ")
@@ -9565,7 +9567,7 @@ func (h *Home) renderPreviewPane(width, height int) string {
 	// Activity time - shows when session was last active
 	activityTime := selected.GetLastActivityTime()
 	activityStr := formatRelativeTime(activityTime)
-	if selected.Status == session.StatusRunning {
+	if selectedStatus == session.StatusRunning {
 		activityStr = "active now"
 	}
 	b.WriteString(infoStyle.Render("⏱ " + activityStr))
@@ -10023,7 +10025,7 @@ func (h *Home) renderPreviewPane(width, height int) string {
 	}
 
 	// Special handling for stopped state - user-intentional stop with resume guidance
-	if selected.Status == session.StatusStopped {
+	if selectedStatus == session.StatusStopped {
 		stoppedHeader := renderSectionDivider("Session Stopped", width-4)
 		b.WriteString(stoppedHeader)
 		b.WriteString("\n\n")
@@ -10076,7 +10078,7 @@ func (h *Home) renderPreviewPane(width, height int) string {
 	}
 
 	// Special handling for error state - crash/unexpected failure with diagnostic guidance
-	if selected.Status == session.StatusError {
+	if selectedStatus == session.StatusError {
 		errorHeader := renderSectionDivider("Session Error", width-4)
 		b.WriteString(errorHeader)
 		b.WriteString("\n\n")
@@ -10240,9 +10242,9 @@ func (h *Home) renderPreviewPane(width, height int) string {
 			}
 		} else if timeSinceStart < 15*time.Second {
 			// STATUS-BASED CHECK: Session ready when Running/Waiting/Idle
-			sessionReady := selected.Status == session.StatusRunning ||
-				selected.Status == session.StatusWaiting ||
-				selected.Status == session.StatusIdle
+			sessionReady := selectedStatus == session.StatusRunning ||
+				selectedStatus == session.StatusWaiting ||
+				selectedStatus == session.StatusIdle
 
 			if !sessionReady {
 				// Also check content for faster detection
