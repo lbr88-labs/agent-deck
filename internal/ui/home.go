@@ -10,6 +10,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"sort"
 	"strings"
 	"sync"
@@ -328,6 +329,10 @@ type Home struct {
 	// Full repaint mode: issue tea.ClearScreen every tick to avoid
 	// incremental redraw drift in terminals with unicode grapheme widths
 	fullRepaint bool
+
+	// Performance observability (debug mode only, zero cost when off)
+	debugMode          bool         // true when AGENTDECK_DEBUG=1, enables perf overlay
+	lastRenderDuration atomic.Int64 // microseconds, for debug status bar
 
 	// Reusable string builder for View() to reduce allocations
 	viewBuilder strings.Builder
@@ -665,6 +670,7 @@ func NewHomeWithProfileAndMode(profile string) *Home {
 		boundKeys:            make(map[string]string),
 		undoStack:            make([]deletedSessionEntry, 0, 10),
 		pendingTitleChanges:  make(map[string]string),
+		debugMode:            logging.IsDebugEnabled(),
 	}
 	h.sessionRenderSnapshot.Store(make(map[string]sessionRenderState))
 
@@ -2130,6 +2136,12 @@ func (h *Home) backgroundStatusUpdate() {
 	totalStart := time.Now()
 	if hotUntil := h.navigationHotUntil.Load(); hotUntil > 0 && time.Now().UnixNano() < hotUntil {
 		return
+	}
+
+	// Track this tick with the slow-op detector (warns if stuck >3s)
+	if sod := logging.SlowOps(); sod != nil {
+		opID := sod.Start("background_status_update")
+		defer sod.Finish(opID)
 	}
 
 	// Refresh tmux session cache
@@ -6932,6 +6944,11 @@ func (h *Home) View() string {
 		return "Loading..."
 	}
 
+	var renderStart time.Time
+	if logging.IsDebugEnabled() {
+		renderStart = time.Now()
+	}
+
 	// Check minimum terminal size for usability
 	if h.width < minTerminalWidth || h.height < minTerminalHeight {
 		return lipgloss.Place(
@@ -7138,8 +7155,12 @@ func (h *Home) View() string {
 	// MAIN CONTENT AREA - Responsive layout based on terminal width
 	// ═══════════════════════════════════════════════════════════════════
 	helpBarHeight := 2 // Help bar takes 2 lines (border + content)
-	// Height breakdown: -1 header, -filterBarHeight filter, -updateBannerHeight banner, -maintenanceBannerHeight maintenance, -helpBarHeight help
-	contentHeight := h.height - 1 - helpBarHeight - updateBannerHeight - maintenanceBannerHeight - filterBarHeight
+	debugBarHeight := 0
+	if h.debugMode {
+		debugBarHeight = 1
+	}
+	// Height breakdown: -1 header, -filterBarHeight filter, -updateBannerHeight banner, -maintenanceBannerHeight maintenance, -helpBarHeight help, -debugBarHeight debug
+	contentHeight := h.height - 1 - helpBarHeight - updateBannerHeight - maintenanceBannerHeight - filterBarHeight - debugBarHeight
 
 	// Route to appropriate layout based on terminal width
 	layoutMode := h.getLayoutMode()
@@ -7165,6 +7186,12 @@ func (h *Home) View() string {
 	helpBar := h.renderHelpBar()
 	b.WriteString(helpBar)
 
+	// Debug performance overlay (AGENTDECK_DEBUG=1 only)
+	if h.debugMode {
+		b.WriteString("\n")
+		b.WriteString(h.renderDebugBar())
+	}
+
 	// Error and warning messages are displayed but may be truncated by final height constraint
 	if h.err != nil {
 		remaining := 5*time.Second - time.Since(h.errTime)
@@ -7188,6 +7215,19 @@ func (h *Home) View() string {
 		warnStyle := lipgloss.NewStyle().Foreground(ColorYellow)
 		b.WriteString("\n")
 		b.WriteString(warnStyle.Render("⚠ " + h.watcherWarning))
+	}
+
+	// Performance: log render duration when debug mode is active
+	if logging.IsDebugEnabled() {
+		elapsed := time.Since(renderStart)
+		if elapsed > 50*time.Millisecond {
+			perfLog.Warn("slow_view_render", slog.Duration("elapsed", elapsed),
+				slog.Int("width", h.width), slog.Int("height", h.height),
+				slog.Int("sessions", len(h.flatItems)))
+		} else {
+			perfLog.Debug("view_render", slog.Duration("elapsed", elapsed))
+		}
+		h.lastRenderDuration.Store(elapsed.Microseconds())
 	}
 
 	// CRITICAL: Use ensureExactHeight for robust, consistent output across all platforms
@@ -8403,6 +8443,31 @@ func (h *Home) helpKey(key, desc string) string {
 		Padding(0, 1)
 	descStyle := lipgloss.NewStyle().Foreground(ColorText)
 	return keyStyle.Render(key) + " " + descStyle.Render(desc)
+}
+
+// renderDebugBar renders a compact performance overlay for debug mode.
+// Shows: render time, goroutine count, heap usage, session count.
+func (h *Home) renderDebugBar() string {
+	var memStats runtime.MemStats
+	runtime.ReadMemStats(&memStats)
+
+	renderUs := h.lastRenderDuration.Load()
+	goroutines := runtime.NumGoroutine()
+	heapMB := float64(memStats.HeapAlloc) / (1024 * 1024)
+	sessionCount := len(h.flatItems)
+
+	debugText := fmt.Sprintf(
+		" DEBUG | render: %dus | goroutines: %d | heap: %.1fMB | items: %d ",
+		renderUs, goroutines, heapMB, sessionCount,
+	)
+
+	debugStyle := lipgloss.NewStyle().
+		Foreground(ColorBg).
+		Background(lipgloss.Color("#FF6600")).
+		Bold(true).
+		MaxWidth(h.width)
+
+	return debugStyle.Render(debugText)
 }
 
 // renderSessionList renders the left panel with hierarchical session list

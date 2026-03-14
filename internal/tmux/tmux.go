@@ -29,6 +29,7 @@ var (
 	statusLog  = logging.ForComponent(logging.CompStatus)
 	respawnLog = logging.ForComponent(logging.CompSession)
 	mcpLog     = logging.ForComponent(logging.CompMCP)
+	perfLog    = logging.ForComponent(logging.CompPerf)
 )
 
 // ErrCaptureTimeout is returned when CapturePane exceeds its timeout.
@@ -56,6 +57,9 @@ var (
 // when there's actual terminal output, while session_activity only updates on
 // session-level events. This is critical for detecting when Claude is actively working.
 func RefreshSessionCache() {
+	finish := logging.TraceOp(perfLog, "refresh_session_cache", 100*time.Millisecond)
+	defer finish()
+
 	// Try control mode pipe first (zero subprocess)
 	if pm := GetPipeManager(); pm != nil {
 		if activities, windows, err := pm.RefreshAllActivities(); err == nil && len(activities) > 0 {
@@ -1660,6 +1664,7 @@ func (s *Session) CapturePane() (string, error) {
 	if s.cacheContent != "" && time.Since(s.cacheTime) < 500*time.Millisecond {
 		content := s.cacheContent
 		s.cacheMu.RUnlock()
+		logging.Aggregate(logging.CompPerf, "capture_pane_cache_hit", slog.String("session", s.Name))
 		return content, nil
 	}
 	s.cacheMu.RUnlock()
@@ -1677,11 +1682,15 @@ func (s *Session) CapturePane() (string, error) {
 
 		// Try control mode pipe first (zero subprocess)
 		if pm := GetPipeManager(); pm != nil {
+			pipeStart := time.Now()
 			if content, pipeErr := pm.CapturePane(s.Name); pipeErr == nil {
 				s.cacheMu.Lock()
 				s.cacheContent = content
 				s.cacheTime = time.Now()
 				s.cacheMu.Unlock()
+				logging.Aggregate(logging.CompPerf, "capture_pane_pipe",
+					slog.String("session", s.Name),
+					slog.Duration("elapsed", time.Since(pipeStart)))
 				return content, nil
 			}
 			// Pipe failed: log it so we can verify zero subprocess usage
@@ -1689,10 +1698,13 @@ func (s *Session) CapturePane() (string, error) {
 		}
 
 		// Subprocess fallback: 3s timeout
+		finish := logging.TraceOp(perfLog, "capture_pane_subprocess", 200*time.Millisecond,
+			slog.String("session", s.Name))
 		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 		defer cancel()
 		cmd := exec.CommandContext(ctx, "tmux", "capture-pane", "-t", s.Name, "-p", "-e")
 		output, err := cmd.Output()
+		finish()
 		if err != nil {
 			if ctx.Err() == context.DeadlineExceeded {
 				return "", ErrCaptureTimeout
@@ -1913,6 +1925,10 @@ func (s *Session) AcknowledgeWithSnapshot() {
 // 5. Cooldown expired → YELLOW or GRAY based on acknowledged
 
 func (s *Session) GetStatus() (string, error) {
+	finish := logging.TraceOp(perfLog, "get_status", 100*time.Millisecond,
+		slog.String("session", s.Name))
+	defer finish()
+
 	shortName := s.DisplayName
 	if len(shortName) > 12 {
 		shortName = shortName[:12]
