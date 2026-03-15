@@ -29,6 +29,9 @@ type SessionAnalytics struct {
 	// Tool usage
 	ToolCalls []ToolCall `json:"tool_calls"`
 
+	// Model ID from the last assistant message (e.g. "claude-opus-4-6")
+	Model string `json:"model,omitempty"`
+
 	// Subagents
 	Subagents []SubagentInfo `json:"subagents"`
 
@@ -65,12 +68,43 @@ func (a *SessionAnalytics) TotalTokens() int {
 	return a.InputTokens + a.OutputTokens + a.CacheReadTokens + a.CacheWriteTokens
 }
 
+// modelContextWindow maps model ID prefixes to their context window sizes.
+// More specific prefixes must come first to ensure correct matching
+// (e.g. "claude-sonnet-4-6" before "claude-sonnet-4").
+var modelContextWindowPrefixes = []struct {
+	prefix string
+	size   int
+}{
+	// 4.6 models: 1M context
+	{"claude-opus-4-6", 1000000},
+	{"claude-sonnet-4-6", 1000000},
+	// 4.x models (non-4.6): 200k context
+	{"claude-opus-4", 200000},
+	{"claude-sonnet-4", 200000},
+	{"claude-haiku-4", 200000},
+	// 3.x models: 200k context
+	{"claude-3-5", 200000},
+	{"claude-3-opus", 200000},
+}
+
+// contextWindowForModel returns the context window size for a model ID.
+// Returns on first prefix match; entries are ordered most-specific first
+// (e.g. "claude-sonnet-4-6" before "claude-sonnet-4") to ensure correct resolution.
+func contextWindowForModel(model string) int {
+	for _, entry := range modelContextWindowPrefixes {
+		if len(model) >= len(entry.prefix) && model[:len(entry.prefix)] == entry.prefix {
+			return entry.size
+		}
+	}
+	return 200000 // Default Claude limit
+}
+
 // ContextPercent returns the percentage of context window used
 // Uses CurrentContextTokens (last turn's input + cache) for accurate context usage
-// modelLimit is the model's context window size (defaults to 200000 for Claude)
+// modelLimit is the model's context window size; if 0, it is inferred from the Model field
 func (a *SessionAnalytics) ContextPercent(modelLimit int) float64 {
 	if modelLimit == 0 {
-		modelLimit = 200000 // Default Claude limit
+		modelLimit = contextWindowForModel(a.Model)
 	}
 	return float64(a.CurrentContextTokens) / float64(modelLimit) * 100
 }
@@ -123,6 +157,7 @@ type jsonlEntry struct {
 			CacheCreationInputTokens int `json:"cache_creation_input_tokens"`
 			CacheReadInputTokens     int `json:"cache_read_input_tokens"`
 		} `json:"usage"`
+		Model   string `json:"model"`
 		Content []struct {
 			Type string `json:"type"`
 			Name string `json:"name"`
@@ -169,6 +204,11 @@ func ParseSessionJSONL(path string) (*SessionAnalytics, error) {
 			if entry.Timestamp.After(lastTime) {
 				lastTime = entry.Timestamp
 			}
+		}
+
+		// Track model ID (use last seen non-synthetic model)
+		if entry.Message.Model != "" && entry.Message.Model != "<synthetic>" {
+			analytics.Model = entry.Message.Model
 		}
 
 		// Accumulate tokens (cumulative totals for cost calculation)

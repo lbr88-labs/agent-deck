@@ -49,6 +49,31 @@ func TestSessionAnalytics_ContextPercent_DefaultLimit(t *testing.T) {
 	assert.InDelta(t, 10.0, analytics.ContextPercent(0), 0.01)
 }
 
+func TestSessionAnalytics_ContextPercent_OpusModel(t *testing.T) {
+	analytics := &SessionAnalytics{
+		CurrentContextTokens: 500000,
+		Model:                "claude-opus-4-6",
+	}
+
+	// 500000 / 1000000 (opus context window) * 100 = 50%
+	assert.InDelta(t, 50.0, analytics.ContextPercent(0), 0.01)
+}
+
+func TestContextWindowForModel(t *testing.T) {
+	// 4.6 models: 1M
+	assert.Equal(t, 1000000, contextWindowForModel("claude-opus-4-6"))
+	assert.Equal(t, 1000000, contextWindowForModel("claude-sonnet-4-6"))
+	// 4.x non-4.6 models: 200k
+	assert.Equal(t, 200000, contextWindowForModel("claude-opus-4-20250514"))
+	assert.Equal(t, 200000, contextWindowForModel("claude-sonnet-4-20250514"))
+	assert.Equal(t, 200000, contextWindowForModel("claude-haiku-4-5"))
+	// 3.x models: 200k
+	assert.Equal(t, 200000, contextWindowForModel("claude-3-5-sonnet"))
+	// Unknown/empty: 200k fallback
+	assert.Equal(t, 200000, contextWindowForModel("unknown-model"))
+	assert.Equal(t, 200000, contextWindowForModel(""))
+}
+
 func TestSessionAnalytics_ZeroTokens(t *testing.T) {
 	analytics := &SessionAnalytics{}
 
