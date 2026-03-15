@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -1493,6 +1494,7 @@ func (h *Home) propagateThemeToSessions() {
 		for _, inst := range instances {
 			if tmuxSess := inst.GetTmuxSession(); tmuxSess != nil && tmuxSess.Exists() {
 				_ = tmuxSess.SetEnvironment("COLORFGBG", colorfgbg)
+				_ = tmuxSess.ApplyThemeOptions()
 			}
 		}
 	}()
@@ -10324,12 +10326,12 @@ func (h *Home) renderPreviewPane(width, height int) string {
 			// from the captured terminal output pass through to display.
 			safeLine := stripControlCharsPreserveANSI(line)
 
-			// In light theme, remove background color ANSI sequences that
-			// cause dark background bands to bleed through (e.g., tool output
-			// uses ESC[40m..ESC[47m which remain dark on a light background).
-			// Foreground colors and text formatting are preserved.
+			// In light theme, remap captured ANSI background colors to the
+			// current preview surface instead of stripping them completely.
+			// This preserves the soft highlighted blocks used by tools like
+			// Codex without letting dark background bands bleed through.
 			if isLightTheme {
-				safeLine = stripANSIBackground(safeLine)
+				safeLine = remapANSIBackground(safeLine, previewSurfaceANSI())
 			}
 
 			// Check if visually empty (strip ANSI for this check)
@@ -10525,15 +10527,40 @@ func stripControlCharsPreserveANSI(s string) string {
 //   - ESC[40m..ESC[47m  — standard 8-color backgrounds
 //   - ESC[100m..ESC[107m — bright/high-intensity backgrounds
 //   - ESC[48;...m        — 256-color and true-color backgrounds (ESC[48;5;Nm / ESC[48;2;R;G;Bm)
-//   - ESC[49m            — default background reset
-var ansiBackgroundRE = regexp.MustCompile(`\x1b\[(?:4[0-7]|10[0-7]|48;[0-9;]+|49)m`)
+var ansiBackgroundRE = regexp.MustCompile(`\x1b\[(?:4[0-7]|10[0-7]|48;[0-9;]+)m`)
 
-// stripANSIBackground removes ANSI background color sequences from a line
-// while preserving all other ANSI sequences (foreground colors, bold, italic,
-// underline). Used in light theme to prevent dark background bleed-through
-// from captured tmux pane output.
-func stripANSIBackground(s string) string {
-	return ansiBackgroundRE.ReplaceAllString(s, "")
+// previewSurfaceANSI returns a truecolor ANSI background sequence matching
+// the current preview surface. Falls back to empty string if the color is not
+// a hex RGB value.
+func previewSurfaceANSI() string {
+	hex := strings.TrimPrefix(string(ColorSurface), "#")
+	if len(hex) != 6 {
+		return ""
+	}
+	r, err := strconv.ParseUint(hex[0:2], 16, 8)
+	if err != nil {
+		return ""
+	}
+	g, err := strconv.ParseUint(hex[2:4], 16, 8)
+	if err != nil {
+		return ""
+	}
+	b, err := strconv.ParseUint(hex[4:6], 16, 8)
+	if err != nil {
+		return ""
+	}
+	return fmt.Sprintf("\x1b[48;2;%d;%d;%dm", r, g, b)
+}
+
+// remapANSIBackground replaces ANSI background color sequences with the
+// provided replacement while preserving all other ANSI sequences (foreground
+// colors, bold, italic, underline). Used in light theme so captured terminal
+// output keeps soft highlighted regions instead of dropping them entirely.
+func remapANSIBackground(s, replacement string) string {
+	if replacement == "" {
+		return ansiBackgroundRE.ReplaceAllString(s, "")
+	}
+	return ansiBackgroundRE.ReplaceAllString(s, replacement)
 }
 
 // truncatePath shortens a path to fit within maxLen display width

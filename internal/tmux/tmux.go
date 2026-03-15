@@ -21,8 +21,10 @@ import (
 
 	"golang.org/x/sync/singleflight"
 
+	"github.com/BurntSushi/toml"
 	"github.com/asheshgoplani/agent-deck/internal/logging"
 	"github.com/asheshgoplani/agent-deck/internal/platform"
+	dark "github.com/thiagokokada/dark-mode-go"
 )
 
 var (
@@ -30,6 +32,70 @@ var (
 	respawnLog = logging.ForComponent(logging.CompSession)
 	mcpLog     = logging.ForComponent(logging.CompMCP)
 )
+
+type tmuxThemeStyle struct {
+	windowStyle       string
+	windowActiveStyle string
+	statusStyle       string
+	hintColor         string
+}
+
+func resolvedAgentDeckTheme() string {
+	type cfg struct {
+		Theme string `toml:"theme"`
+	}
+	home, err := os.UserHomeDir()
+	if err == nil {
+		var c cfg
+		if _, err := toml.DecodeFile(filepath.Join(home, ".agent-deck", "config.toml"), &c); err == nil {
+			switch c.Theme {
+			case "light", "dark":
+				return c.Theme
+			case "system", "":
+				// fall through to OS detection
+			default:
+				return "dark"
+			}
+		}
+	}
+	isDark, err := dark.IsDarkMode()
+	if err != nil {
+		return "dark"
+	}
+	if isDark {
+		return "dark"
+	}
+	return "light"
+}
+
+func currentTmuxThemeStyle() tmuxThemeStyle {
+	if resolvedAgentDeckTheme() == "light" {
+		return tmuxThemeStyle{
+			// Light terminals can still inherit a dark-looking tmux window background
+			// when we leave window-style at "default". Use an explicit neutral light
+			// background so the attached client sees and renders against a light pane.
+			windowStyle:       "bg=#f9f9f9",
+			windowActiveStyle: "bg=#f9f9f9",
+			statusStyle:       "bg=#e9e9ec,fg=#343b58",
+			hintColor:         "#6a6d7c",
+		}
+	}
+	return tmuxThemeStyle{
+		// Preserve the historical dark behavior unless a light theme is active.
+		windowStyle:       "default",
+		windowActiveStyle: "default",
+		statusStyle:       "bg=#1a1b26,fg=#a9b1d6",
+		hintColor:         "#565f89",
+	}
+}
+
+func (s *Session) themedStatusRight(themeStyle tmuxThemeStyle) string {
+	folderName := filepath.Base(s.WorkDir)
+	if folderName == "" || folderName == "." {
+		folderName = "~"
+	}
+	return fmt.Sprintf("#[fg=%s]ctrl+q detach#[default] │ 📁 %s | %s ", themeStyle.hintColor, s.DisplayName, folderName)
+}
 
 // ErrCaptureTimeout is returned when CapturePane exceeds its timeout.
 // Callers should preserve previous state rather than transitioning to error/inactive.
@@ -917,6 +983,21 @@ func (s *Session) SetEnvironment(key, value string) error {
 	return err
 }
 
+func (s *Session) ApplyThemeOptions() error {
+	themeStyle := currentTmuxThemeStyle()
+	args := []string{
+		"set-option", "-t", s.Name, "window-style", themeStyle.windowStyle, ";",
+		"set-option", "-t", s.Name, "window-active-style", themeStyle.windowActiveStyle, ";",
+		"set-option", "-t", s.Name, "status-style", themeStyle.statusStyle,
+	}
+	if s.injectStatusLine {
+		args = append(args,
+			";", "set-option", "-t", s.Name, "status-right", s.themedStatusRight(themeStyle),
+		)
+	}
+	return exec.Command("tmux", args...).Run()
+}
+
 // GetEnvironment gets an environment variable from this tmux session.
 // Uses a 30-second cache to avoid spawning tmux show-environment subprocesses
 // on every poll cycle. Call InvalidateEnvCache() after SetEnvironment to clear.
@@ -1142,9 +1223,11 @@ func (s *Session) Start(command string) error {
 	//
 	// Note: remain-on-exit is NOT set here — it is only enabled for sandbox sessions
 	// via OptionOverrides to avoid changing behaviour for non-sandbox sessions.
+	themeStyle := currentTmuxThemeStyle()
+
 	_ = exec.Command("tmux",
-		"set-option", "-t", s.Name, "window-style", "default", ";",
-		"set-option", "-t", s.Name, "window-active-style", "default", ";",
+		"set-option", "-t", s.Name, "window-style", themeStyle.windowStyle, ";",
+		"set-option", "-t", s.Name, "window-active-style", themeStyle.windowActiveStyle, ";",
 		"set-option", "-t", s.Name, "mouse", "on", ";",
 		"set-option", "-t", s.Name, "-q", "allow-passthrough", "on", ";",
 		"set-option", "-t", s.Name, "set-clipboard", "on", ";",
@@ -1269,16 +1352,8 @@ func (s *Session) ConfigureStatusBar() {
 	if !s.injectStatusLine {
 		return
 	}
-
-	// Get short folder name from WorkDir
-	folderName := filepath.Base(s.WorkDir)
-	if folderName == "" || folderName == "." {
-		folderName = "~"
-	}
-
-	// Right side: detach hint + session title with folder path
-	// The hint uses subtle gray (#565f89) so it doesn't compete with session info
-	rightStatus := fmt.Sprintf("#[fg=#565f89]ctrl+q detach#[default] │ 📁 %s | %s ", s.DisplayName, folderName)
+	themeStyle := currentTmuxThemeStyle()
+	rightStatus := s.themedStatusRight(themeStyle)
 
 	// PERFORMANCE: Batch all 5 status bar options into single subprocess call
 	// Uses tmux command chaining with \; separator (73% reduction in subprocess calls)
@@ -1286,7 +1361,7 @@ func (s *Session) ConfigureStatusBar() {
 	// After: 1 exec.Command call = 1 subprocess spawn
 	cmd := exec.Command("tmux",
 		"set-option", "-t", s.Name, "status", "on", ";",
-		"set-option", "-t", s.Name, "status-style", "bg=#1a1b26,fg=#a9b1d6", ";",
+		"set-option", "-t", s.Name, "status-style", themeStyle.statusStyle, ";",
 		"set-option", "-t", s.Name, "status-left-length", "120", ";",
 		"set-option", "-t", s.Name, "status-right", rightStatus, ";",
 		"set-option", "-t", s.Name, "status-right-length", "80")
