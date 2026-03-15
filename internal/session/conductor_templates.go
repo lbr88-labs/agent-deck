@@ -497,6 +497,8 @@ def load_config() -> dict:
     dc_guild_id = dc.get("guild_id", 0)
     dc_channel_id = dc.get("channel_id", 0)
     dc_user_id = dc.get("user_id", 0)
+    dc_listen_mode = dc.get("listen_mode", "all")  # "mentions" or "all"
+    dc_ignore_replies_to_others = dc.get("ignore_replies_to_others", False)
     dc_configured = bool(dc_bot_token and dc_guild_id and dc_channel_id and dc_user_id)
 
     if not tg_configured and not sl_configured and not dc_configured:
@@ -525,6 +527,8 @@ def load_config() -> dict:
             "guild_id": int(dc_guild_id) if dc_guild_id else 0,
             "channel_id": int(dc_channel_id) if dc_channel_id else 0,
             "user_id": int(dc_user_id) if dc_user_id else 0,
+            "listen_mode": dc_listen_mode,
+            "ignore_replies_to_others": bool(dc_ignore_replies_to_others),
             "configured": dc_configured,
         },
         "heartbeat_interval": conductor_cfg.get("heartbeat_interval", 15),
@@ -1515,6 +1519,14 @@ def create_discord_bot(config: dict):
     guild_id = config["discord"]["guild_id"]
     channel_id = config["discord"]["channel_id"]
     authorized_user = config["discord"]["user_id"]
+    listen_mode = str(config["discord"].get("listen_mode", "all") or "all").strip().lower()
+    ignore_replies_to_others = bool(
+        config["discord"].get("ignore_replies_to_others", False)
+    )
+
+    if listen_mode not in {"all", "mentions"}:
+        log.warning("Unknown Discord listen_mode %r, falling back to 'all'", listen_mode)
+        listen_mode = "all"
 
     intents = discord.Intents.default()
     intents.message_content = True
@@ -1541,6 +1553,47 @@ def create_discord_bot(config: dict):
 
     def is_authorized(user_id: int) -> bool:
         return user_id == authorized_user
+
+    def message_mentions_bot(message: discord.Message) -> bool:
+        if not bot.user:
+            return False
+        return any(getattr(user, "id", 0) == bot.user.id for user in message.mentions)
+
+    def strip_bot_mentions(text: str) -> str:
+        if not bot.user:
+            return text.strip()
+        return re.sub(rf"<@!?{bot.user.id}>", "", text).strip()
+
+    async def should_ignore_reply_to_other(message: discord.Message) -> bool:
+        if not ignore_replies_to_others:
+            return False
+
+        reference = getattr(message, "reference", None)
+        reference_id = getattr(reference, "message_id", None)
+        if not reference_id:
+            return False
+
+        referenced = getattr(reference, "resolved", None)
+        if not isinstance(referenced, discord.Message):
+            try:
+                referenced = await message.channel.fetch_message(reference_id)
+            except Exception as e:
+                log.warning(
+                    "Failed to resolve Discord reply target %d: %s",
+                    reference_id, e,
+                )
+                return False
+
+        if not bot.user:
+            return False
+
+        if referenced.author.id != bot.user.id:
+            log.info(
+                "Ignoring Discord reply to non-bot message %d from user %d",
+                referenced.id, message.author.id,
+            )
+            return True
+        return False
 
     async def ensure_discord_channel(interaction: discord.Interaction) -> bool:
         """Restrict slash commands to the configured channel."""
@@ -1733,15 +1786,22 @@ def create_discord_bot(config: dict):
                 message.author.id,
             )
             return
+        if await should_ignore_reply_to_other(message):
+            return
+        text = message.content
+        if listen_mode == "mentions":
+            if not message_mentions_bot(message):
+                return
+            text = strip_bot_mentions(text)
         # Ignore empty messages
-        if not message.content:
+        if not text:
             return
 
         conductor_names = get_conductor_names()
         conductors = discover_conductors()
 
         target_name, cleaned_msg = parse_conductor_prefix(
-            message.content, conductor_names,
+            text, conductor_names,
         )
 
         target = None
@@ -1759,7 +1819,7 @@ def create_discord_bot(config: dict):
             return
 
         if not cleaned_msg:
-            cleaned_msg = message.content
+            cleaned_msg = text
 
         session_title = conductor_session_title(target["name"])
         profile = target["profile"]
