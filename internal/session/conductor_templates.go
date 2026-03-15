@@ -436,6 +436,9 @@ SLACK_MAX_LENGTH = 40000
 # Discord message length limit
 DISCORD_MAX_LENGTH = 2000
 
+# Marker for uploading local images through the Discord bridge.
+IMAGE_MARKER_RE = re.compile(r"\[IMAGE:(?P<path>[^\]]+)\]")
+
 # How long to wait for conductor to respond (seconds)
 RESPONSE_TIMEOUT = 300
 
@@ -812,6 +815,67 @@ def split_message(text: str, max_len: int = TG_MAX_LENGTH) -> list[str]:
         chunks.append(text[:split_at])
         text = text[split_at:].lstrip("\n")
     return chunks
+
+
+def parse_discord_message_parts(text: str) -> list[tuple[str, str]]:
+    """Split Discord output into plain-text and image-upload segments."""
+    parts = []
+    last_idx = 0
+
+    for match in IMAGE_MARKER_RE.finditer(text):
+        if match.start() > last_idx:
+            parts.append(("text", text[last_idx:match.start()]))
+
+        image_path = match.group("path").strip()
+        if image_path:
+            parts.append(("image", image_path))
+        last_idx = match.end()
+
+    if last_idx < len(text):
+        parts.append(("text", text[last_idx:]))
+
+    if not parts:
+        parts.append(("text", text))
+
+    return parts
+
+
+async def send_discord_output(channel, text: str, name_tag: str = ""):
+    """Send Discord output, uploading [IMAGE:/path] markers as attachments."""
+    prefix = name_tag if name_tag else ""
+    attachment_content = name_tag.strip() if name_tag else None
+
+    for part_type, payload in parse_discord_message_parts(text):
+        if part_type == "text":
+            if not payload.strip():
+                continue
+            for chunk in split_message(payload, max_len=DISCORD_MAX_LENGTH):
+                prefixed = f"{prefix}{chunk}" if prefix else chunk
+                await channel.send(prefixed)
+            continue
+
+        image_path = Path(payload).expanduser()
+        if not image_path.is_absolute():
+            warning = f"[Image path must be absolute: {payload}]"
+            prefixed = f"{prefix}{warning}" if prefix else warning
+            await channel.send(prefixed)
+            continue
+        if not image_path.is_file():
+            warning = f"[Image not found: {image_path}]"
+            prefixed = f"{prefix}{warning}" if prefix else warning
+            await channel.send(prefixed)
+            continue
+
+        try:
+            await channel.send(
+                content=attachment_content,
+                file=discord.File(str(image_path)),
+            )
+        except Exception as e:
+            log.error("Failed to upload Discord image %s: %s", image_path, e)
+            warning = f"[Failed to upload image: {image_path}]"
+            prefixed = f"{prefix}{warning}" if prefix else warning
+            await channel.send(prefixed)
 
 
 # ---------------------------------------------------------------------------
@@ -1800,9 +1864,7 @@ def create_discord_bot(config: dict):
         name_tag = (
             f"[{target['name']}] " if len(conductors) > 1 else ""
         )
-        for chunk in split_message(response, max_len=DISCORD_MAX_LENGTH):
-            prefixed = f"{name_tag}{chunk}" if name_tag else chunk
-            await message.channel.send(prefixed)
+        await send_discord_output(message.channel, response, name_tag=name_tag)
 
     log.info(
         "Discord bot initialized (guild=%d, channel=%d)",
@@ -1996,11 +2058,7 @@ async def heartbeat_loop(
                                 discord_channel_id,
                             )
                             if channel:
-                                for chunk in split_message(
-                                    alert_msg,
-                                    max_len=DISCORD_MAX_LENGTH,
-                                ):
-                                    await channel.send(chunk)
+                                await send_discord_output(channel, alert_msg)
                         except Exception as e:
                             log.error(
                                 "Failed to send Discord notification: %s",

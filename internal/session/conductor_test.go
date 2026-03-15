@@ -1810,6 +1810,9 @@ func TestBridgeTemplate_DiscordHeartbeatNotification(t *testing.T) {
 	if !strings.Contains(template, "Failed to send Discord notification") {
 		t.Error("heartbeat should handle Discord notification errors")
 	}
+	if !strings.Contains(template, "await send_discord_output(channel, alert_msg)") {
+		t.Error("heartbeat should route Discord notifications through send_discord_output")
+	}
 }
 
 func TestBridgeTemplate_DiscordInMain(t *testing.T) {
@@ -1834,6 +1837,25 @@ func TestBridgeTemplate_DiscordTypingIndicator(t *testing.T) {
 	}
 	if !strings.Contains(template, "run_in_executor") {
 		t.Error("Discord on_message should offload blocking send_to_conductor to thread executor")
+	}
+}
+
+func TestBridgeTemplate_DiscordImageUploadSupport(t *testing.T) {
+	template := conductorBridgePy
+	patterns := []string{
+		`IMAGE_MARKER_RE = re.compile(r"\[IMAGE:(?P<path>[^\]]+)\]")`,
+		`def parse_discord_message_parts(text: str) -> list[tuple[str, str]]:`,
+		`async def send_discord_output(channel, text: str, name_tag: str = ""):`,
+		`await channel.send(`,
+		`file=discord.File(str(image_path)),`,
+		`[Image path must be absolute:`,
+		`[Image not found:`,
+		`await send_discord_output(message.channel, response, name_tag=name_tag)`,
+	}
+	for _, pattern := range patterns {
+		if !strings.Contains(template, pattern) {
+			t.Errorf("template should contain Discord image upload pattern: %q", pattern)
+		}
 	}
 }
 
