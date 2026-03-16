@@ -1,0 +1,149 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Agent Deck - Cost Dashboard</title>
+    <script src="/static/chart.umd.min.js"></script>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #1a1b26; color: #c0caf5; padding: 20px; }
+        .header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 24px; }
+        .header h1 { font-size: 24px; color: #7aa2f7; }
+        .header a { color: #7aa2f7; text-decoration: none; }
+        .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 16px; margin-bottom: 24px; }
+        .card { background: #24283b; border-radius: 8px; padding: 16px; }
+        .card .label { font-size: 12px; color: #565f89; text-transform: uppercase; }
+        .card .value { font-size: 28px; font-weight: bold; color: #7dcfff; margin-top: 4px; }
+        .card .sub { font-size: 12px; color: #565f89; margin-top: 4px; }
+        .charts { display: grid; grid-template-columns: 2fr 1fr; gap: 16px; margin-bottom: 24px; }
+        .chart-box { background: #24283b; border-radius: 8px; padding: 16px; }
+        .chart-box h3 { font-size: 14px; color: #565f89; margin-bottom: 12px; }
+        table { width: 100%; border-collapse: collapse; background: #24283b; border-radius: 8px; overflow: hidden; }
+        th, td { padding: 10px 16px; text-align: left; border-bottom: 1px solid #1a1b26; }
+        th { background: #1f2335; color: #565f89; font-size: 12px; text-transform: uppercase; cursor: pointer; }
+        th:hover { color: #7aa2f7; }
+        td { font-size: 14px; }
+        .export-bar { margin-top: 16px; display: flex; gap: 8px; }
+        .export-bar a { background: #24283b; color: #7aa2f7; padding: 8px 16px; border-radius: 4px; text-decoration: none; font-size: 13px; }
+        .export-bar a:hover { background: #1f2335; }
+        @media (max-width: 768px) { .charts { grid-template-columns: 1fr; } }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1>Cost Dashboard</h1>
+        <a href="/">&#8592; Back to Sessions</a>
+    </div>
+
+    <div class="cards" id="summary-cards">
+        <div class="card"><div class="label">Today</div><div class="value" id="today">$0.00</div><div class="sub" id="today-events">0 events</div></div>
+        <div class="card"><div class="label">This Week</div><div class="value" id="week">$0.00</div><div class="sub" id="week-events">0 events</div></div>
+        <div class="card"><div class="label">This Month</div><div class="value" id="month">$0.00</div><div class="sub" id="month-events">0 events</div></div>
+        <div class="card"><div class="label">Projected Monthly</div><div class="value" id="projected">$0.00</div><div class="sub">based on 7-day avg</div></div>
+    </div>
+
+    <div class="charts">
+        <div class="chart-box">
+            <h3>Daily Spend (Last 30 Days)</h3>
+            <canvas id="dailyChart"></canvas>
+        </div>
+        <div class="chart-box">
+            <h3>Cost by Model</h3>
+            <canvas id="modelChart"></canvas>
+        </div>
+    </div>
+
+    <h3 style="color: #565f89; margin-bottom: 8px; font-size: 14px; text-transform: uppercase;">Sessions</h3>
+    <table>
+        <thead><tr><th onclick="sortTable(0)">Session</th><th onclick="sortTable(1)">Group</th><th onclick="sortTable(2)">Cost</th><th onclick="sortTable(3)">Events</th></tr></thead>
+        <tbody id="sessions-table"></tbody>
+    </table>
+
+    <div class="export-bar">
+        <a href="/api/costs/export?format=csv&amp;days=30">Export CSV</a>
+        <a href="/api/costs/export?format=json&amp;days=30">Export JSON</a>
+    </div>
+
+    <script>
+    const fmt = (v) => '$' + v.toFixed(2);
+    let dailyChart, modelChart;
+    const colors = ['#7aa2f7','#bb9af7','#7dcfff','#9ece6a','#e0af68','#f7768e','#73daca','#ff9e64'];
+
+    async function loadSummary() {
+        const r = await fetch('/api/costs/summary');
+        const d = await r.json();
+        document.getElementById('today').textContent = fmt(d.today_usd);
+        document.getElementById('week').textContent = fmt(d.week_usd);
+        document.getElementById('month').textContent = fmt(d.month_usd);
+        document.getElementById('projected').textContent = fmt(d.projected_usd);
+        document.getElementById('today-events').textContent = d.today_events + ' events';
+        document.getElementById('week-events').textContent = d.week_events + ' events';
+        document.getElementById('month-events').textContent = d.month_events + ' events';
+    }
+
+    async function loadDaily() {
+        const r = await fetch('/api/costs/daily?days=30');
+        const d = await r.json();
+        const labels = (d||[]).map(e => e.date.slice(5));
+        const data = (d||[]).map(e => e.cost_usd);
+        if (dailyChart) dailyChart.destroy();
+        dailyChart = new Chart(document.getElementById('dailyChart'), {
+            type: 'line', data: { labels, datasets: [{ label: 'Daily Cost ($)', data, borderColor: '#7aa2f7', backgroundColor: 'rgba(122,162,247,0.1)', fill: true, tension: 0.3 }] },
+            options: { responsive: true, plugins: { legend: { display: false } }, scales: { x: { ticks: { color: '#565f89' }, grid: { color: '#1f2335' } }, y: { ticks: { color: '#565f89', callback: v => '$'+v.toFixed(2) }, grid: { color: '#1f2335' } } } }
+        });
+    }
+
+    async function loadModels() {
+        const r = await fetch('/api/costs/models');
+        const d = await r.json();
+        const labels = Object.keys(d||{});
+        const data = Object.values(d||{});
+        if (modelChart) modelChart.destroy();
+        modelChart = new Chart(document.getElementById('modelChart'), {
+            type: 'doughnut', data: { labels, datasets: [{ data, backgroundColor: colors.slice(0, labels.length) }] },
+            options: { responsive: true, plugins: { legend: { position: 'bottom', labels: { color: '#c0caf5', font: { size: 11 } } } } }
+        });
+    }
+
+    async function loadSessions() {
+        const r = await fetch('/api/costs/sessions');
+        const d = await r.json();
+        const tbody = document.getElementById('sessions-table');
+        tbody.innerHTML = (d||[]).map(s => '<tr><td>'+escHtml(s.title||s.session_id)+'</td><td>'+escHtml(s.group||'-')+'</td><td>'+fmt(s.cost_usd)+'</td><td>'+s.events+'</td></tr>').join('');
+    }
+
+    function escHtml(s) {
+        const d = document.createElement('div');
+        d.textContent = s;
+        return d.innerHTML;
+    }
+
+    let sortDir = [1,1,1,1];
+    function sortTable(col) {
+        const tbody = document.getElementById('sessions-table');
+        const rows = Array.from(tbody.rows);
+        sortDir[col] *= -1;
+        rows.sort((a,b) => {
+            let va = a.cells[col].textContent, vb = b.cells[col].textContent;
+            if (col >= 2) { va = parseFloat(va.replace('$','')); vb = parseFloat(vb.replace('$','')); }
+            return va < vb ? -sortDir[col] : va > vb ? sortDir[col] : 0;
+        });
+        rows.forEach(r => tbody.appendChild(r));
+    }
+
+    function connectSSE() {
+        const es = new EventSource('/api/costs/stream');
+        es.addEventListener('cost_summary', (e) => {
+            const d = JSON.parse(e.data);
+            document.getElementById('today').textContent = fmt(d.today_usd);
+            document.getElementById('week').textContent = fmt(d.week_usd);
+            document.getElementById('month').textContent = fmt(d.month_usd);
+        });
+        es.onerror = () => { es.close(); setTimeout(connectSSE, 5000); };
+    }
+
+    loadSummary(); loadDaily(); loadModels(); loadSessions(); connectSSE();
+    </script>
+</body>
+</html>
