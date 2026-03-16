@@ -61,7 +61,7 @@ Each task was committed atomically:
 1. **Task 1: Add post-release asset validation to CI workflow** - `358c31f` (feat)
 2. **Task 2: Improve install.sh error handling for empty releases** - `e016e78` (fix)
 
-**Plan metadata:** (docs commit to follow)
+**Plan metadata:** `08b484a` (included in docs(18-01) commit — summary was staged alongside phase 18 metadata)
 
 ## Files Created/Modified
 - `.github/workflows/release.yml` - Added "Validate release assets" step after GoReleaser with 4-platform check
@@ -89,3 +89,12 @@ None. No external service configuration required.
 - Release CI pipeline now validates assets automatically on every tag push
 - install.sh provides clearer error guidance when releases are incomplete
 - Phase 17 Plan 02 (Slack bridge for release notifications) can proceed independently
+
+## Self-Check: PASSED
+
+- FOUND: `.github/workflows/release.yml` (with Validate release assets step)
+- FOUND: `install.sh` (with improved error messaging)
+- FOUND: `.planning/phases/17-release-pipeline-slack-bridge/17-01-SUMMARY.md`
+- FOUND commit: `358c31f` (Task 1)
+- FOUND commit: `e016e78` (Task 2)
+- FOUND commit: `08b484a` (metadata, SUMMARY.md included)
