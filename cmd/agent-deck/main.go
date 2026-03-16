@@ -465,6 +465,15 @@ func main() {
 		}()
 	}
 
+	// Disable the Kitty keyboard protocol before starting the TUI.
+	// Wayland terminals (Ghostty, Foot, Alacritty) send keys using CSI u
+	// encoding by default; Bubble Tea v1.3.10 does not parse those sequences,
+	// so uppercase shortcuts and uppercase text input are silently dropped.
+	// Pushing keyboard mode 0 (legacy) restores standard key reporting.
+	// Terminals that don't support the protocol ignore this sequence safely.
+	ui.DisableKittyKeyboard(os.Stdout)
+	defer ui.RestoreKittyKeyboard(os.Stdout)
+
 	p := tea.NewProgram(
 		homeModel,
 		tea.WithAltScreen(),
