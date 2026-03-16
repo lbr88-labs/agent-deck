@@ -1293,8 +1293,54 @@ def create_slack_app(config: dict):
         conductors = discover_conductors()
         return conductors[0] if conductors else None
 
+    def _markdown_to_slack(text: str) -> str:
+        """Convert GitHub-flavored markdown to Slack mrkdwn format.
+
+        Preserves code blocks and inline code. Converts:
+        - Headers (# H1 ... ###### H6) -> *bold text*
+        - Bold (**text**) -> *text*
+        - Strikethrough (~~text~~) -> ~text~
+        - Links [text](url) -> <url|text>
+        - Bullet lists (- item, * item) -> bullet_char item
+        """
+        # Protect code blocks: extract fenced blocks, replace with placeholders.
+        code_blocks = []
+        def _save_code_block(m):
+            code_blocks.append(m.group(0))
+            return f"__CODE_BLOCK_{len(code_blocks) - 1}__"
+        text = re.sub(r"` + "```" + `[\s\S]*?` + "```" + `", _save_code_block, text)
+
+        # Protect inline code.
+        inline_codes = []
+        def _save_inline_code(m):
+            inline_codes.append(m.group(0))
+            return f"__INLINE_CODE_{len(inline_codes) - 1}__"
+        text = re.sub(r"` + "`" + `[^` + "`" + `\n]+` + "`" + `", _save_inline_code, text)
+
+        # Headers -> bold
+        text = re.sub(r"^#{1,6}\s+(.+)$", r"*\1*", text, flags=re.MULTILINE)
+        # Bold **text** -> *text*  (must come after headers to avoid double-wrapping)
+        text = re.sub(r"\*\*(.+?)\*\*", r"*\1*", text)
+        # Strikethrough ~~text~~ -> ~text~
+        text = re.sub(r"~~(.+?)~~", r"~\1~", text)
+        # Links [text](url) -> <url|text>
+        text = re.sub(r"\[([^\]]+)\]\(([^)]+)\)", r"<\2|\1>", text)
+        # Bullet lists: - item or * item -> bullet char item
+        text = re.sub(r"^(\s*)[-*]\s+", r"\1\u2022 ", text, flags=re.MULTILINE)
+
+        # Restore inline code.
+        for i, code in enumerate(inline_codes):
+            text = text.replace(f"__INLINE_CODE_{i}__", code)
+        # Restore code blocks.
+        for i, block in enumerate(code_blocks):
+            text = text.replace(f"__CODE_BLOCK_{i}__", block)
+
+        return text
+
     async def _safe_say(say, **kwargs):
-        """Wrapper around say() that catches network/API errors."""
+        """Wrapper around say() that catches network/API errors and converts markdown."""
+        if "text" in kwargs:
+            kwargs["text"] = _markdown_to_slack(kwargs["text"])
         try:
             await say(**kwargs)
         except Exception as e:
