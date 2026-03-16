@@ -26,6 +26,7 @@ import (
 	"golang.org/x/sync/errgroup"
 
 	"github.com/asheshgoplani/agent-deck/internal/clipboard"
+	"github.com/asheshgoplani/agent-deck/internal/costs"
 	"github.com/asheshgoplani/agent-deck/internal/git"
 	"github.com/asheshgoplani/agent-deck/internal/logging"
 	"github.com/asheshgoplani/agent-deck/internal/session"
@@ -374,6 +375,15 @@ type Home struct {
 	remoteSessionsMu   sync.RWMutex
 	lastRemoteFetch    time.Time // When remote sessions were last fetched
 	remotesFetchActive bool      // Prevents overlapping fetches
+
+	// Cost tracking
+	costStore         *costs.Store
+	costPricer        *costs.Pricer
+	costBudget        *costs.BudgetChecker
+	costToday         atomic.Int64 // microdollars
+	costWeek          atomic.Int64 // microdollars
+	showCostDashboard bool
+	costDashboard     costDashboard
 }
 
 // reloadState preserves UI state during storage reload
@@ -879,6 +889,32 @@ func (h *Home) getWebMenuData() *web.MemoryMenuData {
 	h.webMenuDataMu.RLock()
 	defer h.webMenuDataMu.RUnlock()
 	return h.webMenuData
+}
+
+// SetCostStore sets the cost store for cost tracking display.
+func (h *Home) SetCostStore(store *costs.Store) {
+	h.costStore = store
+}
+
+// SetCostPricer sets the pricer for cost calculations.
+func (h *Home) SetCostPricer(pricer *costs.Pricer) {
+	h.costPricer = pricer
+}
+
+// SetCostBudget sets the budget checker for cost limits.
+func (h *Home) SetCostBudget(budget *costs.BudgetChecker) {
+	h.costBudget = budget
+}
+
+// refreshCostTotals updates cached cost totals from the store.
+func (h *Home) refreshCostTotals() {
+	if h.costStore == nil {
+		return
+	}
+	today, _ := h.costStore.TotalToday()
+	week, _ := h.costStore.TotalThisWeek()
+	h.costToday.Store(today.TotalCostMicrodollars)
+	h.costWeek.Store(week.TotalCostMicrodollars)
 }
 
 func (h *Home) publishWebMenuSnapshot() {
@@ -3759,6 +3795,9 @@ func (h *Home) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Update animation frame for launching spinner (8 frames, cycles every tick)
 		h.animationFrame = (h.animationFrame + 1) % 8
 
+		// Refresh cost totals for header display
+		h.refreshCostTotals()
+
 		// Periodic UI state save (every 5 ticks = ~10 seconds)
 		h.uiStateSaveTicks++
 		if h.uiStateSaveTicks >= 5 {
@@ -3975,6 +4014,15 @@ func (h *Home) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		if h.worktreeFinishDialog.IsVisible() {
 			return h.handleWorktreeFinishDialogKey(msg)
+		}
+
+		if h.showCostDashboard {
+			keyStr := msg.String()
+			if keyStr == "q" || keyStr == "$" || keyStr == "esc" {
+				h.showCostDashboard = false
+				return h, nil
+			}
+			return h, nil // consume all other keys
 		}
 
 		if h.notesEditing {
@@ -5274,7 +5322,13 @@ func (h *Home) handleMainKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return h, nil
 
 	case "$", "shift+4":
-		// Filter to error sessions only
+		// Cost dashboard (when cost tracking is active), otherwise filter to error sessions
+		if h.costStore != nil {
+			h.showCostDashboard = true
+			h.costDashboard = newCostDashboard(h.costStore, h.width, h.height)
+			return h, nil
+		}
+		// Fallback: filter to error sessions only
 		if h.statusFilter == session.StatusError {
 			h.statusFilter = "" // Toggle off
 		} else {
@@ -7205,6 +7259,9 @@ func (h *Home) View() string {
 	if h.worktreeFinishDialog.IsVisible() {
 		return h.worktreeFinishDialog.View()
 	}
+	if h.showCostDashboard {
+		return h.costDashboard.View()
+	}
 
 	// Reuse viewBuilder to reduce allocations (reset and pre-allocate)
 	h.viewBuilder.Reset()
@@ -7269,6 +7326,16 @@ func (h *Home) View() string {
 	} else {
 		stats = lipgloss.NewStyle().Foreground(ColorText).Render("no sessions")
 	}
+
+	// Cost tracking segment
+	todayMicro := h.costToday.Load()
+	weekMicro := h.costWeek.Load()
+	if todayMicro > 0 || weekMicro > 0 {
+		costStyle := lipgloss.NewStyle().Foreground(ColorCyan)
+		costText := costStyle.Render(costs.FormatUSD(todayMicro) + " today")
+		stats += statsSep + costText
+	}
+	_ = weekMicro // reserved for future weekly display
 
 	// Version badge (right-aligned, subtle inline style - no border to keep single line)
 	versionStyle := lipgloss.NewStyle().
