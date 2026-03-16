@@ -6,6 +6,7 @@
 - ~~**v1.1 Integration Testing**~~ -- Phases 4-6 (shipped 2026-03-07)
 - ~~**v1.2 Conductor Reliability & Learnings Cleanup**~~ -- Phases 7-10 (shipped 2026-03-07)
 - **v1.3 Session Reliability & Resume** -- Phases 11-16 (active, rescoped 2026-03-12)
+- **v0.26.2 Stability Fixes** -- Phases 17-18 (active, started 2026-03-16)
 
 ## Phases
 
@@ -53,6 +54,11 @@ Original scope had Phases 11-15. Rescoped after #320 and #318 closed, and new cr
 - [x] **Phase 14: Detection & Sandbox** - Docker tmux set-environment fix (#266); OpenCode waiting status (#255) (completed 2026-03-13)
 - [ ] **Phase 15: Mouse, Theme & Polish** - Mouse scroll, light theme fix, docs, heartbeat cleanup, worktree reuse (#262, #254, #322, #228, #225, #216)
 - [ ] **Phase 16: Comprehensive Testing** - Integration tests for all v1.3 fixes, regression suite
+
+**v0.26.2 Stability Fixes (Phases 17-18) — started 2026-03-16**
+
+- [ ] **Phase 17: Release Pipeline & Slack Bridge** - CI empty-release guard + install script verification (#332); GFM-to-mrkdwn conversion in Slack bridge (#331)
+- [ ] **Phase 18: Wayland Key Input** - Uppercase/shifted key events and text input on Wayland compositors (#340)
 
 ## Phase Details
 
@@ -148,6 +154,30 @@ Plans:
   11. All tests pass with `make test` and `make ci`
 **Plans:** TBD
 
+---
+
+### Phase 17: Release Pipeline & Slack Bridge
+**Goal:** The release pipeline correctly validates all platform assets before publishing, and the install script works end-to-end; Slack bridge messages render with proper mrkdwn formatting
+**Depends on:** Nothing (independent bug fixes, no code dependencies)
+**Requirements:** REL-01, REL-02, REL-03, SLACK-01, SLACK-02
+**Issues:** #332, #331
+**Success Criteria** (what must be TRUE):
+  1. Running the install script against the v0.26.2 release page downloads and installs a working binary without errors
+  2. A CI workflow job fails the release if any of the 4 expected platform assets (darwin_amd64, darwin_arm64, linux_amd64, linux_arm64) are missing from the GitHub release
+  3. A Slack message sent via the bridge with GFM headers, bold, strikethrough, links, and bullets renders visibly formatted in the Slack channel (not raw markdown symbols)
+  4. A code block or inline code sent via the bridge appears as a Slack code block or inline code (backtick-preserved, monospace rendering)
+**Plans:** TBD
+
+### Phase 18: Wayland Key Input
+**Goal:** Users running agent-deck on Wayland compositors can use all uppercase/shifted key shortcuts and type uppercase characters in text input fields
+**Depends on:** Nothing (isolated platform fix, independent of Phase 17)
+**Requirements:** KEY-01, KEY-02
+**Issues:** #340
+**Success Criteria** (what must be TRUE):
+  1. Pressing Shift+M, Shift+R, Shift+F and other uppercase-bound TUI shortcuts on a Wayland compositor triggers the expected action (same behavior as X11/macOS)
+  2. Typing uppercase characters in the session name, search, and other TUI text input fields on Wayland produces the correct uppercase character in the field
+**Plans:** TBD
+
 ## Progress
 
 | Phase | Milestone | Plans Complete | Status | Completed |
@@ -164,7 +194,9 @@ Plans:
 | 10. Learnings Promotion | v1.2 | 2/2 | Complete | 2026-03-06 |
 | 11. MCP Proxy Reliability | v1.3 | 0/1 | Not started | - |
 | 12. Session List & Resume UX | v1.3 | 2/2 | Complete | 2026-03-13 |
-| 13. Auto-Start & Platform | 2/3 | Complete    | 2026-03-13 | - |
-| 14. Detection & Sandbox | 2/2 | Complete   | 2026-03-13 | - |
-| 15. Mouse, Theme & Polish | 2/3 | In Progress|  | - |
+| 13. Auto-Start & Platform | v1.3 | 2/3 | Complete | 2026-03-13 |
+| 14. Detection & Sandbox | v1.3 | 2/2 | Complete | 2026-03-13 |
+| 15. Mouse, Theme & Polish | v1.3 | 2/3 | In Progress | - |
 | 16. Comprehensive Testing | v1.3 | 0/TBD | Not started | - |
+| 17. Release Pipeline & Slack Bridge | v0.26.2 | 0/TBD | Not started | - |
+| 18. Wayland Key Input | v0.26.2 | 0/TBD | Not started | - |

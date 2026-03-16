@@ -5,9 +5,9 @@ milestone_name: Stability Fixes
 status: planning
 stopped_at: ""
 last_updated: "2026-03-16"
-last_activity: "2026-03-16 — Milestone v0.26.2 started"
+last_activity: "2026-03-16 — Roadmap created for v0.26.2 (Phases 17-18)"
 progress:
-  total_phases: 0
+  total_phases: 2
   completed_phases: 0
   total_plans: 0
   completed_plans: 0
@@ -21,18 +21,18 @@ progress:
 See: .planning/PROJECT.md (updated 2026-03-16)
 
 **Core value:** Reliable terminal session management for AI coding agents with conductor orchestration
-**Current focus:** v0.26.2 Stability Fixes
+**Current focus:** v0.26.2 Stability Fixes — Phase 17: Release Pipeline & Slack Bridge
 
 ## Current Position
 
 ```
-Phase:    Not started (defining requirements)
+Phase:    17 — Release Pipeline & Slack Bridge (not started)
 Plan:     —
-Status:   Defining requirements
+Status:   Roadmap ready, awaiting plan-phase
 Progress: [----------] 0%
 ```
 
-Last activity: 2026-03-16 — Milestone v0.26.2 started
+Last activity: 2026-03-16 — Roadmap created for v0.26.2 (Phases 17-18)
 
 ## Accumulated Context
 
@@ -45,6 +45,7 @@ Full decision log in PROJECT.md Key Decisions table.
 - [Phase 15-mouse-theme-polish]: ANSI background stripping in preview pane uses compiled regexp covering standard/bright/256-color/truecolor backgrounds; applied per-line only when ThemeLight active
 - [Phase 14-detection-sandbox]: Pulse chars only indicate busy when no prompt-indicating strings present; authoritative busy strings always take priority over pulse char guard
 - [Phase 13-auto-start-platform]: generateUUID uses crypto/rand directly (no google/uuid dependency); pane-ready timeout non-fatal with Warn logging
+- [v0.26.2 roadmap]: Phase 17 combines REL and SLACK requirements (both quick discrete fixes, no code dependency); Phase 18 isolates KEY requirements (Wayland platform work may need upstream Bubble Tea engagement)
 
 ### Pending Todos
 
@@ -53,7 +54,7 @@ None.
 ### Blockers/Concerns
 
 - Exit 137 is a known Claude Code limitation. Mitigated via status gating, documented in conductor CLAUDE.md.
-- #340 (Wayland keys) may require upstream Bubble Tea investigation.
+- #340 (Wayland keys) may require upstream Bubble Tea investigation — Phase 18 should research Bubble Tea key event handling for Wayland before implementing.
 
 ## Session Continuity
 

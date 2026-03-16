@@ -59,19 +59,19 @@ Which phases cover which requirements. Updated during roadmap creation.
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| REL-01 | — | Pending |
-| REL-02 | — | Pending |
-| REL-03 | — | Pending |
-| SLACK-01 | — | Pending |
-| SLACK-02 | — | Pending |
-| KEY-01 | — | Pending |
-| KEY-02 | — | Pending |
+| REL-01 | Phase 17 | Pending |
+| REL-02 | Phase 17 | Pending |
+| REL-03 | Phase 17 | Pending |
+| SLACK-01 | Phase 17 | Pending |
+| SLACK-02 | Phase 17 | Pending |
+| KEY-01 | Phase 18 | Pending |
+| KEY-02 | Phase 18 | Pending |
 
 **Coverage:**
 - v0.26.2 requirements: 7 total
-- Mapped to phases: 0
-- Unmapped: 7
+- Mapped to phases: 7
+- Unmapped: 0
 
 ---
 *Requirements defined: 2026-03-16*
-*Last updated: 2026-03-16 after initial definition*
+*Last updated: 2026-03-16 after roadmap creation (Phases 17-18)*
