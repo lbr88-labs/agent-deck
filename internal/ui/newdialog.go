@@ -785,6 +785,21 @@ func (d *NewDialog) updateFocus() {
 }
 
 // Update handles key messages.
+// isTextInputFocused returns true when a text input field is actively receiving
+// keystrokes. Single-letter shortcuts must be suppressed in this state.
+func (d *NewDialog) isTextInputFocused() bool {
+	switch d.currentTarget() {
+	case focusName, focusPath, focusBranch:
+		return true
+	case focusCommand:
+		return d.commandCursor == 0 // custom command input
+	case focusMultiRepo:
+		return d.multiRepoEditing
+	default:
+		return false
+	}
+}
+
 func (d *NewDialog) Update(msg tea.Msg) (*NewDialog, tea.Cmd) {
 	if !d.visible {
 		return d, nil
@@ -1030,7 +1045,7 @@ func (d *NewDialog) Update(msg tea.Msg) (*NewDialog, tea.Cmd) {
 			}
 
 		case "w":
-			if cur == focusCommand {
+			if cur == focusCommand && !d.isTextInputFocused() {
 				d.ToggleWorktree()
 				d.rebuildFocusTargets()
 				if d.worktreeEnabled {
@@ -1043,7 +1058,7 @@ func (d *NewDialog) Update(msg tea.Msg) (*NewDialog, tea.Cmd) {
 			}
 
 		case "s":
-			if cur == focusCommand {
+			if cur == focusCommand && !d.isTextInputFocused() {
 				d.ToggleSandbox()
 				if !d.sandboxEnabled {
 					d.inheritedExpanded = false
@@ -1053,7 +1068,7 @@ func (d *NewDialog) Update(msg tea.Msg) (*NewDialog, tea.Cmd) {
 			}
 
 		case "m":
-			if cur == focusCommand {
+			if cur == focusCommand && !d.isTextInputFocused() {
 				d.ToggleMultiRepo()
 				d.rebuildFocusTargets()
 				return d, nil
@@ -1102,14 +1117,16 @@ func (d *NewDialog) Update(msg tea.Msg) (*NewDialog, tea.Cmd) {
 			}
 
 		case "y":
-			selectedCmd := d.GetSelectedCommand()
-			if cur == focusCommand && (selectedCmd == "gemini" || selectedCmd == "codex") && d.toolOptions != nil {
-				d.toolOptions.Update(msg)
-				return d, nil
-			}
-			if cur == focusOptions && d.toolOptions != nil {
-				d.toolOptions.Update(msg)
-				return d, nil
+			if !d.isTextInputFocused() {
+				selectedCmd := d.GetSelectedCommand()
+				if cur == focusCommand && (selectedCmd == "gemini" || selectedCmd == "codex") && d.toolOptions != nil {
+					d.toolOptions.Update(msg)
+					return d, nil
+				}
+				if cur == focusOptions && d.toolOptions != nil {
+					d.toolOptions.Update(msg)
+					return d, nil
+				}
 			}
 
 		case " ":
