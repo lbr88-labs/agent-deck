@@ -3,14 +3,14 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: Roadmap ready, awaiting plan-phase
-stopped_at: Completed 18-wayland-key-input-18-01-PLAN.md
-last_updated: "2026-03-16T13:18:09.067Z"
+stopped_at: Completed 17-release-pipeline-slack-bridge-17-02-PLAN.md
+last_updated: "2026-03-16T13:21:59.243Z"
 last_activity: 2026-03-16 — Roadmap created for v0.26.2 (Phases 17-18)
 progress:
   total_phases: 8
-  completed_phases: 3
+  completed_phases: 4
   total_plans: 14
-  completed_plans: 10
+  completed_plans: 11
   percent: 0
 ---
 
@@ -49,6 +49,8 @@ Full decision log in PROJECT.md Key Decisions table.
 - [Phase 17-release-pipeline-slack-bridge]: Use gh CLI for release asset validation (pre-installed on ubuntu-latest runners)
 - [Phase 17-release-pipeline-slack-bridge]: install.sh uses jq-with-grep-fallback for asset parsing since jq may not be installed at install time
 - [Phase 18-wayland-key-input]: Disable Kitty keyboard protocol via escape sequence rather than input filter for cleaner Wayland key input fix
+- [Phase 17-release-pipeline-slack-bridge]: Sentinel placeholder strings (__CODE_BLOCK_N__/__INLINE_CODE_N__) used in Python bridge to protect code content during GFM-to-mrkdwn conversion, since Go raw string literals cannot contain escape sequences
+- [Phase 17-release-pipeline-slack-bridge]: _markdown_to_slack applied in _safe_say (single choke point) so all outbound Slack text is converted automatically without modifying each call site
 
 ### Pending Todos
 
@@ -61,6 +63,6 @@ None.
 
 ## Session Continuity
 
-Last session: 2026-03-16T13:18:09.066Z
-Stopped at: Completed 18-wayland-key-input-18-01-PLAN.md
+Last session: 2026-03-16T13:21:59.241Z
+Stopped at: Completed 17-release-pipeline-slack-bridge-17-02-PLAN.md
 Resume file: None

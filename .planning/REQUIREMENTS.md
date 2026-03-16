@@ -15,8 +15,8 @@ Requirements for patch release v0.26.2 Stability Fixes. Each maps to roadmap pha
 
 ### Slack Bridge
 
-- [ ] **SLACK-01**: Outbound Slack messages convert GFM headers, bold, strikethrough, links, and bullets to mrkdwn
-- [ ] **SLACK-02**: Code blocks and inline code pass through to Slack unchanged
+- [x] **SLACK-01**: Outbound Slack messages convert GFM headers, bold, strikethrough, links, and bullets to mrkdwn
+- [x] **SLACK-02**: Code blocks and inline code pass through to Slack unchanged
 
 ### Key Input
 
@@ -62,8 +62,8 @@ Which phases cover which requirements. Updated during roadmap creation.
 | REL-01 | Phase 17 | Complete |
 | REL-02 | Phase 17 | Complete |
 | REL-03 | Phase 17 | Complete |
-| SLACK-01 | Phase 17 | Pending |
-| SLACK-02 | Phase 17 | Pending |
+| SLACK-01 | Phase 17 | Complete |
+| SLACK-02 | Phase 17 | Complete |
 | KEY-01 | Phase 18 | Complete |
 | KEY-02 | Phase 18 | Complete |
 
