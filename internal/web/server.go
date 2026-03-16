@@ -112,6 +112,8 @@ func NewServer(cfg Config) *Server {
 	mux.HandleFunc("/api/costs/sessions", s.handleCostsSessions)
 	mux.HandleFunc("/api/costs/models", s.handleCostsModels)
 	mux.HandleFunc("/api/costs/export", s.handleCostsExport)
+	mux.HandleFunc("/api/costs/groups", s.handleCostsGroups)
+	mux.HandleFunc("/api/costs/session", s.handleCostsSessionDetail)
 	mux.HandleFunc("/api/costs/stream", s.handleCostsStream)
 	mux.HandleFunc("/costs", s.handleCostsPage)
 

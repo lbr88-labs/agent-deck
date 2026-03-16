@@ -422,6 +422,122 @@ func (s *Server) handleCostsPage(w http.ResponseWriter, r *http.Request) {
 	_, _ = w.Write(page)
 }
 
+func (s *Server) handleCostsGroups(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeAPIError(w, http.StatusMethodNotAllowed, "METHOD_NOT_ALLOWED", "method not allowed")
+		return
+	}
+	if !s.authorizeRequest(r) {
+		writeAPIError(w, http.StatusUnauthorized, "UNAUTHORIZED", "unauthorized")
+		return
+	}
+	if s.costStore == nil {
+		writeAPIError(w, http.StatusServiceUnavailable, "UNAVAILABLE", "cost tracking not enabled")
+		return
+	}
+
+	sessions, err := s.costStore.TopSessionsByCost(1000)
+	if err != nil {
+		writeAPIError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "failed to query costs")
+		return
+	}
+
+	type groupEntry struct {
+		Group    string  `json:"group"`
+		CostUSD  float64 `json:"cost_usd"`
+		Events   int     `json:"events"`
+		Sessions int     `json:"sessions"`
+	}
+
+	groups := make(map[string]*groupEntry)
+	for _, sc := range sessions {
+		g := sc.Group
+		if g == "" {
+			g = "(ungrouped)"
+		}
+		entry, ok := groups[g]
+		if !ok {
+			entry = &groupEntry{Group: g}
+			groups[g] = entry
+		}
+		entry.CostUSD += microToUSD(sc.CostMicrodollars)
+		entry.Events += sc.EventCount
+		entry.Sessions++
+	}
+
+	result := make([]groupEntry, 0, len(groups))
+	for _, entry := range groups {
+		result = append(result, *entry)
+	}
+
+	writeJSON(w, http.StatusOK, result)
+}
+
+func (s *Server) handleCostsSessionDetail(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeAPIError(w, http.StatusMethodNotAllowed, "METHOD_NOT_ALLOWED", "method not allowed")
+		return
+	}
+	if !s.authorizeRequest(r) {
+		writeAPIError(w, http.StatusUnauthorized, "UNAUTHORIZED", "unauthorized")
+		return
+	}
+	if s.costStore == nil {
+		writeAPIError(w, http.StatusServiceUnavailable, "UNAVAILABLE", "cost tracking not enabled")
+		return
+	}
+
+	sessionID := r.URL.Query().Get("id")
+	if sessionID == "" {
+		writeAPIError(w, http.StatusBadRequest, "INVALID_REQUEST", "missing id parameter")
+		return
+	}
+
+	summary, err := s.costStore.TotalBySession(sessionID)
+	if err != nil {
+		writeAPIError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "failed to query session")
+		return
+	}
+
+	// Get daily breakdown for this session
+	now := time.Now().UTC()
+	from := now.AddDate(0, 0, -30).Truncate(24 * time.Hour)
+	to := now.AddDate(0, 0, 1).Truncate(24 * time.Hour)
+	daily, _ := s.costStore.DailyBySession(sessionID, from, to)
+
+	// Get model breakdown for this session
+	models, _ := s.costStore.CostByModelForSession(sessionID)
+
+	type dailyEntry struct {
+		Date    string  `json:"date"`
+		CostUSD float64 `json:"cost_usd"`
+	}
+	dailyResult := make([]dailyEntry, 0, len(daily))
+	for _, dc := range daily {
+		dailyResult = append(dailyResult, dailyEntry{
+			Date:    dc.Date.Format("2006-01-02"),
+			CostUSD: microToUSD(dc.CostMicrodollars),
+		})
+	}
+
+	modelResult := make(map[string]float64, len(models))
+	for model, micro := range models {
+		modelResult[model] = microToUSD(micro)
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		"session_id":    sessionID,
+		"cost_usd":     microToUSD(summary.TotalCostMicrodollars),
+		"input_tokens":  summary.TotalInputTokens,
+		"output_tokens": summary.TotalOutputTokens,
+		"cache_read":    summary.TotalCacheReadTokens,
+		"cache_write":   summary.TotalCacheWriteTokens,
+		"events":        summary.EventCount,
+		"daily":         dailyResult,
+		"models":        modelResult,
+	})
+}
+
 func microToUSD(microdollars int64) float64 {
 	return float64(microdollars) / 1_000_000
 }
