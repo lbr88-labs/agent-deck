@@ -14,6 +14,19 @@ import (
 	"github.com/asheshgoplani/agent-deck/internal/session"
 )
 
+// envVarFlags implements flag.Value for repeatable -env KEY=VALUE flags
+type envVarFlags map[string]string
+
+func (e *envVarFlags) String() string { return "" }
+func (e *envVarFlags) Set(val string) error {
+	parts := strings.SplitN(val, "=", 2)
+	if len(parts) != 2 || parts[0] == "" {
+		return fmt.Errorf("invalid env format %q, expected KEY=VALUE", val)
+	}
+	(*e)[parts[0]] = parts[1]
+	return nil
+}
+
 // handleConductor dispatches conductor subcommands
 func handleConductor(profile string, args []string) {
 	if len(args) == 0 {
@@ -101,6 +114,9 @@ func handleConductorSetup(profile string, args []string) {
 	policyMD := fs.String("policy-md", "", "Custom POLICY.md for this conductor (e.g., ~/docs/my-policy.md)")
 	sharedClaudeMD := fs.String("shared-claude-md", "", "Custom path for shared CLAUDE.md (e.g., ~/docs/conductor-shared.md)")
 	sharedPolicyMD := fs.String("shared-policy-md", "", "Custom path for shared POLICY.md (e.g., ~/docs/conductor-policy.md)")
+	envFile := fs.String("env-file", "", "Path to .env file to source before conductor starts (e.g., ~/.conductor.env)")
+	envFlags := make(envVarFlags)
+	fs.Var(&envFlags, "env", "Environment variable in KEY=VALUE format (can be repeated)")
 	jsonOutput := fs.Bool("json", false, "Output as JSON")
 
 	fs.Usage = func() {
@@ -131,6 +147,12 @@ func handleConductorSetup(profile string, args []string) {
 		fmt.Println("        Custom path for shared CLAUDE.md (e.g., ~/docs/conductor-shared.md)")
 		fmt.Println("  -shared-policy-md string")
 		fmt.Println("        Custom path for shared POLICY.md (e.g., ~/docs/conductor-policy.md)")
+		fmt.Println()
+		fmt.Println("Environment:")
+		fmt.Println("  -env KEY=VALUE")
+		fmt.Println("        Environment variable for the conductor session (can be repeated)")
+		fmt.Println("  -env-file string")
+		fmt.Println("        Path to .env file to source before conductor starts")
 		fmt.Println()
 		fmt.Println("Output:")
 		fmt.Println("  -json")
@@ -375,7 +397,11 @@ func handleConductorSetup(profile string, args []string) {
 	}
 
 	clearOnCompact := !*noClearOnCompact
-	if err := session.SetupConductor(name, resolvedProfile, heartbeatEnabled, clearOnCompact, *description, *claudeMD, *policyMD); err != nil {
+	var envMap map[string]string
+	if len(envFlags) > 0 {
+		envMap = map[string]string(envFlags)
+	}
+	if err := session.SetupConductor(name, resolvedProfile, heartbeatEnabled, clearOnCompact, *description, *claudeMD, *policyMD, envMap, *envFile); err != nil {
 		fmt.Fprintf(os.Stderr, "Error setting up conductor %s: %v\n", name, err)
 		os.Exit(1)
 	}
