@@ -999,6 +999,9 @@ func TestGenerateSystemdHeartbeatService_IncludesAgentDeckDir(t *testing.T) {
 func TestGenerateHeartbeatPlist_IncludesAgentDeckDir(t *testing.T) {
 	plist, err := GenerateHeartbeatPlist("test-conductor", 15)
 	if err != nil {
+		if strings.Contains(err.Error(), "not found in PATH") {
+			t.Skipf("skipping: %v", err)
+		}
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if strings.Contains(plist, "__PATH__") {
@@ -1017,6 +1020,9 @@ func TestGenerateHeartbeatPlist_IncludesAgentDeckDir(t *testing.T) {
 func TestGenerateLaunchdPlist_IncludesAgentDeckDir(t *testing.T) {
 	plist, err := GenerateLaunchdPlist()
 	if err != nil {
+		if strings.Contains(err.Error(), "not found in PATH") {
+			t.Skipf("skipping: %v", err)
+		}
 		t.Fatalf("unexpected error: %v", err)
 	}
 	// Verify no __PATH__ placeholder remains
