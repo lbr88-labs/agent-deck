@@ -9,9 +9,9 @@ Requirements for patch release v0.26.2 Stability Fixes. Each maps to roadmap pha
 
 ### Release Pipeline
 
-- [ ] **REL-01**: Install script successfully downloads and installs the current release
-- [ ] **REL-02**: CI workflow validates that all platform assets exist before publishing a release
-- [ ] **REL-03**: v0.26.2 release includes all 4 platform binaries (darwin_amd64, darwin_arm64, linux_amd64, linux_arm64)
+- [x] **REL-01**: Install script successfully downloads and installs the current release
+- [x] **REL-02**: CI workflow validates that all platform assets exist before publishing a release
+- [x] **REL-03**: v0.26.2 release includes all 4 platform binaries (darwin_amd64, darwin_arm64, linux_amd64, linux_arm64)
 
 ### Slack Bridge
 
@@ -20,8 +20,8 @@ Requirements for patch release v0.26.2 Stability Fixes. Each maps to roadmap pha
 
 ### Key Input
 
-- [ ] **KEY-01**: Uppercase/shifted key shortcuts (M, R, F, etc.) trigger on Wayland compositors
-- [ ] **KEY-02**: Uppercase characters can be typed in TUI text input fields on Wayland
+- [x] **KEY-01**: Uppercase/shifted key shortcuts (M, R, F, etc.) trigger on Wayland compositors
+- [x] **KEY-02**: Uppercase characters can be typed in TUI text input fields on Wayland
 
 ## Future Requirements
 
@@ -59,13 +59,13 @@ Which phases cover which requirements. Updated during roadmap creation.
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| REL-01 | Phase 17 | Pending |
-| REL-02 | Phase 17 | Pending |
-| REL-03 | Phase 17 | Pending |
+| REL-01 | Phase 17 | Complete |
+| REL-02 | Phase 17 | Complete |
+| REL-03 | Phase 17 | Complete |
 | SLACK-01 | Phase 17 | Pending |
 | SLACK-02 | Phase 17 | Pending |
-| KEY-01 | Phase 18 | Pending |
-| KEY-02 | Phase 18 | Pending |
+| KEY-01 | Phase 18 | Complete |
+| KEY-02 | Phase 18 | Complete |
 
 **Coverage:**
 - v0.26.2 requirements: 7 total

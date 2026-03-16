@@ -58,7 +58,7 @@ Original scope had Phases 11-15. Rescoped after #320 and #318 closed, and new cr
 **v0.26.2 Stability Fixes (Phases 17-18) — started 2026-03-16**
 
 - [ ] **Phase 17: Release Pipeline & Slack Bridge** - CI empty-release guard + install script verification (#332); GFM-to-mrkdwn conversion in Slack bridge (#331)
-- [ ] **Phase 18: Wayland Key Input** - Uppercase/shifted key events and text input on Wayland compositors (#340)
+- [x] **Phase 18: Wayland Key Input** - Uppercase/shifted key events and text input on Wayland compositors (#340) (completed 2026-03-16)
 
 ## Phase Details
 
@@ -166,7 +166,7 @@ Plans:
   2. A CI workflow job fails the release if any of the 4 expected platform assets (darwin_amd64, darwin_arm64, linux_amd64, linux_arm64) are missing from the GitHub release
   3. A Slack message sent via the bridge with GFM headers, bold, strikethrough, links, and bullets renders visibly formatted in the Slack channel (not raw markdown symbols)
   4. A code block or inline code sent via the bridge appears as a Slack code block or inline code (backtick-preserved, monospace rendering)
-**Plans:** 2 plans
+**Plans:** 1/2 plans executed
 Plans:
 - [ ] 17-01-PLAN.md — CI release asset validation + install script error handling (REL-01, REL-02, REL-03)
 - [ ] 17-02-PLAN.md — GFM-to-mrkdwn converter in Slack bridge template (SLACK-01, SLACK-02)
@@ -179,7 +179,7 @@ Plans:
 **Success Criteria** (what must be TRUE):
   1. Pressing Shift+M, Shift+R, Shift+F and other uppercase-bound TUI shortcuts on a Wayland compositor triggers the expected action (same behavior as X11/macOS)
   2. Typing uppercase characters in the session name, search, and other TUI text input fields on Wayland produces the correct uppercase character in the field
-**Plans:** 1 plan
+**Plans:** 1/1 plans complete
 Plans:
 - [ ] 18-01-PLAN.md — Kitty keyboard protocol disable + CSI u compatibility layer (KEY-01, KEY-02)
 
@@ -203,5 +203,5 @@ Plans:
 | 14. Detection & Sandbox | v1.3 | 2/2 | Complete | 2026-03-13 |
 | 15. Mouse, Theme & Polish | v1.3 | 2/3 | In Progress | - |
 | 16. Comprehensive Testing | v1.3 | 0/TBD | Not started | - |
-| 17. Release Pipeline & Slack Bridge | v0.26.2 | 0/2 | Not started | - |
-| 18. Wayland Key Input | v0.26.2 | 0/1 | Not started | - |
+| 17. Release Pipeline & Slack Bridge | 1/2 | In Progress|  | - |
+| 18. Wayland Key Input | 1/1 | Complete   | 2026-03-16 | - |
