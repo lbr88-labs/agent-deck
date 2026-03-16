@@ -40,14 +40,10 @@ Reliable terminal session management for AI coding agents, with conductor orches
 
 ### Active
 
-<!-- v1.3 Session Reliability & Resume -->
-- [ ] Sandbox config persisted through SQLite lifecycle (#320)
-- [ ] Auto-start works on WSL/Linux without TTY redirect breaking tools (#311)
-- [ ] Resumed sessions deduplicated by conversation ID (#224)
-- [ ] Stopped sessions visible and resumable in TUI (#307)
-- [ ] Settings panel exposes custom tools (#318)
-- [ ] Mouse/trackpad support for list navigation and scrolling (#262, #254)
-- [ ] auto_cleanup option documented (#228)
+<!-- v0.26.2 Stability Fixes -->
+- [ ] Release pipeline verified: install script works, CI prevents empty releases (#332)
+- [ ] Slack bridge converts GFM to Slack mrkdwn before sending (#331)
+- [ ] Uppercase/shifted key events work on Wayland in TUI (#340)
 
 ### Out of Scope
 
@@ -60,7 +56,7 @@ Reliable terminal session management for AI coding agents, with conductor orches
 
 - **Shipped milestones:** v1.0 (skills reorg, 3 phases), v1.1 (integration testing, 3 phases), v1.2 (conductor reliability, 4 phases)
 - **Total phases completed:** 10 (21 plans)
-- **Current milestone:** v1.3 Session Reliability & Resume — fixing critical session lifecycle bugs and UX gaps
+- **Current milestone:** v0.26.2 Stability Fixes — 3 bug fixes for release pipeline, Slack bridge, and Wayland key handling
 - **Codebase:** ~114K LOC Go
 - **Tech stack:** Go 1.24+, tmux, Bubble Tea, SQLite (modernc.org/sqlite)
 - **Conductor operations:** 6 conductors in daily use, top reliability issues fixed in v1.2
@@ -89,18 +85,14 @@ Reliable terminal session management for AI coding agents, with conductor orches
 - **Public repo:** No API keys, tokens, or personal data in test fixtures
 
 ---
-## Current Milestone: v1.3 Session Reliability & Resume
+## Current Milestone: v0.26.2 Stability Fixes
 
-**Goal:** Fix critical session lifecycle bugs (sandbox persistence, auto-start, resume dedup) and improve resume UX, mouse support, and settings completeness.
+**Goal:** Fix three production stability bugs: release pipeline asset verification, Slack bridge markdown formatting, and Wayland uppercase key handling.
 
 **Target features:**
-- Sandbox config persistence through SQLite (#320)
-- Auto-start TTY fix for WSL/Linux (#311)
-- Session deduplication on resume (#224)
-- Resume UX: stopped sessions in TUI (#307)
-- Settings custom tools completion (#318)
-- Mouse/trackpad support (#262, #254)
-- auto_cleanup documentation (#228)
+- Release pipeline verification and empty-release prevention (#332)
+- Slack bridge GFM-to-mrkdwn conversion (#331)
+- Wayland uppercase/shifted key event handling (#340)
 
 ---
-*Last updated: 2026-03-12 after v1.3 milestone start*
+*Last updated: 2026-03-16 after v0.26.2 milestone start*

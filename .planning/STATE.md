@@ -1,16 +1,16 @@
 ---
 gsd_state_version: 1.0
-milestone: v1.0
-milestone_name: milestone
+milestone: v0.26.2
+milestone_name: Stability Fixes
 status: planning
-stopped_at: Completed 13-02-PLAN.md (Sync Session IDs from Tmux)
-last_updated: "2026-03-13T07:58:56.116Z"
-last_activity: "2026-03-12 — Milestone rescoped: removed completed #320/#318, added #324/#322/#266/#255/#225/#216"
+stopped_at: ""
+last_updated: "2026-03-16"
+last_activity: "2026-03-16 — Milestone v0.26.2 started"
 progress:
-  total_phases: 6
-  completed_phases: 2
-  total_plans: 11
-  completed_plans: 8
+  total_phases: 0
+  completed_phases: 0
+  total_plans: 0
+  completed_plans: 0
   percent: 0
 ---
 
@@ -18,37 +18,21 @@ progress:
 
 ## Project Reference
 
-See: .planning/PROJECT.md (updated 2026-03-12)
+See: .planning/PROJECT.md (updated 2026-03-16)
 
 **Core value:** Reliable terminal session management for AI coding agents with conductor orchestration
-**Current focus:** v1.3 Session Reliability & Resume (rescoped 2026-03-12)
+**Current focus:** v0.26.2 Stability Fixes
 
 ## Current Position
 
 ```
-Phase:    11 — MCP Proxy Reliability
+Phase:    Not started (defining requirements)
 Plan:     —
-Status:   Milestone rescoped, ready for Phase 11 planning
-Progress: [----------] 0% (0/6 phases)
+Status:   Defining requirements
+Progress: [----------] 0%
 ```
 
-Last activity: 2026-03-12 — Milestone rescoped: removed completed #320/#318, added #324/#322/#266/#255/#225/#216
-
-## Rescoping Summary (2026-03-12)
-
-**Removed (already shipped):**
-- #320 Sandbox config persistence — CLOSED 2026-03-12 (was Phase 11 Storage Foundation)
-- #318 Settings default tool icons — CLOSED 2026-03-11 (was in Phase 15)
-
-**Added (new/promoted):**
-- #324 MCP socket proxy request ID collision — CRITICAL, new Phase 11
-- #322 Light theme dark background bleed — moved to Phase 15
-- #266 tmux set-environment in Docker — unblocked by #320 fix, Phase 14
-- #255 OpenCode waiting status detection — Phase 14
-- #225 Redundant heartbeat cleanup — Phase 15
-- #216 Support existing worktree — Phase 15
-
-**New phase:** Phase 16 (Comprehensive Testing) added for full regression coverage
+Last activity: 2026-03-16 — Milestone v0.26.2 started
 
 ## Accumulated Context
 
@@ -59,52 +43,8 @@ Full decision log in PROJECT.md Key Decisions table.
 - [Phase 12]: Dedup call placed outside saveInstances() under explicit instancesMu.Lock() to avoid re-entrant lock deadlock
 - [Phase 15-mouse-theme-polish]: Mouse wheel routing uses overlay priority guard in Home.Update(); ScrollUp/ScrollDown helpers on SettingsPanel and MCPDialog; tea.MouseButtonWheelUp/Down (not deprecated constants)
 - [Phase 15-mouse-theme-polish]: ANSI background stripping in preview pane uses compiled regexp covering standard/bright/256-color/truecolor backgrounds; applied per-line only when ThemeLight active
-- [Phase 15-mouse-theme-polish]: Worktree reuse silently updates worktreePath to existing path rather than erroring, keeping session WorktreePath accurate
-- [Phase 15-mouse-theme-polish]: Heartbeat OS daemon guard uses filesystem glob (launchd plist / systemd timer) rather than config lookup for robustness
 - [Phase 14-detection-sandbox]: Pulse chars only indicate busy when no prompt-indicating strings present; authoritative busy strings always take priority over pulse char guard
-- [Phase 14-detection-sandbox]: Apply tmux set-environment removal universally (not conditionally on IsSandboxed()) — host-side SetEnvironment is idempotent for non-sandbox sessions
-- [Phase 13-auto-start-platform]: generateUUID uses crypto/rand directly (no google/uuid dependency); pane-ready timeout non-fatal with Warn logging; tmux set-environment removed from shell strings entirely
-- [Phase 13-auto-start-platform]: SyncSessionIDsFromTmux: Restart path does not need SyncSessionIDsFromTmux since Restart() uses respawn-pane atomically without destroying tmux session
-- [Phase 13-auto-start-platform]: SyncSessionIDsFromTmux: ClaudeDetectedAt only set when zero to preserve existing timestamps for fork eligibility
-
-### v1.3 Phase Notes
-
-**Phase 11 (MCP Proxy Reliability):**
-- #324 is critical for production multi-session workflows; proxy request IDs collide when multiple sessions share a proxy
-- Investigate `internal/mcppool/` for the ID generation and routing logic
-- Must test under race detector with concurrent tool calls
-
-**Phase 12 (Session List & Resume UX):**
-- Combines original Phase 12 (visibility) and Phase 13 (dedup) since they're closely coupled
-- Audit all StatusStopped exclusion sites before writing new render code
-- session_picker_dialog.go:41 already correctly excludes stopped sessions for conductor picker; preserve this behavior
-- Preview pane differentiation: stopped = user intent + resume affordance; error = crash + distinct guidance
-- UpdateClaudeSessionsWithDedup must run in-memory immediately at resume site
-
-**Phase 13 (Auto-Start & Platform):**
-- Root cause on WSL/Linux NOT confirmed without reproduction; three candidate failure modes identified
-- Flag for hands-on debugging session on WSL/Linux before writing implementation tasks
-- Correct session ID propagation depends on Phase 12 dedup being stable
-
-**Phase 14 (Detection & Sandbox):**
-- #266 was blocked by #320, now unblocked since sandbox persistence is fixed
-- #255 requires understanding OpenCode's question tool prompt format for status detection
-- Both are relatively contained changes
-
-**Phase 15 (Mouse, Theme & Polish):**
-- Fully independent of Phases 12-14; can be parallelized with them
-- Use tea.MouseButtonWheelUp / tea.MouseButtonWheelDown (NOT deprecated tea.MouseWheelUp/Down)
-- WithMouseCellMotion already active in main.go:468
-- Mouse handler must be O(1), no blocking I/O (Bubble Tea issue #1047 risk)
-- Light theme (#322): audit hardcoded color values in preview and session rendering
-- Heartbeat (#225): consolidate systemd timer and bridge.py heartbeat_loop
-- Worktree (#216): check for existing worktree before creating new one
-
-**Phase 16 (Comprehensive Testing):**
-- Runs after all implementation phases
-- Must cover every fix with at least one integration test
-- Race detector mandatory for MCP proxy tests
-- Goal: robust regression suite that prevents future breakage
+- [Phase 13-auto-start-platform]: generateUUID uses crypto/rand directly (no google/uuid dependency); pane-ready timeout non-fatal with Warn logging
 
 ### Pending Todos
 
@@ -113,11 +53,10 @@ None.
 ### Blockers/Concerns
 
 - Exit 137 is a known Claude Code limitation. Mitigated via status gating, documented in conductor CLAUDE.md.
-- Phase 13 (auto-start TTY fix) root cause on WSL/Linux not confirmed; requires reproduction before planning.
-- #324 (MCP proxy) is the most critical issue: can cause tool call hangs in production multi-session workflows.
+- #340 (Wayland keys) may require upstream Bubble Tea investigation.
 
 ## Session Continuity
 
-Last session: 2026-03-13T07:53:25.085Z
-Stopped at: Completed 13-02-PLAN.md (Sync Session IDs from Tmux)
+Last session: 2026-03-16
+Stopped at: —
 Resume file: None
