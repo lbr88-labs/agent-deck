@@ -27,7 +27,7 @@ func (s *Store) WriteCostEvent(ev CostEvent) error {
 		INSERT INTO cost_events (id, session_id, timestamp, model, input_tokens, output_tokens,
 			cache_read_tokens, cache_write_tokens, cost_microdollars)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		ev.ID, ev.SessionID, ev.Timestamp.UTC(), ev.Model,
+		ev.ID, ev.SessionID, ev.Timestamp.UTC().Format(time.RFC3339), ev.Model,
 		ev.InputTokens, ev.OutputTokens, ev.CacheReadTokens, ev.CacheWriteTokens,
 		ev.CostMicrodollars,
 	)
@@ -40,7 +40,7 @@ func (s *Store) WriteCostEventTx(tx *sql.Tx, ev CostEvent) error {
 		INSERT INTO cost_events (id, session_id, timestamp, model, input_tokens, output_tokens,
 			cache_read_tokens, cache_write_tokens, cost_microdollars)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		ev.ID, ev.SessionID, ev.Timestamp.UTC(), ev.Model,
+		ev.ID, ev.SessionID, ev.Timestamp.UTC().Format(time.RFC3339), ev.Model,
 		ev.InputTokens, ev.OutputTokens, ev.CacheReadTokens, ev.CacheWriteTokens,
 		ev.CostMicrodollars,
 	)
@@ -239,6 +239,57 @@ func (s *Store) querySum(where string, args ...any) (CostSummary, error) {
 		&cs.EventCount,
 	)
 	return cs, err
+}
+
+// DailyBySession returns daily costs for a specific session.
+func (s *Store) DailyBySession(sessionID string, from, to time.Time) ([]DailyCost, error) {
+	rows, err := s.db.Query(`
+		SELECT date(timestamp), SUM(cost_microdollars)
+		FROM cost_events
+		WHERE session_id = ? AND timestamp >= ? AND timestamp < ?
+		GROUP BY date(timestamp)
+		ORDER BY date(timestamp)`,
+		sessionID, from.UTC().Format(time.RFC3339), to.UTC().Format(time.RFC3339))
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var result []DailyCost
+	for rows.Next() {
+		var dateStr string
+		var dc DailyCost
+		if err := rows.Scan(&dateStr, &dc.CostMicrodollars); err != nil {
+			return nil, err
+		}
+		dc.Date, _ = time.Parse("2006-01-02", dateStr)
+		result = append(result, dc)
+	}
+	return result, rows.Err()
+}
+
+// CostByModelForSession returns cost per model for a specific session.
+func (s *Store) CostByModelForSession(sessionID string) (map[string]int64, error) {
+	rows, err := s.db.Query(`
+		SELECT model, SUM(cost_microdollars)
+		FROM cost_events
+		WHERE session_id = ?
+		GROUP BY model`, sessionID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	result := make(map[string]int64)
+	for rows.Next() {
+		var model string
+		var cost int64
+		if err := rows.Scan(&model, &cost); err != nil {
+			return nil, err
+		}
+		result[model] = cost
+	}
+	return result, rows.Err()
 }
 
 func repeatArg(n int) string {
