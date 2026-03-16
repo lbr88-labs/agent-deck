@@ -2018,3 +2018,63 @@ func TestGetHeartbeatInterval_ZeroMeansDisabled(t *testing.T) {
 		})
 	}
 }
+
+// --- Slack markdown-to-mrkdwn converter tests ---
+
+func TestBridgeTemplate_ContainsMarkdownToSlackConverter(t *testing.T) {
+	template := conductorBridgePy
+
+	// Function definition must exist.
+	if !strings.Contains(template, "def _markdown_to_slack(text: str) -> str:") {
+		t.Error("template should contain _markdown_to_slack function definition")
+	}
+
+	// Header conversion regex.
+	if !strings.Contains(template, `^#{1,6}\s+`) {
+		t.Error("template should contain GFM header regex ^#{1,6}\\s+")
+	}
+
+	// Bold conversion: **text** -> *text*.
+	if !strings.Contains(template, `\*\*(.+?)\*\*`) {
+		t.Error("template should contain bold regex \\*\\*(.+?)\\*\\*")
+	}
+
+	// Strikethrough conversion: ~~text~~ -> ~text~.
+	if !strings.Contains(template, `~~(.+?)~~`) {
+		t.Error("template should contain strikethrough regex ~~(.+?)~~")
+	}
+
+	// Link conversion: [text](url) -> <url|text>.
+	if !strings.Contains(template, `\[([^\]]+)\]\(([^)]+)\)`) {
+		t.Error("template should contain link regex \\[([^\\]]+)\\]\\(([^)]+)\\)")
+	}
+
+	// Bullet list conversion.
+	if !strings.Contains(template, `^(\s*)[-*]\s+`) {
+		t.Error("template should contain bullet list regex ^(\\s*)[-*]\\s+")
+	}
+
+	// Code block protection.
+	if !strings.Contains(template, "code_blocks = []") {
+		t.Error("template should contain code block protection list")
+	}
+
+	// Inline code protection.
+	if !strings.Contains(template, "inline_codes = []") {
+		t.Error("template should contain inline code protection list")
+	}
+}
+
+func TestBridgeTemplate_SafeSayConvertsMarkdown(t *testing.T) {
+	template := conductorBridgePy
+
+	// _safe_say must call _markdown_to_slack.
+	if !strings.Contains(template, "_markdown_to_slack(kwargs[\"text\"])") {
+		t.Error("_safe_say should apply _markdown_to_slack to kwargs[\"text\"]")
+	}
+
+	// The conversion must be conditional on "text" being in kwargs.
+	if !strings.Contains(template, `if "text" in kwargs:`) {
+		t.Error("_safe_say should guard _markdown_to_slack call with 'if \"text\" in kwargs:'")
+	}
+}
