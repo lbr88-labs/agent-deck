@@ -63,8 +63,13 @@ func DefaultRawPatterns(toolName string) *RawPatterns {
 				"building tool call...",
 				"waiting for tool response...",
 			},
-			PromptPatterns: []string{"Ask anything", "press enter to send"},
-			SpinnerChars:   []string{"█", "▓", "▒", "░"},
+			PromptPatterns: []string{
+				"Ask anything",
+				"press enter to send",
+				"enter submit", // question tool / permission approval help bar (#255)
+				"esc dismiss",  // question tool cancel affordance (#255)
+			},
+			SpinnerChars: []string{"█", "▓", "▒", "░"},
 		}
 	case "codex":
 		return &RawPatterns{

@@ -1,210 +1,230 @@
-# Stack Research: Integration Testing Framework
+# Stack Research: v1.3 Session Reliability & Resume
 
-**Domain:** Integration testing for Go tmux-based session manager
-**Researched:** 2026-03-06
-**Confidence:** HIGH
+**Domain:** Terminal session manager TUI (Go + Bubble Tea + tmux), subsequent milestone
+**Researched:** 2026-03-12
+**Confidence:** HIGH — verified against module cache, live source files, and existing code
+
+---
+
+## Context: Milestone-Scoped Research
+
+This is a SUBSEQUENT MILESTONE research pass for v1.3. The foundational stack (Go 1.24, Bubble Tea, tmux, modernc.org/sqlite WAL) is validated and unchanged. This document covers ONLY the stack additions or changes needed for five v1.3 features:
+
+1. Sandbox config persistence in SQLite (#320)
+2. TTY handling for auto-start on WSL/Linux (#311)
+3. Session deduplication by conversation ID on resume (#224)
+4. Mouse/trackpad support in Bubble Tea TUI (#262, #254)
+5. Resume UX: stopped sessions visible and resumable (#307)
+
+**Bottom line: No new dependencies required. All five features are implementable with existing packages.**
+
+---
+
+## What Already Exists (Validated, No Changes Needed)
+
+| Area | Current State | Gap for v1.3 |
+|------|--------------|--------------|
+| `SandboxConfig` in `InstanceData` | Already marshaled to JSON in `tool_data` column; `TestStorageSaveWithGroups_PersistsSandboxConfig` passes | Bug is in load-to-restart data flow, not schema |
+| `UpdateClaudeSessionsWithDedup()` | Runs at save, load, and session creation | Not called in the resume code path |
+| `tea.WithMouseCellMotion()` | Already passed to `tea.NewProgram` in `main.go:468` | Zero `case tea.MouseMsg` handlers exist |
+| `StatusStopped` | Defined, persisted, has its own lipgloss style | Excluded from session picker; help text unclear |
+| `golang.org/x/term v0.37.0` | Already imported in `main.go`; `term.IsTerminal()` used in `drainStdin()` | Available for TTY detection in CLI paths |
+| `mattn/go-isatty v0.0.20` | Transitive dependency via bubbletea/termenv | No direct use needed; `x/term` suffices |
+| `creack/pty v1.1.24` | Used in `web/terminal_bridge.go` and `tmux/pty.go` | Not relevant to v1.3 features |
+
+---
 
 ## Recommended Stack
 
-### Core Technologies
+### Core Technologies (No Changes)
 
-No new core dependencies. The integration testing framework should be built entirely on what agent-deck already has, plus Go's standard `testing` package. This is deliberate: adding a test framework dependency (like goconvey, ginkgo, or goblin) would introduce cognitive overhead for zero gain. The existing patterns in the codebase are already well-established and understood.
+| Technology | Version | Purpose | Status |
+|------------|---------|---------|--------|
+| Go | 1.24+ | Runtime | Validated, no change |
+| `charmbracelet/bubbletea` | v1.3.10 | TUI framework | Validated, no change |
+| `charmbracelet/bubbles` | v0.21.0 | TUI input components | Validated, no change |
+| `charmbracelet/lipgloss` | v1.1.0 | Styling | Validated, no change |
+| `modernc.org/sqlite` | v1.44.3 | SQLite, no CGO | Validated, no change |
+| `golang.org/x/term` | v0.37.0 | Terminal detection (`IsTerminal`) | Already direct dep, used in v1.3 |
 
-| Technology | Version | Purpose | Why Recommended |
-|------------|---------|---------|-----------------|
-| Go `testing` (stdlib) | Go 1.24+ | Test execution, subtests, helpers, cleanup | Already the backbone. `t.Run`, `t.Cleanup`, `t.Helper`, `testing.Short()`, `t.Parallel` cover all integration test lifecycle needs |
-| `stretchr/testify` | v1.11.1 (already in go.mod) | Assertions (`assert`) and fail-fast assertions (`require`) | Already used extensively across 80+ test files. `require` for preconditions, `assert` for verification. No reason to switch |
-| `golang.org/x/sync` | v0.19.0 (already in go.mod) | `errgroup` for concurrent test orchestration | Already a dependency. `errgroup.Group` with `SetLimit` is the right tool for multi-session parallel test scenarios |
-| tmux (system) | 3.x+ | Real session management in integration tests | Integration tests MUST use real tmux. The existing `skipIfNoTmuxServer(t)` pattern handles graceful degradation |
+### Supporting Libraries (No New Additions)
 
-### Supporting Libraries
+No new `go get` commands. All five features use existing dependencies.
 
-| Library | Version | Purpose | When to Use |
-|---------|---------|---------|-------------|
-| `testify/suite` | v1.11.1 (part of testify, already available) | Test suite lifecycle (SetupSuite/TeardownSuite/SetupTest) | Use for conductor orchestration test suites that need shared tmux infrastructure across multiple test methods. NOT for simple one-off integration tests |
-| `modernc.org/sqlite` | v1.44.3 (already in go.mod) | In-memory test databases via `t.TempDir()` | Already used in `newTestStorage(t)`. Reuse that pattern for integration tests needing persistence |
-| `fsnotify` | v1.9.0 (already in go.mod) | Event watcher tests (filesystem-based cross-session events) | Already used in `StatusEventWatcher` tests. Same pattern applies for conductor event testing |
+---
 
-### Development Tools
+## Feature-by-Feature Stack Analysis
 
-| Tool | Purpose | Notes |
-|------|---------|-------|
-| `go test -run` | Selective test execution | Use `go test -run TestIntegration_ ./...` to run only integration tests |
-| `go test -short` | Skip slow integration tests | Already established: `testing.Short()` checks exist in fork_integration_test.go |
-| `go test -count=1` | Disable test caching | Critical for integration tests that depend on tmux state; cached results would hide real failures |
-| `go test -timeout 120s` | Extended timeout for multi-session tests | Default 30s is too short for conductor orchestration tests that wait for session transitions |
-| `go test -v` | Verbose output for debugging | Integration tests should use `t.Logf` liberally to trace session state transitions |
+### Feature 1: Sandbox Config Persistence (#320)
 
-## No New Dependencies Required
+**Problem:** When a sandboxed session is stopped and restarted, the session may lose its `SandboxConfig`. The schema already supports persistence — the bug is in the data flow from SQLite load to session restart.
 
-This is the key finding. The codebase already contains everything needed:
+**Root cause to investigate:** `prepareCommand()` in `instance.go:4725` calls `wrapForSandbox()` which reads `inst.Sandbox`. If `inst.Sandbox` is nil at restart time (because it was not loaded from storage, or was cleared during a stop operation), the restart runs without sandbox wrapping. Verify the `Load()` → `convertToInstances()` → `inst.Sandbox` chain survives a stop/restart cycle.
 
+**Stack requirement:** None. The `Sandbox *SandboxConfig` field in `Instance` and the `decodeSandboxConfig()` function in `storage.go:786` already do the right thing. Fix is in ensuring `inst.Sandbox` is populated before `prepareCommand()` is called on restart.
+
+**Integration point:** `cmd/agent-deck/session_cmd.go` restart handler and/or `internal/ui/home.go` session restart message handler — verify `inst.Sandbox` is not nil.
+
+**Confidence:** HIGH — schema confirmed correct via `TestStorageSaveWithGroups_PersistsSandboxConfig`; bug is behavioral.
+
+---
+
+### Feature 2: TTY Auto-Start Fix for WSL/Linux (#311)
+
+**Problem:** `agent-deck session start` invoked from a non-interactive context (script, conductor) fails on WSL/Linux when the AI tool (claude, gemini) receives a broken TTY environment.
+
+**Mechanism understood:** `tmux new-session -d` creates a detached session with its own PTY. The tool inside has a real PTY from tmux. The issue is likely one of:
+- Agent-deck's own stdio (not a TTY when called from a script) causing agent-deck itself to error before launching tmux
+- Environment variable leakage (`NO_COLOR`, missing `TERM`) from the non-TTY parent context contaminating the tmux session environment
+- `wrapIgnoreSuspend()` adding `bash -c 'stty susp undef; ...'` which fails in some Linux configurations
+
+**Stack requirement:** `golang.org/x/term` is already imported. `term.IsTerminal(int(os.Stdin.Fd()))` is the correct check. No new packages needed.
+
+**Integration pattern:**
+```go
+// In CLI path before launching tmux:
+isInteractive := term.IsTerminal(int(os.Stdin.Fd()))
+// If !isInteractive, suppress agent-deck's own interactive prompts
+// The tool inside tmux always has its own PTY regardless
 ```
-go.mod (existing, no changes needed)
-  github.com/stretchr/testify v1.11.1    -> assert, require, suite
-  golang.org/x/sync v0.19.0              -> errgroup for parallel orchestration
-  modernc.org/sqlite v1.44.3             -> test databases
-  github.com/fsnotify/fsnotify v1.9.0    -> event file watching tests
-  github.com/gorilla/websocket v1.5.3    -> WebSocket integration tests
+
+**Confidence:** MEDIUM — exact failure mode of #311 is not documented in the available issue context files. The TTY detection approach is correct; the specific fix requires reproducing on WSL/Linux. Flag this for hands-on debugging during implementation.
+
+---
+
+### Feature 3: Session Deduplication by Conversation ID (#224)
+
+**Problem:** When a user resumes a Claude conversation via `--resume session_id`, agent-deck may create a new `Instance` while the old one (with the same `ClaudeSessionID`) still exists, resulting in two visible entries sharing one Claude conversation.
+
+**Existing mechanism:** `UpdateClaudeSessionsWithDedup()` in `instance.go:4952` already handles dedup by `ClaudeSessionID`. It runs at save, load, and session creation (`sessionCreatedMsg`, `sessionForkedMsg`, `sessionImportedMsg` handlers in `home.go`). It is NOT called in the resume code path.
+
+**Stack requirement:** None. Add a `UpdateClaudeSessionsWithDedup()` call in the resume handler, or perform a targeted pre-check: before persisting a resumed session, verify no existing session already owns the target `ClaudeSessionID`. If one does, reuse or replace it instead of creating a new entry.
+
+**Integration point:** The `--resume <session_id>` flag is parsed in `internal/ui/claudeoptions.go` and `cmd/agent-deck/session_cmd.go`. The fix should run in the code path that creates the new `Instance` for a resumed session.
+
+**Confidence:** HIGH — mechanism exists and is documented; scope extension is straightforward.
+
+---
+
+### Feature 4: Mouse/Trackpad Support (#262, #254)
+
+**Problem:** `tea.WithMouseCellMotion()` is already enabled, so Bubble Tea receives mouse events. There are zero `case tea.MouseMsg` handlers in the codebase, so all scroll and click events are silently dropped.
+
+**Verified API (from module cache `/Users/ashesh/go/pkg/mod/github.com/charmbracelet/bubbletea@v1.3.10/mouse.go`):**
+
+```go
+// In Update() switch:
+case tea.MouseMsg:
+    switch msg.Button {
+    case tea.MouseButtonWheelUp:
+        // dispatch same logic as 'k' key
+    case tea.MouseButtonWheelDown:
+        // dispatch same logic as 'j' key
+    case tea.MouseButtonLeft:
+        if msg.Action == tea.MouseActionPress {
+            // click-to-select: map msg.Y to session list index
+        }
+    }
 ```
+
+**Deprecated constants to avoid:**
+The old `tea.MouseWheelUp` / `tea.MouseWheelDown` constants are deprecated as of v1.3.x. Use `msg.Button == tea.MouseButtonWheelUp` and `msg.Button == tea.MouseButtonWheelDown` instead.
+
+**Scrollable areas needing handlers (from issue #254):**
+1. Session list panel (`home.go`) — `viewOffset` + cursor system
+2. Help overlay — scroll offset
+3. Settings panel (`settings_panel.go`) — scroll offset
+4. Global search results/preview (`global_search.go`) — `previewScroll`
+5. Dialogs (NewDialog, ForkDialog, MCPDialog) — various scroll implementations
+
+**Click-to-select:** Issue #262 requests clicking on sessions to navigate. `msg.Y` is the terminal row; mapping Y to session index requires knowing each item's rendered Y position. The simplest approach: track `viewOffset` and item height, compute `targetIndex = viewOffset + (msg.Y - listStartRow)`.
+
+**Stack requirement:** None. Pure code addition to `internal/ui/home.go` (and potentially helper files for each scrollable area). No new packages.
+
+**Performance note:** `tea.WithMouseCellMotion()` (already in use) sends motion events only on cell boundary crossings, not on every pixel. Guard click handlers with `msg.Action == tea.MouseActionPress` to avoid processing drag/release events.
+
+**Confidence:** HIGH — fully verified against Bubble Tea v1.3.10 module cache.
+
+---
+
+### Feature 5: Resume UX — Stopped Sessions in TUI (#307)
+
+**Problem:** Stopped sessions exist in SQLite and display in the list with `SessionStatusStopped` styling, but the help text and UX flow do not make resume obvious. The session picker dialog (`session_picker_dialog.go:41`) explicitly excludes `StatusStopped` sessions from sub-session selection.
+
+**Existing state:**
+- `StatusStopped` is defined, persisted, and has a visual style
+- Help text in `home.go:9907` says "attach (will auto-start)" for Enter key on a session
+- The auto-start-on-attach path already exists in the session lifecycle
+
+**Fix scope:**
+- Ensure the main session list shows stopped sessions (verify no filtering at render time)
+- Clarify help text specifically for stopped sessions (e.g., "Enter — resume stopped session")
+- Consider allowing stopped sessions in the session picker for conductor scenarios (issue #307 asks for this)
+- The `agent-deck session start <title>` CLI command should already work for stopped sessions; verify and document
+
+**Stack requirement:** None. UI text and flow changes only.
+
+**Confidence:** HIGH — the infrastructure exists; the fix is UX and filtering changes.
+
+---
+
+## Installation
+
+No new packages required. All v1.3 features use existing dependencies.
+
+```bash
+# Verify no drift from expected deps:
+go mod verify
+
+# No new go get commands needed
+```
+
+---
 
 ## Alternatives Considered
 
-| Recommended | Alternative | Why Not |
-|-------------|-------------|---------|
-| `testing` + `testify` | Ginkgo/Gomega BDD framework | Massive dependency for BDD syntax sugar. Agent-deck's test style is idiomatic Go table-driven tests. Switching would create a split personality in the test codebase |
-| `testify/suite` (for complex suites only) | Custom suite implementation | testify/suite is already available (same module). It provides `SetupSuite`/`TeardownSuite` for shared tmux infrastructure, plus per-test `SetupTest`/`TeardownTest` for individual session cleanup |
-| Real tmux sessions | Docker containers (testcontainers-go) | tmux is the dependency under test. Wrapping it in Docker adds latency and complexity without value. The existing `skipIfNoTmuxServer(t)` pattern is correct |
-| Re-exec subprocess pattern | Interface-based mocking (`exec.Command`) | For CLI command tests (`session start`, `session send`), re-exec gives real subprocess behavior without mocking. For unit tests of internal functions, mocking is fine but already handled |
-| `testing.Short()` + `skipIf*` helpers | Build tags (`//go:build integration`) | Build tags require remembering `-tags=integration` and can confuse IDEs. The `skipIf*` pattern is already established and works with standard `go test` invocations |
-| `errgroup` | `sync.WaitGroup` | errgroup provides error propagation and context cancellation. For multi-session tests where any session failure should abort the test, errgroup is strictly better |
+| Feature | Alternative | Why Not |
+|---------|-------------|---------|
+| Mouse support | Upgrade to Bubble Tea v2 for new input API | v2 is alpha as of March 2026; v1.3.10 API is stable and sufficient |
+| Mouse support | Migrate to `charmbracelet/bubbles/list` for built-in mouse | Home model uses a custom viewport; migration is a large rewrite, not a v1.3 fix |
+| Session dedup | Add a new `conversation_id` SQLite column | Overcomplicated; `ClaudeSessionID` IS the conversation ID; dedup function already exists |
+| TTY fix | Add `github.com/mattn/go-isatty` as a direct dep | Already a transitive dep; `golang.org/x/term` (already a direct dep) covers `IsTerminal()` |
+| Sandbox persistence | New SQLite column for sandbox fields | Schema already supports it via `tool_data` JSON blob; adding columns requires a migration for no benefit |
+
+---
 
 ## What NOT to Use
 
 | Avoid | Why | Use Instead |
 |-------|-----|-------------|
-| `testcontainers-go` | tmux sessions ARE the thing being tested. Containerizing them adds a layer of indirection that hides real tmux behavior (socket paths, environment variables, pipe mode). The test would test "tmux in Docker" not "tmux on the developer's machine" | Direct tmux subprocess execution with `skipIfNoTmuxServer(t)` |
-| Ginkgo/Gomega | Would create two testing styles in one codebase. The 80+ existing test files use `testing.T` + testify. Migration cost is high, value is zero | Standard `testing` + `testify/assert` + `testify/require` |
-| `gomock` / `mockery` | Integration tests should exercise real components. Mocking tmux defeats the purpose. Unit tests that need mocking already work fine with manual interface implementations | Real tmux sessions for integration tests; thin interfaces with manual stubs for unit tests |
-| `go-testing-interface` (mitchellh) | Adds indirection to use `testing.TB` as a general interface. Not needed when all consumers are test code | Use `testing.TB` directly in test helper signatures |
-| `gnomock` | Designed for external services (databases, message queues) in Docker. Agent-deck's dependencies are tmux (local binary) and SQLite (embedded). No Docker services needed | Direct SQLite via `newTestStorage(t)`, direct tmux via `createTestSession(t, name)` |
+| `tea.WithMouseAllMotion()` | Sends a motion event for every mouse position change; floods the Update loop and interferes with text selection during tmux session attachment | Keep `tea.WithMouseCellMotion()` — fires only on cell boundary crossings |
+| Deprecated `tea.MouseWheelUp` / `tea.MouseWheelDown` constants | Deprecated in Bubble Tea v1.3.x; linter will flag them | Use `tea.MouseButtonWheelUp` / `tea.MouseButtonWheelDown` with `msg.Button ==` check |
+| New `conversation_id` SQLite schema column | Requires a migration, adds complexity, and duplicates `ClaudeSessionID` | Use existing `ClaudeSessionID` field and `UpdateClaudeSessionsWithDedup()` |
 
-## Stack Patterns by Test Category
-
-**Session lifecycle integration tests** (start, stop, restart, fork):
-- Use real tmux sessions via existing `NewInstance` + `inst.Start()`
-- Use `t.Cleanup(func() { _ = inst.Kill() })` for guaranteed cleanup
-- Use `skipIfNoTmuxServer(t)` at test entry
-- Reference: `status_lifecycle_test.go` is the gold standard
-
-**Conductor orchestration tests** (parent spawns children, sends commands, reads output):
-- Use `testify/suite` for shared tmux infrastructure
-- `SetupSuite`: create parent tmux session, initialize conductor state
-- `SetupTest`: create child sessions per test
-- `TeardownTest`: kill child sessions
-- `TeardownSuite`: kill parent, clean up conductor state files
-
-**Cross-session event tests** (session A notifies session B):
-- Use `fsnotify` + event files (already established in `event_watcher_test.go`)
-- Use channels with `select` + `time.After` for event delivery verification
-- Reference: `TestStatusEventWatcher_DetectsNewFile` pattern
-
-**CLI command integration tests** (testing `agent-deck session send`, `session output`):
-- Use the re-exec subprocess pattern from Go stdlib
-- Test binary re-launches itself with `-test.run=TestHelperProcess` and `GO_WANT_HELPER_PROCESS=1`
-- This avoids needing to build a separate binary for each test
-- Reference: Go stdlib `os/exec/exec_test.go`
-
-**Multi-tool session tests** (Claude, Gemini, OpenCode, Codex):
-- Use `skipIfNo{Tool}(t)` helpers (already exist for OpenCode)
-- Create `skipIfNoClaude(t)`, `skipIfNoGemini(t)` following same pattern
-- Tests gracefully skip when tools are not installed
-
-**Parallel multi-session tests:**
-- Use `errgroup.Group` with `SetLimit` to control concurrency
-- Each goroutine creates its own tmux session with unique suffix
-- Use `errgroup.WithContext` to cancel all sessions if any fails
-
-## Patterns to Build (Not Import)
-
-These are patterns to implement in `internal/testutil/`, not external packages:
-
-### 1. TmuxTestSession helper
-
-```go
-// internal/testutil/tmux.go
-func CreateTmuxSession(t testing.TB, suffix string) string {
-    t.Helper()
-    name := tmux.SessionPrefix + "inttest-" + suffix + "-" + randomHex(4)
-    cmd := exec.Command("tmux", "new-session", "-d", "-s", name)
-    require.NoError(t, cmd.Run())
-    t.Cleanup(func() {
-        _ = exec.Command("tmux", "kill-session", "-t", name).Run()
-    })
-    return name
-}
-```
-
-### 2. WaitForStatus helper
-
-```go
-// internal/testutil/wait.go
-func WaitForStatus(t testing.TB, inst *session.Instance, want string, timeout time.Duration) {
-    t.Helper()
-    deadline := time.After(timeout)
-    ticker := time.NewTicker(100 * time.Millisecond)
-    defer ticker.Stop()
-    for {
-        select {
-        case <-deadline:
-            t.Fatalf("timeout waiting for status %q, got %q", want, inst.GetStatusThreadSafe())
-        case <-ticker.C:
-            _ = inst.UpdateStatus()
-            if string(inst.GetStatusThreadSafe()) == want {
-                return
-            }
-        }
-    }
-}
-```
-
-### 3. CaptureOutput helper
-
-```go
-// internal/testutil/capture.go
-func WaitForPaneContent(t testing.TB, sessionName, needle string, timeout time.Duration) string {
-    t.Helper()
-    deadline := time.After(timeout)
-    ticker := time.NewTicker(200 * time.Millisecond)
-    defer ticker.Stop()
-    for {
-        select {
-        case <-deadline:
-            t.Fatalf("timeout waiting for %q in pane content", needle)
-            return ""
-        case <-ticker.C:
-            out, _ := exec.Command("tmux", "capture-pane", "-t", sessionName, "-p").Output()
-            if strings.Contains(string(out), needle) {
-                return string(out)
-            }
-        }
-    }
-}
-```
+---
 
 ## Version Compatibility
 
-| Package | Compatible With | Notes |
-|---------|-----------------|-------|
-| `testify v1.11.1` | Go 1.19+ | Latest stable v1. No v2 planned. Published Aug 2025 |
-| `golang.org/x/sync v0.19.0` | Go 1.18+ | errgroup stable API. No breaking changes expected |
-| `modernc.org/sqlite v1.44.3` | Go 1.21+ | CGO-free. Matches project's existing usage |
-| tmux 3.x | macOS/Linux | Agent-deck's tmux abstraction layer handles version differences |
+| Package | Version | Mouse API Notes |
+|---------|---------|-----------------|
+| `charmbracelet/bubbletea` | v1.3.10 | `tea.MouseMsg`, `tea.MouseButtonWheelUp/Down`, `tea.MouseButtonLeft`, `msg.Action`, `msg.X`, `msg.Y` are all current and not deprecated |
+| `charmbracelet/bubbletea` | v1.3.10 | Old `tea.MouseEventType` constants (`tea.MouseWheelUp`, etc.) are deprecated — do not use in new code |
 
-## Integration with Existing Test Infrastructure
-
-Critical: the integration test framework MUST preserve these existing patterns:
-
-| Existing Pattern | Location | Integration Requirement |
-|-----------------|----------|------------------------|
-| `TestMain` with `AGENTDECK_PROFILE=_test` | `*/testmain_test.go` (4 files) | All new test packages MUST include TestMain. Use `internal/testutil` helpers |
-| `skipIfNoTmuxServer(t)` | `session/testmain_test.go`, `tmux/testmain_test.go` | Extract to `internal/testutil/skip.go` for reuse across packages |
-| `cleanupTestSessions()` | `session/testmain_test.go` | Extend to clean up integration test sessions (pattern: `agentdeck_inttest-*`) |
-| `newTestStorage(t)` | `session/storage_test.go` | Reuse directly; do not create a competing pattern |
-| `createTestSession(t, suffix)` | `tmux/controlpipe_test.go` | Generalize into `internal/testutil/tmux.go` so all packages can create test tmux sessions |
-| `t.Cleanup` for tmux sessions | Throughout | Always use `t.Cleanup` (not `defer`) for tmux session teardown. It survives `t.Parallel()` and runs even on `t.FailNow()` |
+---
 
 ## Sources
 
-- [Go stdlib os/exec test patterns](https://go.dev/src/os/exec/exec_test.go) -- Re-exec subprocess pattern (HIGH confidence)
-- [Re-exec testing Go subprocesses](https://rednafi.com/go/test-subprocesses/) -- Practical re-exec guide (MEDIUM confidence)
-- [testify/suite docs](https://pkg.go.dev/github.com/stretchr/testify/suite) -- Suite lifecycle methods (HIGH confidence)
-- [testify assert/require docs](https://pkg.go.dev/github.com/stretchr/testify/assert) -- Assertion patterns (HIGH confidence)
-- [errgroup docs](https://pkg.go.dev/golang.org/x/sync/errgroup) -- Concurrent test orchestration (HIGH confidence)
-- [t.Cleanup vs defer in parallel tests](https://brandur.org/fragments/go-prefer-t-cleanup-with-parallel-subtests) -- Why t.Cleanup is better for tmux session teardown (MEDIUM confidence)
-- [Go build tags for test separation](https://mickey.dev/posts/go-build-tags-testing/) -- Evaluated and rejected in favor of skipIf* pattern (MEDIUM confidence)
-- [tmux programmatic testing patterns](https://www.drmaciver.com/2015/05/using-tmux-to-test-your-console-applications/) -- Using tmux as test infrastructure (MEDIUM confidence)
+- `go.mod` — confirmed all current deps and versions (HIGH confidence)
+- `/Users/ashesh/go/pkg/mod/github.com/charmbracelet/bubbletea@v1.3.10/mouse.go` — verified `MouseMsg`, `MouseButton`, `MouseButtonWheelUp/Down`, `MouseActionPress`, deprecation notice on `MouseEventType` (HIGH confidence)
+- `internal/session/storage.go`, `internal/statedb/migrate.go` — confirmed sandbox already in `tool_data` schema (HIGH confidence)
+- `internal/session/storage_test.go:260` — `TestStorageSaveWithGroups_PersistsSandboxConfig` confirms schema correct (HIGH confidence)
+- `internal/session/instance.go:UpdateClaudeSessionsWithDedup()` — confirmed dedup mechanism and call sites (HIGH confidence)
+- `cmd/agent-deck/main.go:468` — confirmed `tea.WithMouseCellMotion()` already enabled (HIGH confidence)
+- `.github-issue-context-254.json` — confirmed zero `MouseMsg` handlers in codebase (HIGH confidence)
+- `internal/ui/session_picker_dialog.go:41` — confirmed `StatusStopped` excluded from picker (HIGH confidence)
+- `.planning/PROJECT.md` — confirmed v1.3 feature scope (HIGH confidence)
 
 ---
-*Stack research for: Integration testing framework for agent-deck*
-*Researched: 2026-03-06*
+
+*Stack research for: agent-deck v1.3 Session Reliability & Resume*
+*Researched: 2026-03-12*

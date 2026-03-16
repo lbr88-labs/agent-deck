@@ -1,570 +1,362 @@
-# Architecture Research: Integration Testing Framework for Agent-Deck
+# Architecture Research: v1.3 Session Reliability and Resume
 
-**Domain:** Go integration testing for terminal session manager with tmux, multi-tool orchestration, and cross-session events
-**Researched:** 2026-03-06
-**Confidence:** HIGH
+**Domain:** Go TUI terminal session manager — adding persistence, TTY, dedup, UX, and input fixes to an existing app
+**Researched:** 2026-03-12
+**Confidence:** HIGH (all findings from direct codebase reads)
 
-## System Overview: How Integration Tests Fit the Existing Architecture
+## System Overview
 
 ```
-Existing Codebase                                   New Testing Infrastructure
-==================================                  ==================================
-
-cmd/agent-deck/                                     internal/integration/ (NEW PACKAGE)
-  main.go, session_cmd.go,                            testutil.go        -- shared helpers
-  conductor_cmd.go, ...                               fixtures.go        -- fixture management
-  *_test.go (unit + CLI tests)                        tmux_harness.go    -- tmux lifecycle
-                                                      storage_harness.go -- DB setup/teardown
-internal/session/                                     conductor_test.go  -- orchestration pipeline
-  instance.go, conductor.go,                          lifecycle_test.go  -- session start/stop/fork
-  claude.go, gemini.go, ...                           events_test.go     -- cross-session events
-  *_test.go (unit tests, some                         multitool_test.go  -- Claude/Gemini/OpenCode/Codex
-             integration tests)                       sleep_test.go      -- sleep/wait detection
-  testmain_test.go                                    skills_test.go     -- skills attachment
-                                                      testmain_test.go   -- profile isolation
-internal/tmux/
-  tmux.go, pipemanager.go, ...                      internal/testutil/ (EXTENDED)
-  *_test.go (unit tests)                              gitenv.go          -- existing
-  testmain_test.go                                    tmux.go            -- tmux session helpers (NEW)
-                                                      storage.go         -- test DB helpers (NEW)
-internal/statedb/                                     fixtures.go        -- fixture loading (NEW)
-  statedb.go, migrate.go
-  statedb_test.go
+┌────────────────────────────────────────────────────────────────┐
+│                        CLI Layer                               │
+│  cmd/agent-deck/main.go  |  session_cmd.go  |  hook_handler.go│
+└───────────────────────────────┬────────────────────────────────┘
+                                │
+┌───────────────────────────────▼────────────────────────────────┐
+│                        TUI Layer                               │
+│  internal/ui/home.go (~8500 lines)                             │
+│  ├── newdialog.go    (session creation form)                   │
+│  ├── settings_panel.go  (user preferences)                     │
+│  ├── mcp_dialog.go   (MCP attach/detach)                       │
+│  └── styles.go       (theme, layout modes)                     │
+└───────────────────────────────┬────────────────────────────────┘
+                                │
+┌───────────────────────────────▼────────────────────────────────┐
+│                      Session Data Layer                        │
+│  internal/session/instance.go  (Instance struct + Start/Stop)  │
+│  internal/session/storage.go   (SQLite save/load pipeline)     │
+│  internal/session/claude.go    (Claude session ID tracking)    │
+│  internal/session/config.go    (profile + config access)       │
+└─────────┬──────────────────────────────────┬───────────────────┘
+          │                                  │
+┌─────────▼──────────┐         ┌─────────────▼──────────────────┐
+│  tmux Abstraction  │         │    Persistence Layer            │
+│  internal/tmux/    │         │    internal/statedb/            │
+│  ├── tmux.go       │         │    ├── statedb.go (schema)      │
+│  ├── session.go    │         │    └── migrate.go (toolDataBlob)│
+│  └── pipe_manager  │         └────────────────────────────────┘
+└────────────────────┘
 ```
 
-### Key Decision: New `internal/integration/` Package
+### Component Responsibilities
 
-**Why a new package, not scattered in existing packages:**
-
-1. **Import graph freedom.** Integration tests need to import from `session`, `tmux`, `statedb`, and `cmd/agent-deck` simultaneously. Placing tests in any one of those packages creates circular dependency risks and limits what the test can access. A separate package imports everything it needs cleanly.
-
-2. **Clear boundary with existing unit tests.** The existing `*_test.go` files in `internal/session/` and `internal/tmux/` are package-internal tests (they use unexported functions like `newTestStorage`, `cleanupTestSessions`). Integration tests should test through public APIs only, exercising the same interfaces the CLI and TUI use.
-
-3. **Shared test infrastructure.** Integration tests share helpers (tmux harness, fixture loading, storage setup) that do not belong to any single production package. Putting them in `internal/testutil/` (shared helpers) and `internal/integration/` (test files) keeps concerns separated.
-
-4. **Existing precedent.** The `internal/web/handlers_ws_integration_test.go` already demonstrates integration-style tests in their own domain area. The conductor orchestration tests cross multiple domains, so they need their own home.
-
-**What stays in existing packages:** Tests that exercise internal (unexported) behavior remain where they are. The existing `fork_integration_test.go`, `notifications_integration_test.go`, and `opencode_integration_test.go` in `internal/session/` are fine because they test internal session logic. The new integration tests exercise cross-package behavior.
-
-## Component Responsibilities
-
-| Component | Responsibility | New vs Modified |
-|-----------|---------------|-----------------|
-| `internal/integration/` | Cross-package integration test files | **NEW** |
-| `internal/integration/testmain_test.go` | Profile isolation, tmux cleanup | **NEW** |
-| `internal/testutil/tmux.go` | Shared tmux session helpers (create, cleanup, wait-for-prompt) | **NEW** |
-| `internal/testutil/storage.go` | Shared test DB setup (extracted from `session/storage_test.go` pattern) | **NEW** |
-| `internal/testutil/fixtures.go` | Fixture loading and config builder helpers | **NEW** |
-| `internal/testutil/gitenv.go` | Git env cleanup (existing, unchanged) | **EXISTING** |
+| Component | Responsibility | v1.3 Change |
+|-----------|----------------|-------------|
+| `internal/statedb/migrate.go` | Defines `toolDataBlob` struct; `MarshalToolData`/`UnmarshalToolData` functions | Add sandbox fields to blob (Issue #320) |
+| `internal/session/storage.go` | Converts `Instance` to `statedb.InstanceRow` for save; reverses on load | Verify sandbox round-trip is complete (Issue #320) |
+| `internal/session/instance.go` | `Start()` builds and launches tmux session; `SandboxConfig` struct | `Start()` already reads `inst.Sandbox`; storage round-trip fix is in storage.go |
+| `internal/session/claude.go` | `UpdateClaudeSessionsWithDedup()` clears duplicate `ClaudeSessionID` fields | Call this at resume-creation time, not only at save time (Issue #224) |
+| `internal/ui/home.go` | `rebuildFlatItems()` filters session list; `Update()` handles all keyboard/mouse events | Show `StatusStopped` in list (Issue #307); add `tea.MouseMsg` handler (Issues #262, #254) |
+| `internal/ui/settings_panel.go` | `buildToolLists()` builds radio group for default tool | Add `Icon` from `ToolDef` to display names (Issue #318) |
+| `cmd/agent-deck/main.go` | Launches TUI with `tea.NewProgram`; platform-specific startup | Investigate TTY fd redirect on WSL/Linux (Issue #311) |
+| `internal/tmux/tmux.go` | `Session.Start()` creates the tmux session process | TTY fix may require a startup flag or env var (Issue #311) |
 
 ## Recommended Project Structure
 
+No new packages are needed for this milestone. All changes are targeted edits inside existing files.
+
 ```
 internal/
-├── integration/                    # Integration test package (NEW)
-│   ├── testmain_test.go            # TestMain: AGENTDECK_PROFILE=_test, tmux cleanup
-│   ├── helpers_test.go             # Package-local test helpers
-│   ├── conductor_test.go           # Conductor setup, meta.json, orchestration pipeline
-│   ├── lifecycle_test.go           # Session start/stop/fork/restart with real tmux
-│   ├── events_test.go              # StatusEvent write/watch cycle across sessions
-│   ├── multitool_test.go           # Tool-specific behavior (Claude, Gemini, OpenCode, Codex)
-│   ├── sleep_detection_test.go     # PromptDetector accuracy with real tmux pane content
-│   ├── skills_test.go              # Skills loading, attachment, triggering
-│   └── send_test.go                # session send/output CLI pipeline
+├── statedb/
+│   └── migrate.go          MODIFY: verify toolDataBlob includes sandbox fields
 │
-├── testutil/                       # Shared test helpers (EXTENDED)
-│   ├── gitenv.go                   # Existing: git env cleanup
-│   ├── tmux.go                     # NEW: TmuxHarness for session lifecycle
-│   ├── storage.go                  # NEW: TestStorage builder
-│   └── fixtures.go                 # NEW: Fixture helpers (conductor meta, config, etc.)
+├── session/
+│   ├── storage.go          MODIFY: verify Save/Load round-trips sandbox correctly
+│   └── instance.go         MODIFY: call dedup at resume-creation site (#224)
 │
-├── session/                        # Existing (unchanged test files)
-│   ├── testmain_test.go            # Existing profile isolation
-│   ├── conductor_test.go           # Existing unit tests for conductor logic
-│   ├── fork_integration_test.go    # Existing fork flow tests
-│   └── ...
-│
-└── tmux/                           # Existing (unchanged test files)
-    ├── testmain_test.go            # Existing profile isolation
-    └── ...
+├── ui/
+│   ├── home.go             MODIFY: stopped session visibility + mouse events
+│   └── settings_panel.go   MODIFY: custom tool icons in radio group
+
+cmd/agent-deck/
+└── main.go                 INVESTIGATE/MODIFY: WSL/Linux TTY launch path
+
+docs/ (or skills/agent-deck/references/)
+└── config-reference.md     MODIFY: document auto_cleanup field (#228)
 ```
-
-### Structure Rationale
-
-- **`internal/integration/`:** Dedicated package for cross-cutting integration tests. Uses `_test.go` suffix convention so Go only compiles these during `go test`. Imports from `session`, `tmux`, `statedb`, and `cmd/agent-deck` freely.
-- **`internal/testutil/`:** Shared helpers used by both the new integration package and existing package-level tests. Extracted patterns from the duplicated `newTestStorage()` and `skipIfNoTmuxServer()` functions that currently exist in both `session/` and `tmux/` testmain files.
 
 ## Architectural Patterns
 
-### Pattern 1: TmuxHarness (Session Lifecycle Management)
+### Pattern 1: toolDataBlob as the Single Serialization Contract (Issue #320)
 
-**What:** A test helper that manages tmux session creation, cleanup, and provides assertion-friendly APIs for pane content inspection.
-**When to use:** Any integration test that needs real tmux sessions.
-**Trade-offs:** Requires a running tmux server (tests skip gracefully without one via `skipIfNoTmuxServer`). Slower than mocks but catches real subprocess behavior.
+**What:** All per-session extended fields (Claude session IDs, Gemini settings, sandbox config, SSH, etc.) are packed into a single JSON blob stored in the `tool_data` column of the SQLite `instances` table. The blob is defined by `toolDataBlob` in `internal/statedb/migrate.go`. Two functions at the `statedb` package boundary marshal and unmarshal it: `MarshalToolData` and `UnmarshalToolData`.
 
-**Example:**
+**Existing flow — confirmed working:**
+
+```
+Instance.Sandbox (*SandboxConfig)
+    │
+    ▼  [storage.go:SaveWithGroups]
+json.Marshal(inst.Sandbox) → sandboxJSON (json.RawMessage)
+    │
+    ▼  [statedb.MarshalToolData]
+toolDataBlob{Sandbox: sandboxJSON, SandboxContainer: "..."} → tool_data column in SQLite
+    │
+    ▼  [statedb.UnmarshalToolData]
+sandboxJSON (json.RawMessage), sandboxContainer (string)
+    │
+    ▼  [storage.go:decodeSandboxConfig]
+Instance.Sandbox = *SandboxConfig{Enabled: true, Image: "..."}
+```
+
+**The round-trip already exists.** The storage code reads and writes sandbox. Issue #320 is a bug in the dialog submission path: `newdialog.go` collects `sandboxEnabled bool` but the dialog's `Result()` struct (`newDialogResult`) needs to be verified that it carries the sandbox bool through to `createSessionInGroupWithWorktreeAndOptions`, which creates `session.NewSandboxConfig("")` when `sandboxEnabled == true`. The question is whether the `sandboxEnabled` bool reaches the save call when resuming (restarting) an existing session rather than creating a new one. The `Restart()` path must read from the persisted `inst.Sandbox` and must not clear it.
+
+**When to use:** Any new per-session config field should go into `toolDataBlob` (not a new SQLite column). Add to the struct, `MarshalToolData`, `UnmarshalToolData`, and both call sites in `storage.go`.
+
+**Trade-offs:** Single JSON blob means no SQL queries on individual fields, but since these fields are only accessed when loading the full session list, this is acceptable. Adding a field is three-file edit (migrate.go + storage.go twice). No schema migration needed.
+
+### Pattern 2: Bubble Tea Message Flow for New Input Events (Issues #262, #254)
+
+**What:** The TUI runs a single event loop in `home.go:Update(msg tea.Msg)`. All state changes happen as responses to messages. Mouse events arrive as `tea.MouseMsg` values. The program already registers for mouse events via `tea.WithMouseCellMotion()` in `cmd/agent-deck/main.go` at line 468, so events are already being delivered to `Update()` — they just have no handler.
+
+**Adding wheel scroll — minimal change:**
+
 ```go
-// internal/testutil/tmux.go
-package testutil
-
-import (
-    "os/exec"
-    "testing"
-    "time"
-    "github.com/asheshgoplani/agent-deck/internal/tmux"
-)
-
-// TmuxHarness manages tmux sessions for integration tests.
-// All sessions use a unique prefix to avoid collision with production sessions.
-type TmuxHarness struct {
-    t        *testing.T
-    sessions []string // track created sessions for cleanup
-}
-
-func NewTmuxHarness(t *testing.T) *TmuxHarness {
-    t.Helper()
-    SkipIfNoTmuxServer(t)
-    h := &TmuxHarness{t: t}
-    t.Cleanup(h.cleanup)
-    return h
-}
-
-// CreateSession creates a tmux session running the given command.
-// Returns the tmux.Session wrapper. Session is killed on test cleanup.
-func (h *TmuxHarness) CreateSession(name, workDir, command string) *tmux.Session {
-    h.t.Helper()
-    sess := tmux.NewSession(name, workDir)
-    if err := sess.Start(command); err != nil {
-        h.t.Fatalf("TmuxHarness.CreateSession(%q): %v", name, err)
+// Inside home.go:Update(), alongside the tea.KeyMsg case:
+case tea.MouseMsg:
+    switch msg.Button {
+    case tea.MouseWheelUp:
+        // reuse existing cursor-up logic
+        return h, h.moveCursor(-3)
+    case tea.MouseWheelDown:
+        // reuse existing cursor-down logic
+        return h, h.moveCursor(3)
     }
-    h.sessions = append(h.sessions, sess.Name)
-    return sess
-}
-
-// WaitForContent polls pane content until predicate returns true or timeout.
-func (h *TmuxHarness) WaitForContent(sess *tmux.Session, predicate func(string) bool, timeout time.Duration) string {
-    // ... poll CapturePane until predicate matches or timeout
-}
-
-func (h *TmuxHarness) cleanup() {
-    for _, name := range h.sessions {
-        _ = exec.Command("tmux", "kill-session", "-t", name).Run()
-    }
-}
-
-// SkipIfNoTmuxServer is a shared version of the duplicated function.
-func SkipIfNoTmuxServer(t *testing.T) {
-    t.Helper()
-    if _, err := exec.LookPath("tmux"); err != nil {
-        t.Skip("tmux not available")
-    }
-    if err := exec.Command("tmux", "list-sessions").Run(); err != nil {
-        t.Skip("tmux server not running")
-    }
-}
 ```
 
-### Pattern 2: TestStorage (Isolated Database per Test)
+**The scroll amount (3 lines) is a UX judgment call.** Existing keyboard navigation moves 1 line per j/k, so 3 per scroll tick is a reasonable default.
 
-**What:** Factory function for creating isolated SQLite test databases, extracted from the pattern already in `internal/session/storage_test.go`.
-**When to use:** Any integration test that needs to persist session data.
-**Trade-offs:** Each test gets its own temp directory and DB. Slightly slower than in-memory but matches production behavior. Uses `t.TempDir()` for automatic cleanup.
+**Adding click-to-select — requires coordinate mapping:**
 
-**Example:**
 ```go
-// internal/testutil/storage.go
-package testutil
-
-import (
-    "testing"
-    "path/filepath"
-    "github.com/asheshgoplani/agent-deck/internal/session"
-    "github.com/asheshgoplani/agent-deck/internal/statedb"
-)
-
-// NewTestStorage creates a Storage backed by a temp-dir SQLite database.
-// The database and directory are automatically cleaned up when the test finishes.
-func NewTestStorage(t *testing.T) *session.Storage {
-    t.Helper()
-    tmpDir := t.TempDir()
-    dbPath := filepath.Join(tmpDir, "state.db")
-    db, err := statedb.Open(dbPath)
-    if err != nil {
-        t.Fatalf("NewTestStorage: open db: %v", err)
+case tea.MouseMsg:
+    if msg.Button == tea.MouseLeft && msg.Action == tea.MouseActionRelease {
+        // msg.Y is the terminal row relative to the top of the program
+        // Subtract the header height, then map to flatItems index + viewOffset
+        listRow := msg.Y - h.listTopOffset // listTopOffset must be tracked during View()
+        targetIdx := h.viewOffset + listRow
+        if targetIdx >= 0 && targetIdx < len(h.flatItems) {
+            h.cursor = targetIdx
+        }
     }
-    if err := db.Migrate(); err != nil {
-        t.Fatalf("NewTestStorage: migrate: %v", err)
-    }
-    t.Cleanup(func() { db.Close() })
-    return session.NewStorageForTest(db, dbPath, "_test")
-}
 ```
 
-**Important:** This requires exposing a `NewStorageForTest` constructor from the `session` package (or using an existing one). The current `newTestStorage` is unexported and package-internal. The integration package needs a public version. Alternatively, the integration tests can call `statedb.Open` + `statedb.Migrate` directly and construct instances without going through `Storage`.
+`listTopOffset` must be computed during `View()` and stored as a field on `Home`. This is the only new field needed.
 
-### Pattern 3: Fixture Builders (Conductor Meta, Instances, Config)
+**Trade-offs:** Wheel scroll is trivial and low-risk. Click-to-select requires tracking where the list starts on screen during render, which creates a coupling between `View()` (render) and `Update()` (input handling). This is acceptable given Bubble Tea's architecture, but requires care.
 
-**What:** Builder helpers that construct test conductor metadata, instances, and config files with sensible defaults, overridable via functional options.
-**When to use:** Tests that need conductor setup, multi-session scenarios, or tool-specific configurations.
-**Trade-offs:** More setup code upfront, but dramatically reduces boilerplate in test functions.
+### Pattern 3: rebuildFlatItems Predicate for Stopped Session Visibility (Issue #307)
 
-**Example:**
+**What:** `home.go:rebuildFlatItems()` calls `h.groupTree.Flatten()` which returns all sessions, then applies a `statusFilter` if one is active. There is no unconditional filter that hides stopped sessions — the issue is that several utility functions that derive "active" sessions (like `getOtherActiveSessions`) exclude `StatusStopped` alongside `StatusError`. This means stopped sessions may appear in the list but are excluded from conductor-style "send to all" actions. The original visibility bug is in these exclusion functions, not in `rebuildFlatItems` itself.
+
+**Verified:** `rebuildFlatItems` does NOT unconditionally hide stopped sessions. The `StatusStopped` sessions will appear in the list if they exist in the group tree. However, the preview pane shows "Session Inactive" for both `StatusError` and `StatusStopped` rather than offering a "Resume" action. The UX fix is to differentiate the preview pane guidance for stopped vs error sessions:
+
 ```go
-// internal/testutil/fixtures.go
-package testutil
-
-import (
-    "os"
-    "path/filepath"
-    "testing"
-    "encoding/json"
-    "github.com/asheshgoplani/agent-deck/internal/session"
-)
-
-// ConductorFixture creates a conductor directory with meta.json in a temp dir.
-// Returns the conductor name and the base directory path.
-func ConductorFixture(t *testing.T, name, profile string) string {
-    t.Helper()
-    tmpDir := t.TempDir()
-
-    // Override HOME so conductor functions use our temp dir
-    conductorDir := filepath.Join(tmpDir, ".agent-deck", "conductor", name)
-    if err := os.MkdirAll(conductorDir, 0755); err != nil {
-        t.Fatalf("ConductorFixture: mkdir: %v", err)
-    }
-
-    meta := &session.ConductorMeta{
-        Name:             name,
-        Profile:          profile,
-        HeartbeatEnabled: false,
-        CreatedAt:        "2026-01-01T00:00:00Z",
-    }
-    data, _ := json.MarshalIndent(meta, "", "  ")
-    if err := os.WriteFile(filepath.Join(conductorDir, "meta.json"), data, 0644); err != nil {
-        t.Fatalf("ConductorFixture: write meta.json: %v", err)
-    }
-
-    return tmpDir
-}
-
-// InstanceBuilder provides a fluent API for creating test instances.
-type InstanceBuilder struct {
-    inst *session.Instance
-}
-
-func NewInstanceBuilder(title, projectPath string) *InstanceBuilder {
-    return &InstanceBuilder{inst: session.NewInstance(title, projectPath)}
-}
-
-func (b *InstanceBuilder) WithTool(tool string) *InstanceBuilder {
-    b.inst.Tool = tool
-    return b
-}
-
-func (b *InstanceBuilder) WithStatus(status session.Status) *InstanceBuilder {
-    b.inst.Status = status
-    return b
-}
-
-func (b *InstanceBuilder) Build() *session.Instance {
-    return b.inst
-}
+// home.go: renderPreview (or equivalent)
+case selected.Status == session.StatusStopped:
+    // Show "Press [r] to resume this session"
+case selected.Status == session.StatusError:
+    // Show "Session crashed — press [r] to restart"
 ```
 
-### Pattern 4: Mock vs Real Subprocess Strategy
+No change to filtering is needed. The work is in the preview pane rendering.
 
-**What:** A clear decision tree for when to use mock interfaces vs real tmux subprocesses.
-**When to use:** Every integration test design decision.
+### Pattern 4: Deduplication at Resume-Creation Time (Issue #224)
 
-**Decision tree:**
+**What:** `UpdateClaudeSessionsWithDedup()` currently runs inside `SaveWithGroups()` in `storage.go`. This means duplicates are cleared when the full session list is persisted. The problem is the resume flow: when the user resumes a stopped Claude session, a new `Instance` is created with the same `ClaudeSessionID` as the stopped one. The duplicate exists in-memory between creation and the next `SaveWithGroups` call.
 
+**The call chain for resume:**
 ```
-Need to test? ────────────────────────────────────────────────────────┐
-    │                                                                  │
-    ├── Prompt/status detection logic?                                 │
-    │       └── Use mock PromptDetector (already tested in unit tests) │
-    │                                                                  │
-    ├── tmux pane content parsing?                                     │
-    │       └── Use mock pane content (strings, not real tmux)         │
-    │                                                                  │
-    ├── Full session lifecycle (start, run, detect status, stop)?      │
-    │       └── Use REAL tmux with TmuxHarness                        │
-    │                                                                  │
-    ├── Conductor orchestration pipeline?                              │
-    │       └── Use REAL tmux for session creation                     │
-    │           + mock tool (echo/sleep instead of claude/gemini)      │
-    │                                                                  │
-    ├── Send/output CLI pipeline?                                      │
-    │       └── Use REAL tmux (existing pattern in session_send_test)  │
-    │           + mock statusChecker interface (already exists)        │
-    │                                                                  │
-    ├── Event watcher/writer cycle?                                    │
-    │       └── Use filesystem events in temp dirs (existing pattern)  │
-    │                                                                  │
-    └── Storage persistence?                                           │
-            └── Use real SQLite in t.TempDir() (existing pattern)     │
-                                                                       │
-────────────────────────────────────────────────────────────────────────┘
+User presses [r] on a stopped session
+    → home.go handles 'r' key → calls Restart() on the stopped instance
+    → instance.Restart() calls Start() with the existing ClaudeSessionID or -r flag
+    → buildClaudeCommand reads inst.ClaudeSessionID
+    → if two sessions now have the same ClaudeSessionID, conductor counts break
 ```
 
-**Key principle:** Use real tmux for session lifecycle tests (start, kill, exists, capture-pane), but use simple commands (`echo`, `sleep`, `cat`) instead of actual AI tools. This tests the plumbing without requiring Claude/Gemini API keys.
+**Fix point:** In `home.go`, immediately before or after calling `inst.Restart()`, run `UpdateClaudeSessionsWithDedup(h.instances)` on the in-memory list. This mirrors what happens at save time, but applies it immediately at resume creation so the UI and any concurrent conductor operations see the deduplicated state.
+
+Alternatively, `Restart()` itself can clear the `ClaudeSessionID` and let the session detection in the background worker pick up the new session ID — which is the more robust fix because it prevents the duplicate from ever forming.
+
+### Pattern 5: TTY Fix for WSL/Linux Auto-Start (Issue #311)
+
+**What:** The auto-start path launches the TUI without an interactive TTY in some WSL/Linux environments. Tools like Claude Code check `isatty(stdout)` and refuse to start, or behave differently, when stdout is not a terminal.
+
+**Current launch path:**
+```
+tmux new-session -d -s agentdeck_... [optional: command]
+```
+
+For non-sandbox sessions, `Start()` creates a detached tmux session with no initial process, then sends the command via `SendKeysAndEnter`. The tmux pane already has a TTY. The issue is not in the tmux session itself but in how the `agent-deck` process is invoked at startup on WSL/Linux.
+
+**Investigation target:** `cmd/agent-deck/main.go` — when launched without a terminal (e.g., as a systemd service or via `nohup`), the program must explicitly allocate a PTY or refuse to start cleanly. The fix likely involves:
+
+1. Checking `isatty(os.Stdout.Fd())` at startup and either erroring out or re-execing with a PTY allocator.
+2. Or ensuring the auto-start wrapper (whatever invokes agent-deck on WSL/Linux startup) uses `setsid` / `script -c` to provide a controlling TTY.
+
+The `mattn/go-isatty` package is already in `go.sum` (line 54), so the import is available.
 
 ## Data Flow
 
-### Integration Test Execution Flow
+### Sandbox Config Persistence Round-Trip
 
 ```
-TestMain (testmain_test.go)
-    │
-    ├── os.Setenv("AGENTDECK_PROFILE", "_test")
-    ├── testutil.UnsetGitRepoEnv()
-    │
-    └── m.Run()
-         │
-         ├── TestConductorPipeline
-         │     ├── testutil.NewTmuxHarness(t)         // real tmux
-         │     ├── testutil.ConductorFixture(t, ...)   // temp conductor dir
-         │     ├── session.SetupConductor(...)          // production function
-         │     ├── instance.Start()                     // creates tmux session
-         │     ├── harness.WaitForContent(...)          // wait for prompt
-         │     ├── tmuxSession.SendKeysAndEnter(...)    // send message
-         │     ├── harness.WaitForContent(...)          // verify response
-         │     └── instance.Kill()                      // cleanup (also in t.Cleanup)
-         │
-         ├── TestSessionLifecycle
-         │     ├── testutil.NewTmuxHarness(t)
-         │     ├── session.NewInstanceWithTool(...)
-         │     ├── instance.Start() / Kill() / Restart()
-         │     └── assert status transitions
-         │
-         └── TestCrossSessionEvents
-               ├── session.NewStatusEventWatcher("")
-               ├── session.WriteStatusEvent(event)
-               └── watcher.WaitForStatus(...)
+newdialog.go                 home.go                  storage.go              statedb/migrate.go
+────────────                 ───────                  ──────────              ──────────────────
+sandboxEnabled: bool  →  createSession(sandboxEnabled: bool)
+                              │
+                              └→ session.NewSandboxConfig("")
+                                    inst.Sandbox = &SandboxConfig{Enabled: true, Image: "..."}
+                                        │
+                                        └→ SaveWithGroups(instances, groupTree)
+                                                │
+                                                └→ json.Marshal(inst.Sandbox) → sandboxJSON
+                                                      │
+                                                      └→ MarshalToolData(..., sandboxJSON, ...)
+                                                            │
+                                                            └→ tool_data JSON column in SQLite
+
+On reload:
+SQLite → UnmarshalToolData → sandboxJSON → decodeSandboxConfig → inst.Sandbox
 ```
 
-### Status Detection Integration Flow (What Tests Must Validate)
+**Gap to verify:** Does `Restart()` preserve `inst.Sandbox`? The `Restart()` function in `instance.go` calls `Start()` which calls `prepareCommand()` which calls `wrapForSandbox()`. `wrapForSandbox()` reads `inst.Sandbox` — so if `inst.Sandbox` is correctly loaded from SQLite, `Restart()` will re-use it. The bug in #320 is likely that `inst.Sandbox` is nil after reload, which means the SQLite round-trip is broken somewhere in the load path.
+
+### Mouse Event Flow
 
 ```
-tmux session running command
-    │
-    ├── tmux.CapturePane() ←── real tmux subprocess
-    │       │
-    │       └── pane content string
-    │               │
-    │               ├── PromptDetector.HasPrompt()   → "waiting"
-    │               ├── BusyDetector.IsBusy()        → "running"
-    │               └── neither                       → "idle" or "starting"
-    │
-    ├── StatusEvent written to ~/.agent-deck/events/
-    │       │
-    │       └── StatusEventWatcher picks up via fsnotify
-    │               │
-    │               └── EventCh() delivers to subscriber
-    │
-    └── Instance.UpdateStatus() sets inst.Status
+Terminal input (scroll/click)
+    → tea.Program (mouse events enabled via WithMouseCellMotion)
+    → home.go:Update(tea.MouseMsg{Button: MouseWheelDown, Y: 12})
+    → [NEW] case tea.MouseMsg: h.moveCursor(+3) or h.cursor = computeTargetIdx(msg.Y)
+    → home.go:View() re-renders with new cursor position
 ```
 
-## Test Isolation Strategy
-
-### Profile Isolation (Critical)
-
-Every test package MUST have a `TestMain` that sets `AGENTDECK_PROFILE=_test`. This is already enforced in existing packages. The new `internal/integration/testmain_test.go` must follow the same pattern.
-
-```go
-// internal/integration/testmain_test.go
-package integration
-
-import (
-    "os"
-    "testing"
-    "github.com/asheshgoplani/agent-deck/internal/testutil"
-)
-
-func TestMain(m *testing.M) {
-    testutil.UnsetGitRepoEnv()
-    os.Setenv("AGENTDECK_PROFILE", "_test")
-    code := m.Run()
-    // Cleanup any orphaned integration test tmux sessions
-    cleanupIntegrationSessions()
-    os.Exit(code)
-}
-```
-
-### tmux Session Naming (Prevents Collisions)
-
-Integration test sessions should use a distinguishable prefix pattern:
+### Deduplication at Resume
 
 ```
-agentdeck_inttest_{testname}_{unique_suffix}
+User presses [r] on stopped session
+    → home.go:handleKeyRestart()
+    → inst.Restart()                          [this calls Start() with existing ClaudeSessionID]
+    → [FIX] UpdateClaudeSessionsWithDedup(h.instances)   [clear the now-duplicate ID from other sessions]
+    → h.saveToStorage()                       [already calls dedup in SaveWithGroups, but in-memory dedup is needed first]
 ```
 
-The `TmuxHarness` creates sessions via `tmux.NewSession()` which already uses `agentdeck_` prefix + unique hex suffix. Integration tests should use display names like `inttest-lifecycle-start` to make identification clear.
+### Settings Custom Tools
 
-### Filesystem Isolation
-
-Tests that interact with conductor directories, event files, or config files must use `t.TempDir()` and override relevant paths. The existing patterns use:
-- Temp dirs for event watcher tests (override `watcher.eventsDir`)
-- Temp dirs for storage tests (via `statedb.Open(tempPath)`)
-- Env var overrides for `CLAUDE_CONFIG_DIR`
-
-The same patterns apply to conductor tests, which need to override `~/.agent-deck/conductor/` to a temp dir. This can be done by setting `AGENTDECK_HOME` or by having conductor functions accept a base directory parameter for testability.
-
-### Database Isolation
-
-Each test that needs storage creates its own SQLite DB in `t.TempDir()`. No shared state between tests. The existing `newTestStorage` pattern in `session/storage_test.go` is the model.
+```
+config.toml [tools] section → session.UserConfig.Tools map[string]ToolDef
+    → settings_panel.go:buildToolLists(config)
+        → for name, def := range config.Tools {
+              display := def.Icon + " " + Title(name)  // [FIX] add Icon here
+              names = append(names, display)
+              values = append(values, name)
+          }
+    → s.toolNames, s.toolValues
+    → renderRadioGroup(s.toolNames, s.selectedTool, ...)
+```
 
 ## Integration Points
 
-### Integration Between Test Infrastructure and Production Code
+### New vs Modified: Per Feature
 
-| Integration Point | Direction | Method | Notes |
-|-------------------|-----------|--------|-------|
-| `testutil.TmuxHarness` -> `tmux.Session` | Test -> Production | Creates real `tmux.Session` objects | Uses production `NewSession()` and `Start()` |
-| `testutil.NewTestStorage` -> `statedb` | Test -> Production | Opens real SQLite database | Uses production `statedb.Open()` and `Migrate()` |
-| Integration tests -> `session.Instance` | Test -> Production | Creates instances, calls `Start()`, `Kill()` | Tests production lifecycle |
-| Integration tests -> `session.SetupConductor` | Test -> Production | Sets up conductor in temp dir | Tests production conductor setup |
-| Integration tests -> `session.StatusEventWatcher` | Test -> Production | Creates watcher, writes events | Tests production event system |
-| Integration tests -> `tmux.PromptDetector` | Test -> Production | Tests prompt detection accuracy | Uses production detectors |
-
-### New Public APIs Needed
-
-To enable the integration package to construct test objects, a few small public constructors or interfaces may need to be exposed:
-
-| What | Currently | Needed |
-|------|-----------|--------|
-| `session.Storage` construction for tests | `newTestStorage` (unexported, in `session` package) | Either export it or have integration tests construct via `statedb` directly |
-| `session.Instance` with tmux session | `NewInstanceWithTool` exists (public) | Already sufficient, no change needed |
-| Conductor base dir override | Hardcoded to `~/.agent-deck/conductor` | Tests use `t.Setenv("HOME", tmpDir)` or override via env var |
-| Event dir override | `GetEventsDir()` returns fixed path | Tests use `t.Setenv("HOME", tmpDir)` to redirect |
+| Feature | Touch Points | New vs Modified |
+|---------|--------------|-----------------|
+| Sandbox persistence (#320) | `statedb/migrate.go`, `session/storage.go`, `session/instance.go` | MODIFIED only — verify round-trip |
+| Auto-start TTY (#311) | `cmd/agent-deck/main.go`, potentially `internal/tmux/tmux.go` | MODIFIED — add isatty check or re-exec |
+| Session dedup on resume (#224) | `session/instance.go` (`Restart()` or `home.go` restart handler) | MODIFIED — add dedup call at resume site |
+| Stopped sessions in TUI (#307) | `internal/ui/home.go` (preview pane rendering) | MODIFIED — differentiate stopped vs error guidance |
+| Settings custom tools (#318) | `internal/ui/settings_panel.go` (`buildToolLists`) | MODIFIED — add Icon field to display name |
+| Mouse scroll (#262, #254) | `internal/ui/home.go` (`Update()`) | MODIFIED — add `tea.MouseMsg` case |
+| auto_cleanup docs (#228) | `docs/` or `skills/agent-deck/references/config-reference.md` | MODIFIED — text-only change |
 
 ### Internal Boundaries
 
-| Boundary | Communication | Notes |
-|----------|---------------|-------|
-| `integration/` -> `session/` | Public API calls (`NewInstance`, `Start`, `Kill`) | Tests only use exported functions |
-| `integration/` -> `tmux/` | Public API calls (`NewSession`, `CapturePane`) | Tests only use exported functions |
-| `integration/` -> `statedb/` | Public API calls (`Open`, `Migrate`) | For database setup only |
-| `integration/` -> `testutil/` | Helper calls (`TmuxHarness`, `SkipIfNoTmuxServer`) | Shared infrastructure |
-| Existing `session/*_test.go` -> `testutil/` | Helper calls (migrate `skipIfNoTmuxServer`) | Can optionally refactor to use shared version |
+| Boundary | Communication | v1.3 Notes |
+|----------|---------------|------------|
+| `storage.go` → `statedb/migrate.go` | `MarshalToolData`/`UnmarshalToolData` function calls | Sandbox already in signature; verify nil-safety in `decodeSandboxConfig` |
+| `home.go` → `session/instance.go` | Direct struct field reads + method calls | `Restart()` must not clear `inst.Sandbox`; `UpdateClaudeSessionsWithDedup` must be callable from `home.go` |
+| `cmd/agent-deck/main.go` → `internal/platform` | `platform.IsWSL()`, `platform.IsLinux()` | TTY check should branch on platform for targeted fix |
+| `tea.Program` → `home.go:Update()` | `tea.Msg` dispatch | `tea.MouseMsg` already arrives; needs a handler case |
 
-## Build Order (Dependencies Between Test Infrastructure and Tests)
+## Build Order
 
-The integration testing framework should be built in this order, because each layer depends on the previous:
+The features are independent except for one dependency chain:
 
-### Layer 1: Shared Test Utilities (`internal/testutil/`)
+```
+Phase A (foundation, no deps):
+  1. Sandbox persistence (#320)     — storage layer, self-contained
+  2. auto_cleanup docs (#228)       — text-only, zero risk
 
-Build first because everything else depends on these helpers.
+Phase B (depends on stopped sessions being visible):
+  3. Stopped sessions in TUI (#307) — prerequisite for manual resume testing
 
-1. `testutil/tmux.go` with `SkipIfNoTmuxServer()` and `TmuxHarness`
-2. `testutil/storage.go` with `NewTestStorage()` (if storage export path chosen)
-3. `testutil/fixtures.go` with `ConductorFixture()` and `InstanceBuilder`
+Phase C (depends on stopped sessions being visible for validation):
+  4. Session dedup on resume (#224) — confirmed by seeing both sessions in TUI
 
-**Dependencies:** `internal/tmux`, `internal/session`, `internal/statedb` (all existing)
+Phase D (independent, can run in parallel with Phase B/C):
+  5. Settings custom tools (#318)   — settings_panel.go, fully isolated
+  6. Mouse scroll (#262)            — home.go Update(), low risk
+  7. Mouse click (#254)             — builds on scroll, needs listTopOffset tracking
 
-### Layer 2: Integration Package Scaffold (`internal/integration/`)
+Phase E (requires investigation before work can start):
+  8. Auto-start TTY fix (#311)      — platform-specific, needs root cause confirmation
+```
 
-Set up the package with TestMain and verify it can import everything.
+**Rationale:**
 
-1. `integration/testmain_test.go` with profile isolation
-2. `integration/helpers_test.go` with any package-local helpers
-
-**Dependencies:** Layer 1 (`testutil`)
-
-### Layer 3: Session Lifecycle Tests
-
-The foundation. Other tests build on reliable session start/stop.
-
-1. `integration/lifecycle_test.go`
-   - `TestSessionStart_CreatesRealTmuxSession` (start shell, verify exists)
-   - `TestSessionKill_RemovesTmuxSession` (start, kill, verify gone)
-   - `TestSessionRestart_RecreatesSession` (start, restart, verify alive)
-   - `TestSessionFork_CreatesChildSession` (start parent, fork, verify both exist)
-   - `TestSessionStartWithMessage_DeliversMessage` (start with initial prompt)
-
-**Dependencies:** Layer 2 (scaffold), `tmux.Session.Start/Kill/Exists`
-
-### Layer 4: Status Detection and Events
-
-Tests for the status lifecycle and event system.
-
-1. `integration/sleep_detection_test.go`
-   - `TestPromptDetection_RealTmuxOutput` (run commands, verify detection from real pane)
-   - `TestStatusTransition_StartingToRunning` (start with command, verify status progression)
-   - `TestStatusTransition_RunningToWaiting` (command finishes, verify waiting detected)
-
-2. `integration/events_test.go`
-   - `TestStatusEventWriteAndWatch` (write event, verify watcher receives it)
-   - `TestCrossSessionEventNotification` (session A writes event, watcher for session B filters correctly)
-   - `TestEventCleanupStaleFiles` (create old events, verify cleanup)
-
-**Dependencies:** Layer 3 (lifecycle works), `session.StatusEventWatcher`, `session.WriteStatusEvent`
-
-### Layer 5: Conductor Orchestration
-
-The most complex tests, requiring everything below to work.
-
-1. `integration/conductor_test.go`
-   - `TestConductorSetup_CreatesMetaAndDirectory` (SetupConductor, verify files)
-   - `TestConductorList_FindsAllConductors` (create multiple, list, verify)
-   - `TestConductorSession_Lifecycle` (create conductor session, start, verify status)
-   - `TestConductorClearOnCompact_Behavior` (test clear-on-compact flag interaction)
-
-**Dependencies:** Layer 3 + 4, `session.SetupConductor`, `session.LoadConductorMeta`
-
-### Layer 6: Multi-Tool and Send/Output
-
-Tool-specific behavior and the send pipeline.
-
-1. `integration/multitool_test.go`
-   - `TestClaudeToolSession_CommandConstruction` (verify built command includes expected flags)
-   - `TestGeminiToolSession_CommandConstruction`
-   - `TestShellToolSession_DirectCommand`
-
-2. `integration/send_test.go`
-   - `TestSessionSend_DeliversToTmuxPane` (start session, send text, verify in pane)
-   - `TestSessionOutput_RetrievesContent` (start session, run command, get output)
-
-3. `integration/skills_test.go`
-   - `TestSkillsLoading_FindsSkillFiles`
-   - `TestSkillsAttachment_AppendsToConfig`
-
-**Dependencies:** Layer 3 + 4, tool-specific session logic
+- #320 first: If sandbox persistence is confirmed broken at load time, it means `inst.Sandbox` is nil after reload — which also affects the restart path. Fix this before touching restart.
+- #307 before #224: You cannot confirm dedup is working if stopped sessions are not visible to compare against.
+- #228 any time: Doc change, no coordination needed.
+- #318 any time: Settings panel change, no coordination with other features.
+- #262 before #254: Scroll is simpler (no hit-testing). Confirm mouse events are handled before adding coordinate-dependent click logic.
+- #311 last: Needs investigation on a WSL/Linux environment. The fix location is uncertain until the root cause is confirmed. Doing it last prevents it from blocking other work.
 
 ## Anti-Patterns
 
-### Anti-Pattern 1: Testing Against Real AI Tools
+### Anti-Pattern 1: Adding a New SQLite Column for Sandbox Config
 
-**What people do:** Start a real Claude Code or Gemini CLI session in integration tests.
-**Why it's wrong:** Requires API keys (can't run in CI or by contributors), slow, non-deterministic, expensive. Also violates the "public repo: no API keys" constraint.
-**Do this instead:** Use simple shell commands (`echo "prompt text"`, `sleep 5`, `cat`) that simulate the prompt/response pattern. Test the plumbing (tmux management, status detection, event routing), not the AI tool itself.
+**What people do:** When a field is not persisting correctly, add a new column to the schema.
+**Why it's wrong:** The `toolDataBlob` design intentionally packs all extended fields into one JSON blob to avoid schema migrations. The sandbox fields are already in `toolDataBlob`. Adding a column creates redundancy and requires a migration version bump.
+**Do this instead:** Verify the round-trip through `toolDataBlob`. The fix is in logic, not schema.
 
-### Anti-Pattern 2: Broad tmux Session Cleanup Patterns
+### Anti-Pattern 2: Filtering StatusStopped Out of rebuildFlatItems
 
-**What people do:** `tmux kill-session` with patterns like `HasPrefix("agentdeck_test")` or `Contains("test")`.
-**Why it's wrong:** Kills real user sessions with "test" in their title. This happened in production (see 2025-12-11 incident in CLAUDE.md).
-**Do this instead:** Track created session names explicitly in `TmuxHarness.sessions` and kill only those specific sessions. The existing `cleanupTestSessions()` pattern only targets the exact known artifact name `"Test-Skip-Regen"`.
+**What people do:** "Stopped sessions are like error sessions — filter them from the main list."
+**Why it's wrong:** Stopped sessions are intentional stops. Hiding them removes the user's ability to resume them. `StatusError` (crashed) should also arguably remain visible.
+**Do this instead:** Keep both statuses in the list. Differentiate them visually and in the preview pane. The existing icons already differ ("■" for stopped, "✕" for error).
 
-### Anti-Pattern 3: Shared State Between Tests
+### Anti-Pattern 3: Running Dedup Only at Save Time
 
-**What people do:** Use a single tmux session or database across multiple tests for "efficiency".
-**Why it's wrong:** Tests become order-dependent, flaky, and hard to debug. One test's failure contaminates others.
-**Do this instead:** Each test creates its own tmux sessions and database. Use `t.TempDir()` for filesystem isolation and `t.Cleanup()` for deterministic teardown. The slight performance cost is worth the reliability.
+**What people do:** "SaveWithGroups already calls dedup — we're covered."
+**Why it's wrong:** Conductors query `h.instances` in-memory between user action and the next save. If two sessions share a `ClaudeSessionID` between a `Restart()` call and the next `SaveWithGroups`, the conductor sees a duplicate and may route the wrong session.
+**Do this instead:** Run `UpdateClaudeSessionsWithDedup` in-memory immediately when a session is resumed, not only at persist time.
 
-### Anti-Pattern 4: Polling with Fixed Sleep
+### Anti-Pattern 4: Setting tea.WithMouseAllMotion Instead of tea.WithMouseCellMotion
 
-**What people do:** `time.Sleep(2 * time.Second)` then check state.
-**Why it's wrong:** Too slow on fast machines, too fast on slow machines, wastes CI time.
-**Do this instead:** Poll with short intervals and a timeout. The `WaitForContent` pattern in `TmuxHarness` polls every 100ms with a configurable timeout. The existing `event_watcher_test.go` uses `select` with `time.After` for event delivery, which is the correct pattern.
+**What people do:** Enable all mouse events to get more coverage.
+**Why it's wrong:** `WithMouseAllMotion` sends a mouse event for every cursor position, flooding the event loop with messages on every mouse movement. This degrades TUI performance noticeably.
+**Do this instead:** `WithMouseCellMotion()` is already active — it sends events only on cell boundary changes, which is sufficient for scroll and click detection.
+
+### Anti-Pattern 5: Hardcoding listTopOffset
+
+**What people do:** `const listTopOffset = 3` because the header "looks like 3 lines."
+**Why it's wrong:** Header height depends on layout mode (Single/Stacked/Dual), update banner visibility, filter bar, and other conditional elements. A hardcoded offset produces wrong click targets.
+**Do this instead:** Compute and store `listTopOffset` during `View()` by counting lines as they are appended to the output buffer. Store it as `h.listTopOffset int` so `Update()` can use it for hit-testing.
 
 ## Sources
 
-- Agent-deck codebase analysis (direct code reading, HIGH confidence)
-- Existing test patterns in `internal/session/testmain_test.go`, `internal/tmux/testmain_test.go`, `cmd/agent-deck/testmain_test.go`
-- Existing integration test patterns in `internal/session/fork_integration_test.go`, `internal/session/notifications_integration_test.go`, `internal/web/handlers_ws_integration_test.go`
-- Go testing best practices: `testing.Short()` for long-running tests, `t.TempDir()` for cleanup, `t.Cleanup()` for deferred teardown
-- CLAUDE.md incident history: profile isolation requirements, tmux session safety, test data corruption prevention
+- `internal/session/storage.go` — `SaveWithGroups`, `decodeSandboxConfig`, `convertToInstances` (HIGH confidence, direct read)
+- `internal/statedb/migrate.go` — `toolDataBlob`, `MarshalToolData`, `UnmarshalToolData` (HIGH confidence, direct read)
+- `internal/session/instance.go` — `Instance`, `SandboxConfig`, `Start()`, `UpdateClaudeSessionsWithDedup()`, `wrapIgnoreSuspend()` (HIGH confidence, direct read)
+- `internal/ui/home.go` — `rebuildFlatItems()`, `Update()`, `createSessionInGroupWithWorktreeAndOptions()`, `getOtherActiveSessions()` (HIGH confidence, direct read)
+- `internal/ui/settings_panel.go` — `buildToolLists()`, `SettingDefaultTool` (HIGH confidence, direct read)
+- `internal/ui/newdialog.go` — `sandboxEnabled` field, `newDialogResult` struct (HIGH confidence, direct read)
+- `cmd/agent-deck/main.go` line 468 — `tea.WithMouseCellMotion()` already active (HIGH confidence, direct read)
+- `.planning/codebase/ARCHITECTURE.md` — existing system architecture map (HIGH confidence, project documentation)
+- `.planning/research/FEATURES.md` — feature complexity and integration notes from prior research (HIGH confidence, already written for this milestone)
+- `go.sum` line 54 — `mattn/go-isatty v0.0.20` already in dependency tree (HIGH confidence, direct read)
 
 ---
-*Architecture research for: Agent-Deck Integration Testing Framework*
-*Researched: 2026-03-06*
+*Architecture research for: Agent-Deck v1.3 Session Reliability and Resume*
+*Researched: 2026-03-12*

@@ -940,6 +940,96 @@ func TestClaudeCode2125_DynamicStatusPattern(t *testing.T) {
 }
 
 // =============================================================================
+// VALIDATION 8.0: OpenCode Question Tool Detection (#255)
+// =============================================================================
+// Bug: OpenCode's question tool (selection UI showing "enter submit" / "esc dismiss"
+// in the help bar) is not detected as a waiting state. Sessions appear stuck in
+// "running" (green) instead of "waiting" (orange).
+//
+// Fix: Add "enter submit" and "esc dismiss" to PromptPatterns and HasPrompt checks.
+// Refined hasOpencodeBusyIndicator to avoid false positives when pulse chars appear
+// in static UI elements alongside prompt-indicating strings.
+
+func TestDefaultRawPatterns_OpenCodeQuestionTool(t *testing.T) {
+	raw := DefaultRawPatterns("opencode")
+	if raw == nil {
+		t.Fatal("DefaultRawPatterns(opencode) returned nil")
+	}
+
+	promptPatterns := raw.PromptPatterns
+	found := func(needle string) bool {
+		for _, p := range promptPatterns {
+			if p == needle {
+				return true
+			}
+		}
+		return false
+	}
+
+	if !found("enter submit") {
+		t.Errorf("PromptPatterns missing %q (question tool prompt pattern)", "enter submit")
+	}
+	if !found("esc dismiss") {
+		t.Errorf("PromptPatterns missing %q (question tool dismiss pattern)", "esc dismiss")
+	}
+}
+
+// TestOpencodeBusyGuard_QuestionTool adds VALIDATION 8.0 test cases for question tool
+// detection and false-positive prevention to the existing opencode busy guard coverage.
+func TestOpencodeBusyGuard_QuestionTool(t *testing.T) {
+	detector := NewPromptDetector("opencode")
+
+	tests := []struct {
+		name       string
+		content    string
+		wantPrompt bool
+	}{
+		// === IDLE states: question tool help bar (HasPrompt must return true) ===
+		{
+			name:       "idle - question tool help bar (enter submit + esc dismiss)",
+			content:    "Select an option:\n  Option A\n  Option B\n↑↓ select     enter submit     esc dismiss",
+			wantPrompt: true,
+		},
+		{
+			name:       "idle - permission approval dialog",
+			content:    "Allow tool execution?\n  Yes\n  No\n↑↓ select     enter submit     esc dismiss",
+			wantPrompt: true,
+		},
+		{
+			name:       "idle - question tool with TUI chrome",
+			content:    "┃ What would you like to do?                                     ┃\n┃   Create new file                                              ┃\n┃   Edit existing file                                           ┃\n─────────────────────────────────────────────────\n↑↓ select     enter submit     esc dismiss",
+			wantPrompt: true,
+		},
+		// === False-positive prevention: pulse char in static UI + prompt indicator ===
+		{
+			name:       "idle - pulse char in static UI but question tool active",
+			content:    "░ Progress: 100%\n↑↓ select     enter submit     esc dismiss",
+			wantPrompt: true,
+		},
+		// === BUSY states must still win when authoritative indicators present ===
+		{
+			name:       "busy - esc interrupt overrides enter submit",
+			content:    "esc interrupt     enter submit     esc dismiss",
+			wantPrompt: false,
+		},
+		{
+			name:       "busy - Waiting for tool response with pulse char still busy",
+			content:    "░ Waiting for tool response...\nSome output here",
+			wantPrompt: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := detector.HasPrompt(tt.content)
+			if got != tt.wantPrompt {
+				t.Errorf("HasPrompt() = %v, want %v\nContent:\n%s", got, tt.wantPrompt, tt.content)
+			}
+		})
+	}
+}
+
+// =============================================================================
 // BENCHMARKS: Status Detection Performance Baselines
 // =============================================================================
 // Run with: go test -bench=. -benchmem ./internal/tmux/...

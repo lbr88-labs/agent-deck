@@ -269,6 +269,12 @@ func handleSessionStop(profile string, args []string) {
 		os.Exit(1)
 	}
 
+	// Capture tool conversation IDs from tmux env before killing the session.
+	// This ensures IDs are saved to storage even if PostStartSync timed out
+	// during start (e.g., tool started late on slow WSL2 machines).
+	// Must happen before Kill() because tmux show-environment fails on dead sessions.
+	inst.SyncSessionIDsFromTmux()
+
 	// Stop the session by killing the tmux session
 	if err := inst.Kill(); err != nil {
 		out.Error(fmt.Sprintf("failed to stop session: %v", err), ErrCodeInvalidOperation)
@@ -494,19 +500,25 @@ func handleSessionFork(profile string, args []string) {
 			Template:  wtSettings.Template(),
 		})
 
-		if _, statErr := os.Stat(worktreePath); statErr == nil {
-			out.Error(fmt.Sprintf("worktree path already exists: %s", worktreePath), ErrCodeInvalidOperation)
-			os.Exit(1)
-		}
+		// Check for an existing worktree for this branch before creating a new one
+		if existingPath, err := git.GetWorktreeForBranch(repoRoot, wtBranch); err == nil && existingPath != "" {
+			fmt.Fprintf(os.Stderr, "Reusing existing worktree at %s for branch %s\n", existingPath, wtBranch)
+			worktreePath = existingPath
+		} else {
+			if _, statErr := os.Stat(worktreePath); statErr == nil {
+				out.Error(fmt.Sprintf("worktree path already exists: %s", worktreePath), ErrCodeInvalidOperation)
+				os.Exit(1)
+			}
 
-		if err := os.MkdirAll(filepath.Dir(worktreePath), 0o755); err != nil {
-			out.Error(fmt.Sprintf("failed to create directory: %v", err), ErrCodeInvalidOperation)
-			os.Exit(1)
-		}
+			if err := os.MkdirAll(filepath.Dir(worktreePath), 0o755); err != nil {
+				out.Error(fmt.Sprintf("failed to create directory: %v", err), ErrCodeInvalidOperation)
+				os.Exit(1)
+			}
 
-		if err := git.CreateWorktree(repoRoot, worktreePath, wtBranch); err != nil {
-			out.Error(fmt.Sprintf("worktree creation failed: %v", err), ErrCodeInvalidOperation)
-			os.Exit(1)
+			if err := git.CreateWorktree(repoRoot, worktreePath, wtBranch); err != nil {
+				out.Error(fmt.Sprintf("worktree creation failed: %v", err), ErrCodeInvalidOperation)
+				os.Exit(1)
+			}
 		}
 
 		userConfig, _ := session.LoadUserConfig()

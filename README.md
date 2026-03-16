@@ -154,7 +154,10 @@ Host tool auth (Claude, Gemini, Codex, etc.) is automatically shared into contai
 [docker]
 default_enabled = true
 mount_ssh = true
+auto_cleanup = true    # Remove containers when sessions end (default: true)
 ```
+
+Set `auto_cleanup = false` to keep containers alive after session termination, which is useful for debugging container state or inspecting logs.
 
 See the [Docker Sandbox Guide](skills/agent-deck/references/sandbox.md) for the full reference including overlay details, custom images, and troubleshooting.
 

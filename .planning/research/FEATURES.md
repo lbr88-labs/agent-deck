@@ -1,196 +1,147 @@
 # Feature Research
 
-**Domain:** Integration testing framework for multi-process tmux-based orchestration (Go)
-**Researched:** 2026-03-06
-**Confidence:** HIGH
+**Domain:** Session reliability and resume UX for Go+BubbleTea TUI session manager (v1.3)
+**Researched:** 2026-03-12
+**Confidence:** HIGH (all findings from codebase analysis; no speculative external research needed)
 
 ## Feature Landscape
 
-### Table Stakes (Tests You Must Have)
+### Table Stakes (Users Expect These)
 
-Features that define a credible integration test framework. Without these, the test suite cannot verify the core product functionality (conductor orchestration, cross-session coordination, multi-tool support).
+Features that session manager users consider baseline behavior. Missing any of these causes
+"is this broken?" frustration, not "that's a nice-to-have" disappointment.
 
 | Feature | Why Expected | Complexity | Notes |
 |---------|--------------|------------|-------|
-| tmux session test fixture lifecycle | Every integration test needs managed tmux sessions. Without create/cleanup, tests leak sessions or collide. The existing `createTestSession` in `controlpipe_test.go` is a good starting point but lacks cross-package reuse. | MEDIUM | Build a shared `testutil/tmux.go` helper. Must use `t.Cleanup()` for automatic teardown. Must prefix names distinctively (e.g., `agentdeck_it_`) to avoid collision with user sessions. Must call `skipIfNoTmuxServer(t)` at entry. |
-| Session lifecycle integration tests | Agent-deck's core loop: `start -> running -> waiting -> idle`. Unit tests mock this, but integration tests must verify real tmux sessions transition status correctly via pane capture and busy-indicator detection. | MEDIUM | Reuse existing `NewSession`/`ReconnectSessionLazy`, send real commands via `SendKeysAndEnter`, verify status via the status detection engine in `tmux.go`. Cover start, stop, restart-with-flags flows. |
-| Conductor parent-child command delivery | Conductor sends commands to child sessions via `SendSessionMessageReliable`. This is the core orchestration primitive. Must verify: message arrives in child pane, child processes it, status transitions reach parent. | HIGH | Requires creating parent + child tmux sessions, linking via `ParentSessionID`, sending text, and verifying pane content. The `sendWithRetryTarget` mock tests exist but never test real tmux delivery. |
-| Cross-session event notification tests | `TransitionNotifier` dispatches events when child sessions transition (running -> waiting). Must verify: event file written, event watcher detects it, parent receives notification message. | HIGH | The unit tests in `transition_notifier_test.go` mock storage. Integration tests need real SQLite storage, real event files, and real `StatusEventWatcher` (fsnotify-based). |
-| Multi-tool session creation and detection | Agent-deck supports Claude Code, Gemini CLI, OpenCode, Codex, and shell. Each tool has different launch commands, sleep detection patterns, and session ID mechanisms. Integration tests must verify each tool's session creates correctly and status detection works. | HIGH | Existing e2e tests (`opencode_e2e_test.go`, `opencode_fullflow_test.go`) require the actual CLI tool installed. Integration tests should use mock tool commands (e.g., `echo`/`sleep`) with tool-specific pane patterns to test the detection engine without real tools. |
-| Sleep/wait detection across tools | The busy-indicator and prompt-detection system in `tmux.go` (~2500 lines) is the most complex detection logic. Must verify: each tool's "running" patterns are detected as GREEN, each tool's "waiting" patterns are detected as YELLOW, transitions happen within expected timeframes. | HIGH | Use tmux sessions running `printf` commands that emit tool-specific busy indicators and prompts. Verify `GetStatus()` returns correct status. Cover Claude ("Thinking...", spinner), Gemini ("Generating..."), OpenCode (thinking indicator), Codex patterns. |
-| Test profile isolation | Tests must use `AGENTDECK_PROFILE=_test` to prevent corrupting production data. This is non-negotiable given the 2025-12-11 incident (36 sessions overwritten). | LOW | Already implemented via TestMain pattern. Integration tests in new packages must include their own `TestMain` file. Template exists. |
-| SQLite fixture management | Integration tests need pre-populated databases (sessions with specific tools, statuses, parent-child relationships, groups). Must create, seed, and tear down SQLite state cleanly. | MEDIUM | Extend existing `newTestStorage(t)` pattern from `storage_test.go`. Add a `testutil/fixtures.go` with helpers: `CreateTestInstance(t, tool, status)`, `CreateLinkedPair(t, parentTool, childTool)`, `SeedConductorMeta(t, name)`. |
-| Timeout and polling assertions | Many integration tests involve waiting for async events (status transitions, event file writes, pane content changes). Need reliable polling helpers with configurable timeouts that fail with descriptive messages. | MEDIUM | Pattern exists in `event_watcher_test.go` (`select` with `time.After`). Generalize into `testutil/wait.go`: `WaitForCondition(t, timeout, interval, checkFn)`, `WaitForPaneContent(t, session, contains, timeout)`, `WaitForStatus(t, session, expectedStatus, timeout)`. |
+| Config survives save/reload cycle | Any persistent UI config that resets on restart is broken. Sandbox Docker image/limits are user-specified; losing them forces re-entry every session. | LOW | Storage layer already round-trips `sandbox` JSON through `tool_data` column. Root cause is likely in the newdialog/settings save path not writing `Sandbox` back to the instance before `SaveWithGroups`. Needs a targeted trace from dialog submission to storage call. |
+| Stopped sessions visible in TUI | Users stop sessions intentionally and expect to resume them later. If stopped sessions vanish from the list, users cannot resume or delete them — they must recreate from scratch. | LOW | `StatusStopped` already exists as an enum value. The TUI filtering logic that hides "dead" sessions is conflating `error`/`stopped` with each other. Fix is a one-line predicate change in `home.go` list filtering. |
+| Resume does not create duplicates | Starting a stopped session should reuse the existing entry, not add a second row. Duplicate entries break conductor status counts and confuse the user about which session is "real". | MEDIUM | `UpdateClaudeSessionsWithDedup` clears duplicate `ClaudeSessionID` fields at save time, but the bug is upstream: resume via CLI or TUI may call `NewInstance` instead of `Restart` on the existing record. Needs dedup applied at the resume-creation boundary, not just at save. |
+| Auto-start works on Linux/WSL | Users running agent-deck on Linux or WSL expect `agent-deck &` (background launch) to work the same as macOS. TTY requirement is a platform surprise, not a design choice users accept. | MEDIUM | Claude Code (and others) call `isatty(stdout)` and refuse to run when stdout is redirected. Auto-start detaches stdout. Fix: use `tmux new-session -d` to launch inside a tmux pane so the tool sees a PTY regardless of the outer process's stdio. Session IDs used for resume after the auto-start also need verification — wrong IDs cause silent resume failure. |
+| Mouse scroll works in session list | Terminal UIs with long session lists require scroll. Keyboard-only scroll (j/k) is a fallback, not a complete solution. Users with trackpads expect natural scroll. | LOW | `tea.WithMouseCellMotion()` is already passed to `tea.NewProgram`. The TUI receives mouse events but `home.go:Update()` has no `tea.MouseMsg` handler for the session list. Add `tea.MouseWheelUp`/`tea.MouseWheelDown` cases routing to the existing cursor movement logic. |
+| Settings panel shows all configurable tools | If a user adds a custom tool in `config.toml`, they expect it to appear in settings so they can set it as the default. Missing it forces TOML editing for a basic UI preference. | LOW | `buildToolLists()` in `settings_panel.go` already reads `config.Tools` and appends custom entries. The gap (issue #318) is that custom tool entries in the `SettingDefaultTool` radio group do not display their `icon` field from the TOML definition, making them indistinguishable from built-ins. Likely also missing in the `newdialog` tool picker. Needs icon rendering for custom tool rows. |
 
 ### Differentiators (Competitive Advantage)
 
-Features that make the test framework robust and catch real-world regressions that unit tests miss.
+Features beyond baseline that improve reliability for power users running multiple conductors
+and AI agent workflows.
 
 | Feature | Value Proposition | Complexity | Notes |
 |---------|-------------------|------------|-------|
-| Conductor heartbeat round-trip test | Verifies the full heartbeat loop: conductor session receives heartbeat message, processes it (simulated), responds with status. This is the production-critical path that breaks silently. | HIGH | Create conductor session with `meta.json` fixture, simulate heartbeat script sending to child sessions, verify response arrives back. Uses real tmux + real file system. |
-| Concurrent session status polling stress test | Agent-deck polls status for N sessions every 2s tick. Integration test creates 10+ sessions and verifies that batch polling (`RefreshSessions`) correctly identifies status for all of them without race conditions. | MEDIUM | Creates multiple tmux sessions in different states (some running commands, some idle). Runs one poll cycle via the tmux cache. Asserts correct status for each. Exercises the "1 subprocess instead of N" optimization. |
-| Fork flow with real tmux sessions | The fork operation creates a child session from a parent's Claude session ID. Current `fork_integration_test.go` only validates the command string. A real integration test would execute the fork command in tmux and verify both sessions exist. | HIGH | Requires real `tmux new-session`, then fork command execution. Cannot use real Claude (needs API key), but can verify tmux session creation, environment variable propagation (`AGENTDECK_INSTANCE_ID`, `CLAUDE_SESSION_ID`), and parent-child linkage in storage. |
-| MCP attach/detach with scoped config | MCP attachment writes to `.mcp.json` (LOCAL) or `~/.claude-work/.claude.json` (GLOBAL). Integration test verifies: file written correctly, detach removes entry, re-attach after detach works. | MEDIUM | Use temp directories to avoid touching real config. Verify JSON structure matches what Claude Code expects. Tests `mcp_catalog.go` and `mcp_dialog.go` logic end-to-end. |
-| Event watcher recovery after restart | The `StatusEventWatcher` uses fsnotify. If the watched directory is recreated (e.g., after a crash), the watcher should reconnect or fail gracefully. | LOW | Create watcher, delete events dir, recreate it, write event, verify delivery or clean error. |
-| Storage watcher multi-instance sync | `StorageWatcher` detects external SQLite changes for multi-instance sync. Integration test runs two storage instances, writes from one, verifies the other detects the change within the `pollInterval`. | MEDIUM | Tests the `ignoreWindow` (3s) > `pollInterval` (2s) invariant documented in CLAUDE.md memory. Creates two `Storage` instances pointing at same `state.db`. |
-| Skills attachment and triggering integration | Skills are loaded from the cache directory and attached to sessions. Integration test verifies: skill discovered from `skills/` directory, attached to session instance, triggering conditions evaluated correctly. | MEDIUM | Create temp skills directory structure matching Anthropic skill-creator format (`SKILL.md` + optional `scripts/`). Verify `SkillsCatalog` discovers them. Attach to test instance. Verify trigger evaluation. |
-| Send-with-retry real tmux verification | `sendWithRetryTarget` has extensive mock tests. Integration test sends to a real tmux session running a script that delays Enter processing (simulating paste buffer behavior), verifies retry logic works. | MEDIUM | Create tmux session, send large text, verify it appears in pane capture. Exercises chunked sending (`SendKeysChunked`) and the paste-marker detection. |
+| Mouse click to select session | Beyond scroll: clicking a session in the list to jump to it directly. Reduces friction when managing 10+ sessions. | MEDIUM | Requires hit-testing the rendered list rows against `tea.MouseMsg.Y` coordinates. The list rendering in `home.go` is custom (not using `bubbles/list`), so hit-test must account for group headers, indent levels, and the current scroll offset. More involved than wheel scroll. |
+| Click-to-attach (double-click or Enter after click) | Selecting then attaching in one gesture. Natural for trackpad users. | HIGH | Needs click-select first. Double-click detection requires stateful last-click timestamp tracking. Bubble Tea does not provide double-click natively. |
+| auto_cleanup documented in config reference | Users enabling sandbox mode discover `auto_cleanup` only by reading source or config-reference.md. Explicit docs surface a behavior that directly affects disk/container hygiene. | LOW | `auto_cleanup = true` default already in `userconfig.go` template and `config-reference.md`. Issue #228 is documentation completeness — ensure the option appears in the user-facing docs site or README alongside the sandbox section, with an explanation of what gets cleaned and when. |
 
 ### Anti-Features (Commonly Requested, Often Problematic)
 
-Features that seem valuable but create more problems than they solve.
-
 | Feature | Why Requested | Why Problematic | Alternative |
 |---------|---------------|-----------------|-------------|
-| Full Claude Code / Gemini CLI end-to-end tests | "We should test the actual tools" | Requires API keys in CI (security risk for public repo), costs money per test run, flaky due to model latency/availability, violates "no production side effects" constraint | Use tool-pattern simulation: tmux sessions running scripts that emit the exact terminal patterns each tool produces (busy indicators, prompts, spinners). Test the detection engine, not the AI tools. |
-| TUI (Bubble Tea) integration tests | "Test the UI renders correctly" | Explicitly out of scope per PROJECT.md. Bubble Tea testing requires a separate approach (tea.Test or VHS). The `home.go` file is 8500 lines. Testing it end-to-end is a separate, massive effort. | Keep TUI testing to unit tests of individual components (already done: `components_test.go`, `hotkeys_test.go`, `newdialog_test.go`). Integration tests focus on the data/orchestration layer beneath the TUI. |
-| Docker-based test isolation | "Run tests in Docker for reproducibility" | Agent-deck is fundamentally a tmux-based tool. Running tmux inside Docker is fragile (no PTY by default, socket issues). Testcontainers adds CGO dependency (modernc.org/sqlite avoids CGO intentionally). macOS is the primary dev platform. | Use profile isolation (`AGENTDECK_PROFILE=_test`), temp directories (`t.TempDir()`), and `t.Cleanup()`. These provide reliable isolation without Docker overhead. |
-| Performance/load testing | "How many sessions can we handle?" | Out of scope per PROJECT.md. Performance testing requires fundamentally different infrastructure (benchmarks, profiling, sustained load). Conflating it with integration testing makes both worse. | Use `go test -bench` for hot-path benchmarks (status polling, SQLite reads). Keep separate from correctness-focused integration tests. |
-| Parallel integration test execution | "Run all integration tests in parallel for speed" | tmux sessions share a global namespace. Parallel tests create race conditions on session names, port conflicts, and state file corruption. The `SessionPrefix + unique suffix` pattern helps but isn't bulletproof for parallel tmux operations. | Run integration tests sequentially (`go test -count=1 -p 1`). Use `testing.Short()` to skip slow tests in rapid feedback loops. Each test cleans up its own sessions via `t.Cleanup()`. |
-| CI/CD pipeline integration | "Tests should run in GitHub Actions" | Out of scope per PROJECT.md. tmux requires a running server, which needs special CI configuration (start tmux server in background, handle PTY allocation). This is a separate effort. | Design tests with `skipIfNoTmuxServer(t)` so they skip gracefully in CI. Run full suite locally before push. Add CI later as a separate milestone. |
-| Mocking tmux entirely | "Abstract tmux away for unit-testable orchestration" | The entire value of integration tests is verifying real tmux behavior (send-keys timing, pane capture accuracy, busy-indicator detection). Mocking tmux defeats the purpose. | Use mocks for unit tests (already done: `mockStatusChecker`, `mockSendRetryTarget`). Integration tests use real tmux. The two layers complement each other. |
+| Auto-hide stopped sessions (filtered out of main list by default) | "Stopped sessions are clutter" | Hides the very sessions users want to resume. The original filter bug is the anti-feature; fixing it means stopped sessions are visible. A separate toggle to hide stopped sessions is fine if the default is visible. | Fix visibility first (table stake). If demand exists for filtering, add a `[f]ilter` toggle in the TUI header — same pattern as existing group expand/collapse. |
+| Merge stopped+error into one status | "Simplifies the status model" | `stopped` (user intent) and `error` (crash) have different semantics. Conductor templates already differentiate them: "do not restart stopped sessions." Merging breaks conductor logic. | Keep distinct. Ensure TUI renders them with different colors/icons so users can tell them apart at a glance. |
+| Persist mouse mode globally in tmux config | "Enable mouse mode in tmux for all sessions" | `set -g mouse on` in `~/.tmux.conf` affects all tmux sessions outside agent-deck. Agent-deck already enables mouse per-session via `EnableMouseMode` on attach (deferred to `EnsureConfigured()`). Touching global tmux config violates user sovereignty. | Mouse in the BubbleTea TUI (for the session list) is separate from mouse in the attached tmux pane. Fix the TUI mouse handler; leave per-session tmux mouse mode as-is. |
+| Full TUI re-architecture to use bubbles/list | "Would fix mouse, scroll, and rendering in one shot" | `home.go` is ~8500 lines built on a custom list model. Migrating to `charmbracelet/bubbles` list would be a full rewrite of the session rendering, group tree, keyboard handling, and status display. Risk of regression across every existing feature. | Add targeted `tea.MouseMsg` handling for wheel events and hit-testing directly in the existing model. Scope is ~30 lines for wheel scroll, ~80 lines for click-select. |
 
 ## Feature Dependencies
 
 ```
-[tmux session test fixtures]
-    |
-    +--requires--> [Test profile isolation]
-    |
-    +--enables--> [Session lifecycle integration tests]
-    |                 |
-    |                 +--enables--> [Sleep/wait detection across tools]
-    |                 |
-    |                 +--enables--> [Multi-tool session creation and detection]
-    |
-    +--enables--> [Conductor parent-child command delivery]
-    |                 |
-    |                 +--requires--> [SQLite fixture management]
-    |                 |
-    |                 +--enables--> [Conductor heartbeat round-trip test]
-    |
-    +--enables--> [Cross-session event notification tests]
-    |                 |
-    |                 +--requires--> [Timeout and polling assertions]
-    |                 |
-    |                 +--requires--> [SQLite fixture management]
-    |
-    +--enables--> [Fork flow with real tmux sessions]
-    |
-    +--enables--> [Send-with-retry real tmux verification]
+[Stopped sessions visible in TUI]                 -- prerequisite for:
+    └──enables──> [Resume does not create duplicates]
+                      └──enables──> [Auto-start works on Linux/WSL]
+                                        (session IDs must be correct post-dedup)
 
-[SQLite fixture management]
-    |
-    +--requires--> [Test profile isolation]
-    |
-    +--enables--> [Storage watcher multi-instance sync]
+[Sandbox config persistence]                       -- independent, no dependencies
 
-[Timeout and polling assertions]
-    |
-    +--enables--> [Concurrent session status polling stress test]
-    |
-    +--enables--> [Event watcher recovery after restart]
+[Mouse scroll in session list]                     -- independent, no dependencies
+    └──enables──> [Mouse click to select session]
+                      └──enables──> [Click-to-attach]
 
-[Skills attachment and triggering integration]
-    +--requires--> [SQLite fixture management]
+[Settings custom tools display]                    -- independent, no dependencies
+
+[auto_cleanup documentation]                       -- independent, no dependencies
 ```
 
 ### Dependency Notes
 
-- **tmux session test fixtures require Test profile isolation:** Every tmux test helper must enforce `AGENTDECK_PROFILE=_test` via TestMain. Without this, test sessions could corrupt production state.
-- **Conductor tests require SQLite fixtures:** Conductor parent-child relationships are stored in SQLite. Tests must create pre-linked session pairs with correct `ParentSessionID` fields.
-- **Cross-session events require Timeout/polling helpers:** Event watcher tests are inherently async (fsnotify-based). Without reliable polling/timeout helpers, tests become flaky.
-- **Sleep detection requires Session lifecycle:** You cannot test sleep detection without first being able to create and manage tmux sessions. The detection engine (`GetStatus`) operates on real pane content.
-- **All features require tmux session fixtures:** This is the foundation. Build it first, then everything else layers on top.
+- **Stopped sessions visible requires no other fix first:** The filter predicate in `home.go` is self-contained. Fix this first — it unblocks manual resume testing which validates the dedup fix.
+- **Resume dedup depends on stopped visibility:** You cannot confirm dedup is fixed if you cannot see both the original stopped session and any accidental duplicate in the same list view.
+- **Auto-start TTY fix can be developed independently:** The WSL/Linux TTY issue is in the process launch path (`cmd/agent-deck/main.go` or platform-specific launch), not in the session list. However, validating it correctly requires that resume creates the right session record, so dedup should be stable first.
+- **Mouse click depends on mouse scroll:** Scroll is the simpler sub-feature (no hit-testing needed). Confirm scroll events are handled before implementing click-select, which requires coordinate mapping.
+- **Settings custom tools and auto_cleanup docs are fully independent:** No runtime dependencies on other features. Can be done in any order or in parallel with other fixes.
 
 ## MVP Definition
 
-### Launch With (Phase 1: Foundation)
+### Ship in v1.3 (All Seven Items)
 
-Minimum viable test framework that enables all subsequent test development.
+All seven issues are scoped, bounded, and directly fix reported regressions. None should be deferred.
 
-- [ ] **tmux session test fixture helpers** (`testutil/tmux.go`) -- Foundation for every integration test. Provides `CreateTestSession(t, name)`, `KillTestSession(t, name)`, session name generation. Cross-package reusable.
-- [ ] **Timeout and polling assertion helpers** (`testutil/wait.go`) -- Eliminates flaky async tests. Provides `WaitForCondition`, `WaitForPaneContent`, `WaitForStatus`.
-- [ ] **SQLite fixture helpers** (`testutil/fixtures.go`) -- Seed test databases with sessions, groups, parent-child links. Extends existing `newTestStorage` pattern.
-- [ ] **TestMain template for new packages** -- Standardized `TestMain` with profile isolation and session cleanup. Copy from existing pattern.
-- [ ] **Session lifecycle integration tests** -- End-to-end: create tmux session, run command, verify status transitions via real detection engine.
+- [ ] **Sandbox config persistence (#320)** — Data loss on restart. Highest user frustration.
+- [ ] **Stopped sessions visible in TUI (#307)** — Prerequisite for manual resume workflows.
+- [ ] **Session deduplication on resume (#224)** — Corrupts conductor session counts.
+- [ ] **Auto-start TTY fix for WSL/Linux (#311)** — Blocks Linux/WSL users entirely.
+- [ ] **Mouse/trackpad scroll support (#262, #254)** — `tea.WithMouseCellMotion()` is already active but unhandled.
+- [ ] **Settings custom tools completion (#318)** — Custom tool icons missing in settings radio group.
+- [ ] **auto_cleanup documentation (#228)** — Low-effort, high-clarity documentation fix.
 
-### Add After Foundation (Phase 2: Orchestration)
+### Prioritization Within v1.3
 
-Tests for the conductor and cross-session systems, built on the Phase 1 foundation.
+Order matters for implementation because of the dependency chain above:
 
-- [ ] **Conductor parent-child command delivery** -- Trigger: foundation helpers working, session lifecycle tests passing.
-- [ ] **Cross-session event notification tests** -- Trigger: SQLite fixtures and polling helpers proven reliable.
-- [ ] **Sleep/wait detection across tools** -- Trigger: session lifecycle tests demonstrate status detection works with real tmux.
-- [ ] **Multi-tool session creation and detection** -- Trigger: sleep detection tests establish the pattern for simulating tool output.
+1. Stopped sessions visible (enables manual resume testing)
+2. Sandbox config persistence (independent, quick win)
+3. Session deduplication (can now be visually verified)
+4. Auto-start TTY fix (session ID correctness relies on dedup being stable)
+5. Mouse scroll (independent, isolated change)
+6. Settings custom tools (independent, isolated change)
+7. auto_cleanup docs (can go in any phase, zero risk)
 
-### Add After Orchestration (Phase 3: Edge Cases)
+### Defer to v1.4+
 
-Differentiator tests that catch production regressions.
-
-- [ ] **Conductor heartbeat round-trip test** -- Trigger: conductor parent-child tests passing.
-- [ ] **Fork flow with real tmux sessions** -- Trigger: session lifecycle and SQLite fixture helpers working.
-- [ ] **Send-with-retry real tmux verification** -- Trigger: session lifecycle tests with real tmux proven stable.
-- [ ] **Concurrent session status polling stress test** -- Trigger: multiple sessions can be created and polled reliably.
-- [ ] **Storage watcher multi-instance sync** -- Trigger: SQLite fixtures working.
-- [ ] **Skills attachment and triggering integration** -- Trigger: SQLite fixtures working.
-- [ ] **MCP attach/detach with scoped config** -- Trigger: basic session lifecycle working.
-- [ ] **Event watcher recovery after restart** -- Trigger: cross-session event tests passing.
+- Mouse click-to-select (requires coordinate hit-testing, higher complexity)
+- Click-to-attach (requires double-click state machine, depends on click-select)
+- Performance testing at 50+ sessions (out of scope per PROJECT.md)
 
 ## Feature Prioritization Matrix
 
 | Feature | User Value | Implementation Cost | Priority |
 |---------|------------|---------------------|----------|
-| tmux session test fixtures | HIGH | LOW | P1 |
-| Timeout and polling assertions | HIGH | LOW | P1 |
-| SQLite fixture management | HIGH | LOW | P1 |
-| TestMain template | HIGH | LOW | P1 |
-| Session lifecycle integration tests | HIGH | MEDIUM | P1 |
-| Conductor parent-child command delivery | HIGH | HIGH | P1 |
-| Cross-session event notification tests | HIGH | MEDIUM | P1 |
-| Sleep/wait detection across tools | HIGH | HIGH | P2 |
-| Multi-tool session creation and detection | MEDIUM | HIGH | P2 |
-| Conductor heartbeat round-trip test | MEDIUM | HIGH | P2 |
-| Fork flow with real tmux sessions | MEDIUM | MEDIUM | P2 |
-| Send-with-retry real tmux verification | MEDIUM | MEDIUM | P2 |
-| Concurrent status polling stress test | MEDIUM | MEDIUM | P3 |
-| Storage watcher multi-instance sync | LOW | MEDIUM | P3 |
-| Skills attachment and triggering integration | LOW | MEDIUM | P3 |
-| MCP attach/detach scoped config | LOW | MEDIUM | P3 |
-| Event watcher recovery after restart | LOW | LOW | P3 |
+| Stopped sessions visible (#307) | HIGH | LOW | P1 |
+| Sandbox config persistence (#320) | HIGH | LOW | P1 |
+| Session deduplication (#224) | HIGH | MEDIUM | P1 |
+| Auto-start TTY fix (#311) | HIGH | MEDIUM | P1 |
+| Mouse scroll (#262, #254) | MEDIUM | LOW | P1 |
+| Settings custom tools (#318) | MEDIUM | LOW | P1 |
+| auto_cleanup docs (#228) | LOW | LOW | P1 |
+| Mouse click-to-select | MEDIUM | MEDIUM | P2 |
+| Click-to-attach | LOW | HIGH | P3 |
 
 **Priority key:**
-- P1: Must have for launch. These tests verify the core product promises.
-- P2: Should have. These catch real production regressions.
-- P3: Nice to have. Valuable but can wait.
+- P1: In v1.3 scope. All regressions or missing basics.
+- P2: Next milestone candidate.
+- P3: Future consideration only.
 
 ## Existing Infrastructure Analysis
 
-The codebase already has significant test infrastructure that the integration framework should build on, not replace.
+Understanding what already exists prevents reimplementing and confirms where the bugs actually are.
 
-| Existing Asset | Location | Reuse Strategy |
-|---------------|----------|----------------|
-| `skipIfNoTmuxServer(t)` | `session/testmain_test.go`, `tmux/testmain_test.go` | Extract to shared `testutil/tmux.go` |
-| `createTestSession(t, suffix)` | `tmux/controlpipe_test.go` | Basis for shared fixture helper |
-| `newTestStorage(t)` | `session/storage_test.go` | Basis for fixture helper |
-| `mockStatusChecker` | `cmd/agent-deck/session_send_test.go` | Keep for unit tests, complement with real tmux tests |
-| `StatusEventWatcher` tests | `session/event_watcher_test.go` | Pattern for async event testing |
-| `TestIntegration_*` notification tests | `session/notifications_integration_test.go` | Good model for multi-phase integration tests |
-| `TestForkFlow_Integration` | `session/fork_integration_test.go` | Extend with real tmux execution |
-| TestMain pattern | 5 packages | Template for new test packages |
-| `UnsetGitRepoEnv` | `testutil/gitenv.go` | Already cross-package; add tmux helpers to same package |
+| Feature | Existing Assets | Gap |
+|---------|----------------|-----|
+| Sandbox persistence | `InstanceData.Sandbox`, `SandboxConfig`, `MarshalToolData`/`UnmarshalToolData`, `decodeSandboxConfig` — full round-trip tested in `TestStorageSaveWithGroups_PersistsSandboxConfig` | Sandbox not written back to instance record at save time in the UI dialog flow |
+| Stopped session visibility | `StatusStopped` enum, `statusToString("inactive")`, conductor templates distinguish stopped vs error | TUI list filter hides stopped same as error |
+| Deduplication | `UpdateClaudeSessionsWithDedup` (oldest-wins by `CreatedAt`) called in `SaveWithGroups` | Not called at resume-creation path; duplicate row created before save |
+| Auto-start TTY | `tmux.ReconnectSessionLazy`, `wrapIgnoreSuspend`, `isatty` pattern documented in issue | Platform-specific launch in main.go does not route through a PTY; session IDs post-launch need verification |
+| Mouse in TUI | `tea.WithMouseCellMotion()` already active in `tea.NewProgram` | `home.go:Update()` has no `tea.MouseMsg` handler cases |
+| Settings custom tools | `buildToolLists()` reads `config.Tools`, appends custom names and values | Custom tool `icon` field from `ToolDef` not rendered in radio group; `newdialog` tool picker may also miss icons |
+| auto_cleanup | `DockerSettings.AutoCleanup`, `GetAutoCleanup()`, default `true`, `config-reference.md` entry | Not mentioned in main README or sandbox guide intro section |
 
 ## Sources
 
-- Codebase analysis: `internal/session/`, `internal/tmux/`, `cmd/agent-deck/` test files (HIGH confidence, primary source)
-- [DoltHub: Debugging Multiple Go Processes](https://www.dolthub.com/blog/2023-05-25-debugging-multiple-golang-processes/) -- Multi-process Go integration test patterns
-- [David MacIver: Using tmux to Test Console Applications](https://www.drmaciver.com/2015/05/using-tmux-to-test-your-console-applications/) -- tmux as test harness pattern (capture-pane, send-keys for assertions)
-- [tmux-plugins/tmux-test](https://github.com/tmux-plugins/tmux-test) -- Isolated tmux testing framework (Vagrant-based, inspiration for isolation patterns)
-- [Go testing.T cleanup](https://ieftimov.com/posts/testing-in-go-clean-tests-using-t-cleanup/) -- `t.Cleanup()` patterns for resource management
-- [Testcontainers for Go](https://golang.testcontainers.org/) -- Lifecycle management patterns (TestMain for shared resources, garbage collection). Not used directly, but cleanup patterns apply.
-- [Go Test Parallelism](https://threedots.tech/post/go-test-parallelism/) -- Why sequential execution is safer for resource-dependent tests
+- `internal/session/instance.go` — `UpdateClaudeSessionsWithDedup`, `SandboxConfig`, `StatusStopped` (HIGH confidence, direct codebase)
+- `internal/session/storage.go` — `SaveWithGroups`, `MarshalToolData`, `decodeSandboxConfig` (HIGH confidence, direct codebase)
+- `internal/session/userconfig.go` — `ToolDef`, `DockerSettings.AutoCleanup`, `GetCustomToolNames` (HIGH confidence, direct codebase)
+- `internal/ui/settings_panel.go` — `buildToolLists`, `SettingDefaultTool`, tool radio group rendering (HIGH confidence, direct codebase)
+- `cmd/agent-deck/main.go` line 468 — `tea.WithMouseCellMotion()` already active (HIGH confidence, direct codebase)
+- `.planning/PROJECT.md` — Issue numbers, milestone goal, constraints (HIGH confidence, project documentation)
+- `skills/agent-deck/references/config-reference.md` and `sandbox.md` — `auto_cleanup` documentation coverage (HIGH confidence, direct file read)
 
 ---
-*Feature research for: Integration testing framework for agent-deck v1.1*
-*Researched: 2026-03-06*
+*Feature research for: v1.3 Session Reliability and Resume UX (agent-deck)*
+*Researched: 2026-03-12*

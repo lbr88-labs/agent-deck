@@ -369,6 +369,22 @@ func (m *MCPDialog) GetError() error {
 	return m.err
 }
 
+// ScrollUp moves the active list cursor up by one (mouse wheel support).
+func (m *MCPDialog) ScrollUp() {
+	list, idx := m.getCurrentList()
+	if len(*list) > 0 && *idx > 0 {
+		*idx--
+	}
+}
+
+// ScrollDown moves the active list cursor down by one (mouse wheel support).
+func (m *MCPDialog) ScrollDown() {
+	list, idx := m.getCurrentList()
+	if len(*list) > 0 && *idx < len(*list)-1 {
+		*idx++
+	}
+}
+
 // SetSize sets the dialog size
 func (m *MCPDialog) SetSize(width, height int) {
 	m.width = width

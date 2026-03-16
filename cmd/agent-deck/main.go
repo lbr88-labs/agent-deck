@@ -29,7 +29,7 @@ import (
 	"github.com/asheshgoplani/agent-deck/internal/web"
 )
 
-const Version = "0.25.1"
+const Version = "0.26.0"
 
 // Table column widths for list command output
 const (
@@ -952,25 +952,31 @@ func handleAdd(profile string, args []string) {
 			Template:  wtSettings.Template(),
 		})
 
-		// Ensure parent directory exists (needed for subdirectory mode)
-		if err := os.MkdirAll(filepath.Dir(worktreePath), 0o755); err != nil {
-			fmt.Fprintf(os.Stderr, "Error: failed to create parent directory: %v\n", err)
-			os.Exit(1)
-		}
-
-		// Create worktree atomically (git handles existence checks).
-		// This avoids a TOCTOU race from separate check-then-create steps.
-		if err := git.CreateWorktree(repoRoot, worktreePath, wtBranch); err != nil {
-			if isWorktreeAlreadyExistsError(err) {
-				fmt.Fprintf(os.Stderr, "Error: worktree already exists at %s\n", worktreePath)
-				fmt.Fprintf(os.Stderr, "Tip: Use 'agent-deck add %s' to add the existing worktree\n", worktreePath)
+		// Check for an existing worktree for this branch before creating a new one
+		if existingPath, err := git.GetWorktreeForBranch(repoRoot, wtBranch); err == nil && existingPath != "" {
+			fmt.Fprintf(os.Stderr, "Reusing existing worktree at %s for branch %s\n", existingPath, wtBranch)
+			worktreePath = existingPath
+		} else {
+			// Ensure parent directory exists (needed for subdirectory mode)
+			if err := os.MkdirAll(filepath.Dir(worktreePath), 0o755); err != nil {
+				fmt.Fprintf(os.Stderr, "Error: failed to create parent directory: %v\n", err)
 				os.Exit(1)
 			}
-			fmt.Fprintf(os.Stderr, "Error: failed to create worktree: %v\n", err)
-			os.Exit(1)
-		}
 
-		fmt.Printf("Created worktree at: %s\n", worktreePath)
+			// Create worktree atomically (git handles existence checks).
+			// This avoids a TOCTOU race from separate check-then-create steps.
+			if err := git.CreateWorktree(repoRoot, worktreePath, wtBranch); err != nil {
+				if isWorktreeAlreadyExistsError(err) {
+					fmt.Fprintf(os.Stderr, "Error: worktree already exists at %s\n", worktreePath)
+					fmt.Fprintf(os.Stderr, "Tip: Use 'agent-deck add %s' to add the existing worktree\n", worktreePath)
+					os.Exit(1)
+				}
+				fmt.Fprintf(os.Stderr, "Error: failed to create worktree: %v\n", err)
+				os.Exit(1)
+			}
+
+			fmt.Printf("Created worktree at: %s\n", worktreePath)
+		}
 		worktreeRepoRoot = repoRoot
 		// Update path to point to worktree so session uses worktree as working directory
 		path = worktreePath

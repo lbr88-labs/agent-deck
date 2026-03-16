@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 	"sync"
@@ -323,6 +324,10 @@ type Home struct {
 		valid                           atomic.Bool // THREAD-SAFE: accessed from main and worker goroutines
 		timestamp                       time.Time   // For time-based expiration
 	}
+
+	// Full repaint mode: issue tea.ClearScreen every tick to avoid
+	// incremental redraw drift in terminals with unicode grapheme widths
+	fullRepaint bool
 
 	// Reusable string builder for View() to reduce allocations
 	viewBuilder strings.Builder
@@ -664,6 +669,13 @@ func NewHomeWithProfileAndMode(profile string) *Home {
 	h.sessionRenderSnapshot.Store(make(map[string]sessionRenderState))
 
 	h.reloadHotkeysFromConfig()
+
+	// Cache full-repaint setting (config.toml [display] full_repaint or AGENTDECK_REPAINT=full)
+	if cfg, _ := session.LoadUserConfig(); cfg != nil {
+		h.fullRepaint = cfg.Display.GetFullRepaint()
+	} else {
+		h.fullRepaint = (session.DisplaySettings{}).GetFullRepaint()
+	}
 
 	// Keep settings panel profile-aware so profile overrides (e.g., Claude config dir)
 	// are displayed and edited in the correct scope.
@@ -1463,6 +1475,27 @@ func (h *Home) startThemeWatcher() tea.Cmd {
 		return nil
 	}
 	return listenForThemeChange(h.themeWatcher)
+}
+
+// propagateThemeToSessions updates COLORFGBG in all running tmux sessions
+// so that terminal-aware tools pick up the new light/dark setting.
+func (h *Home) propagateThemeToSessions() {
+	colorfgbg := session.ThemeColorFGBG()
+	if colorfgbg == "" {
+		return
+	}
+	h.instancesMu.RLock()
+	instances := make([]*session.Instance, len(h.instances))
+	copy(instances, h.instances)
+	h.instancesMu.RUnlock()
+
+	go func() {
+		for _, inst := range instances {
+			if tmuxSess := inst.GetTmuxSession(); tmuxSess != nil && tmuxSess.Exists() {
+				_ = tmuxSess.SetEnvironment("COLORFGBG", colorfgbg)
+			}
+		}
+	}()
 }
 
 // fetchRemoteSessions fetches sessions from all configured remotes.
@@ -2633,6 +2666,62 @@ func (h *Home) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		h.geminiModelDialog.SetSize(msg.Width, msg.Height)
 		return h, nil
 
+	case tea.MouseMsg:
+		// Route mouse wheel events to the active scrollable area.
+		// Priority: setup wizard > settings > help > global search > MCP dialog > new/fork dialogs > main list.
+		// Non-wheel events are silently ignored (O(1), no blocking I/O).
+		switch msg.Button {
+		case tea.MouseButtonWheelUp, tea.MouseButtonWheelDown:
+			if h.setupWizard.IsVisible() {
+				return h, nil
+			}
+			if h.settingsPanel.IsVisible() {
+				if msg.Button == tea.MouseButtonWheelUp {
+					h.settingsPanel.ScrollUp()
+				} else {
+					h.settingsPanel.ScrollDown()
+				}
+				return h, nil
+			}
+			if h.helpOverlay.IsVisible() {
+				return h, nil
+			}
+			if h.globalSearch.IsVisible() {
+				var cmd tea.Cmd
+				h.globalSearch, cmd = h.globalSearch.Update(msg)
+				return h, cmd
+			}
+			if h.mcpDialog.IsVisible() {
+				if msg.Button == tea.MouseButtonWheelUp {
+					h.mcpDialog.ScrollUp()
+				} else {
+					h.mcpDialog.ScrollDown()
+				}
+				return h, nil
+			}
+			if h.newDialog.IsVisible() || h.forkDialog.IsVisible() {
+				return h, nil
+			}
+			// Main session list scroll
+			if msg.Button == tea.MouseButtonWheelUp {
+				if h.cursor > 0 {
+					h.cursor--
+					h.syncViewport()
+					h.markNavigationActivity()
+					return h, h.fetchSelectedPreview()
+				}
+			} else {
+				if h.cursor < len(h.flatItems)-1 {
+					h.cursor++
+					h.syncViewport()
+					h.markNavigationActivity()
+					return h, h.fetchSelectedPreview()
+				}
+			}
+			return h, nil
+		}
+		return h, nil
+
 	case loadSessionsMsg:
 		// Clear loading indicators and store file mtime for external change detection
 		h.reloadMu.Lock()
@@ -3133,6 +3222,10 @@ func (h *Home) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				// Refresh the loaded MCPs to match the new config
 				inst.CaptureLoadedMCPs()
 			}
+			// Run dedup in-memory before saving, mirroring sessionCreatedMsg pattern (line ~2864)
+			h.instancesMu.Lock()
+			session.UpdateClaudeSessionsWithDedup(h.instances)
+			h.instancesMu.Unlock()
 			h.invalidatePreviewCache(msg.sessionID)
 			// Save the updated session state (new tmux session name)
 			h.saveInstances()
@@ -3262,6 +3355,7 @@ func (h *Home) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			theme = "dark"
 		}
 		InitTheme(theme)
+		h.propagateThemeToSessions()
 		// IMPORTANT: Re-issue listener to keep watching for theme changes.
 		// Without this, the watcher silently disconnects.
 		return h, tea.Batch(listenForThemeChange(h.themeWatcher), tea.ClearScreen)
@@ -3742,7 +3836,11 @@ func (h *Home) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			h.previewCacheMu.Unlock()
 		}
-		return h, tea.Batch(h.tick(), previewCmd, remoteFetchCmd)
+		cmds := []tea.Cmd{h.tick(), previewCmd, remoteFetchCmd}
+		if h.fullRepaint {
+			cmds = append(cmds, tea.ClearScreen)
+		}
+		return h, tea.Batch(cmds...)
 
 	case globalSearchDebounceMsg, globalSearchResultsMsg:
 		// Route async global search messages to the global search component
@@ -3804,6 +3902,7 @@ func (h *Home) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				h.stopThemeWatcher()
 				resolvedTheme := session.ResolveTheme()
 				InitTheme(resolvedTheme)
+				h.propagateThemeToSessions()
 				var themeCmd tea.Cmd
 				if config.Theme == "system" {
 					themeCmd = h.startThemeWatcher()
@@ -5922,11 +6021,18 @@ func (h *Home) createSessionInGroupWithWorktreeAndOptions(
 
 		if worktreePath != "" && worktreeRepoRoot != "" && worktreeBranch != "" && !multiRepoEnabled {
 			// Single-repo worktree: create here. Multi-repo worktrees are handled below.
-			if err := os.MkdirAll(filepath.Dir(worktreePath), 0o755); err != nil {
-				return sessionCreatedMsg{err: fmt.Errorf("failed to create parent directory: %w", err)}
-			}
-			if err := git.CreateWorktree(worktreeRepoRoot, worktreePath, worktreeBranch); err != nil {
-				return sessionCreatedMsg{err: fmt.Errorf("failed to create worktree: %w", err)}
+			//
+			// Check for an existing worktree for this branch before creating a new one.
+			if existingPath, err := git.GetWorktreeForBranch(worktreeRepoRoot, worktreeBranch); err == nil && existingPath != "" {
+				uiLog.Info("worktree_reuse", slog.String("branch", worktreeBranch), slog.String("path", existingPath))
+				worktreePath = existingPath
+			} else {
+				if err := os.MkdirAll(filepath.Dir(worktreePath), 0o755); err != nil {
+					return sessionCreatedMsg{err: fmt.Errorf("failed to create parent directory: %w", err)}
+				}
+				if err := git.CreateWorktree(worktreeRepoRoot, worktreePath, worktreeBranch); err != nil {
+					return sessionCreatedMsg{err: fmt.Errorf("failed to create worktree: %w", err)}
+				}
 			}
 			path = worktreePath
 		}
@@ -6287,11 +6393,18 @@ func (h *Home) forkSessionCmdWithOptions(
 		if opts != nil && opts.WorktreePath != "" && opts.WorktreeRepoRoot != "" && opts.WorktreeBranch != "" {
 			// Worktree creation can be slow on large repos; keep it in async cmd path
 			// so the TUI remains responsive.
-			if err := os.MkdirAll(filepath.Dir(opts.WorktreePath), 0o755); err != nil {
-				return sessionForkedMsg{err: fmt.Errorf("failed to create directory: %w", err), sourceID: sourceID}
-			}
-			if err := git.CreateWorktree(opts.WorktreeRepoRoot, opts.WorktreePath, opts.WorktreeBranch); err != nil {
-				return sessionForkedMsg{err: fmt.Errorf("worktree creation failed: %w", err), sourceID: sourceID}
+			//
+			// Check for an existing worktree for this branch before creating a new one.
+			if existingPath, err := git.GetWorktreeForBranch(opts.WorktreeRepoRoot, opts.WorktreeBranch); err == nil && existingPath != "" {
+				uiLog.Info("worktree_reuse", slog.String("branch", opts.WorktreeBranch), slog.String("path", existingPath))
+				opts.WorktreePath = existingPath
+			} else {
+				if err := os.MkdirAll(filepath.Dir(opts.WorktreePath), 0o755); err != nil {
+					return sessionForkedMsg{err: fmt.Errorf("failed to create directory: %w", err), sourceID: sourceID}
+				}
+				if err := git.CreateWorktree(opts.WorktreeRepoRoot, opts.WorktreePath, opts.WorktreeBranch); err != nil {
+					return sessionForkedMsg{err: fmt.Errorf("worktree creation failed: %w", err), sourceID: sourceID}
+				}
 			}
 		}
 
@@ -10055,26 +10168,78 @@ func (h *Home) renderPreviewPane(width, height int) string {
 		// PreviewModeBoth: use config settings (default)
 	}
 
-	// Special handling for error/stopped state - show guidance instead of output
-	if selected.Status == session.StatusError || selected.Status == session.StatusStopped {
-		errorHeader := renderSectionDivider("Session Inactive", width-4)
-		b.WriteString(errorHeader)
+	// Special handling for stopped state - user-intentional stop with resume guidance
+	if selected.Status == session.StatusStopped {
+		stoppedHeader := renderSectionDivider("Session Stopped", width-4)
+		b.WriteString(stoppedHeader)
 		b.WriteString("\n\n")
 
-		// Warning icon and message
 		warnStyle := lipgloss.NewStyle().Foreground(ColorYellow)
 		dimStyle := lipgloss.NewStyle().Foreground(ColorText)
 		keyStyle := lipgloss.NewStyle().Foreground(ColorAccent).Bold(true)
 
-		b.WriteString(warnStyle.Render("⚠ No tmux session running"))
+		b.WriteString(warnStyle.Render("■ Session stopped by user"))
+		b.WriteString("\n\n")
+		b.WriteString(dimStyle.Render("You stopped this session intentionally."))
+		b.WriteString("\n")
+		b.WriteString(dimStyle.Render("The session record is preserved for resuming."))
+		b.WriteString("\n\n")
+		b.WriteString(dimStyle.Render("Actions:"))
+		b.WriteString("\n")
+		if restartKey := h.actionKey(hotkeyRestart); restartKey != "" {
+			b.WriteString("  ")
+			b.WriteString(keyStyle.Render(restartKey))
+			b.WriteString(dimStyle.Render(" Resume  - restart with session resume"))
+			b.WriteString("\n")
+		}
+		if deleteKey := h.actionKey(hotkeyDelete); deleteKey != "" {
+			b.WriteString("  ")
+			b.WriteString(keyStyle.Render(deleteKey))
+			b.WriteString(dimStyle.Render(" Delete  - remove from list"))
+			b.WriteString("\n")
+		}
+		b.WriteString("  ")
+		b.WriteString(keyStyle.Render("Enter"))
+		b.WriteString(dimStyle.Render(" - attach (will auto-start)"))
+		b.WriteString("\n")
+
+		// Pad output to exact height to prevent layout shifts
+		content := b.String()
+		lines := strings.Split(content, "\n")
+		lineCount := len(lines)
+
+		if lineCount < height {
+			for i := lineCount; i < height; i++ {
+				content += "\n"
+			}
+		}
+
+		if len(content) > 0 && content[len(content)-1] == '\n' {
+			content = content[:len(content)-1]
+		}
+
+		return content
+	}
+
+	// Special handling for error state - crash/unexpected failure with diagnostic guidance
+	if selected.Status == session.StatusError {
+		errorHeader := renderSectionDivider("Session Error", width-4)
+		b.WriteString(errorHeader)
+		b.WriteString("\n\n")
+
+		warnStyle := lipgloss.NewStyle().Foreground(ColorYellow)
+		dimStyle := lipgloss.NewStyle().Foreground(ColorText)
+		keyStyle := lipgloss.NewStyle().Foreground(ColorAccent).Bold(true)
+
+		b.WriteString(warnStyle.Render("✕ No tmux session running"))
 		b.WriteString("\n\n")
 		b.WriteString(dimStyle.Render("This can happen if:"))
 		b.WriteString("\n")
-		b.WriteString(dimStyle.Render("  • Session was added but not yet started"))
+		b.WriteString(dimStyle.Render("  - Session was added but not yet started"))
 		b.WriteString("\n")
-		b.WriteString(dimStyle.Render("  • tmux server was restarted"))
+		b.WriteString(dimStyle.Render("  - tmux server was restarted"))
 		b.WriteString("\n")
-		b.WriteString(dimStyle.Render("  • Terminal was closed or system rebooted"))
+		b.WriteString(dimStyle.Render("  - Terminal was closed or system rebooted"))
 		b.WriteString("\n\n")
 		b.WriteString(dimStyle.Render("Actions:"))
 		b.WriteString("\n")
@@ -10363,11 +10528,20 @@ func (h *Home) renderPreviewPane(width, height int) string {
 		consecutiveEmpty := 0
 		const maxConsecutiveEmpty = 2 // Allow up to 2 consecutive empty lines
 
+		isLightTheme := GetCurrentTheme() == ThemeLight
 		for _, line := range lines {
 			// Strip dangerous control characters (\r, \b, etc.) but preserve
 			// ANSI escape sequences (ESC = 0x1b) so colors and formatting
 			// from the captured terminal output pass through to display.
 			safeLine := stripControlCharsPreserveANSI(line)
+
+			// In light theme, remove background color ANSI sequences that
+			// cause dark background bands to bleed through (e.g., tool output
+			// uses ESC[40m..ESC[47m which remain dark on a light background).
+			// Foreground colors and text formatting are preserved.
+			if isLightTheme {
+				safeLine = stripANSIBackground(safeLine)
+			}
 
 			// Check if visually empty (strip ANSI for this check)
 			stripped := ansi.Strip(safeLine)
@@ -10556,6 +10730,21 @@ func stripControlCharsPreserveANSI(s string) string {
 		}
 		return r
 	}, s)
+}
+
+// ansiBackgroundRE matches ANSI background color escape sequences:
+//   - ESC[40m..ESC[47m  — standard 8-color backgrounds
+//   - ESC[100m..ESC[107m — bright/high-intensity backgrounds
+//   - ESC[48;...m        — 256-color and true-color backgrounds (ESC[48;5;Nm / ESC[48;2;R;G;Bm)
+//   - ESC[49m            — default background reset
+var ansiBackgroundRE = regexp.MustCompile(`\x1b\[(?:4[0-7]|10[0-7]|48;[0-9;]+|49)m`)
+
+// stripANSIBackground removes ANSI background color sequences from a line
+// while preserving all other ANSI sequences (foreground colors, bold, italic,
+// underline). Used in light theme to prevent dark background bleed-through
+// from captured tmux pane output.
+func stripANSIBackground(s string) string {
+	return ansiBackgroundRE.ReplaceAllString(s, "")
 }
 
 // truncatePath shortens a path to fit within maxLen display width

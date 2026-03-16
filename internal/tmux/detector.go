@@ -55,6 +55,8 @@ func (d *PromptDetector) HasPrompt(content string) bool {
 		return strings.Contains(content, "press enter to send") ||
 			strings.Contains(content, "Ask anything") ||
 			strings.Contains(content, "open code") ||
+			strings.Contains(content, "enter submit") ||
+			strings.Contains(content, "esc dismiss") ||
 			d.hasLineEndingWith(content, ">")
 
 	case "gemini":
@@ -420,23 +422,15 @@ func (d *PromptDetector) hasShellPrompt(content string) bool {
 
 // hasOpencodeBusyIndicator checks if opencode's TUI shows signs of active processing.
 // OpenCode uses a Bubble Tea TUI with these busy signals:
-//   - Help bar: "esc" to cancel (only during processing)
+//   - Help bar: "esc interrupt" / "esc to exit" (only during processing)
 //   - Pulse spinner: █ ▓ ▒ ░ (cycles at 125ms)
 //   - Task text: "Thinking...", "Generating...", etc.
 func (d *PromptDetector) hasOpencodeBusyIndicator(content string) bool {
-	// "esc interrupt" or "esc to exit" in help bar = processing
+	// Authoritative busy indicators: always override prompt detection.
 	if strings.Contains(content, "esc interrupt") || strings.Contains(content, "esc to exit") {
 		return true
 	}
-	// Pulse spinner characters (spinner.Pulse from Bubble Tea)
-	// These only appear on the spinner line when opencode is actively working
-	pulseChars := []string{"█", "▓", "▒", "░"}
-	for _, ch := range pulseChars {
-		if strings.Contains(content, ch) {
-			return true
-		}
-	}
-	// Task text patterns shown next to the spinner
+	// Authoritative busy task text.
 	busyStrings := []string{
 		"Thinking...",
 		"Generating...",
@@ -446,6 +440,22 @@ func (d *PromptDetector) hasOpencodeBusyIndicator(content string) bool {
 	for _, s := range busyStrings {
 		if strings.Contains(content, s) {
 			return true
+		}
+	}
+	// Pulse spinner chars: only indicate busy when no prompt-indicating strings
+	// are present. This prevents false positives when pulse chars appear in
+	// static UI elements (progress bars, decorative borders) alongside
+	// question tool prompts. (#255)
+	hasPromptIndicator := strings.Contains(content, "enter submit") ||
+		strings.Contains(content, "esc dismiss") ||
+		strings.Contains(content, "press enter to send") ||
+		strings.Contains(content, "Ask anything")
+	if !hasPromptIndicator {
+		pulseChars := []string{"█", "▓", "▒", "░"}
+		for _, ch := range pulseChars {
+			if strings.Contains(content, ch) {
+				return true
+			}
 		}
 	}
 	return false
