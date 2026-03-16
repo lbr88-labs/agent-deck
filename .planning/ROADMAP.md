@@ -179,7 +179,9 @@ Plans:
 **Success Criteria** (what must be TRUE):
   1. Pressing Shift+M, Shift+R, Shift+F and other uppercase-bound TUI shortcuts on a Wayland compositor triggers the expected action (same behavior as X11/macOS)
   2. Typing uppercase characters in the session name, search, and other TUI text input fields on Wayland produces the correct uppercase character in the field
-**Plans:** TBD
+**Plans:** 1 plan
+Plans:
+- [ ] 18-01-PLAN.md — Kitty keyboard protocol disable + CSI u compatibility layer (KEY-01, KEY-02)
 
 ## Progress
 
@@ -202,4 +204,4 @@ Plans:
 | 15. Mouse, Theme & Polish | v1.3 | 2/3 | In Progress | - |
 | 16. Comprehensive Testing | v1.3 | 0/TBD | Not started | - |
 | 17. Release Pipeline & Slack Bridge | v0.26.2 | 0/2 | Not started | - |
-| 18. Wayland Key Input | v0.26.2 | 0/TBD | Not started | - |
+| 18. Wayland Key Input | v0.26.2 | 0/1 | Not started | - |
