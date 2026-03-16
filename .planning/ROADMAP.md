@@ -204,4 +204,4 @@ Plans:
 | 15. Mouse, Theme & Polish | v1.3 | 2/3 | In Progress | - |
 | 16. Comprehensive Testing | v1.3 | 0/TBD | Not started | - |
 | 17. Release Pipeline & Slack Bridge | 2/2 | Complete    | 2026-03-16 | - |
-| 18. Wayland Key Input | 1/1 | Complete   | 2026-03-16 | - |
+| 18. Wayland Key Input | 1/1 | Complete    | 2026-03-16 | - |
