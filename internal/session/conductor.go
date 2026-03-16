@@ -80,6 +80,14 @@ type DiscordSettings struct {
 
 	// UserID is the authorized Discord user ID
 	UserID int64 `toml:"user_id"`
+
+	// ListenMode controls when the bot responds: "mentions" (only @mentions) or "all" (all channel messages)
+	// Default: "all"
+	ListenMode string `toml:"listen_mode"`
+
+	// IgnoreRepliesToOthers skips forwarding replies unless they reply to the bot itself.
+	// Default: false
+	IgnoreRepliesToOthers bool `toml:"ignore_replies_to_others"`
 }
 
 // ConductorMeta holds metadata for a named conductor instance

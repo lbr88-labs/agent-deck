@@ -450,6 +450,36 @@ func TestSlackSettings_TOML(t *testing.T) {
 	}
 }
 
+func TestDiscordSettings_TOML(t *testing.T) {
+	discord := DiscordSettings{
+		BotToken:              "discord-bot-token",
+		GuildID:               12345,
+		ChannelID:             67890,
+		UserID:                24680,
+		ListenMode:            "mentions",
+		IgnoreRepliesToOthers: true,
+	}
+
+	if discord.BotToken != "discord-bot-token" {
+		t.Errorf("bot_token mismatch: got %q", discord.BotToken)
+	}
+	if discord.GuildID != 12345 {
+		t.Errorf("guild_id mismatch: got %d", discord.GuildID)
+	}
+	if discord.ChannelID != 67890 {
+		t.Errorf("channel_id mismatch: got %d", discord.ChannelID)
+	}
+	if discord.UserID != 24680 {
+		t.Errorf("user_id mismatch: got %d", discord.UserID)
+	}
+	if discord.ListenMode != "mentions" {
+		t.Errorf("listen_mode mismatch: got %q", discord.ListenMode)
+	}
+	if !discord.IgnoreRepliesToOthers {
+		t.Error("ignore_replies_to_others should be true")
+	}
+}
+
 // --- Python bridge template tests ---
 
 func TestBridgeTemplate_ContainsSlackAuthorization(t *testing.T) {
@@ -1763,6 +1793,10 @@ func TestBridgeTemplate_DiscordConfigLoading(t *testing.T) {
 		`dc_guild_id = dc.get("guild_id", 0)`,
 		`dc_channel_id = dc.get("channel_id", 0)`,
 		`dc_user_id = dc.get("user_id", 0)`,
+		`dc_listen_mode = dc.get("listen_mode", "all")`,
+		`dc_ignore_replies_to_others = dc.get("ignore_replies_to_others", False)`,
+		`"listen_mode": dc_listen_mode,`,
+		`"ignore_replies_to_others": bool(dc_ignore_replies_to_others),`,
 		`"discord":`,
 	}
 	for _, pattern := range patterns {
@@ -1798,6 +1832,40 @@ func TestBridgeTemplate_DiscordSlashCommandsChannelRestriction(t *testing.T) {
 	for _, pattern := range patterns {
 		if !strings.Contains(template, pattern) {
 			t.Errorf("template should contain Discord channel restriction pattern: %q", pattern)
+		}
+	}
+}
+
+func TestBridgeTemplate_DiscordListenModeSupport(t *testing.T) {
+	template := conductorBridgePy
+	patterns := []string{
+		`listen_mode = str(config["discord"].get("listen_mode", "all") or "all").strip().lower()`,
+		`if listen_mode not in {"all", "mentions"}:`,
+		`if listen_mode == "mentions":`,
+		`if not message_mentions_bot(message):`,
+		`text = strip_bot_mentions(text)`,
+		`return re.sub(rf"<@!?{bot.user.id}>", "", text).strip()`,
+	}
+	for _, pattern := range patterns {
+		if !strings.Contains(template, pattern) {
+			t.Errorf("template should contain Discord listen_mode pattern: %q", pattern)
+		}
+	}
+}
+
+func TestBridgeTemplate_DiscordReplyFilterSupport(t *testing.T) {
+	template := conductorBridgePy
+	patterns := []string{
+		`ignore_replies_to_others = bool(`,
+		`config["discord"].get("ignore_replies_to_others", False)`,
+		`async def should_ignore_reply_to_other(message: discord.Message) -> bool:`,
+		`referenced = await message.channel.fetch_message(reference_id)`,
+		`if referenced.author.id != bot.user.id:`,
+		`if await should_ignore_reply_to_other(message):`,
+	}
+	for _, pattern := range patterns {
+		if !strings.Contains(template, pattern) {
+			t.Errorf("template should contain Discord reply filter pattern: %q", pattern)
 		}
 	}
 }
