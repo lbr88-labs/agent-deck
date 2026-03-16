@@ -166,7 +166,10 @@ Plans:
   2. A CI workflow job fails the release if any of the 4 expected platform assets (darwin_amd64, darwin_arm64, linux_amd64, linux_arm64) are missing from the GitHub release
   3. A Slack message sent via the bridge with GFM headers, bold, strikethrough, links, and bullets renders visibly formatted in the Slack channel (not raw markdown symbols)
   4. A code block or inline code sent via the bridge appears as a Slack code block or inline code (backtick-preserved, monospace rendering)
-**Plans:** TBD
+**Plans:** 2 plans
+Plans:
+- [ ] 17-01-PLAN.md — CI release asset validation + install script error handling (REL-01, REL-02, REL-03)
+- [ ] 17-02-PLAN.md — GFM-to-mrkdwn converter in Slack bridge template (SLACK-01, SLACK-02)
 
 ### Phase 18: Wayland Key Input
 **Goal:** Users running agent-deck on Wayland compositors can use all uppercase/shifted key shortcuts and type uppercase characters in text input fields
@@ -198,5 +201,5 @@ Plans:
 | 14. Detection & Sandbox | v1.3 | 2/2 | Complete | 2026-03-13 |
 | 15. Mouse, Theme & Polish | v1.3 | 2/3 | In Progress | - |
 | 16. Comprehensive Testing | v1.3 | 0/TBD | Not started | - |
-| 17. Release Pipeline & Slack Bridge | v0.26.2 | 0/TBD | Not started | - |
+| 17. Release Pipeline & Slack Bridge | v0.26.2 | 0/2 | Not started | - |
 | 18. Wayland Key Input | v0.26.2 | 0/TBD | Not started | - |
