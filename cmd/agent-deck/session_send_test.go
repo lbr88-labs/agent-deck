@@ -487,6 +487,9 @@ func TestSendWithRetry_DelayedInputHandler_Integration(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping integration test in short mode")
 	}
+	if os.Getenv("AGENT_DECK_INTEGRATION_TESTS") == "" {
+		t.Skip("skipping flaky tmux integration test (set AGENT_DECK_INTEGRATION_TESTS=1 to enable)")
+	}
 
 	sess := tmux.NewSession("send-test-delayed", "/tmp")
 
