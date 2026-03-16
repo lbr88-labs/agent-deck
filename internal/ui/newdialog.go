@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/charmbracelet/bubbles/textinput"
@@ -20,10 +21,11 @@ type focusTarget int
 
 const (
 	focusName      focusTarget = iota
-	focusPath                  // project path input.
+	focusPath                  // project path input (hidden when multi-repo enabled).
 	focusCommand               // tool/command picker.
 	focusWorktree              // worktree checkbox.
 	focusSandbox               // sandbox checkbox.
+	focusMultiRepo             // multi-repo toggle (transforms path into list when enabled).
 	focusInherited             // inherited Docker settings toggle (conditional).
 	focusBranch                // branch input (conditional — only when worktree enabled).
 	focusOptions               // tool-specific options panel (conditional).
@@ -70,6 +72,11 @@ type NewDialog struct {
 	// Inline validation error displayed inside the dialog.
 	validationErr string
 	pathCycler    session.CompletionCycler // Path autocomplete state.
+	// Multi-repo mode.
+	multiRepoEnabled    bool
+	multiRepoPaths      []string // All paths when multi-repo is active.
+	multiRepoPathCursor int      // Selected path index in the stacked list.
+	multiRepoEditing    bool     // True when editing a path entry.
 	// Recent sessions picker.
 	recentSessions      []*statedb.RecentSessionRow
 	recentSessionCursor int
@@ -79,17 +86,19 @@ type NewDialog struct {
 
 // dialogSnapshot captures form state so the recent picker can restore on cancel.
 type dialogSnapshot struct {
-	name            string
-	path            string
-	commandCursor   int
-	commandInput    string
-	sandboxEnabled  bool
-	worktreeEnabled bool
-	branch          string
-	branchAutoSet   bool
-	claudeOptions   *session.ClaudeOptions
-	geminiYolo      bool
-	codexYolo       bool
+	name             string
+	path             string
+	commandCursor    int
+	commandInput     string
+	sandboxEnabled   bool
+	worktreeEnabled  bool
+	branch           string
+	branchAutoSet    bool
+	claudeOptions    *session.ClaudeOptions
+	geminiYolo       bool
+	codexYolo        bool
+	multiRepoEnabled bool
+	multiRepoPaths   []string
 }
 
 // buildPresetCommands returns the list of commands for the picker,
@@ -306,17 +315,19 @@ func (d *NewDialog) saveSnapshot() *dialogSnapshot {
 	}
 
 	return &dialogSnapshot{
-		name:            d.nameInput.Value(),
-		path:            d.pathInput.Value(),
-		commandCursor:   d.commandCursor,
-		commandInput:    d.commandInput.Value(),
-		sandboxEnabled:  d.sandboxEnabled,
-		worktreeEnabled: d.worktreeEnabled,
-		branch:          d.branchInput.Value(),
-		branchAutoSet:   d.branchAutoSet,
-		claudeOptions:   claudeOpts,
-		geminiYolo:      d.geminiOptions.GetYoloMode(),
-		codexYolo:       d.codexOptions.GetYoloMode(),
+		name:             d.nameInput.Value(),
+		path:             d.pathInput.Value(),
+		commandCursor:    d.commandCursor,
+		commandInput:     d.commandInput.Value(),
+		sandboxEnabled:   d.sandboxEnabled,
+		worktreeEnabled:  d.worktreeEnabled,
+		branch:           d.branchInput.Value(),
+		branchAutoSet:    d.branchAutoSet,
+		claudeOptions:    claudeOpts,
+		geminiYolo:       d.geminiOptions.GetYoloMode(),
+		codexYolo:        d.codexOptions.GetYoloMode(),
+		multiRepoEnabled: d.multiRepoEnabled,
+		multiRepoPaths:   append([]string{}, d.multiRepoPaths...),
 	}
 }
 
@@ -335,6 +346,10 @@ func (d *NewDialog) restoreSnapshot(s *dialogSnapshot) {
 	}
 	d.geminiOptions.SetDefaults(s.geminiYolo)
 	d.codexOptions.SetDefaults(s.codexYolo)
+	d.multiRepoEnabled = s.multiRepoEnabled
+	d.multiRepoPaths = append([]string{}, s.multiRepoPaths...)
+	d.multiRepoPathCursor = 0
+	d.multiRepoEditing = false
 	d.updateToolOptions()
 	d.rebuildFocusTargets()
 }
@@ -400,6 +415,12 @@ func (d *NewDialog) previewRecentSession(rs *statedb.RecentSessionRow) {
 	d.worktreeEnabled = false
 	d.branchInput.SetValue("")
 	d.branchAutoSet = false
+
+	// Reset multi-repo (ephemeral, never pre-filled)
+	d.multiRepoEnabled = false
+	d.multiRepoPaths = nil
+	d.multiRepoPathCursor = 0
+	d.multiRepoEditing = false
 
 	d.rebuildFocusTargets()
 }
@@ -520,6 +541,59 @@ func (d *NewDialog) ToggleSandbox() {
 	d.rebuildFocusTargets()
 }
 
+// ToggleMultiRepo toggles multi-repo mode.
+// When enabling, initializes multiRepoPaths with the current pathInput value.
+// When disabling, collapses back to the first path.
+func (d *NewDialog) ToggleMultiRepo() {
+	d.multiRepoEnabled = !d.multiRepoEnabled
+	if d.multiRepoEnabled {
+		currentPath := strings.TrimSpace(d.pathInput.Value())
+		if currentPath != "" {
+			d.multiRepoPaths = []string{currentPath}
+		} else {
+			d.multiRepoPaths = []string{""}
+		}
+		d.multiRepoPathCursor = 0
+		d.multiRepoEditing = false
+	} else {
+		// Collapse back to the first non-empty path
+		if len(d.multiRepoPaths) > 0 {
+			d.pathInput.SetValue(d.multiRepoPaths[0])
+		}
+		d.multiRepoPaths = nil
+		d.multiRepoPathCursor = 0
+		d.multiRepoEditing = false
+	}
+	d.rebuildFocusTargets()
+}
+
+// GetMultiRepoPaths returns the multi-repo paths and enabled state.
+func (d *NewDialog) GetMultiRepoPaths() ([]string, bool) {
+	if !d.multiRepoEnabled {
+		return nil, false
+	}
+	// Return non-empty, expanded paths
+	var paths []string
+	for _, p := range d.multiRepoPaths {
+		p = strings.TrimSpace(p)
+		if p != "" {
+			p = strings.Trim(p, "'\"")
+			if idx := strings.Index(p, "~/"); idx > 0 {
+				p = p[idx:]
+			}
+			p = session.ExpandPath(p)
+			paths = append(paths, p)
+		}
+	}
+	return paths, true
+}
+
+// IsMultiRepoEditing returns true when the user is editing a path in the multi-repo list.
+// Used by the parent to prevent enter from submitting the form.
+func (d *NewDialog) IsMultiRepoEditing() bool {
+	return d.multiRepoEnabled && d.currentTarget() == focusMultiRepo
+}
+
 // GetSelectedCommand returns the currently selected command/tool
 func (d *NewDialog) GetSelectedCommand() string {
 	if d.commandCursor >= 0 && d.commandCursor < len(d.presetCommands) {
@@ -561,8 +635,29 @@ func (d *NewDialog) Validate() string {
 	}
 
 	// Check for empty path
-	if path == "" {
+	if path == "" && !d.multiRepoEnabled {
 		return "Project path cannot be empty"
+	}
+
+	// Validate multi-repo paths
+	if d.multiRepoEnabled {
+		nonEmpty := 0
+		seen := make(map[string]bool)
+		for _, p := range d.multiRepoPaths {
+			p = strings.TrimSpace(p)
+			if p == "" {
+				continue
+			}
+			expanded := session.ExpandPath(strings.Trim(p, "'\""))
+			if seen[expanded] {
+				return "Duplicate paths in multi-repo mode"
+			}
+			seen[expanded] = true
+			nonEmpty++
+		}
+		if nonEmpty < 2 {
+			return "Multi-repo mode requires at least 2 paths"
+		}
 	}
 
 	// Validate worktree branch if enabled
@@ -610,7 +705,13 @@ func (d *NewDialog) indexOf(target focusTarget) int {
 // rebuildFocusTargets builds the ordered list of active focusable elements
 // based on current dialog state (sandbox, worktree, tool options visibility).
 func (d *NewDialog) rebuildFocusTargets() {
-	targets := []focusTarget{focusName, focusPath, focusCommand, focusWorktree, focusSandbox}
+	var targets []focusTarget
+	if d.multiRepoEnabled {
+		// Multi-repo replaces the single path field with a path list under focusMultiRepo
+		targets = []focusTarget{focusName, focusMultiRepo, focusCommand, focusWorktree, focusSandbox}
+	} else {
+		targets = []focusTarget{focusName, focusMultiRepo, focusPath, focusCommand, focusWorktree, focusSandbox}
+	}
 	if d.sandboxEnabled && len(d.inheritedSettings) > 0 {
 		targets = append(targets, focusInherited)
 	}
@@ -737,7 +838,7 @@ func (d *NewDialog) Update(msg tea.Msg) (*NewDialog, tea.Cmd) {
 		}
 
 		// Soft-select interception for path field
-		if d.focusIndex == 1 && d.pathSoftSelected {
+		if d.currentTarget() == focusPath && d.pathSoftSelected {
 			switch msg.Type {
 			case tea.KeyRunes:
 				// Printable char: clear field, focus textinput, let rune fall through
@@ -764,8 +865,9 @@ func (d *NewDialog) Update(msg tea.Msg) (*NewDialog, tea.Cmd) {
 
 		switch msg.String() {
 		case "tab":
-			// On path field: trigger autocomplete or cycle through matches.
-			if cur == focusPath {
+			// On path field (or multi-repo path editing): trigger autocomplete or cycle through matches.
+			isPathEditing := cur == focusPath || d.multiRepoEditing
+			if isPathEditing {
 				path := d.pathInput.Value()
 				info, err := os.Stat(path)
 				isDir := err == nil && info.IsDir()
@@ -788,11 +890,15 @@ func (d *NewDialog) Update(msg tea.Msg) (*NewDialog, tea.Cmd) {
 			}
 
 			// On path field: apply selected suggestion ONLY if user explicitly navigated.
-			if cur == focusPath && d.suggestionNavigated && len(d.pathSuggestions) > 0 {
+			if isPathEditing && d.suggestionNavigated && len(d.pathSuggestions) > 0 {
 				if d.pathSuggestionCursor < len(d.pathSuggestions) {
 					d.pathInput.SetValue(d.pathSuggestions[d.pathSuggestionCursor])
 					d.pathInput.SetCursor(len(d.pathInput.Value()))
 				}
+			}
+			// When editing a multi-repo path, Tab is only for autocomplete — don't move focus.
+			if d.multiRepoEditing {
+				return d, nil
 			}
 			// Move to next field.
 			if d.focusIndex < maxIdx {
@@ -811,8 +917,8 @@ func (d *NewDialog) Update(msg tea.Msg) (*NewDialog, tea.Cmd) {
 			return d, cmd
 
 		case "ctrl+n":
-			// Next suggestion (when on path field).
-			if cur == focusPath && len(d.pathSuggestions) > 0 {
+			// Next suggestion (when on path field or editing multi-repo path).
+			if (cur == focusPath || d.multiRepoEditing) && len(d.pathSuggestions) > 0 {
 				d.pathSoftSelected = false
 				d.pathInput.Focus() // exit soft-select, focus for future input.
 				d.pathSuggestionCursor = (d.pathSuggestionCursor + 1) % len(d.pathSuggestions)
@@ -821,8 +927,8 @@ func (d *NewDialog) Update(msg tea.Msg) (*NewDialog, tea.Cmd) {
 			}
 
 		case "ctrl+p":
-			// Previous suggestion (when on path field).
-			if cur == focusPath && len(d.pathSuggestions) > 0 {
+			// Previous suggestion (when on path field or editing multi-repo path).
+			if (cur == focusPath || d.multiRepoEditing) && len(d.pathSuggestions) > 0 {
 				d.pathSoftSelected = false
 				d.pathInput.Focus() // exit soft-select, focus for future input.
 				d.pathSuggestionCursor--
@@ -834,6 +940,12 @@ func (d *NewDialog) Update(msg tea.Msg) (*NewDialog, tea.Cmd) {
 			}
 
 		case "down":
+			if cur == focusMultiRepo && d.multiRepoEnabled && !d.multiRepoEditing {
+				if d.multiRepoPathCursor < len(d.multiRepoPaths)-1 {
+					d.multiRepoPathCursor++
+					return d, nil
+				}
+			}
 			if d.focusIndex < maxIdx {
 				d.focusIndex++
 				d.updateFocus()
@@ -843,6 +955,12 @@ func (d *NewDialog) Update(msg tea.Msg) (*NewDialog, tea.Cmd) {
 			return d, nil
 
 		case "shift+tab", "up":
+			if cur == focusMultiRepo && d.multiRepoEnabled && !d.multiRepoEditing {
+				if d.multiRepoPathCursor > 0 {
+					d.multiRepoPathCursor--
+					return d, nil
+				}
+			}
 			if cur == focusOptions && d.toolOptions != nil && !d.toolOptions.AtTop() {
 				return d, d.toolOptions.Update(msg)
 			}
@@ -854,10 +972,36 @@ func (d *NewDialog) Update(msg tea.Msg) (*NewDialog, tea.Cmd) {
 			return d, nil
 
 		case "esc":
+			if d.multiRepoEditing {
+				// Cancel editing, revert to the stored value
+				d.multiRepoEditing = false
+				d.pathInput.Blur()
+				return d, nil
+			}
 			d.Hide()
 			return d, nil
 
 		case "enter":
+			if cur == focusMultiRepo && d.multiRepoEnabled {
+				if d.multiRepoEditing {
+					// Save the edited path back
+					d.multiRepoPaths[d.multiRepoPathCursor] = strings.TrimSpace(d.pathInput.Value())
+					d.multiRepoEditing = false
+					d.pathInput.Blur()
+					d.pathCycler.Reset()
+				} else {
+					// Start editing: load path into pathInput
+					d.multiRepoEditing = true
+					d.pathInput.SetValue(d.multiRepoPaths[d.multiRepoPathCursor])
+					d.pathInput.SetCursor(len(d.pathInput.Value()))
+					d.pathInput.Focus()
+					d.pathCycler.Reset()
+					d.suggestionNavigated = false
+					d.pathSuggestionCursor = 0
+					d.filterPathSuggestions()
+				}
+				return d, nil
+			}
 			return d, nil
 
 		case "left":
@@ -908,6 +1052,55 @@ func (d *NewDialog) Update(msg tea.Msg) (*NewDialog, tea.Cmd) {
 				return d, nil
 			}
 
+		case "m":
+			if cur == focusCommand {
+				d.ToggleMultiRepo()
+				d.rebuildFocusTargets()
+				return d, nil
+			}
+
+		case "a":
+			if cur == focusMultiRepo && d.multiRepoEnabled && !d.multiRepoEditing {
+				// Pre-fill with parent directory of the last path
+				defaultPath := ""
+				for i := len(d.multiRepoPaths) - 1; i >= 0; i-- {
+					if p := strings.TrimSpace(d.multiRepoPaths[i]); p != "" {
+						defaultPath = filepath.Dir(session.ExpandPath(p))
+						if defaultPath != "" && defaultPath != "." {
+							// Collapse home dir back to ~
+							if home, err := os.UserHomeDir(); err == nil && strings.HasPrefix(defaultPath, home) {
+								defaultPath = "~" + defaultPath[len(home):]
+							}
+							defaultPath += string(os.PathSeparator)
+						} else {
+							defaultPath = ""
+						}
+						break
+					}
+				}
+				d.multiRepoPaths = append(d.multiRepoPaths, defaultPath)
+				d.multiRepoPathCursor = len(d.multiRepoPaths) - 1
+				// Auto-enter edit mode for the new path
+				d.multiRepoEditing = true
+				d.pathInput.SetValue(defaultPath)
+				d.pathInput.SetCursor(len(defaultPath))
+				d.pathInput.Focus()
+				d.pathCycler.Reset()
+				d.suggestionNavigated = false
+				d.pathSuggestionCursor = 0
+				d.filterPathSuggestions()
+				return d, nil
+			}
+
+		case "d":
+			if cur == focusMultiRepo && d.multiRepoEnabled && !d.multiRepoEditing && len(d.multiRepoPaths) > 1 {
+				d.multiRepoPaths = append(d.multiRepoPaths[:d.multiRepoPathCursor], d.multiRepoPaths[d.multiRepoPathCursor+1:]...)
+				if d.multiRepoPathCursor >= len(d.multiRepoPaths) {
+					d.multiRepoPathCursor = len(d.multiRepoPaths) - 1
+				}
+				return d, nil
+			}
+
 		case "y":
 			selectedCmd := d.GetSelectedCommand()
 			if cur == focusCommand && (selectedCmd == "gemini" || selectedCmd == "codex") && d.toolOptions != nil {
@@ -936,6 +1129,11 @@ func (d *NewDialog) Update(msg tea.Msg) (*NewDialog, tea.Cmd) {
 				if !d.sandboxEnabled {
 					d.inheritedExpanded = false
 				}
+				d.rebuildFocusTargets()
+				return d, nil
+			}
+			if cur == focusMultiRepo {
+				d.ToggleMultiRepo()
 				d.rebuildFocusTargets()
 				return d, nil
 			}
@@ -969,6 +1167,18 @@ func (d *NewDialog) Update(msg tea.Msg) (*NewDialog, tea.Cmd) {
 	case focusCommand:
 		if d.commandCursor == 0 {
 			d.commandInput, cmd = d.commandInput.Update(msg)
+		}
+	case focusMultiRepo:
+		// When editing a multi-repo path, forward keystrokes to pathInput.
+		if d.multiRepoEditing {
+			oldValue := d.pathInput.Value()
+			d.pathInput, cmd = d.pathInput.Update(msg)
+			if d.pathInput.Value() != oldValue {
+				d.suggestionNavigated = false
+				d.pathSuggestionCursor = 0
+				d.pathCycler.Reset()
+				d.filterPathSuggestions()
+			}
 		}
 	case focusWorktree, focusSandbox, focusInherited:
 		// Checkbox/toggle rows — no text input to update.
@@ -1107,85 +1317,191 @@ func (d *NewDialog) View() string {
 	content.WriteString(d.nameInput.View())
 	content.WriteString("\n\n")
 
-	// Path input
-	if cur == focusPath {
-		content.WriteString(activeLabelStyle.Render("▶ Path:"))
-	} else {
-		content.WriteString(labelStyle.Render("  Path:"))
+	// Multi-repo checkbox — rendered above path, toggles between single path and path list.
+	multiRepoLabel := "Multi-repo mode"
+	if cur == focusCommand {
+		multiRepoLabel = "Multi-repo mode (m)"
 	}
-	content.WriteString("\n")
-	content.WriteString("  ")
-	if d.focusIndex == 1 && d.pathSoftSelected && d.pathInput.Value() != "" {
-		// Render path in "selected" style (reverse video)
-		selectedStyle := lipgloss.NewStyle().
-			Background(ColorAccent).
-			Foreground(ColorBg)
-		content.WriteString(selectedStyle.Render(d.pathInput.Value()))
-	} else {
-		content.WriteString(d.pathInput.View())
-	}
-	content.WriteString("\n")
+	content.WriteString(renderCheckboxLine(multiRepoLabel, d.multiRepoEnabled, cur == focusMultiRepo && !d.multiRepoEnabled))
 
-	// Show path suggestions dropdown when path field is focused
-	if d.focusIndex == 1 && len(d.pathSuggestions) > 0 {
-		suggestionStyle := lipgloss.NewStyle().
-			Foreground(ColorComment)
-		selectedStyle := lipgloss.NewStyle().
-			Foreground(ColorCyan).
-			Bold(true)
-
-		// Show up to 5 suggestions in a scrolling window around the cursor
-		maxShow := 5
-		total := len(d.pathSuggestions)
-
-		// Calculate visible window that follows the cursor
-		startIdx := 0
-		endIdx := total // Start with all suggestions
-		if total > maxShow {
-			// Need scrolling - center the cursor in the window
-			startIdx = d.pathSuggestionCursor - maxShow/2
-			if startIdx < 0 {
-				startIdx = 0
-			}
-			endIdx = startIdx + maxShow
-			if endIdx > total {
-				endIdx = total
-				startIdx = endIdx - maxShow
-			}
-		}
-
-		var headerText string
-		if len(d.pathSuggestions) < len(d.allPathSuggestions) {
-			headerText = fmt.Sprintf("─ recent paths (%d/%d matching, ^N/^P: cycle, Tab: accept) ─",
-				len(d.pathSuggestions), len(d.allPathSuggestions))
+	if d.multiRepoEnabled {
+		// Multi-repo path list replaces the single path field.
+		dimStyle := lipgloss.NewStyle().Foreground(ColorComment)
+		pathFocused := cur == focusMultiRepo
+		if pathFocused {
+			content.WriteString(activeLabelStyle.Render("▶ Paths:"))
 		} else {
-			headerText = "─ recent paths (^N/^P: cycle, Tab: accept) ─"
+			content.WriteString(labelStyle.Render("  Paths:"))
 		}
+		content.WriteString("\n")
+		if pathFocused {
+			for i, p := range d.multiRepoPaths {
+				isSelected := i == d.multiRepoPathCursor
+				prefix := "    "
+				if isSelected {
+					prefix = "  ▸ "
+				}
+				if isSelected && d.multiRepoEditing {
+					content.WriteString(fmt.Sprintf("%s%d. ", prefix, i+1))
+					content.WriteString(d.pathInput.View())
+					content.WriteString("\n")
+				} else {
+					display := p
+					if display == "" {
+						display = "(empty)"
+					}
+					if isSelected {
+						content.WriteString(lipgloss.NewStyle().Foreground(ColorCyan).Bold(true).Render(
+							fmt.Sprintf("%s%d. %s", prefix, i+1, display)))
+					} else {
+						content.WriteString(dimStyle.Render(
+							fmt.Sprintf("%s%d. %s", prefix, i+1, display)))
+					}
+					content.WriteString("\n")
+				}
+			}
+			content.WriteString(dimStyle.Render("    [a: add, d: remove, enter: edit, ↑↓: navigate]"))
+			content.WriteString("\n")
+			// Show path suggestions dropdown when editing a multi-repo path
+			if d.multiRepoEditing && len(d.pathSuggestions) > 0 {
+				suggestionStyle := lipgloss.NewStyle().
+					Foreground(ColorComment)
+				selectedStyle := lipgloss.NewStyle().
+					Foreground(ColorCyan).
+					Bold(true)
+
+				maxShow := 5
+				total := len(d.pathSuggestions)
+				startIdx := 0
+				endIdx := total
+				if total > maxShow {
+					startIdx = d.pathSuggestionCursor - maxShow/2
+					if startIdx < 0 {
+						startIdx = 0
+					}
+					endIdx = startIdx + maxShow
+					if endIdx > total {
+						endIdx = total
+						startIdx = endIdx - maxShow
+					}
+				}
+
+				var headerText string
+				if len(d.pathSuggestions) < len(d.allPathSuggestions) {
+					headerText = fmt.Sprintf("─ recent paths (%d/%d matching, ^N/^P: cycle, Tab: accept) ─",
+						len(d.pathSuggestions), len(d.allPathSuggestions))
+				} else {
+					headerText = "─ recent paths (^N/^P: cycle, Tab: accept) ─"
+				}
+				content.WriteString("  ")
+				content.WriteString(lipgloss.NewStyle().Foreground(ColorComment).Render(headerText))
+				content.WriteString("\n")
+
+				if startIdx > 0 {
+					content.WriteString(suggestionStyle.Render(fmt.Sprintf("    ↑ %d more above", startIdx)))
+					content.WriteString("\n")
+				}
+
+				for i := startIdx; i < endIdx; i++ {
+					style := suggestionStyle
+					prefix := "    "
+					if i == d.pathSuggestionCursor {
+						style = selectedStyle
+						prefix = "  ▶ "
+					}
+					content.WriteString(style.Render(prefix + d.pathSuggestions[i]))
+					content.WriteString("\n")
+				}
+
+				if endIdx < total {
+					content.WriteString(suggestionStyle.Render(fmt.Sprintf("    ↓ %d more below", total-endIdx)))
+					content.WriteString("\n")
+				}
+			}
+		} else {
+			for i, p := range d.multiRepoPaths {
+				display := p
+				if display == "" {
+					display = "(empty)"
+				}
+				content.WriteString(dimStyle.Render(fmt.Sprintf("    %d. %s", i+1, display)))
+				content.WriteString("\n")
+			}
+		}
+	} else {
+		// Single path input (original behavior).
+		if cur == focusPath {
+			content.WriteString(activeLabelStyle.Render("▶ Path:"))
+		} else {
+			content.WriteString(labelStyle.Render("  Path:"))
+		}
+		content.WriteString("\n")
 		content.WriteString("  ")
-		content.WriteString(lipgloss.NewStyle().Foreground(ColorComment).Render(headerText))
+		if cur == focusPath && d.pathSoftSelected && d.pathInput.Value() != "" {
+			selectedStyle := lipgloss.NewStyle().
+				Background(ColorAccent).
+				Foreground(ColorBg)
+			content.WriteString(selectedStyle.Render(d.pathInput.Value()))
+		} else {
+			content.WriteString(d.pathInput.View())
+		}
 		content.WriteString("\n")
 
-		// Show "more above" indicator
-		if startIdx > 0 {
-			content.WriteString(suggestionStyle.Render(fmt.Sprintf("    ↑ %d more above", startIdx)))
-			content.WriteString("\n")
-		}
+		// Show path suggestions dropdown when path field is focused
+		if cur == focusPath && len(d.pathSuggestions) > 0 {
+			suggestionStyle := lipgloss.NewStyle().
+				Foreground(ColorComment)
+			selectedStyle := lipgloss.NewStyle().
+				Foreground(ColorCyan).
+				Bold(true)
 
-		for i := startIdx; i < endIdx; i++ {
-			style := suggestionStyle
-			prefix := "    "
-			if i == d.pathSuggestionCursor {
-				style = selectedStyle
-				prefix = "  ▶ "
+			maxShow := 5
+			total := len(d.pathSuggestions)
+			startIdx := 0
+			endIdx := total
+			if total > maxShow {
+				startIdx = d.pathSuggestionCursor - maxShow/2
+				if startIdx < 0 {
+					startIdx = 0
+				}
+				endIdx = startIdx + maxShow
+				if endIdx > total {
+					endIdx = total
+					startIdx = endIdx - maxShow
+				}
 			}
-			content.WriteString(style.Render(prefix + d.pathSuggestions[i]))
-			content.WriteString("\n")
-		}
 
-		// Show "more below" indicator
-		if endIdx < total {
-			content.WriteString(suggestionStyle.Render(fmt.Sprintf("    ↓ %d more below", total-endIdx)))
+			var headerText string
+			if len(d.pathSuggestions) < len(d.allPathSuggestions) {
+				headerText = fmt.Sprintf("─ recent paths (%d/%d matching, ^N/^P: cycle, Tab: accept) ─",
+					len(d.pathSuggestions), len(d.allPathSuggestions))
+			} else {
+				headerText = "─ recent paths (^N/^P: cycle, Tab: accept) ─"
+			}
+			content.WriteString("  ")
+			content.WriteString(lipgloss.NewStyle().Foreground(ColorComment).Render(headerText))
 			content.WriteString("\n")
+
+			if startIdx > 0 {
+				content.WriteString(suggestionStyle.Render(fmt.Sprintf("    ↑ %d more above", startIdx)))
+				content.WriteString("\n")
+			}
+
+			for i := startIdx; i < endIdx; i++ {
+				style := suggestionStyle
+				prefix := "    "
+				if i == d.pathSuggestionCursor {
+					style = selectedStyle
+					prefix = "  ▶ "
+				}
+				content.WriteString(style.Render(prefix + d.pathSuggestions[i]))
+				content.WriteString("\n")
+			}
+
+			if endIdx < total {
+				content.WriteString(suggestionStyle.Render(fmt.Sprintf("    ↓ %d more below", total-endIdx)))
+				content.WriteString("\n")
+			}
 		}
 	}
 	content.WriteString("\n")

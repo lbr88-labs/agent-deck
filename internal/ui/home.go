@@ -4159,6 +4159,13 @@ func (h *Home) handleNewDialogKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 	switch msg.String() {
 	case "enter":
+		// When multi-repo path list is focused, let the dialog handle enter (edit/save path).
+		if h.newDialog.IsMultiRepoEditing() {
+			var cmd tea.Cmd
+			h.newDialog, cmd = h.newDialog.Update(msg)
+			return h, cmd
+		}
+
 		// Validate before creating session
 		if validationErr := h.newDialog.Validate(); validationErr != "" {
 			h.newDialog.SetError(validationErr)
@@ -4223,6 +4230,13 @@ func (h *Home) handleNewDialogKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 		geminiYoloMode := h.newDialog.IsGeminiYoloMode()
 		sandboxMode := h.newDialog.IsSandboxEnabled()
+		multiRepoPaths, multiRepoEnabled := h.newDialog.GetMultiRepoPaths()
+		var additionalPaths []string
+		if multiRepoEnabled && len(multiRepoPaths) > 1 {
+			// First path stays as ProjectPath, rest are additional
+			path = multiRepoPaths[0]
+			additionalPaths = multiRepoPaths[1:]
+		}
 
 		return h, h.createSessionInGroupWithWorktreeAndOptions(
 			name,
@@ -4235,6 +4249,8 @@ func (h *Home) handleNewDialogKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			geminiYoloMode,
 			sandboxMode,
 			toolOptionsJSON,
+			multiRepoEnabled,
+			additionalPaths,
 		)
 
 	case "esc":
@@ -5299,6 +5315,8 @@ func (h *Home) handleConfirmDialogKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				false,
 				false,
 				pendingToolOpts,
+				false,
+				nil,
 			)
 		case "n", "N", "esc":
 			h.confirmDialog.Hide()
@@ -5994,6 +6012,8 @@ func (h *Home) createSessionInGroupWithWorktreeAndOptions(
 	geminiYoloMode bool,
 	sandboxEnabled bool,
 	toolOptionsJSON json.RawMessage,
+	multiRepoEnabled bool,
+	additionalPaths []string,
 ) tea.Cmd {
 	return func() tea.Msg {
 		// Check tmux availability before creating session
@@ -6001,9 +6021,8 @@ func (h *Home) createSessionInGroupWithWorktreeAndOptions(
 			return sessionCreatedMsg{err: fmt.Errorf("cannot create session: %w", err)}
 		}
 
-		if worktreePath != "" && worktreeRepoRoot != "" && worktreeBranch != "" {
-			// Worktree creation can be slow on large repos; keep it in async cmd path
-			// so the TUI remains responsive.
+		if worktreePath != "" && worktreeRepoRoot != "" && worktreeBranch != "" && !multiRepoEnabled {
+			// Single-repo worktree: create here. Multi-repo worktrees are handled below.
 			//
 			// Check for an existing worktree for this branch before creating a new one.
 			if existingPath, err := git.GetWorktreeForBranch(worktreeRepoRoot, worktreeBranch); err == nil && existingPath != "" {
@@ -6066,6 +6085,115 @@ func (h *Home) createSessionInGroupWithWorktreeAndOptions(
 		// Apply sandbox config.
 		if sandboxEnabled {
 			inst.Sandbox = session.NewSandboxConfig("")
+		}
+
+		// Apply multi-repo config.
+		if multiRepoEnabled && len(additionalPaths) > 0 {
+			inst.MultiRepoEnabled = true
+			inst.AdditionalPaths = additionalPaths
+			allPaths := inst.AllProjectPaths()
+
+			if worktreeBranch != "" {
+				// Multi-repo + worktree: create a persistent parent dir with all worktrees inside.
+				// Layout: ~/.agent-deck/multi-repo-worktrees/<branch>-<id>/<repo-name>/
+				home, _ := os.UserHomeDir()
+				sanitizedBranch := strings.ReplaceAll(worktreeBranch, "/", "-")
+				sanitizedBranch = strings.ReplaceAll(sanitizedBranch, " ", "-")
+				parentDir := filepath.Join(home, ".agent-deck", "multi-repo-worktrees",
+					fmt.Sprintf("%s-%s", sanitizedBranch, inst.ID[:8]))
+				if mkErr := os.MkdirAll(parentDir, 0o755); mkErr != nil {
+					return sessionCreatedMsg{err: fmt.Errorf("failed to create multi-repo worktree dir: %w", mkErr)}
+				}
+				if resolved, evalErr := filepath.EvalSymlinks(parentDir); evalErr == nil {
+					parentDir = resolved
+				}
+				inst.MultiRepoTempDir = parentDir
+
+				// Create worktrees inside parentDir, named after each repo
+				dirnames := session.DeduplicateDirnames(allPaths)
+				var newProjectPath string
+				var newAdditionalPaths []string
+				for i, p := range allPaths {
+					wtPath := filepath.Join(parentDir, dirnames[i])
+					if git.IsGitRepo(p) {
+						repoRoot, rootErr := git.GetWorktreeBaseRoot(p)
+						if rootErr != nil {
+							uiLog.Warn("multi_repo_worktree_skip", slog.String("path", p), slog.String("error", rootErr.Error()))
+							// Copy path as-is into the parent dir via symlink
+							_ = os.Symlink(p, wtPath)
+							if i == 0 {
+								newProjectPath = wtPath
+							} else {
+								newAdditionalPaths = append(newAdditionalPaths, wtPath)
+							}
+							continue
+						}
+						if err := git.CreateWorktree(repoRoot, wtPath, worktreeBranch); err != nil {
+							uiLog.Warn("multi_repo_worktree_create_fail", slog.String("path", p), slog.String("error", err.Error()))
+							_ = os.Symlink(p, wtPath)
+							if i == 0 {
+								newProjectPath = wtPath
+							} else {
+								newAdditionalPaths = append(newAdditionalPaths, wtPath)
+							}
+							continue
+						}
+						inst.MultiRepoWorktrees = append(inst.MultiRepoWorktrees, session.MultiRepoWorktree{
+							OriginalPath: p,
+							WorktreePath: wtPath,
+							RepoRoot:     repoRoot,
+							Branch:       worktreeBranch,
+						})
+						if i == 0 {
+							newProjectPath = wtPath
+						} else {
+							newAdditionalPaths = append(newAdditionalPaths, wtPath)
+						}
+					} else {
+						// Non-git paths: symlink into parent dir
+						_ = os.Symlink(p, wtPath)
+						if i == 0 {
+							newProjectPath = wtPath
+						} else {
+							newAdditionalPaths = append(newAdditionalPaths, wtPath)
+						}
+					}
+				}
+				inst.ProjectPath = newProjectPath
+				inst.AdditionalPaths = newAdditionalPaths
+			} else {
+				// Multi-repo without worktree: create a persistent parent dir with symlinks.
+				home, _ := os.UserHomeDir()
+				parentDir := filepath.Join(home, ".agent-deck", "multi-repo-worktrees", inst.ID[:8])
+				if mkErr := os.MkdirAll(parentDir, 0o755); mkErr != nil {
+					return sessionCreatedMsg{err: fmt.Errorf("failed to create multi-repo dir: %w", mkErr)}
+				}
+				if resolved, evalErr := filepath.EvalSymlinks(parentDir); evalErr == nil {
+					parentDir = resolved
+				}
+				inst.MultiRepoTempDir = parentDir
+
+				// Create symlinks for all paths
+				dirnames := session.DeduplicateDirnames(allPaths)
+				var newProjectPath string
+				var newAdditionalPaths []string
+				for i, p := range allPaths {
+					linkPath := filepath.Join(parentDir, dirnames[i])
+					_ = os.Symlink(p, linkPath)
+					if i == 0 {
+						newProjectPath = linkPath
+					} else {
+						newAdditionalPaths = append(newAdditionalPaths, linkPath)
+					}
+				}
+				inst.ProjectPath = newProjectPath
+				inst.AdditionalPaths = newAdditionalPaths
+			}
+
+			// Update tmux session working directory to the parent dir
+			if inst.GetTmuxSession() != nil {
+				inst.GetTmuxSession().WorkDir = inst.MultiRepoTempDir
+			}
 		}
 
 		uiLog.Info("session_create_starting",
@@ -6201,6 +6329,7 @@ func (h *Home) quickCreateSession() tea.Cmd {
 		name, projectPath, command, groupPath,
 		"", "", "", // no worktree
 		geminiYoloMode, false, toolOptionsJSON,
+		false, nil, // no multi-repo
 	)
 }
 
@@ -6299,6 +6428,45 @@ func (h *Home) forkSessionCmdWithOptions(
 			inst.Sandbox = session.NewSandboxConfig("")
 		}
 
+		// Propagate multi-repo config from source.
+		if source.IsMultiRepo() {
+			inst.MultiRepoEnabled = true
+			inst.AdditionalPaths = append([]string{}, source.AdditionalPaths...)
+			// Copy worktree tracking from source (shared worktrees)
+			if len(source.MultiRepoWorktrees) > 0 {
+				inst.MultiRepoWorktrees = append([]session.MultiRepoWorktree{}, source.MultiRepoWorktrees...)
+			}
+			// Create a new persistent dir for the fork with symlinks to shared worktrees
+			home, _ := os.UserHomeDir()
+			parentDir := filepath.Join(home, ".agent-deck", "multi-repo-worktrees", inst.ID[:8])
+			if mkErr := os.MkdirAll(parentDir, 0o755); mkErr != nil {
+				return sessionForkedMsg{err: fmt.Errorf("failed to create multi-repo dir: %w", mkErr), sourceID: sourceID}
+			}
+			if resolved, evalErr := filepath.EvalSymlinks(parentDir); evalErr == nil {
+				parentDir = resolved
+			}
+			inst.MultiRepoTempDir = parentDir
+			if inst.GetTmuxSession() != nil {
+				inst.GetTmuxSession().WorkDir = parentDir
+			}
+			// Recreate symlinks/entries in new parent dir pointing to source worktree paths
+			allPaths := inst.AllProjectPaths()
+			dirnames := session.DeduplicateDirnames(allPaths)
+			var newProjectPath string
+			var newAdditionalPaths []string
+			for i, p := range allPaths {
+				linkPath := filepath.Join(parentDir, dirnames[i])
+				_ = os.Symlink(p, linkPath)
+				if i == 0 {
+					newProjectPath = linkPath
+				} else {
+					newAdditionalPaths = append(newAdditionalPaths, linkPath)
+				}
+			}
+			inst.ProjectPath = newProjectPath
+			inst.AdditionalPaths = newAdditionalPaths
+		}
+
 		if err := inst.Start(); err != nil {
 			return sessionForkedMsg{err: err, sourceID: sourceID}
 		}
@@ -6337,11 +6505,25 @@ func (h *Home) deleteSession(inst *session.Instance) tea.Cmd {
 	isWorktree := inst.IsWorktree()
 	worktreePath := inst.WorktreePath
 	worktreeRepoRoot := inst.WorktreeRepoRoot
+	isMultiRepo := inst.IsMultiRepo()
+	multiRepoTempDir := inst.MultiRepoTempDir
+	multiRepoWorktrees := inst.MultiRepoWorktrees
 	return func() tea.Msg {
 		killErr := inst.Kill()
 		if isWorktree {
 			_ = git.RemoveWorktree(worktreeRepoRoot, worktreePath, false)
 			_ = git.PruneWorktrees(worktreeRepoRoot)
+		}
+		if isMultiRepo {
+			// Clean up multi-repo temp directory
+			if multiRepoTempDir != "" {
+				_ = os.RemoveAll(multiRepoTempDir)
+			}
+			// Clean up per-repo worktrees
+			for _, wt := range multiRepoWorktrees {
+				_ = git.RemoveWorktree(wt.RepoRoot, wt.WorktreePath, false)
+				_ = git.PruneWorktrees(wt.RepoRoot)
+			}
 		}
 		return sessionDeletedMsg{deletedID: id, killErr: killErr}
 	}
@@ -8834,6 +9016,17 @@ func (h *Home) renderSessionItem(
 		sandboxBadge = sbStyle.Render(" [sandbox]")
 	}
 
+	// Multi-repo badge for multi-repo sessions.
+	multiRepoBadge := ""
+	if inst.IsMultiRepo() {
+		mrStyle := lipgloss.NewStyle().Foreground(ColorCyan)
+		if selected {
+			mrStyle = SessionStatusSelStyle
+		}
+		pathCount := len(inst.AllProjectPaths())
+		multiRepoBadge = mrStyle.Render(fmt.Sprintf(" [multi-repo: %d]", pathCount))
+	}
+
 	// SSH badge for remote sessions.
 	sshBadge := ""
 	if inst.IsSSH() {
@@ -8862,9 +9055,9 @@ func (h *Home) renderSessionItem(
 		windowChevron = chevronStyle.Render(chevronChar)
 	}
 
-	// Build row: [baseIndent][selection][tree][chevron][status] [title] [tool] [yolo] [worktree] [sandbox] [ssh]
+	// Build row: [baseIndent][selection][tree][chevron][status] [title] [tool] [yolo] [worktree] [sandbox] [multi-repo] [ssh]
 	row := fmt.Sprintf(
-		"%s%s%s%s%s %s%s%s%s%s%s",
+		"%s%s%s%s%s %s%s%s%s%s%s%s",
 		baseIndent,
 		selectionPrefix,
 		treeStyle.Render(treeConnector),
@@ -8875,6 +9068,7 @@ func (h *Home) renderSessionItem(
 		yoloBadge,
 		worktreeBadge,
 		sandboxBadge,
+		multiRepoBadge,
 		sshBadge,
 	)
 	b.WriteString(row)
@@ -9583,6 +9777,23 @@ func (h *Home) renderPreviewPane(width, height int) string {
 			b.WriteString(wtHintStyle.Render("Finish:  "))
 			b.WriteString(wtKeyStyle.Render(finishKey))
 			b.WriteString(wtHintStyle.Render(" merge + cleanup"))
+			b.WriteString("\n")
+		}
+	}
+
+	// Multi-repo info section
+	if selected.IsMultiRepo() {
+		mrHeader := renderSectionDivider("Multi-Repo", width-4)
+		b.WriteString(mrHeader)
+		b.WriteString("\n")
+
+		mrLabelStyle := lipgloss.NewStyle().Foreground(ColorText)
+		mrValueStyle := lipgloss.NewStyle().Foreground(ColorText)
+
+		for i, p := range selected.AllProjectPaths() {
+			label := fmt.Sprintf("  %d. ", i+1)
+			b.WriteString(mrLabelStyle.Render(label))
+			b.WriteString(mrValueStyle.Render(truncatePath(p, width-4-len(label))))
 			b.WriteString("\n")
 		}
 	}

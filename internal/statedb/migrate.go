@@ -85,6 +85,19 @@ type toolDataBlob struct {
 	SandboxContainer   string          `json:"sandbox_container,omitempty"`
 	SSHHost            string          `json:"ssh_host,omitempty"`
 	SSHRemotePath      string          `json:"ssh_remote_path,omitempty"`
+	// Multi-repo support
+	MultiRepoEnabled   bool                    `json:"multi_repo_enabled,omitempty"`
+	AdditionalPaths    []string                `json:"additional_paths,omitempty"`
+	MultiRepoTempDir   string                  `json:"multi_repo_temp_dir,omitempty"`
+	MultiRepoWorktrees []multiRepoWorktreeBlob `json:"multi_repo_worktrees,omitempty"`
+}
+
+// multiRepoWorktreeBlob is the JSON representation of a multi-repo worktree in tool_data.
+type multiRepoWorktreeBlob struct {
+	OriginalPath string `json:"original_path"`
+	WorktreePath string `json:"worktree_path"`
+	RepoRoot     string `json:"repo_root"`
+	Branch       string `json:"branch"`
 }
 
 // MigrateFromJSON reads a sessions.json file and inserts all data into the StateDB.
@@ -183,6 +196,14 @@ func MigrateFromJSON(jsonPath string, db *StateDB) (int, int, error) {
 
 // MarshalToolData creates a tool_data JSON blob from individual fields.
 // This is the forward path: Instance fields -> JSON blob for SQLite storage.
+// MultiRepoWorktreeData holds multi-repo worktree info for serialization.
+type MultiRepoWorktreeData struct {
+	OriginalPath string
+	WorktreePath string
+	RepoRoot     string
+	Branch       string
+}
+
 func MarshalToolData(
 	claudeSessionID string, claudeDetectedAt time.Time,
 	geminiSessionID string, geminiDetectedAt time.Time,
@@ -193,6 +214,8 @@ func MarshalToolData(
 	toolOptionsJSON json.RawMessage,
 	sandboxJSON json.RawMessage, sandboxContainer string,
 	sshHost string, sshRemotePath string,
+	multiRepoEnabled bool, additionalPaths []string,
+	multiRepoTempDir string, multiRepoWorktrees []MultiRepoWorktreeData,
 ) json.RawMessage {
 	td := toolDataBlob{
 		ClaudeSessionID:   claudeSessionID,
@@ -209,6 +232,17 @@ func MarshalToolData(
 		SandboxContainer:  sandboxContainer,
 		SSHHost:           sshHost,
 		SSHRemotePath:     sshRemotePath,
+		MultiRepoEnabled:  multiRepoEnabled,
+		AdditionalPaths:   additionalPaths,
+		MultiRepoTempDir:  multiRepoTempDir,
+	}
+	for _, wt := range multiRepoWorktrees {
+		td.MultiRepoWorktrees = append(td.MultiRepoWorktrees, multiRepoWorktreeBlob{
+			OriginalPath: wt.OriginalPath,
+			WorktreePath: wt.WorktreePath,
+			RepoRoot:     wt.RepoRoot,
+			Branch:       wt.Branch,
+		})
 	}
 	if !claudeDetectedAt.IsZero() {
 		td.ClaudeDetectedAt = claudeDetectedAt.Unix()
@@ -238,6 +272,8 @@ func UnmarshalToolData(data json.RawMessage) (
 	toolOptionsJSON json.RawMessage,
 	sandboxJSON json.RawMessage, sandboxContainer string,
 	sshHost string, sshRemotePath string,
+	multiRepoEnabled bool, additionalPaths []string,
+	multiRepoTempDir string, multiRepoWorktrees []MultiRepoWorktreeData,
 ) {
 	if len(data) == 0 {
 		return
@@ -272,5 +308,16 @@ func UnmarshalToolData(data json.RawMessage) (
 	sandboxContainer = td.SandboxContainer
 	sshHost = td.SSHHost
 	sshRemotePath = td.SSHRemotePath
+	multiRepoEnabled = td.MultiRepoEnabled
+	additionalPaths = td.AdditionalPaths
+	multiRepoTempDir = td.MultiRepoTempDir
+	for _, wt := range td.MultiRepoWorktrees {
+		multiRepoWorktrees = append(multiRepoWorktrees, MultiRepoWorktreeData{
+			OriginalPath: wt.OriginalPath,
+			WorktreePath: wt.WorktreePath,
+			RepoRoot:     wt.RepoRoot,
+			Branch:       wt.Branch,
+		})
+	}
 	return
 }

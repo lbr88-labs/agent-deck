@@ -1,6 +1,7 @@
 package docker
 
 import (
+	"fmt"
 	"log/slog"
 	"maps"
 	"path/filepath"
@@ -324,6 +325,37 @@ func WithExtraVolumes(volumes map[string]string) ContainerConfigOption {
 				containerPath: cleanContainer,
 			})
 		}
+	}
+}
+
+// WithMultiRepoPaths replaces the default single-project mount with one mount per
+// project path, each under /workspace/<dirname>. The container working directory
+// is set to /workspace so the agent can navigate between repos.
+func WithMultiRepoPaths(paths []string) ContainerConfigOption {
+	return func(cfg *ContainerConfig) {
+		// Remove the default project mount at containerWorkDir
+		newVols := make([]VolumeMount, 0, len(cfg.volumes)+len(paths))
+		for _, v := range cfg.volumes {
+			if v.containerPath == containerWorkDir {
+				continue
+			}
+			newVols = append(newVols, v)
+		}
+		// Mount each path under /workspace/<dirname>, deduplicating names
+		seen := make(map[string]int)
+		for _, p := range paths {
+			dirname := filepath.Base(p)
+			if n := seen[dirname]; n > 0 {
+				dirname = fmt.Sprintf("%s-%d", dirname, n)
+			}
+			seen[filepath.Base(p)]++
+			newVols = append(newVols, VolumeMount{
+				hostPath:      p,
+				containerPath: filepath.Join(containerWorkDir, dirname),
+			})
+		}
+		cfg.volumes = newVols
+		cfg.workingDir = containerWorkDir
 	}
 }
 
