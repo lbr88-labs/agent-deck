@@ -237,12 +237,7 @@ func MarshalToolData(
 		MultiRepoTempDir:  multiRepoTempDir,
 	}
 	for _, wt := range multiRepoWorktrees {
-		td.MultiRepoWorktrees = append(td.MultiRepoWorktrees, multiRepoWorktreeBlob{
-			OriginalPath: wt.OriginalPath,
-			WorktreePath: wt.WorktreePath,
-			RepoRoot:     wt.RepoRoot,
-			Branch:       wt.Branch,
-		})
+		td.MultiRepoWorktrees = append(td.MultiRepoWorktrees, multiRepoWorktreeBlob(wt))
 	}
 	if !claudeDetectedAt.IsZero() {
 		td.ClaudeDetectedAt = claudeDetectedAt.Unix()
@@ -312,12 +307,7 @@ func UnmarshalToolData(data json.RawMessage) (
 	additionalPaths = td.AdditionalPaths
 	multiRepoTempDir = td.MultiRepoTempDir
 	for _, wt := range td.MultiRepoWorktrees {
-		multiRepoWorktrees = append(multiRepoWorktrees, MultiRepoWorktreeData{
-			OriginalPath: wt.OriginalPath,
-			WorktreePath: wt.WorktreePath,
-			RepoRoot:     wt.RepoRoot,
-			Branch:       wt.Branch,
-		})
+		multiRepoWorktrees = append(multiRepoWorktrees, MultiRepoWorktreeData(wt))
 	}
 	return
 }
