@@ -34,8 +34,6 @@ from aiogram.filters import Command, CommandStart
 AGENT_DECK_DIR = Path.home() / ".agent-deck"
 CONFIG_PATH = AGENT_DECK_DIR / "config.toml"
 CONDUCTOR_DIR = AGENT_DECK_DIR / "conductor"
-LOG_PATH = CONDUCTOR_DIR / "bridge.log"
-
 # Telegram message length limit
 TG_MAX_LENGTH = 4096
 
@@ -50,7 +48,6 @@ logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(message)s",
     handlers=[
-        logging.FileHandler(LOG_PATH, encoding="utf-8"),
         logging.StreamHandler(sys.stdout),
     ],
 )
