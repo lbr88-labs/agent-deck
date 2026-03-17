@@ -455,8 +455,8 @@ func main() {
 
 		// Set up pricer with overrides
 		homeDir, _ := os.UserHomeDir()
-		cachePath := filepath.Join(homeDir, ".agent-deck", "pricing.json")
-		pricerCfg := costs.PricerConfig{CachePath: cachePath}
+		cacheDir := filepath.Join(homeDir, ".agent-deck")
+		pricerCfg := costs.PricerConfig{CachePath: cacheDir}
 		if userCfg != nil && len(userCfg.Costs.Pricing.Overrides) > 0 {
 			pricerCfg.Overrides = make(map[string]costs.PriceOverride)
 			for model, ov := range userCfg.Costs.Pricing.Overrides {
@@ -474,7 +474,7 @@ func main() {
 		// Start daily price fetcher
 		fetchCtx, fetchCancel := context.WithCancel(context.Background())
 		defer fetchCancel()
-		fetcher := &costs.Fetcher{CachePath: cachePath, Pricer: pricer}
+		fetcher := &costs.Fetcher{CachePath: filepath.Join(cacheDir, "pricing.json"), Pricer: pricer}
 		go fetcher.StartDaily(fetchCtx)
 
 		// Set up budget checker

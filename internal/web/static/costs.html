@@ -49,7 +49,7 @@
 <body>
     <div class="header">
         <h1 id="page-title">Cost Dashboard</h1>
-        <a href="/">&#8592; Back to Sessions</a>
+        <a href="/" id="back-to-sessions">&#8592; Back to Sessions</a>
     </div>
     <div class="breadcrumb hidden" id="breadcrumb"></div>
 
@@ -74,8 +74,8 @@
         </div>
 
         <div class="tabs">
-            <button class="tab active" onclick="showTab('groups')">Groups</button>
-            <button class="tab" onclick="showTab('sessions')">Sessions</button>
+            <button class="tab active" onclick="showTab(this,'groups')">Groups</button>
+            <button class="tab" onclick="showTab(this,'sessions')">Sessions</button>
         </div>
 
         <div id="tab-groups">
@@ -129,6 +129,10 @@
     </div>
 
     <script>
+    const _params = new URLSearchParams(window.location.search);
+    const _token = _params.get('token') || '';
+    function api(path) { return _token ? path + (path.includes('?') ? '&' : '?') + 'token=' + encodeURIComponent(_token) : path; }
+
     const fmt = (v) => '$' + (v||0).toFixed(2);
     const fmtTok = (n) => { if(n>=1e6) return (n/1e6).toFixed(1)+'M'; if(n>=1e3) return (n/1e3).toFixed(1)+'K'; return ''+n; };
     let dailyChart, modelChart, sdDailyChart, sdModelChart;
@@ -136,6 +140,7 @@
     let sessionsData = [];
 
     function escHtml(s) { const d=document.createElement('div'); d.textContent=s; return d.innerHTML; }
+    function attr(s) { return (s||'').replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/'/g,'&#39;').replace(/</g,'&lt;'); }
 
     function showView(name) {
         ['overview','session','group'].forEach(v => {
@@ -145,15 +150,15 @@
         bc.classList.toggle('hidden', name==='overview');
     }
 
-    function showTab(tab) {
+    function showTab(btn, tab) {
         document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
         document.getElementById('tab-groups').classList.toggle('hidden', tab!=='groups');
         document.getElementById('tab-sessions').classList.toggle('hidden', tab!=='sessions');
-        event.target.classList.add('active');
+        btn.classList.add('active');
     }
 
     async function loadSummary() {
-        const r = await fetch('/api/costs/summary');
+        const r = await fetch(api('/api/costs/summary'));
         const d = await r.json();
         document.getElementById('today').textContent = fmt(d.today_usd);
         document.getElementById('week').textContent = fmt(d.week_usd);
@@ -165,7 +170,7 @@
     }
 
     async function loadDaily() {
-        const r = await fetch('/api/costs/daily?days=30');
+        const r = await fetch(api('/api/costs/daily?days=30'));
         const d = await r.json();
         const labels = (d||[]).map(e => e.date.slice(5));
         const data = (d||[]).map(e => e.cost_usd);
@@ -177,7 +182,7 @@
     }
 
     async function loadModels() {
-        const r = await fetch('/api/costs/models');
+        const r = await fetch(api('/api/costs/models'));
         const d = await r.json();
         const labels = Object.keys(d||{});
         const data = Object.values(d||{});
@@ -189,29 +194,29 @@
     }
 
     async function loadSessions() {
-        const r = await fetch('/api/costs/sessions');
+        const r = await fetch(api('/api/costs/sessions'));
         sessionsData = await r.json() || [];
         const tbody = document.getElementById('sessions-table');
         tbody.innerHTML = sessionsData.map(s =>
-            `<tr><td><a href="#" onclick="openSession('${escHtml(s.session_id)}','${escHtml(s.title||s.session_id)}');return false">${escHtml(s.title||s.session_id)}</a></td><td><a href="#" onclick="openGroup('${escHtml(s.group)}');return false">${escHtml(s.group||'-')}</a></td><td>${fmt(s.cost_usd)}</td><td>${s.events}</td></tr>`
+            `<tr><td><a href="#" class="session-link" data-id="${attr(s.session_id)}" data-title="${attr(s.title||s.session_id)}">${escHtml(s.title||s.session_id)}</a></td><td><a href="#" class="group-link" data-group="${attr(s.group||'(ungrouped)')}">${escHtml(s.group||'-')}</a></td><td>${fmt(s.cost_usd)}</td><td>${s.events}</td></tr>`
         ).join('');
     }
 
     async function loadGroups() {
-        const r = await fetch('/api/costs/groups');
+        const r = await fetch(api('/api/costs/groups'));
         const d = await r.json() || [];
         const tbody = document.getElementById('groups-table');
         tbody.innerHTML = d.map(g =>
-            `<tr><td><a href="#" onclick="openGroup('${escHtml(g.group)}');return false">${escHtml(g.group)}</a></td><td>${g.sessions}</td><td>${fmt(g.cost_usd)}</td><td>${g.events}</td></tr>`
+            `<tr><td><a href="#" class="group-link" data-group="${attr(g.group)}">${escHtml(g.group)}</a></td><td>${g.sessions}</td><td>${fmt(g.cost_usd)}</td><td>${g.events}</td></tr>`
         ).join('');
     }
 
     async function openSession(id, title) {
         showView('session');
         document.getElementById('page-title').textContent = title;
-        document.getElementById('breadcrumb').innerHTML = `<a href="#" onclick="backToOverview();return false">Cost Dashboard</a> &rsaquo; ${escHtml(title)}`;
+        document.getElementById('breadcrumb').innerHTML = `<a href="#" class="back-link">Cost Dashboard</a> &rsaquo; ${escHtml(title)}`;
 
-        const r = await fetch('/api/costs/session?id='+encodeURIComponent(id));
+        const r = await fetch(api('/api/costs/session?id='+encodeURIComponent(id)));
         const d = await r.json();
 
         document.getElementById('sd-cost').textContent = fmt(d.cost_usd);
@@ -241,7 +246,7 @@
     function openGroup(groupName) {
         showView('group');
         document.getElementById('page-title').textContent = groupName;
-        document.getElementById('breadcrumb').innerHTML = `<a href="#" onclick="backToOverview();return false">Cost Dashboard</a> &rsaquo; ${escHtml(groupName)}`;
+        document.getElementById('breadcrumb').innerHTML = `<a href="#" class="back-link">Cost Dashboard</a> &rsaquo; ${escHtml(groupName)}`;
 
         const groupSessions = sessionsData.filter(s => (s.group||'(ungrouped)') === groupName);
         const totalCost = groupSessions.reduce((sum,s) => sum+s.cost_usd, 0);
@@ -254,7 +259,7 @@
 
         const tbody = document.getElementById('group-sessions-table');
         tbody.innerHTML = groupSessions.map(s =>
-            `<tr><td><a href="#" onclick="openSession('${escHtml(s.session_id)}','${escHtml(s.title||s.session_id)}');return false">${escHtml(s.title||s.session_id)}</a></td><td>${fmt(s.cost_usd)}</td><td>${s.events}</td></tr>`
+            `<tr><td><a href="#" class="session-link" data-id="${attr(s.session_id)}" data-title="${attr(s.title||s.session_id)}">${escHtml(s.title||s.session_id)}</a></td><td>${fmt(s.cost_usd)}</td><td>${s.events}</td></tr>`
         ).join('');
     }
 
@@ -278,7 +283,7 @@
     }
 
     function connectSSE() {
-        const es = new EventSource('/api/costs/stream');
+        const es = new EventSource(api('/api/costs/stream'));
         es.addEventListener('cost_summary', (e) => {
             const d = JSON.parse(e.data);
             document.getElementById('today').textContent = fmt(d.today_usd);
@@ -287,6 +292,31 @@
         });
         es.onerror = () => { es.close(); setTimeout(connectSSE, 5000); };
     }
+
+    document.addEventListener('click', function(e) {
+        const sessionLink = e.target.closest('.session-link');
+        if (sessionLink) {
+            e.preventDefault();
+            openSession(sessionLink.dataset.id, sessionLink.dataset.title);
+            return;
+        }
+        const groupLink = e.target.closest('.group-link');
+        if (groupLink) {
+            e.preventDefault();
+            openGroup(groupLink.dataset.group);
+            return;
+        }
+        const backLink = e.target.closest('.back-link');
+        if (backLink) {
+            e.preventDefault();
+            backToOverview();
+            return;
+        }
+    });
+
+    // Update links with token
+    document.querySelectorAll('.export-bar a').forEach(a => { a.href = api(a.getAttribute('href')); });
+    if (_token) { document.getElementById('back-to-sessions').href = '/?token=' + encodeURIComponent(_token); }
 
     loadSummary(); loadDaily(); loadModels(); loadSessions(); loadGroups(); connectSSE();
     </script>

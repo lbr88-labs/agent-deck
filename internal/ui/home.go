@@ -382,6 +382,7 @@ type Home struct {
 	costBudget        *costs.BudgetChecker
 	costToday         atomic.Int64 // microdollars
 	costWeek          atomic.Int64 // microdollars
+	costRefreshTime   time.Time
 	showCostDashboard bool
 	costDashboard     costDashboard
 }
@@ -907,10 +908,15 @@ func (h *Home) SetCostBudget(budget *costs.BudgetChecker) {
 }
 
 // refreshCostTotals updates cached cost totals from the store.
+// Throttled to run at most every 10 seconds.
 func (h *Home) refreshCostTotals() {
 	if h.costStore == nil {
 		return
 	}
+	if time.Since(h.costRefreshTime) < 10*time.Second {
+		return
+	}
+	h.costRefreshTime = time.Now()
 	today, _ := h.costStore.TotalToday()
 	week, _ := h.costStore.TotalThisWeek()
 	h.costToday.Store(today.TotalCostMicrodollars)

@@ -503,10 +503,18 @@ func (s *Server) handleCostsSessionDetail(w http.ResponseWriter, r *http.Request
 	now := time.Now().UTC()
 	from := now.AddDate(0, 0, -30).Truncate(24 * time.Hour)
 	to := now.AddDate(0, 0, 1).Truncate(24 * time.Hour)
-	daily, _ := s.costStore.DailyBySession(sessionID, from, to)
+	daily, err := s.costStore.DailyBySession(sessionID, from, to)
+	if err != nil {
+		writeAPIError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "failed to query session daily costs")
+		return
+	}
 
 	// Get model breakdown for this session
-	models, _ := s.costStore.CostByModelForSession(sessionID)
+	models, err := s.costStore.CostByModelForSession(sessionID)
+	if err != nil {
+		writeAPIError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "failed to query session model costs")
+		return
+	}
 
 	type dailyEntry struct {
 		Date    string  `json:"date"`

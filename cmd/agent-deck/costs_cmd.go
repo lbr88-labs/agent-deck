@@ -61,6 +61,7 @@ func newPricerFromConfig() *costs.Pricer {
 
 func handleCostsSync(profile string) {
 	costStore, storage := openCostStore(profile)
+	defer storage.Close()
 	pricer := newPricerFromConfig()
 
 	instances, err := storage.Load()
@@ -103,7 +104,8 @@ func handleCostsSync(profile string) {
 }
 
 func handleCostsSummary(profile string) {
-	costStore, _ := openCostStore(profile)
+	costStore, storage := openCostStore(profile)
+	defer storage.Close()
 
 	today, _ := costStore.TotalToday()
 	week, _ := costStore.TotalThisWeek()

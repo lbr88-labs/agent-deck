@@ -125,7 +125,7 @@ func (s *Store) TotalByDateRange(from, to time.Time) ([]DailyCost, error) {
 		WHERE timestamp >= ? AND timestamp < ?
 		GROUP BY date(timestamp)
 		ORDER BY date(timestamp)`,
-		from.UTC(), to.UTC())
+		from.UTC().Format(time.RFC3339), to.UTC().Format(time.RFC3339))
 	if err != nil {
 		return nil, err
 	}

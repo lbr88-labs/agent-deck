@@ -427,10 +427,12 @@ func readLastLine(path string) (string, error) {
 		return "", fmt.Errorf("empty file")
 	}
 
-	buf := make([]byte, 0, 8192)
+	// Read backwards in chunks to find the last complete line
+	buf := make([]byte, 0, 16384)
 	offset := size
+
 	for offset > 0 {
-		readSize := int64(8192)
+		readSize := int64(16384)
 		if readSize > offset {
 			readSize = offset
 		}
@@ -442,26 +444,25 @@ func readLastLine(path string) (string, error) {
 		}
 		buf = append(chunk, buf...)
 
-		nlCount := 0
-		for i := len(buf) - 1; i >= 0; i-- {
-			if buf[i] == '\n' {
-				nlCount++
-				if nlCount == 2 {
-					line := strings.TrimSpace(string(buf[i+1:]))
-					if line != "" {
-						return line, nil
-					}
-				}
-			}
+		// Strip trailing whitespace/newlines for consistent handling
+		trimmed := strings.TrimRight(string(buf), "\n\r ")
+		// Find the last newline in the trimmed content
+		lastNL := strings.LastIndexByte(trimmed, '\n')
+		if lastNL >= 0 {
+			return trimmed[lastNL+1:], nil
 		}
 	}
 
+	// Entire file is one line
 	return strings.TrimSpace(string(buf)), nil
 }
 
 // logCostDebug writes debug messages to ~/.agent-deck/cost-debug.log
-// TODO: remove after cost tracking is validated
+// Only active when AGENTDECK_DEBUG is set.
 func logCostDebug(format string, args ...any) {
+	if os.Getenv("AGENTDECK_DEBUG") == "" {
+		return
+	}
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return

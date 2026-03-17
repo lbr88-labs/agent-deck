@@ -88,7 +88,6 @@ func SyncFromTranscripts(store *Store, pricer *Pricer, sessions []SyncSession) S
 		transcriptPath := filepath.Join(home, ".claude", "projects", sluggedPath, sess.ClaudeSessionID+".jsonl")
 
 		if _, err := os.Stat(transcriptPath); os.IsNotExist(err) {
-			// Try without slug (some sessions may use different patterns)
 			continue
 		}
 
