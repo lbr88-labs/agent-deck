@@ -279,9 +279,15 @@ func TestPromptDetector(t *testing.T) {
 	}{
 		{"codex>", true},
 		{"Continue?", true},
-		{"How can I help today?", false}, // plain prose should not trigger by itself
-		{"some output >", false},         // generic trailing '>' should not be treated as Codex prompt
-		{"esc to interrupt", false},      // busy indicator, not prompt
+		{"How can I help today?", true},               // initial Codex prompt (#350)
+		{"some output >", false},                      // generic trailing '>' should not be treated as Codex prompt
+		{"esc to interrupt", false},                   // busy indicator, not prompt
+		{"› Run /review on my current changes", true}, // Codex › prompt marker (#350)
+		{"›", true},                                   // bare › prompt marker (#350)
+		{"  › ", true},                                // › with surrounding whitespace (#350)
+		{"› Run /review\n\n  gpt-5.4 · ~/proj · main · 100% left · 0% used", true}, // full Codex prompt with status bar (#350)
+		{"ctrl+c to interrupt\n› Run /review on my current changes", false},        // busy overrides › prompt (#350)
+		{"Processing files...\nesc to interrupt\n› previous suggestion", false},    // busy overrides › prompt (#350)
 	}
 
 	for _, tt := range codexTests {
