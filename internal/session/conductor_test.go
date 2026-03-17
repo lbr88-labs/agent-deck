@@ -2091,7 +2091,7 @@ func TestSetupConductor_WithEnvVars(t *testing.T) {
 
 	name := "test-env-conductor"
 	env := map[string]string{
-		"ANTHROPIC_BASE_URL":  "https://api.z.ai/api/anthropic",
+		"ANTHROPIC_BASE_URL":   "https://api.z.ai/api/anthropic",
 		"ANTHROPIC_AUTH_TOKEN": "test-token",
 	}
 	err := SetupConductor(name, "default", true, true, "env test", "", "", env, "~/.conductor.env")
