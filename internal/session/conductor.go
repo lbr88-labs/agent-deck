@@ -105,6 +105,14 @@ type ConductorMeta struct {
 	// relying on CLAUDE.md and conductor state for continuity.
 	// Default: true (nil = use default true via GetClearOnCompact)
 	ClearOnCompact *bool `json:"clear_on_compact,omitempty"`
+
+	// Env holds inline environment variables for the conductor session.
+	// These are exported before the conductor command launches.
+	Env map[string]string `json:"env,omitempty"`
+
+	// EnvFile is a path to a .env file to source before the conductor command.
+	// Supports ~ and $VAR expansion.
+	EnvFile string `json:"env_file,omitempty"`
 }
 
 // GetClearOnCompact returns whether to block compaction and send /clear instead, defaulting to true
@@ -270,7 +278,11 @@ func SaveConductorMeta(meta *ConductorMeta) error {
 		return fmt.Errorf("failed to marshal meta.json: %w", err)
 	}
 	metaPath := filepath.Join(dir, "meta.json")
-	if err := os.WriteFile(metaPath, data, 0o644); err != nil {
+	perm := os.FileMode(0o644)
+	if len(meta.Env) > 0 || meta.EnvFile != "" {
+		perm = 0o600 // restrict access when env vars contain secrets
+	}
+	if err := os.WriteFile(metaPath, data, perm); err != nil {
 		return fmt.Errorf("failed to write meta.json: %w", err)
 	}
 	return nil
@@ -348,7 +360,7 @@ func matchesTemplateContent(actual, expected string) bool {
 // If customClaudeMD is provided, creates a symlink instead of writing the template.
 // If customPolicyMD is provided, creates a per-conductor POLICY.md symlink (overrides the shared POLICY.md).
 // It does NOT register the session (that's done by the CLI handler which has access to storage).
-func SetupConductor(name, profile string, heartbeatEnabled bool, clearOnCompact bool, description string, customClaudeMD string, customPolicyMD string) error {
+func SetupConductor(name, profile string, heartbeatEnabled bool, clearOnCompact bool, description string, customClaudeMD string, customPolicyMD string, env map[string]string, envFile string) error {
 	if err := ValidateConductorName(name); err != nil {
 		return err
 	}
@@ -399,6 +411,8 @@ func SetupConductor(name, profile string, heartbeatEnabled bool, clearOnCompact 
 		HeartbeatEnabled: heartbeatEnabled,
 		Description:      description,
 		CreatedAt:        time.Now().UTC().Format(time.RFC3339),
+		Env:              env,
+		EnvFile:          envFile,
 	}
 	if !clearOnCompact {
 		meta.ClearOnCompact = &clearOnCompact
@@ -677,7 +691,7 @@ const conductorHeartbeatPlistTemplate = `<?xml version="1.0" encoding="UTF-8"?>
 // SetupConductorProfile creates the conductor directory and CLAUDE.md for a profile.
 // Deprecated: Use SetupConductor instead. Kept for backward compatibility.
 func SetupConductorProfile(profile string) error {
-	return SetupConductor(profile, profile, true, true, "", "", "")
+	return SetupConductor(profile, profile, true, true, "", "", "", nil, "")
 }
 
 // createSymlinkWithExpansion creates a symlink from target to source, with ~ expansion and validation.

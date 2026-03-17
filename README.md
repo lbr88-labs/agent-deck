@@ -174,6 +174,15 @@ agent-deck -p work conductor setup ops --description "Ops monitor"
 # Add more conductors to the same profile (no prompts)
 agent-deck -p work conductor setup infra --description "Infra watcher"
 agent-deck conductor setup personal --description "Personal project monitor"
+
+# Use a custom AI backend via environment variables
+agent-deck conductor setup glm-bot \
+  -env ANTHROPIC_BASE_URL=https://api.z.ai/api/anthropic \
+  -env ANTHROPIC_AUTH_TOKEN=<token> \
+  -env ANTHROPIC_DEFAULT_OPUS_MODEL=glm-5
+
+# Or use an env file
+agent-deck conductor setup glm-bot -env-file ~/.conductor.env
 ```
 
 Each conductor gets its own directory, identity, and settings:
@@ -184,7 +193,7 @@ Each conductor gets its own directory, identity, and settings:
 ├── bridge.py           # Bridge daemon (Telegram/Slack, if configured)
 ├── ops/
 │   ├── CLAUDE.md       # Identity: "You are ops, a conductor for the work profile"
-│   ├── meta.json       # Config: name, profile, description
+│   ├── meta.json       # Config: name, profile, description, env vars
 │   ├── state.json      # Runtime state
 │   └── task-log.md     # Action log
 └── infra/
