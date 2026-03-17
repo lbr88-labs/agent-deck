@@ -797,7 +797,11 @@ func TestNotesSectionLineBudget(t *testing.T) {
 func setFollowCwdOnAttachConfigForTest(t *testing.T, enabled *bool) {
 	t.Helper()
 
-	homeDir := t.TempDir()
+	homeDir, err := os.MkdirTemp("", "follow-cwd-test-*")
+	if err != nil {
+		t.Fatalf("failed to create temp home: %v", err)
+	}
+	t.Cleanup(func() { os.RemoveAll(homeDir) })
 	t.Setenv("HOME", homeDir)
 
 	configDir := filepath.Join(homeDir, ".agent-deck")
@@ -824,7 +828,11 @@ func setFollowCwdOnAttachConfigForTest(t *testing.T, enabled *bool) {
 func setPreviewShowNotesConfigForTest(t *testing.T, enabled *bool) {
 	t.Helper()
 
-	homeDir := t.TempDir()
+	homeDir, err := os.MkdirTemp("", "follow-cwd-test-*")
+	if err != nil {
+		t.Fatalf("failed to create temp home: %v", err)
+	}
+	t.Cleanup(func() { os.RemoveAll(homeDir) })
 	t.Setenv("HOME", homeDir)
 
 	configDir := filepath.Join(homeDir, ".agent-deck")
