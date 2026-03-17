@@ -25,6 +25,7 @@ import (
 	"golang.org/x/sync/errgroup"
 
 	"github.com/asheshgoplani/agent-deck/internal/clipboard"
+	"github.com/asheshgoplani/agent-deck/internal/git"
 	"github.com/asheshgoplani/agent-deck/internal/logging"
 	"github.com/asheshgoplani/agent-deck/internal/session"
 	"github.com/asheshgoplani/agent-deck/internal/statedb"
@@ -4268,6 +4269,7 @@ func (h *Home) handleNewDialogKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			toolOptionsJSON,
 			multiRepoEnabled,
 			additionalPaths,
+			vcsType,
 		)
 
 	case "esc":
@@ -5340,6 +5342,7 @@ func (h *Home) handleConfirmDialogKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				pendingToolOpts,
 				false,
 				nil,
+				"",
 			)
 		case "n", "N", "esc":
 			h.confirmDialog.Hide()
@@ -6039,6 +6042,7 @@ func (h *Home) createSessionInGroupWithWorktreeAndOptions(
 	toolOptionsJSON json.RawMessage,
 	multiRepoEnabled bool,
 	additionalPaths []string,
+	vcsType string,
 ) tea.Cmd {
 	return func() tea.Msg {
 		// Check tmux availability before creating session
@@ -6064,9 +6068,6 @@ func (h *Home) createSessionInGroupWithWorktreeAndOptions(
 				if err := wtCreateBackend.CreateWorktree(worktreeRepoRoot, worktreePath, worktreeBranch); err != nil {
 					return sessionCreatedMsg{err: fmt.Errorf("failed to create worktree: %w", err)}
 				}
-			}
-			path = worktreePath
-		}
 			}
 			path = worktreePath
 		}
@@ -6444,7 +6445,6 @@ func (h *Home) forkSessionCmdWithOptions(
 				if err := forkWtBackend.CreateWorktree(opts.WorktreeRepoRoot, opts.WorktreePath, opts.WorktreeBranch); err != nil {
 					return sessionForkedMsg{err: fmt.Errorf("worktree creation failed: %w", err), sourceID: sourceID}
 				}
-			}
 			}
 		}
 

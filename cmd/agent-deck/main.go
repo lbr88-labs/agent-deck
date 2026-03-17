@@ -20,6 +20,7 @@ import (
 	"github.com/muesli/termenv"
 	"golang.org/x/term"
 
+	"github.com/asheshgoplani/agent-deck/internal/git"
 	"github.com/asheshgoplani/agent-deck/internal/logging"
 	"github.com/asheshgoplani/agent-deck/internal/session"
 	"github.com/asheshgoplani/agent-deck/internal/statedb"
@@ -980,23 +981,6 @@ func handleAdd(profile string, args []string) {
 			// Create worktree atomically (git handles existence checks).
 			// This avoids a TOCTOU race from separate check-then-create steps.
 			if err := backend.CreateWorktree(repoRoot, worktreePath, wtBranch); err != nil {
-				if isWorktreeAlreadyExistsError(err) {
-					fmt.Fprintf(os.Stderr, "Error: worktree already exists at %s\n", worktreePath)
-					fmt.Fprintf(os.Stderr, "Tip: Use 'agent-deck add %s' to add the existing worktree\n", worktreePath)
-					os.Exit(1)
-				}
-				fmt.Fprintf(os.Stderr, "Error: failed to create worktree: %v\n", err)
-				os.Exit(1)
-			}
-
-			fmt.Printf("Created worktree at: %s\n", worktreePath)
-		}
-				os.Exit(1)
-			}
-
-			// Create worktree atomically (git handles existence checks).
-			// This avoids a TOCTOU race from separate check-then-create steps.
-			if err := git.CreateWorktree(repoRoot, worktreePath, wtBranch); err != nil {
 				if isWorktreeAlreadyExistsError(err) {
 					fmt.Fprintf(os.Stderr, "Error: worktree already exists at %s\n", worktreePath)
 					fmt.Fprintf(os.Stderr, "Tip: Use 'agent-deck add %s' to add the existing worktree\n", worktreePath)
