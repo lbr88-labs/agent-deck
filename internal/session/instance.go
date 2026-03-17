@@ -34,7 +34,7 @@ var (
 	mcpLog                      = logging.ForComponent(logging.CompMCP)
 	codexSessionIDPathPatternRE = regexp.MustCompile(`/.codex/sessions/\S*/rollout-\S*-([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\.jsonl`)
 	uuidPatternRE               = regexp.MustCompile(`[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}`)
-	geminiPromptRE              = regexp.MustCompile(`^(>|>>>|\$|❯|➜|gemini>)\s*$`)
+	geminiPromptRE              = regexp.MustCompile(`^(>|>>>|\$|❯|➜|gemini>|✦)\s*$`)
 	shellPromptRE               = regexp.MustCompile(`^[\s]*(>|>>>|\$|❯|➜|#|%)\s*$`)
 )
 
@@ -3042,6 +3042,13 @@ func (i *Instance) GetLastResponse() (*ResponseOutput, error) {
 // 3. Scan disk for active session ID and retry.
 // 4. Fallback to terminal parsing.
 // 5. If still unavailable, return an empty response (no error).
+//
+// Behavior for Gemini (mirrors Claude):
+// 1. Try structured JSON read via stored GeminiSessionID.
+// 2. Refresh ID from tmux env and retry.
+// 3. Scan disk for latest session and retry.
+// 4. Fallback to terminal parsing.
+// 5. If still unavailable, return an empty response (no error).
 func (i *Instance) GetLastResponseBestEffort() (*ResponseOutput, error) {
 	resp, err := i.GetLastResponse()
 	if err == nil {
@@ -3068,6 +3075,25 @@ func (i *Instance) GetLastResponseBestEffort() (*ResponseOutput, error) {
 		}
 	}
 
+	// Gemini-specific recovery path (mirrors Claude recovery above)
+	if i.Tool == "gemini" {
+		// Refresh from tmux env (fast path)
+		i.syncGeminiSessionFromTmux()
+		if i.GeminiSessionID != "" {
+			if recovered, recoverErr := i.getGeminiLastResponse(); recoverErr == nil {
+				return recovered, nil
+			}
+		}
+
+		// Fallback: detect latest session on disk (handles startup race / stale ID)
+		i.syncGeminiSessionFromDisk()
+		if i.GeminiSessionID != "" {
+			if recovered, recoverErr := i.getGeminiLastResponse(); recoverErr == nil {
+				return recovered, nil
+			}
+		}
+	}
+
 	// Final fallback: terminal parsing (works for all tools).
 	if i.tmuxSession != nil {
 		if terminalResp, terminalErr := i.getTerminalLastResponse(); terminalErr == nil {
@@ -3075,10 +3101,14 @@ func (i *Instance) GetLastResponseBestEffort() (*ResponseOutput, error) {
 		}
 	}
 
-	// For Claude, prefer a graceful empty response instead of a hard error.
-	if IsClaudeCompatible(i.Tool) {
+	// For Claude and Gemini, prefer a graceful empty response instead of a hard error.
+	if IsClaudeCompatible(i.Tool) || i.Tool == "gemini" {
+		toolName := i.Tool
+		if IsClaudeCompatible(toolName) {
+			toolName = "claude"
+		}
 		return &ResponseOutput{
-			Tool:    "claude",
+			Tool:    toolName,
 			Role:    "assistant",
 			Content: "",
 		}, nil
