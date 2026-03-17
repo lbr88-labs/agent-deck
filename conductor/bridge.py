@@ -20,6 +20,7 @@ import os
 import re
 import subprocess
 import sys
+import tempfile
 import time
 from pathlib import Path
 
@@ -34,6 +35,8 @@ from aiogram.filters import Command, CommandStart
 AGENT_DECK_DIR = Path.home() / ".agent-deck"
 CONFIG_PATH = AGENT_DECK_DIR / "config.toml"
 CONDUCTOR_DIR = AGENT_DECK_DIR / "conductor"
+LOG_PATH = CONDUCTOR_DIR / "bridge.log"
+
 # Telegram message length limit
 TG_MAX_LENGTH = 4096
 
@@ -48,6 +51,7 @@ logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(message)s",
     handlers=[
+        logging.FileHandler(LOG_PATH, encoding="utf-8"),
         logging.StreamHandler(sys.stdout),
     ],
 )
@@ -375,6 +379,67 @@ def md_to_tg_html(text: str) -> str:
     return text
 
 
+
+# ---------------------------------------------------------------------------
+# Voice transcription (local parakeet-mlx via subprocess)
+# ---------------------------------------------------------------------------
+
+# Opt-in: voice STT is disabled unless BRIDGE_STT_ENABLED=true
+BRIDGE_STT_ENABLED = os.environ.get("BRIDGE_STT_ENABLED", "").lower() in (
+    "true", "1", "yes",
+)
+
+# Path to the STT worker script (next to this file)
+STT_WORKER = Path(__file__).parent / "stt_worker.py"
+# Python interpreter: prefer the bridge venv, fall back to system python3
+_venv_python = Path(__file__).parent / ".venv" / "bin" / "python3"
+VENV_PYTHON = str(_venv_python) if _venv_python.exists() else "python3"
+
+
+async def transcribe_voice(voice: types.Voice, bot: Bot) -> str | None:
+    """Transcribe a Telegram voice message using local parakeet-mlx."""
+    tmp_path = None
+    try:
+        file = await bot.get_file(voice.file_id)
+        bio = await bot.download_file(file.file_path)
+        audio_data = bio.read()
+
+        with tempfile.NamedTemporaryFile(
+            suffix=".ogg", prefix="voice_", delete=False
+        ) as tmp:
+            tmp.write(audio_data)
+            tmp_path = tmp.name
+
+        proc = await asyncio.create_subprocess_exec(
+            str(VENV_PYTHON), str(STT_WORKER), tmp_path,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        try:
+            stdout, stderr = await asyncio.wait_for(
+                proc.communicate(), timeout=60
+            )
+        except asyncio.TimeoutError:
+            proc.kill()
+            await proc.wait()
+            log.error("STT worker timed out (60s)")
+            return None
+
+        if proc.returncode != 0:
+            log.error("STT worker failed: %s", stderr.decode().strip())
+            return None
+
+        text = stdout.decode().strip()
+        return text if text else None
+
+    except Exception as e:
+        log.error("Voice transcription error: %s", e)
+        return None
+    finally:
+        if tmp_path:
+            Path(tmp_path).unlink(missing_ok=True)
+
+
 # ---------------------------------------------------------------------------
 # Telegram bot setup
 # ---------------------------------------------------------------------------
@@ -549,17 +614,33 @@ def create_bot(config: dict) -> tuple[Bot, Dispatcher]:
 
     @dp.message()
     async def handle_message(message: types.Message):
-        """Forward any text message to the conductor and return its response."""
+        """Forward text or voice messages to the conductor and return its response."""
         if not is_authorized(message):
             return
-        if not message.text:
+
+        text = message.text
+
+        # Transcribe voice messages (only when STT is enabled)
+        if message.voice and not text and BRIDGE_STT_ENABLED:
+            await ensure_bot_info(message.bot)
+            if not is_bot_addressed(message):
+                return
+            await message.answer("Transcribing...")
+            text = await transcribe_voice(message.voice, message.bot)
+            if not text:
+                await message.answer(
+                    "[Could not transcribe voice message.]"
+                )
+                return
+
+        if not text:
             return
         await ensure_bot_info(message.bot)
         if not is_bot_addressed(message):
             return
 
         # Strip @botname mention from group messages
-        text = strip_bot_mention(message.text)
+        text = strip_bot_mention(text)
         if not text:
             return
 
