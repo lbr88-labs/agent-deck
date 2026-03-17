@@ -886,7 +886,7 @@ func handleAdd(profile string, args []string) {
 			path = groupTree.DefaultPathForGroup(sessionGroup)
 		}
 		if path == "" {
-			path = resolveQuickDefaultPathForCLI()
+			path = session.ResolveQuickDefaultPath()
 		}
 		if path == "" {
 			path, err = os.Getwd()

@@ -37,10 +37,11 @@ const (
 	SettingQuickDefaultPath
 	SettingMaxActiveSessions
 	SettingMaxActiveSessionsPolicy
+	SettingQuickAutoDelete
 )
 
 // Total number of navigable settings.
-const settingsCount = 21
+const settingsCount = 22
 
 // SettingsPanel displays and edits user configuration
 type SettingsPanel struct {
@@ -78,6 +79,7 @@ type SettingsPanel struct {
 	quickDefaultPath    string
 	maxActiveSessions   int
 	maxActivePolicy     int // 0=warn, 1=deny, 2=close_oldest
+	quickAutoDelete     bool
 
 	// Text input state
 	editingText bool
@@ -281,6 +283,7 @@ func (s *SettingsPanel) LoadConfig(config *session.UserConfig) {
 			break
 		}
 	}
+	s.quickAutoDelete = config.Instances.GetQuickAutoDelete()
 }
 
 func (s *SettingsPanel) buildToolLists(config *session.UserConfig) {
@@ -400,6 +403,8 @@ func (s *SettingsPanel) GetConfig() *session.UserConfig {
 	} else {
 		config.Instances.MaxActiveSessionsPolicy = session.MaxActiveSessionsPolicyWarn
 	}
+	quickAutoDelete := s.quickAutoDelete
+	config.Instances.QuickAutoDelete = &quickAutoDelete
 
 	// Apply profile-specific Claude override after original profile map is restored.
 	if s.claudeConfigIsScope && s.profile != "" {
@@ -581,6 +586,10 @@ func (s *SettingsPanel) toggleValue() bool {
 
 	case SettingFollowCwdOnAttach:
 		s.followCwdOnAttach = !s.followCwdOnAttach
+		return true
+
+	case SettingQuickAutoDelete:
+		s.quickAutoDelete = !s.quickAutoDelete
 		return true
 	}
 
@@ -891,10 +900,16 @@ func (s *SettingsPanel) View() string {
 	}
 	content.WriteString("  " + labelStyle.Render(line) + "\n")
 
+	line = s.renderCheckbox("Quick-create auto-delete on close", s.quickAutoDelete) + " - Remove session metadata when process exits"
+	if s.cursor == int(SettingQuickAutoDelete) {
+		line = highlightStyle.Render(line)
+	}
+	content.WriteString("  " + labelStyle.Render(line) + "\n")
+
 	quickKey := actionHotkey(hotkeys, hotkeyQuickCreate)
-	quickHint := "  Quicktemp hotkey is unbound."
+	quickHint := "  Quick-create hotkey is unbound."
 	if quickKey != "" {
-		quickHint = fmt.Sprintf("  Press %s for quicktemp sessions (auto-delete on close).", quickKey)
+		quickHint = fmt.Sprintf("  Press %s for quick-create sessions.", quickKey)
 	}
 	content.WriteString(dimStyle.Render(quickHint))
 	content.WriteString("\n\n")
@@ -952,6 +967,7 @@ func (s *SettingsPanel) View() string {
 			42, // SettingQuickDefaultPath
 			43, // SettingMaxActiveSessions
 			44, // SettingMaxActiveSessionsPolicy
+			45, // SettingQuickAutoDelete
 		}
 		cursorLine := cursorToLine[s.cursor]
 

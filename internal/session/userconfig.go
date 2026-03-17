@@ -397,6 +397,12 @@ type InstanceSettings struct {
 	// Valid values: "warn", "deny", "close_oldest".
 	// Default: "warn".
 	MaxActiveSessionsPolicy string `toml:"max_active_sessions_policy"`
+
+	// QuickAutoDelete controls whether quick-created sessions (N hotkey) are
+	// automatically removed from the session list when their process exits.
+	//
+	// Default: false (quick-created sessions persist like normal sessions).
+	QuickAutoDelete *bool `toml:"quick_auto_delete"`
 }
 
 const (
@@ -454,6 +460,15 @@ func (i *InstanceSettings) GetMaxActiveSessionsPolicy() string {
 	default:
 		return MaxActiveSessionsPolicyWarn
 	}
+}
+
+// GetQuickAutoDelete returns whether quick-created sessions auto-delete on close.
+// Defaults to false.
+func (i *InstanceSettings) GetQuickAutoDelete() bool {
+	if i.QuickAutoDelete == nil {
+		return false
+	}
+	return *i.QuickAutoDelete
 }
 
 // ShellSettings defines shell environment configuration for sessions
@@ -1699,6 +1714,8 @@ func CreateExampleConfig() error {
 # What to do when trying to exceed max_active_sessions:
 # "warn" | "deny" | "close_oldest"
 # max_active_sessions_policy = "warn"
+# Auto-delete quick-created sessions (N hotkey) when process exits
+# quick_auto_delete = false
 
 # Preview settings (optional)
 # [preview]

@@ -760,6 +760,25 @@ func TestInstanceSettingsMaxActiveSessionsAndPolicy(t *testing.T) {
 	}
 }
 
+func TestInstanceSettingsQuickAutoDelete(t *testing.T) {
+	settings := InstanceSettings{}
+	if settings.GetQuickAutoDelete() {
+		t.Fatal("GetQuickAutoDelete() default should be false")
+	}
+
+	enabled := true
+	settings.QuickAutoDelete = &enabled
+	if !settings.GetQuickAutoDelete() {
+		t.Fatal("GetQuickAutoDelete() should be true when set")
+	}
+
+	disabled := false
+	settings.QuickAutoDelete = &disabled
+	if settings.GetQuickAutoDelete() {
+		t.Fatal("GetQuickAutoDelete() should be false when explicitly disabled")
+	}
+}
+
 func TestUserConfigParseFollowCwdOnAttach(t *testing.T) {
 	dir := t.TempDir()
 	configPath := filepath.Join(dir, "config.toml")
@@ -769,6 +788,7 @@ follow_cwd_on_attach = true
 quick_default_path = "~/projects"
 max_active_sessions = 4
 max_active_sessions_policy = "deny"
+quick_auto_delete = true
 `
 	if err := os.WriteFile(configPath, []byte(content), 0644); err != nil {
 		t.Fatalf("Failed to write config file: %v", err)
@@ -790,6 +810,9 @@ max_active_sessions_policy = "deny"
 	}
 	if got := config.Instances.GetMaxActiveSessionsPolicy(); got != MaxActiveSessionsPolicyDeny {
 		t.Fatalf("instances.max_active_sessions_policy = %q, want %q", got, MaxActiveSessionsPolicyDeny)
+	}
+	if !config.Instances.GetQuickAutoDelete() {
+		t.Fatal("instances.quick_auto_delete should parse as true")
 	}
 }
 

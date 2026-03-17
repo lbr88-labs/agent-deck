@@ -391,18 +391,18 @@ func writeQuickDefaultPathConfigForTest(t *testing.T, value string) string {
 }
 
 func TestJoinWarnings(t *testing.T) {
-	got := joinWarnings("  ", "limit reached", "", "  closing oldest  ")
+	got := session.JoinWarnings("  ", "limit reached", "", "  closing oldest  ")
 	want := "limit reached; closing oldest"
 	if got != want {
-		t.Fatalf("joinWarnings() = %q, want %q", got, want)
+		t.Fatalf("JoinWarnings() = %q, want %q", got, want)
 	}
 
-	if got := joinWarnings("", "  "); got != "" {
-		t.Fatalf("joinWarnings empty = %q, want empty", got)
+	if got := session.JoinWarnings("", "  "); got != "" {
+		t.Fatalf("JoinWarnings empty = %q, want empty", got)
 	}
 }
 
-func TestResolveQuickDefaultPathForCLI(t *testing.T) {
+func TestResolveQuickDefaultPath(t *testing.T) {
 	t.Run("returns cleaned absolute existing directory", func(t *testing.T) {
 		targetDir := filepath.Join(t.TempDir(), "workspace")
 		if err := os.MkdirAll(targetDir, 0o755); err != nil {
@@ -415,10 +415,10 @@ func TestResolveQuickDefaultPathForCLI(t *testing.T) {
 			t.Fatalf("failed to move target directory under HOME: %v", err)
 		}
 
-		got := resolveQuickDefaultPathForCLI()
+		got := session.ResolveQuickDefaultPath()
 		want := filepath.Clean(movedDir)
 		if got != want {
-			t.Fatalf("resolveQuickDefaultPathForCLI() = %q, want %q", got, want)
+			t.Fatalf("ResolveQuickDefaultPath() = %q, want %q", got, want)
 		}
 	})
 
@@ -426,8 +426,8 @@ func TestResolveQuickDefaultPathForCLI(t *testing.T) {
 		missing := filepath.Join(t.TempDir(), "missing-dir")
 		writeQuickDefaultPathConfigForTest(t, missing)
 
-		if got := resolveQuickDefaultPathForCLI(); got != "" {
-			t.Fatalf("resolveQuickDefaultPathForCLI() = %q, want empty", got)
+		if got := session.ResolveQuickDefaultPath(); got != "" {
+			t.Fatalf("ResolveQuickDefaultPath() = %q, want empty", got)
 		}
 	})
 }

@@ -363,7 +363,7 @@ func handleSessionRestart(profile string, args []string) {
 		out.Error(fmt.Sprintf("failed to restart session: %v", err), ErrCodeInvalidOperation)
 		os.Exit(1)
 	}
-	warning := joinWarnings(limitWarning, inst.ConsumeCodexRestartWarning())
+	warning := session.JoinWarnings(limitWarning, inst.ConsumeCodexRestartWarning())
 	if warning != "" && !*jsonOutput {
 		fmt.Fprintf(os.Stderr, "Warning: %s\n", warning)
 	}

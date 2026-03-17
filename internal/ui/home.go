@@ -2053,41 +2053,6 @@ func (h *Home) getDefaultPathForGroup(groupPath string) string {
 	return p
 }
 
-func (h *Home) resolveQuickDefaultPath() string {
-	settings := session.GetInstanceSettings()
-	path := settings.GetQuickDefaultPath()
-	path = strings.TrimSpace(path)
-	if path == "" {
-		return ""
-	}
-
-	if !filepath.IsAbs(path) {
-		absPath, err := filepath.Abs(path)
-		if err != nil {
-			return ""
-		}
-		path = absPath
-	}
-
-	if info, err := os.Stat(path); err != nil || !info.IsDir() {
-		return ""
-	}
-
-	return filepath.Clean(path)
-}
-
-func joinWarnings(parts ...string) string {
-	joined := make([]string, 0, len(parts))
-	for _, part := range parts {
-		part = strings.TrimSpace(part)
-		if part == "" {
-			continue
-		}
-		joined = append(joined, part)
-	}
-	return strings.Join(joined, "; ")
-}
-
 func normalizeFollowedProjectPath(rawPath string) string {
 	path := strings.TrimSpace(rawPath)
 	if path == "" {
@@ -6404,7 +6369,7 @@ func (h *Home) quickCreateSession() tea.Cmd {
 
 	// Fallback for path
 	if projectPath == "" {
-		projectPath = h.resolveQuickDefaultPath()
+		projectPath = session.ResolveQuickDefaultPath()
 	}
 	if projectPath == "" {
 		var err error
@@ -6432,12 +6397,13 @@ func (h *Home) quickCreateSession() tea.Cmd {
 	name := session.GenerateUniqueSessionName(h.instances, groupPath)
 	h.instancesMu.RUnlock()
 
+	instanceSettings := session.GetInstanceSettings()
 	return h.createSessionInGroupWithWorktreeAndOptions(
 		name, projectPath, command, groupPath,
 		"", "", "", // no worktree
 		geminiYoloMode, false, toolOptionsJSON,
 		false, nil, // no multi-repo
-		true, // autoDeleteOnClose
+		instanceSettings.GetQuickAutoDelete(),
 	)
 }
 
@@ -6738,7 +6704,7 @@ func (h *Home) restartSession(inst *session.Instance) tea.Cmd {
 		return sessionRestartedMsg{
 			sessionID: id,
 			err:       err,
-			warning:   joinWarnings(limitWarning, current.ConsumeCodexRestartWarning()),
+			warning:   session.JoinWarnings(limitWarning, current.ConsumeCodexRestartWarning()),
 		}
 	}
 }
@@ -8623,7 +8589,7 @@ func (h *Home) renderHelpBarFull() string {
 	if len(h.flatItems) == 0 {
 		contextTitle = "Empty"
 		if newQuickKey != "" {
-			primaryHints = append(primaryHints, h.helpKey(newQuickKey, "New/Temp"))
+			primaryHints = append(primaryHints, h.helpKey(newQuickKey, "New/Quick"))
 		}
 		if key := h.actionKey(hotkeyImport); key != "" {
 			primaryHints = append(primaryHints, h.helpKey(key, "Import"))
@@ -8637,7 +8603,7 @@ func (h *Home) renderHelpBarFull() string {
 			contextTitle = "Group"
 			primaryHints = append(primaryHints, h.helpKey("Tab", "Toggle"))
 			if newQuickKey != "" {
-				primaryHints = append(primaryHints, h.helpKey(newQuickKey, "New/Temp"))
+				primaryHints = append(primaryHints, h.helpKey(newQuickKey, "New/Quick"))
 			}
 			if groupKey != "" {
 				primaryHints = append(primaryHints, h.helpKey(groupKey, "Group"))
@@ -8652,7 +8618,7 @@ func (h *Home) renderHelpBarFull() string {
 			contextTitle = "Session"
 			primaryHints = append(primaryHints, h.helpKey("Enter", "Attach"))
 			if newQuickKey != "" {
-				primaryHints = append(primaryHints, h.helpKey(newQuickKey, "New/Temp"))
+				primaryHints = append(primaryHints, h.helpKey(newQuickKey, "New/Quick"))
 			}
 			if groupKey != "" {
 				primaryHints = append(primaryHints, h.helpKey(groupKey, "Group"))

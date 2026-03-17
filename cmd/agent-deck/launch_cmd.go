@@ -85,7 +85,7 @@ func handleLaunch(profile string, args []string) {
 	// Resolve path
 	path := strings.Trim(fs.Arg(0), "'\"")
 	if path == "" {
-		path = resolveQuickDefaultPathForCLI()
+		path = session.ResolveQuickDefaultPath()
 		if path == "" {
 			var err error
 			path, err = os.Getwd()

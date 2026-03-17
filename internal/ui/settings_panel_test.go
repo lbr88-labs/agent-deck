@@ -1067,7 +1067,7 @@ func TestSettingsPanel_ViewShowsUnboundMCPHotkeyHint(t *testing.T) {
 	}
 }
 
-func TestSettingsPanel_ViewUsesConfiguredQuicktempHotkeyHint(t *testing.T) {
+func TestSettingsPanel_ViewUsesConfiguredQuickCreateHotkeyHint(t *testing.T) {
 	setSettingsPanelHotkeyConfigForTest(t, "[hotkeys]\nquick_create = \"ctrl+n\"\n")
 
 	panel := NewSettingsPanel()
@@ -1075,12 +1075,12 @@ func TestSettingsPanel_ViewUsesConfiguredQuicktempHotkeyHint(t *testing.T) {
 	panel.Show()
 
 	view := panel.View()
-	if !containsString(view, "Press ctrl+n for quicktemp sessions") || !containsString(view, "auto-delete on") {
-		t.Fatalf("settings view should show configured quicktemp key hint, got %q", view)
+	if !containsString(view, "Press ctrl+n for quick-create sessions") {
+		t.Fatalf("settings view should show configured quick-create key hint, got %q", view)
 	}
 }
 
-func TestSettingsPanel_ViewShowsUnboundQuicktempHotkeyHint(t *testing.T) {
+func TestSettingsPanel_ViewShowsUnboundQuickCreateHotkeyHint(t *testing.T) {
 	setSettingsPanelHotkeyConfigForTest(t, "[hotkeys]\nquick_create = \"\"\n")
 
 	panel := NewSettingsPanel()
@@ -1088,7 +1088,7 @@ func TestSettingsPanel_ViewShowsUnboundQuicktempHotkeyHint(t *testing.T) {
 	panel.Show()
 
 	view := panel.View()
-	if !containsString(view, "Quicktemp hotkey is unbound.") {
-		t.Fatalf("settings view should show unbound quicktemp key hint, got %q", view)
+	if !containsString(view, "Quick-create hotkey is unbound.") {
+		t.Fatalf("settings view should show unbound quick-create key hint, got %q", view)
 	}
 }
