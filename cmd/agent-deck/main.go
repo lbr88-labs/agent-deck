@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
+	"math"
 	"log/slog"
 	"os"
 	"os/exec"
@@ -481,13 +482,13 @@ func main() {
 		var budgetCfg costs.BudgetConfig
 		if userCfg != nil {
 			bc := userCfg.Costs.Budgets
-			budgetCfg.DailyLimit = int64(bc.DailyLimit * 1_000_000)
-			budgetCfg.WeeklyLimit = int64(bc.WeeklyLimit * 1_000_000)
-			budgetCfg.MonthlyLimit = int64(bc.MonthlyLimit * 1_000_000)
+			budgetCfg.DailyLimit = int64(math.Round(bc.DailyLimit * 1_000_000))
+			budgetCfg.WeeklyLimit = int64(math.Round(bc.WeeklyLimit * 1_000_000))
+			budgetCfg.MonthlyLimit = int64(math.Round(bc.MonthlyLimit * 1_000_000))
 			if len(bc.Groups) > 0 {
 				budgetCfg.GroupLimits = make(map[string]int64)
 				for name, g := range bc.Groups {
-					budgetCfg.GroupLimits[name] = int64(g.DailyLimit * 1_000_000)
+					budgetCfg.GroupLimits[name] = int64(math.Round(g.DailyLimit * 1_000_000))
 				}
 			}
 		}

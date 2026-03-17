@@ -133,6 +133,15 @@
     const _token = _params.get('token') || '';
     function api(path) { return _token ? path + (path.includes('?') ? '&' : '?') + 'token=' + encodeURIComponent(_token) : path; }
 
+    async function apiFetch(path) {
+        const r = await fetch(api(path));
+        if (!r.ok) {
+            console.error('API error:', r.status, path);
+            return null;
+        }
+        return r.json();
+    }
+
     const fmt = (v) => '$' + (v||0).toFixed(2);
     const fmtTok = (n) => { if(n>=1e6) return (n/1e6).toFixed(1)+'M'; if(n>=1e3) return (n/1e3).toFixed(1)+'K'; return ''+n; };
     let dailyChart, modelChart, sdDailyChart, sdModelChart;
@@ -158,8 +167,8 @@
     }
 
     async function loadSummary() {
-        const r = await fetch(api('/api/costs/summary'));
-        const d = await r.json();
+        const d = await apiFetch('/api/costs/summary');
+        if (!d) return;
         document.getElementById('today').textContent = fmt(d.today_usd);
         document.getElementById('week').textContent = fmt(d.week_usd);
         document.getElementById('month').textContent = fmt(d.month_usd);
@@ -170,8 +179,8 @@
     }
 
     async function loadDaily() {
-        const r = await fetch(api('/api/costs/daily?days=30'));
-        const d = await r.json();
+        const d = await apiFetch('/api/costs/daily?days=30');
+        if (!d) return;
         const labels = (d||[]).map(e => e.date.slice(5));
         const data = (d||[]).map(e => e.cost_usd);
         if (dailyChart) dailyChart.destroy();
@@ -182,8 +191,8 @@
     }
 
     async function loadModels() {
-        const r = await fetch(api('/api/costs/models'));
-        const d = await r.json();
+        const d = await apiFetch('/api/costs/models');
+        if (!d) return;
         const labels = Object.keys(d||{});
         const data = Object.values(d||{});
         if (modelChart) modelChart.destroy();
@@ -194,8 +203,7 @@
     }
 
     async function loadSessions() {
-        const r = await fetch(api('/api/costs/sessions'));
-        sessionsData = await r.json() || [];
+        sessionsData = await apiFetch('/api/costs/sessions') || [];
         const tbody = document.getElementById('sessions-table');
         tbody.innerHTML = sessionsData.map(s =>
             `<tr><td><a href="#" class="session-link" data-id="${attr(s.session_id)}" data-title="${attr(s.title||s.session_id)}">${escHtml(s.title||s.session_id)}</a></td><td><a href="#" class="group-link" data-group="${attr(s.group||'(ungrouped)')}">${escHtml(s.group||'-')}</a></td><td>${fmt(s.cost_usd)}</td><td>${s.events}</td></tr>`
@@ -203,8 +211,7 @@
     }
 
     async function loadGroups() {
-        const r = await fetch(api('/api/costs/groups'));
-        const d = await r.json() || [];
+        const d = await apiFetch('/api/costs/groups') || [];
         const tbody = document.getElementById('groups-table');
         tbody.innerHTML = d.map(g =>
             `<tr><td><a href="#" class="group-link" data-group="${attr(g.group)}">${escHtml(g.group)}</a></td><td>${g.sessions}</td><td>${fmt(g.cost_usd)}</td><td>${g.events}</td></tr>`
@@ -216,8 +223,8 @@
         document.getElementById('page-title').textContent = title;
         document.getElementById('breadcrumb').innerHTML = `<a href="#" class="back-link">Cost Dashboard</a> &rsaquo; ${escHtml(title)}`;
 
-        const r = await fetch(api('/api/costs/session?id='+encodeURIComponent(id)));
-        const d = await r.json();
+        const d = await apiFetch('/api/costs/session?id='+encodeURIComponent(id));
+        if (!d) return;
 
         document.getElementById('sd-cost').textContent = fmt(d.cost_usd);
         document.getElementById('sd-events').textContent = d.events + ' events';

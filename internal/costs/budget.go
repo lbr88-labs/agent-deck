@@ -42,7 +42,7 @@ func NewBudgetChecker(cfg BudgetConfig, store *Store) *BudgetChecker {
 
 // CheckTx evaluates all budget limits within a transaction.
 // This must be called within the same transaction as the cost event INSERT.
-func (b *BudgetChecker) CheckTx(tx *sql.Tx, sessionID, groupName string, groupSessionIDs []string) BudgetResult {
+func (b *BudgetChecker) CheckTx(tx *sql.Tx, sessionID, groupName string, groupSessionIDs []string) (BudgetResult, error) {
 	worst := BudgetResult{Action: BudgetActionNone}
 	tz := b.cfg.Timezone
 	if tz == nil {
@@ -51,7 +51,10 @@ func (b *BudgetChecker) CheckTx(tx *sql.Tx, sessionID, groupName string, groupSe
 
 	// Session lifetime limit
 	if limit, ok := b.cfg.SessionLimits[sessionID]; ok && limit > 0 {
-		total, _ := b.store.RunningTotal(tx, sessionID, time.Time{}) // all time
+		total, err := b.store.RunningTotal(tx, sessionID, time.Time{}) // all time
+		if err != nil {
+			return BudgetResult{Action: BudgetActionStop, Reason: "budget query failed"}, err
+		}
 		r := evaluate(total, limit, "session lifetime limit exceeded")
 		if r.Action > worst.Action {
 			worst = r
@@ -60,7 +63,10 @@ func (b *BudgetChecker) CheckTx(tx *sql.Tx, sessionID, groupName string, groupSe
 
 	// Daily global limit
 	if b.cfg.DailyLimit > 0 {
-		total, _ := b.store.GlobalRunningTotal(tx, startOfDay(tz))
+		total, err := b.store.GlobalRunningTotal(tx, startOfDay(tz))
+		if err != nil {
+			return BudgetResult{Action: BudgetActionStop, Reason: "budget query failed"}, err
+		}
 		r := evaluate(total, b.cfg.DailyLimit, "daily global limit exceeded")
 		if r.Action > worst.Action {
 			worst = r
@@ -69,7 +75,10 @@ func (b *BudgetChecker) CheckTx(tx *sql.Tx, sessionID, groupName string, groupSe
 
 	// Weekly global limit
 	if b.cfg.WeeklyLimit > 0 {
-		total, _ := b.store.GlobalRunningTotal(tx, startOfWeek(tz))
+		total, err := b.store.GlobalRunningTotal(tx, startOfWeek(tz))
+		if err != nil {
+			return BudgetResult{Action: BudgetActionStop, Reason: "budget query failed"}, err
+		}
 		r := evaluate(total, b.cfg.WeeklyLimit, "weekly global limit exceeded")
 		if r.Action > worst.Action {
 			worst = r
@@ -78,7 +87,10 @@ func (b *BudgetChecker) CheckTx(tx *sql.Tx, sessionID, groupName string, groupSe
 
 	// Monthly global limit
 	if b.cfg.MonthlyLimit > 0 {
-		total, _ := b.store.GlobalRunningTotal(tx, startOfMonth(tz))
+		total, err := b.store.GlobalRunningTotal(tx, startOfMonth(tz))
+		if err != nil {
+			return BudgetResult{Action: BudgetActionStop, Reason: "budget query failed"}, err
+		}
 		r := evaluate(total, b.cfg.MonthlyLimit, "monthly global limit exceeded")
 		if r.Action > worst.Action {
 			worst = r
@@ -87,14 +99,17 @@ func (b *BudgetChecker) CheckTx(tx *sql.Tx, sessionID, groupName string, groupSe
 
 	// Group daily limit
 	if limit, ok := b.cfg.GroupLimits[groupName]; ok && limit > 0 && len(groupSessionIDs) > 0 {
-		total, _ := b.store.GroupRunningTotal(tx, groupSessionIDs, startOfDay(tz))
+		total, err := b.store.GroupRunningTotal(tx, groupSessionIDs, startOfDay(tz))
+		if err != nil {
+			return BudgetResult{Action: BudgetActionStop, Reason: "budget query failed"}, err
+		}
 		r := evaluate(total, limit, "group daily limit exceeded")
 		if r.Action > worst.Action {
 			worst = r
 		}
 	}
 
-	return worst
+	return worst, nil
 }
 
 // Check is a convenience for non-transactional checks (e.g., TUI display).

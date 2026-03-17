@@ -65,6 +65,7 @@ func (w *CostEventWatcher) EventCh() <-chan RawCostEvent {
 
 // Start begins watching for file events. Blocks until stopped.
 func (w *CostEventWatcher) Start() {
+	defer close(w.eventCh)
 	var mu sync.Mutex
 	pending := make(map[string]struct{})
 	var timer *time.Timer
@@ -124,12 +125,14 @@ func (w *CostEventWatcher) processFile(path string) {
 	}
 	var ev RawCostEvent
 	if err := json.Unmarshal(data, &ev); err != nil {
+		os.Remove(path) // malformed, remove
 		return
 	}
-	os.Remove(path)
 
 	select {
 	case w.eventCh <- ev:
+		os.Remove(path) // only delete after successful send
 	default:
+		// channel full, leave file for retry on next fsnotify event
 	}
 }

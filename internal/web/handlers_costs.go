@@ -310,9 +310,6 @@ func (s *Server) handleCostsStream(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	costChanges := s.subscribeCostChanges()
-	defer s.unsubscribeCostChanges(costChanges)
-
 	pollTicker := time.NewTicker(costStreamPollInterval)
 	defer pollTicker.Stop()
 
@@ -345,10 +342,6 @@ func (s *Server) handleCostsStream(w http.ResponseWriter, r *http.Request) {
 			return
 		case <-heartbeatTicker.C:
 			if err := writeSSEComment(w, flusher, "keepalive"); err != nil {
-				return
-			}
-		case <-costChanges:
-			if err := emitIfChanged(); err != nil {
 				return
 			}
 		case <-pollTicker.C:

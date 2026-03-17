@@ -55,7 +55,10 @@ func TestBudgetCheckTx_SessionLimit(t *testing.T) {
 	}
 	defer tx.Rollback()
 
-	result := b.CheckTx(tx, "s1", "group-1", nil)
+	result, err := b.CheckTx(tx, "s1", "group-1", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if result.Action != costs.BudgetActionStop {
 		t.Errorf("action = %v, want Stop", result.Action)
 	}

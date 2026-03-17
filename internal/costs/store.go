@@ -179,7 +179,7 @@ func (s *Store) RunningTotal(tx *sql.Tx, sessionID string, since time.Time) (int
 	err := tx.QueryRow(`
 		SELECT SUM(cost_microdollars) FROM cost_events
 		WHERE session_id = ? AND timestamp >= ?`,
-		sessionID, since.UTC()).Scan(&total)
+		sessionID, since.UTC().Format(time.RFC3339)).Scan(&total)
 	if err != nil {
 		return 0, err
 	}
@@ -194,7 +194,7 @@ func (s *Store) GlobalRunningTotal(tx *sql.Tx, since time.Time) (int64, error) {
 	var total sql.NullInt64
 	err := tx.QueryRow(`
 		SELECT SUM(cost_microdollars) FROM cost_events
-		WHERE timestamp >= ?`, since.UTC()).Scan(&total)
+		WHERE timestamp >= ?`, since.UTC().Format(time.RFC3339)).Scan(&total)
 	if err != nil {
 		return 0, err
 	}
@@ -215,7 +215,7 @@ func (s *Store) GroupRunningTotal(tx *sql.Tx, sessionIDs []string, since time.Ti
 	for i, id := range sessionIDs {
 		args[i] = id
 	}
-	args[len(sessionIDs)] = since.UTC()
+	args[len(sessionIDs)] = since.UTC().Format(time.RFC3339)
 	var total int64
 	err := tx.QueryRow(query, args...).Scan(&total)
 	return total, err
