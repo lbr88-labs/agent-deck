@@ -619,6 +619,7 @@ func TestNewDialog_WorktreeToggle_ViaKeyPress(t *testing.T) {
 	dialog.Show()
 	dialog.sandboxEnabled = false
 	dialog.inheritedSettings = nil
+	dialog.commandCursor = 1 // preset command (not custom input)
 	dialog.rebuildFocusTargets()
 	dialog.focusIndex = 3 // Command field
 
@@ -640,6 +641,46 @@ func TestNewDialog_WorktreeToggle_ViaKeyPress(t *testing.T) {
 
 	if dialog.worktreeEnabled {
 		t.Error("Worktree should be disabled after pressing 'w' again")
+	}
+}
+
+func TestNewDialog_ShortcutsBlockedDuringTextInput(t *testing.T) {
+	dialog := NewNewDialog()
+	dialog.Show()
+	dialog.sandboxEnabled = false
+	dialog.inheritedSettings = nil
+	dialog.commandCursor = 0 // custom command input (text field active)
+	dialog.rebuildFocusTargets()
+
+	// Navigate to command field.
+	cmdIdx := dialog.indexOf(focusCommand)
+	dialog.focusIndex = cmdIdx
+	dialog.updateFocus()
+
+	// Press 's' — should NOT toggle sandbox when custom command input is focused.
+	dialog, _ = dialog.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'s'}})
+	if dialog.sandboxEnabled {
+		t.Error("Pressing 's' on custom command input should type, not toggle sandbox")
+	}
+
+	// Press 'w' — should NOT toggle worktree.
+	dialog, _ = dialog.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'w'}})
+	if dialog.worktreeEnabled {
+		t.Error("Pressing 'w' on custom command input should type, not toggle worktree")
+	}
+
+	// Press 'm' — should NOT toggle multi-repo.
+	dialog, _ = dialog.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'m'}})
+	if dialog.multiRepoEnabled {
+		t.Error("Pressing 'm' on custom command input should type, not toggle multi-repo")
+	}
+
+	// Also verify shortcuts don't fire on name field.
+	dialog.focusIndex = 0 // focusName
+	dialog.updateFocus()
+	dialog, _ = dialog.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'s'}})
+	if dialog.sandboxEnabled {
+		t.Error("Pressing 's' on name input should not toggle sandbox")
 	}
 }
 
