@@ -350,6 +350,11 @@ func NewContainerConfig(projectPath string, opts ...ContainerConfigOption) *Cont
 	// Set after options to prevent caller-supplied values from disabling sandbox mode.
 	cfg.environment["IS_SANDBOX"] = "1"
 
+	// HOME must point to the container home directory so tools find their config.
+	// The host UID has no /etc/passwd entry, so HOME would default to "/" without this.
+	// Set after options to prevent caller-supplied values from misdirecting tool config.
+	cfg.environment["HOME"] = cfg.containerHome
+
 	return cfg
 }
 
