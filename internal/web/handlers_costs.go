@@ -353,12 +353,12 @@ func (s *Server) handleCostsStream(w http.ResponseWriter, r *http.Request) {
 }
 
 type costSummarySSE struct {
-	TodayUSD    float64 `json:"today_usd"`
-	WeekUSD     float64 `json:"week_usd"`
-	MonthUSD    float64 `json:"month_usd"`
-	TodayMicro  int64   `json:"-"`
-	WeekMicro   int64   `json:"-"`
-	MonthMicro  int64   `json:"-"`
+	TodayUSD   float64 `json:"today_usd"`
+	WeekUSD    float64 `json:"week_usd"`
+	MonthUSD   float64 `json:"month_usd"`
+	TodayMicro int64   `json:"-"`
+	WeekMicro  int64   `json:"-"`
+	MonthMicro int64   `json:"-"`
 }
 
 func (s *Server) buildCostSummary() (*costSummarySSE, error) {
@@ -528,7 +528,7 @@ func (s *Server) handleCostsSessionDetail(w http.ResponseWriter, r *http.Request
 
 	writeJSON(w, http.StatusOK, map[string]any{
 		"session_id":    sessionID,
-		"cost_usd":     microToUSD(summary.TotalCostMicrodollars),
+		"cost_usd":      microToUSD(summary.TotalCostMicrodollars),
 		"input_tokens":  summary.TotalInputTokens,
 		"output_tokens": summary.TotalOutputTokens,
 		"cache_read":    summary.TotalCacheReadTokens,

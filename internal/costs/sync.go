@@ -27,8 +27,8 @@ type TranscriptEntry struct {
 		} `json:"usage"`
 	} `json:"message"`
 	// Progress entries nest usage inside data.message.message
-	Data *progressData `json:"data,omitempty"`
-	Timestamp string   `json:"timestamp"` // ISO 8601
+	Data      *progressData `json:"data,omitempty"`
+	Timestamp string        `json:"timestamp"` // ISO 8601
 }
 
 type progressData struct {
@@ -136,12 +136,12 @@ func SyncFromTranscripts(store *Store, pricer *Pricer, sessions []SyncSession) S
 }
 
 type parsedUsage struct {
-	dedupKey        string
-	timestamp       time.Time
-	model           string
-	inputTokens     int64
-	outputTokens    int64
-	cacheReadTokens int64
+	dedupKey         string
+	timestamp        time.Time
+	model            string
+	inputTokens      int64
+	outputTokens     int64
+	cacheReadTokens  int64
 	cacheWriteTokens int64
 }
 
