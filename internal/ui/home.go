@@ -415,6 +415,10 @@ func (h *Home) reloadHotkeysFromConfig() {
 	h.setHotkeys(resolveHotkeys(session.GetHotkeyOverrides()))
 }
 
+func (h *Home) detachByte() byte {
+	return ResolvedDetachByte(session.GetHotkeyOverrides())
+}
+
 func (h *Home) setHotkeys(bindings map[string]string) {
 	if bindings == nil {
 		bindings = resolveHotkeys(nil)
@@ -4830,7 +4834,7 @@ func (h *Home) handleMainKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 						}
 
 						h.isAttaching.Store(true)
-						return h, tea.Exec(attachWindowCmd{session: tmuxSess, windowIndex: item.WindowIndex}, func(err error) tea.Msg {
+						return h, tea.Exec(attachWindowCmd{session: tmuxSess, windowIndex: item.WindowIndex, detachByte: h.detachByte()}, func(err error) tea.Msg {
 							h.isAttaching.Store(false)
 							parentInst.MarkAccessed()
 							return statusUpdateMsg{}
@@ -5139,7 +5143,7 @@ func (h *Home) handleMainKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			}
 			termSession := &tmux.Session{Name: tmuxName}
 			h.isAttaching.Store(true)
-			return h, tea.Exec(attachCmd{session: termSession}, func(err error) tea.Msg {
+			return h, tea.Exec(attachCmd{session: termSession, detachByte: h.detachByte()}, func(err error) tea.Msg {
 				h.isAttaching.Store(false)
 				return statusUpdateMsg{}
 			})
@@ -6990,7 +6994,7 @@ func (h *Home) attachSession(inst *session.Instance) tea.Cmd {
 	// On return, immediately update all session statuses (don't reload from storage
 	// which would lose the tmux session state)
 	h.isAttaching.Store(true) // Prevent View() output only during actual attach transition
-	return tea.Exec(attachCmd{session: tmuxSess}, func(err error) tea.Msg {
+	return tea.Exec(attachCmd{session: tmuxSess, detachByte: h.detachByte()}, func(err error) tea.Msg {
 		// CRITICAL: Set isAttaching to false BEFORE returning the message
 		// This prevents a race condition where View() could be called with
 		// isAttaching=true before Update() processes statusUpdateMsg,
@@ -7069,7 +7073,8 @@ func (h *Home) followAttachReturnCwd(msg statusUpdateMsg) {
 
 // attachCmd implements tea.ExecCommand for custom PTY attach
 type attachCmd struct {
-	session *tmux.Session
+	session    *tmux.Session
+	detachByte byte
 }
 
 func (a attachCmd) Run() error {
@@ -7077,7 +7082,7 @@ func (a attachCmd) Run() error {
 	// Removing clear screen here prevents double-clearing which corrupts terminal state
 
 	ctx := context.Background()
-	return a.session.Attach(ctx)
+	return a.session.Attach(ctx, a.detachByte)
 }
 
 func (a attachCmd) SetStdin(r io.Reader)  {}
@@ -7131,11 +7136,12 @@ func (r remoteCreateAndAttachCmd) SetStderr(writer io.Writer) {}
 type attachWindowCmd struct {
 	session     *tmux.Session
 	windowIndex int
+	detachByte  byte
 }
 
 func (a attachWindowCmd) Run() error {
 	ctx := context.Background()
-	return a.session.AttachWindow(ctx, a.windowIndex)
+	return a.session.AttachWindow(ctx, a.windowIndex, a.detachByte)
 }
 
 func (a attachWindowCmd) SetStdin(r io.Reader)  {}

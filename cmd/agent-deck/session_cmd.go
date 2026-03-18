@@ -16,6 +16,7 @@ import (
 	"github.com/asheshgoplani/agent-deck/internal/send"
 	"github.com/asheshgoplani/agent-deck/internal/session"
 	"github.com/asheshgoplani/agent-deck/internal/tmux"
+	"github.com/asheshgoplani/agent-deck/internal/ui"
 )
 
 // handleSession dispatches session subcommands
@@ -579,13 +580,16 @@ func handleSessionFork(profile string, args []string) {
 
 // handleSessionAttach attaches to a session interactively
 func handleSessionAttach(profile string, args []string) {
+	detachByte := ui.ResolvedDetachByte(session.GetHotkeyOverrides())
+	detachLabel := ui.DetachByteLabel(detachByte)
+
 	fs := flag.NewFlagSet("session attach", flag.ExitOnError)
 
 	fs.Usage = func() {
 		fmt.Println("Usage: agent-deck session attach <id|title>")
 		fmt.Println()
 		fmt.Println("Attach to a session interactively.")
-		fmt.Println("Press Ctrl+Q to detach.")
+		fmt.Printf("Press %s to detach.\n", detachLabel)
 	}
 
 	if err := fs.Parse(normalizeArgs(fs, args)); err != nil {
@@ -628,7 +632,7 @@ func handleSessionAttach(profile string, args []string) {
 	// Create context for attach
 	ctx := context.Background()
 
-	if err := tmuxSession.Attach(ctx); err != nil {
+	if err := tmuxSession.Attach(ctx, detachByte); err != nil {
 		fmt.Fprintf(os.Stderr, "Error: failed to attach: %v\n", err)
 		os.Exit(1)
 	}
