@@ -283,6 +283,31 @@ Agent Deck works with any terminal-based AI tool:
 | **Cursor** (terminal) | Status detection, organization |
 | **Custom tools** | Configurable via `[tools.*]` in config.toml |
 
+### Cost Tracking Dashboard
+
+Track token usage and costs across all your AI agent sessions in real-time.
+
+- **Automatic collection** — Claude Code hook integration reads transcript files on each turn. Gemini/Codex support via output parsing (untested)
+- **9 models priced** — Claude Opus/Sonnet/Haiku, Gemini Pro/Flash, GPT-4o/4.1, o3, o4-mini with daily price refresh
+- **TUI dashboard** — press `$` to view today/week/month costs, top sessions, model breakdown
+- **Web dashboard** — `/costs` page with Chart.js charts, group drill-down, session detail views, SSE live updates
+- **Budget limits** — configurable daily/weekly/monthly/per-group/per-session limits with 80% warning and 100% hard stop (untested)
+- **Historical sync** — `agent-deck costs sync` backfills cost data from existing Claude transcript files
+- **Export** — CSV/JSON export from web dashboard
+
+```toml
+# Optional config (~/.agent-deck/config.toml)
+[costs]
+retention_days = 90
+
+[costs.budgets]
+daily_limit = 50.00
+weekly_limit = 200.00
+
+[costs.pricing.overrides]
+"custom-model" = { input_per_mtok = 1.0, output_per_mtok = 5.0 }
+```
+
 ## Installation
 
 **Works on:** macOS, Linux, Windows (WSL)
@@ -381,6 +406,7 @@ agent-deck web --token my-secret
 | `f` / `F` | Fork (quick / dialog) |
 | `m` | MCP Manager |
 | `s` | Skills Manager (Claude) |
+| `$` | Cost Dashboard |
 | `M` | Move session to group |
 | `S` | Settings |
 | `/` / `G` | Search / Global search |
