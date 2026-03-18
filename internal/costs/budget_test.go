@@ -19,7 +19,9 @@ func TestBudgetCheck_NoBudget(t *testing.T) {
 func TestBudgetCheck_Warning(t *testing.T) {
 	s := testStore(t)
 	now := time.Now()
-	s.WriteCostEvent(costs.CostEvent{ID: "e1", SessionID: "s1", Timestamp: now, Model: "m", CostMicrodollars: 40_000_000})
+	if err := s.WriteCostEvent(costs.CostEvent{ID: "e1", SessionID: "s1", Timestamp: now, Model: "m", CostMicrodollars: 40_000_000}); err != nil {
+		t.Fatal(err)
+	}
 
 	b := costs.NewBudgetChecker(costs.BudgetConfig{DailyLimit: 50_000_000}, s)
 	result := b.Check("s1", "group-1")
@@ -31,7 +33,9 @@ func TestBudgetCheck_Warning(t *testing.T) {
 func TestBudgetCheck_Stop(t *testing.T) {
 	s := testStore(t)
 	now := time.Now()
-	s.WriteCostEvent(costs.CostEvent{ID: "e1", SessionID: "s1", Timestamp: now, Model: "m", CostMicrodollars: 51_000_000})
+	if err := s.WriteCostEvent(costs.CostEvent{ID: "e1", SessionID: "s1", Timestamp: now, Model: "m", CostMicrodollars: 51_000_000}); err != nil {
+		t.Fatal(err)
+	}
 
 	b := costs.NewBudgetChecker(costs.BudgetConfig{DailyLimit: 50_000_000}, s)
 	result := b.Check("s1", "group-1")
@@ -43,7 +47,9 @@ func TestBudgetCheck_Stop(t *testing.T) {
 func TestBudgetCheckTx_SessionLimit(t *testing.T) {
 	s := testStore(t)
 	now := time.Now()
-	s.WriteCostEvent(costs.CostEvent{ID: "e1", SessionID: "s1", Timestamp: now, Model: "m", CostMicrodollars: 100_000_000})
+	if err := s.WriteCostEvent(costs.CostEvent{ID: "e1", SessionID: "s1", Timestamp: now, Model: "m", CostMicrodollars: 100_000_000}); err != nil {
+		t.Fatal(err)
+	}
 
 	b := costs.NewBudgetChecker(costs.BudgetConfig{
 		SessionLimits: map[string]int64{"s1": 90_000_000},
@@ -53,7 +59,7 @@ func TestBudgetCheckTx_SessionLimit(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 
 	result, err := b.CheckTx(tx, "s1", "group-1", nil)
 	if err != nil {
@@ -70,7 +76,9 @@ func TestBudgetCheckTx_SessionLimit(t *testing.T) {
 func TestBudgetCheck_UnderThreshold(t *testing.T) {
 	s := testStore(t)
 	now := time.Now()
-	s.WriteCostEvent(costs.CostEvent{ID: "e1", SessionID: "s1", Timestamp: now, Model: "m", CostMicrodollars: 10_000_000})
+	if err := s.WriteCostEvent(costs.CostEvent{ID: "e1", SessionID: "s1", Timestamp: now, Model: "m", CostMicrodollars: 10_000_000}); err != nil {
+		t.Fatal(err)
+	}
 
 	b := costs.NewBudgetChecker(costs.BudgetConfig{DailyLimit: 50_000_000}, s)
 	result := b.Check("s1", "group-1")

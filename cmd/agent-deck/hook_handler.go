@@ -405,7 +405,10 @@ func writeCostEvent(instanceID string, rawPayload []byte) {
 		logCostDebug("write failed: %v", err)
 		return
 	}
-	os.Rename(tmpPath, finalPath)
+	if err := os.Rename(tmpPath, finalPath); err != nil {
+		logCostDebug("rename failed: %v", err)
+		return
+	}
 	logCostDebug("wrote cost event: %s model=%s in=%d out=%d", finalPath, cf.Model, cf.InputTokens, cf.OutputTokens)
 }
 

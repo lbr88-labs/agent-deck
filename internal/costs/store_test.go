@@ -61,12 +61,12 @@ func TestStore_TotalToday(t *testing.T) {
 	s := testStore(t)
 	now := time.Now()
 
-	s.WriteCostEvent(costs.CostEvent{
+	_ = s.WriteCostEvent(costs.CostEvent{
 		ID: "e1", SessionID: "s1", Timestamp: now,
 		Model: "claude-sonnet-4-6", InputTokens: 1000, OutputTokens: 500,
 		CostMicrodollars: 10000,
 	})
-	s.WriteCostEvent(costs.CostEvent{
+	_ = s.WriteCostEvent(costs.CostEvent{
 		ID: "e2", SessionID: "s2", Timestamp: now,
 		Model: "gemini-2.5-pro", InputTokens: 2000, OutputTokens: 1000,
 		CostMicrodollars: 20000,
@@ -88,9 +88,9 @@ func TestStore_CostByModel(t *testing.T) {
 	s := testStore(t)
 	now := time.Now()
 
-	s.WriteCostEvent(costs.CostEvent{ID: "e1", SessionID: "s1", Timestamp: now, Model: "claude-sonnet-4-6", CostMicrodollars: 10000})
-	s.WriteCostEvent(costs.CostEvent{ID: "e2", SessionID: "s1", Timestamp: now, Model: "claude-sonnet-4-6", CostMicrodollars: 5000})
-	s.WriteCostEvent(costs.CostEvent{ID: "e3", SessionID: "s2", Timestamp: now, Model: "gemini-2.5-pro", CostMicrodollars: 20000})
+	_ = s.WriteCostEvent(costs.CostEvent{ID: "e1", SessionID: "s1", Timestamp: now, Model: "claude-sonnet-4-6", CostMicrodollars: 10000})
+	_ = s.WriteCostEvent(costs.CostEvent{ID: "e2", SessionID: "s1", Timestamp: now, Model: "claude-sonnet-4-6", CostMicrodollars: 5000})
+	_ = s.WriteCostEvent(costs.CostEvent{ID: "e3", SessionID: "s2", Timestamp: now, Model: "gemini-2.5-pro", CostMicrodollars: 20000})
 
 	byModel, err := s.CostByModel()
 	if err != nil {
@@ -108,9 +108,9 @@ func TestStore_TopSessionsByCost(t *testing.T) {
 	s := testStore(t)
 	now := time.Now()
 
-	s.WriteCostEvent(costs.CostEvent{ID: "e1", SessionID: "s1", Timestamp: now, Model: "m", CostMicrodollars: 50000})
-	s.WriteCostEvent(costs.CostEvent{ID: "e2", SessionID: "s2", Timestamp: now, Model: "m", CostMicrodollars: 30000})
-	s.WriteCostEvent(costs.CostEvent{ID: "e3", SessionID: "s3", Timestamp: now, Model: "m", CostMicrodollars: 70000})
+	_ = s.WriteCostEvent(costs.CostEvent{ID: "e1", SessionID: "s1", Timestamp: now, Model: "m", CostMicrodollars: 50000})
+	_ = s.WriteCostEvent(costs.CostEvent{ID: "e2", SessionID: "s2", Timestamp: now, Model: "m", CostMicrodollars: 30000})
+	_ = s.WriteCostEvent(costs.CostEvent{ID: "e3", SessionID: "s3", Timestamp: now, Model: "m", CostMicrodollars: 70000})
 
 	top, err := s.TopSessionsByCost(2)
 	if err != nil {
@@ -132,8 +132,8 @@ func TestStore_Retention(t *testing.T) {
 	old := time.Now().AddDate(0, 0, -100)
 	recent := time.Now()
 
-	s.WriteCostEvent(costs.CostEvent{ID: "old", SessionID: "s1", Timestamp: old, Model: "m", CostMicrodollars: 10000})
-	s.WriteCostEvent(costs.CostEvent{ID: "new", SessionID: "s1", Timestamp: recent, Model: "m", CostMicrodollars: 20000})
+	_ = s.WriteCostEvent(costs.CostEvent{ID: "old", SessionID: "s1", Timestamp: old, Model: "m", CostMicrodollars: 10000})
+	_ = s.WriteCostEvent(costs.CostEvent{ID: "new", SessionID: "s1", Timestamp: recent, Model: "m", CostMicrodollars: 20000})
 
 	deleted, err := s.PurgeOlderThan(90)
 	if err != nil {

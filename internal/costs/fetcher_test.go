@@ -18,7 +18,9 @@ func TestFetcherCacheAge_Missing(t *testing.T) {
 func TestFetcherCacheAge_Exists(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "pricing.json")
-	os.WriteFile(path, []byte(`{}`), 0644)
+	if err := os.WriteFile(path, []byte(`{}`), 0644); err != nil {
+		t.Fatal(err)
+	}
 
 	f := &costs.Fetcher{CachePath: path}
 	if f.CacheAge() < 0 {

@@ -33,8 +33,12 @@ func TestCostEventWatcher(t *testing.T) {
 	data, _ := json.Marshal(cf)
 	tmpPath := filepath.Join(dir, "inst-1_123.json.tmp")
 	finalPath := filepath.Join(dir, "inst-1_123.json")
-	os.WriteFile(tmpPath, data, 0644)
-	os.Rename(tmpPath, finalPath)
+	if err := os.WriteFile(tmpPath, data, 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Rename(tmpPath, finalPath); err != nil {
+		t.Fatal(err)
+	}
 
 	select {
 	case ev := <-w.EventCh():

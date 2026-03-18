@@ -104,7 +104,9 @@ func SyncFromTranscripts(store *Store, pricer *Pricer, sessions []SyncSession) S
 
 			// Check if already in database
 			var count int
-			store.db.QueryRow("SELECT COUNT(*) FROM cost_events WHERE id = ?", dedupKey).Scan(&count)
+			if err := store.db.QueryRow("SELECT COUNT(*) FROM cost_events WHERE id = ?", dedupKey).Scan(&count); err != nil {
+				continue
+			}
 			if count > 0 {
 				result.EventsSkipped++
 				existing[dedupKey] = true

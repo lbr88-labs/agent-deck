@@ -47,9 +47,7 @@ type Server struct {
 	menuSubscribersMu sync.Mutex
 	menuSubscribers   map[chan struct{}]struct{}
 
-	costStore         *costs.Store
-	costSubscribersMu sync.Mutex
-	costSubscribers   map[chan struct{}]struct{}
+	costStore *costs.Store
 }
 
 // NewServer creates a new web server with base routes and middleware.
@@ -67,7 +65,6 @@ func NewServer(cfg Config) *Server {
 		cfg:             cfg,
 		menuData:        menuData,
 		menuSubscribers: make(map[chan struct{}]struct{}),
-		costSubscribers: make(map[chan struct{}]struct{}),
 	}
 	s.baseCtx, s.cancelBase = context.WithCancel(context.Background())
 	webLog := logging.ForComponent(logging.CompWeb)
@@ -239,20 +236,6 @@ func (s *Server) unsubscribeMenuChanges(ch chan struct{}) {
 
 func (s *Server) SetCostStore(store *costs.Store) {
 	s.costStore = store
-}
-
-func (s *Server) subscribeCostChanges() chan struct{} {
-	ch := make(chan struct{}, 1)
-	s.costSubscribersMu.Lock()
-	s.costSubscribers[ch] = struct{}{}
-	s.costSubscribersMu.Unlock()
-	return ch
-}
-
-func (s *Server) unsubscribeCostChanges(ch chan struct{}) {
-	s.costSubscribersMu.Lock()
-	delete(s.costSubscribers, ch)
-	s.costSubscribersMu.Unlock()
 }
 
 func (s *Server) notifyMenuChanged() {
