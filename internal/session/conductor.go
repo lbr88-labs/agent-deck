@@ -209,30 +209,6 @@ func GetConductorAgentSpec(agent string) (ConductorAgentSpec, error) {
 	return spec, nil
 }
 
-func conductorInstructionsPath(name, agent string) (string, error) {
-	spec, err := GetConductorAgentSpec(agent)
-	if err != nil {
-		return "", err
-	}
-	dir, err := ConductorNameDir(name)
-	if err != nil {
-		return "", err
-	}
-	return filepath.Join(dir, spec.InstructionsFileName), nil
-}
-
-func sharedConductorInstructionsPath(agent string) (string, error) {
-	spec, err := GetConductorAgentSpec(agent)
-	if err != nil {
-		return "", err
-	}
-	dir, err := ConductorDir()
-	if err != nil {
-		return "", err
-	}
-	return filepath.Join(dir, spec.InstructionsFileName), nil
-}
-
 // conductorNameRegex validates conductor names: starts with alphanumeric, then alphanumeric/._-
 var conductorNameRegex = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9._-]*$`)
 

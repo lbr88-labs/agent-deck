@@ -134,7 +134,6 @@ func (r *SSHRunner) Attach(sessionID string) error {
 	return nil
 }
 
-
 // RunCommand executes an arbitrary agent-deck command on the remote.
 func (r *SSHRunner) RunCommand(ctx context.Context, args ...string) ([]byte, error) {
 	return r.Run(ctx, args...)

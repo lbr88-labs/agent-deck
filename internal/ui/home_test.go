@@ -2024,3 +2024,77 @@ func TestRestartSessionCmdSessionMissingReturnsError(t *testing.T) {
 		t.Fatalf("unexpected error: %v", restarted.err)
 	}
 }
+
+func TestRebuildFlatItemsAutoClearsEmptyStatusFilter(t *testing.T) {
+	home := NewHome()
+	home.initialLoading = false
+
+	// Create sessions that are all "running"
+	inst1 := &session.Instance{ID: "s1", Title: "Session 1", Tool: "claude", Status: session.StatusRunning}
+	inst2 := &session.Instance{ID: "s2", Title: "Session 2", Tool: "claude", Status: session.StatusRunning}
+
+	home.instancesMu.Lock()
+	home.instances = []*session.Instance{inst1, inst2}
+	home.instanceByID[inst1.ID] = inst1
+	home.instanceByID[inst2.ID] = inst2
+	home.instancesMu.Unlock()
+	home.groupTree = session.NewGroupTree(home.instances)
+
+	// Set a filter for a status that no session has
+	home.statusFilter = session.StatusError
+
+	home.rebuildFlatItems()
+
+	// Filter should have been auto-cleared since no sessions match "error"
+	if home.statusFilter != "" {
+		t.Errorf("statusFilter should be auto-cleared when filter matches nothing, got %q", home.statusFilter)
+	}
+
+	// All sessions should be visible
+	sessionCount := 0
+	for _, item := range home.flatItems {
+		if item.Type == session.ItemTypeSession {
+			sessionCount++
+		}
+	}
+	if sessionCount != 2 {
+		t.Errorf("expected 2 sessions in flatItems after auto-clear, got %d", sessionCount)
+	}
+}
+
+func TestRebuildFlatItemsKeepsValidStatusFilter(t *testing.T) {
+	home := NewHome()
+	home.initialLoading = false
+
+	// Create sessions with mixed statuses
+	inst1 := &session.Instance{ID: "s1", Title: "Session 1", Tool: "claude", Status: session.StatusRunning}
+	inst2 := &session.Instance{ID: "s2", Title: "Session 2", Tool: "claude", Status: session.StatusError}
+
+	home.instancesMu.Lock()
+	home.instances = []*session.Instance{inst1, inst2}
+	home.instanceByID[inst1.ID] = inst1
+	home.instanceByID[inst2.ID] = inst2
+	home.instancesMu.Unlock()
+	home.groupTree = session.NewGroupTree(home.instances)
+
+	// Filter for error - one session matches
+	home.statusFilter = session.StatusError
+
+	home.rebuildFlatItems()
+
+	// Filter should remain because it matches a session
+	if home.statusFilter != session.StatusError {
+		t.Errorf("statusFilter should remain %q when sessions match, got %q", session.StatusError, home.statusFilter)
+	}
+
+	// Only the error session should be visible
+	sessionCount := 0
+	for _, item := range home.flatItems {
+		if item.Type == session.ItemTypeSession {
+			sessionCount++
+		}
+	}
+	if sessionCount != 1 {
+		t.Errorf("expected 1 session in flatItems with error filter, got %d", sessionCount)
+	}
+}
