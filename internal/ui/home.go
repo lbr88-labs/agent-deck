@@ -1141,7 +1141,13 @@ func (h *Home) rebuildFlatItems() {
 				}
 			}
 		}
-		h.flatItems = filtered
+		// Auto-clear filter if it matches nothing but sessions exist
+		if len(filtered) == 0 && len(allItems) > 0 {
+			h.statusFilter = ""
+			h.flatItems = allItems
+		} else {
+			h.flatItems = filtered
+		}
 	} else {
 		h.flatItems = allItems
 	}
