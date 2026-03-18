@@ -61,16 +61,20 @@ func TestStore_TotalToday(t *testing.T) {
 	s := testStore(t)
 	now := time.Now()
 
-	_ = s.WriteCostEvent(costs.CostEvent{
+	if err := s.WriteCostEvent(costs.CostEvent{
 		ID: "e1", SessionID: "s1", Timestamp: now,
 		Model: "claude-sonnet-4-6", InputTokens: 1000, OutputTokens: 500,
 		CostMicrodollars: 10000,
-	})
-	_ = s.WriteCostEvent(costs.CostEvent{
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.WriteCostEvent(costs.CostEvent{
 		ID: "e2", SessionID: "s2", Timestamp: now,
 		Model: "gemini-2.5-pro", InputTokens: 2000, OutputTokens: 1000,
 		CostMicrodollars: 20000,
-	})
+	}); err != nil {
+		t.Fatal(err)
+	}
 
 	summary, err := s.TotalToday()
 	if err != nil {
