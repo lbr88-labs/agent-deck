@@ -821,6 +821,36 @@ def split_message(text: str, max_len: int = TG_MAX_LENGTH) -> list[str]:
     return chunks
 
 
+def md_to_tg_html(text: str) -> str:
+    """Convert markdown bold/italic/code to Telegram HTML and escape unsafe chars.
+
+    Processes code spans first to protect their content from bold/italic conversion.
+    """
+    import html as _html
+
+    # 1. Extract code spans before escaping (protect their content)
+    code_spans: list[str] = []
+
+    def _save_code(m: re.Match) -> str:
+        code_spans.append(m.group(1))
+        return f"\x00CODE{len(code_spans) - 1}\x00"
+
+    text = re.sub(r'` + "`" + `(.+?)` + "`" + `', _save_code, text)
+
+    # 2. Escape HTML special chars
+    text = _html.escape(text, quote=False)
+
+    # 3. Convert bold/italic (code spans are already replaced with placeholders)
+    text = re.sub(r'\*\*(.+?)\*\*', r'<b>\1</b>', text)
+    text = re.sub(r'(?<!\*)\*(?!\*)(.+?)(?<!\*)\*(?!\*)', r'<i>\1</i>', text)
+
+    # 4. Restore code spans (escaped content wrapped in <code>)
+    for i, code in enumerate(code_spans):
+        text = text.replace(f"\x00CODE{i}\x00", f"<code>{_html.escape(code, quote=False)}</code>")
+
+    return text
+
+
 def parse_discord_message_parts(text: str) -> list[tuple[str, str]]:
     """Split Discord output into plain-text and image-upload segments."""
     parts = []
@@ -1156,10 +1186,12 @@ def create_telegram_bot(config: dict):
         await message.answer(f"{name_tag}...")  # typing indicator
         log.info("Conductor [%s] response: %s", target["name"], response[:100])
 
-        # Send response back (split if needed)
-        for chunk in split_message(response):
-            prefixed = f"{name_tag}{chunk}" if name_tag else chunk
-            await message.answer(prefixed)
+        # Convert to HTML first, then split to respect post-conversion length
+        html_response = md_to_tg_html(
+            f"{name_tag}{response}" if name_tag else response
+        )
+        for chunk in split_message(html_response):
+            await message.answer(chunk, parse_mode="HTML")
 
     return bot, dp
 
@@ -2138,9 +2170,11 @@ async def heartbeat_loop(
                     # Notify via Telegram
                     if telegram_bot and tg_user_id:
                         try:
-                            await telegram_bot.send_message(
-                                tg_user_id, alert_msg,
-                            )
+                            alert_html = md_to_tg_html(alert_msg)
+                            for chunk in split_message(alert_html):
+                                await telegram_bot.send_message(
+                                    tg_user_id, chunk, parse_mode="HTML",
+                                )
                         except Exception as e:
                             log.error(
                                 "Failed to send Telegram notification: %s", e
