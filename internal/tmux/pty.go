@@ -40,6 +40,14 @@ func (s *Session) Attach(ctx context.Context) error {
 	}
 	defer ptmx.Close()
 
+	// Set the PTY to raw mode so all bytes pass through transparently.
+	// Without this, the PTY's default terminal settings (ISIG enabled)
+	// interpret Ctrl+Z as SUSP and send SIGTSTP to the tmux attach process,
+	// causing it to exit and returning the user to the session list.
+	if _, err := term.MakeRaw(int(ptmx.Fd())); err != nil {
+		return fmt.Errorf("failed to set pty raw mode: %w", err)
+	}
+
 	// Save original terminal state and set raw mode
 	oldState, err := term.MakeRaw(int(os.Stdin.Fd()))
 	if err != nil {
