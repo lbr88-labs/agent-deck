@@ -14,6 +14,7 @@ import (
 	"github.com/asheshgoplani/agent-deck/internal/costs"
 	"github.com/asheshgoplani/agent-deck/internal/logging"
 	"github.com/asheshgoplani/agent-deck/internal/session"
+	"golang.org/x/time/rate"
 )
 
 // Config defines runtime options for the web server.
@@ -21,6 +22,7 @@ type Config struct {
 	ListenAddr          string
 	Profile             string
 	ReadOnly            bool
+	WebMutations        bool // When false, POST/PATCH/DELETE endpoints return 403
 	Token               string
 	MenuData            MenuDataLoader
 	PushVAPIDPublicKey  string
@@ -47,7 +49,8 @@ type Server struct {
 	menuSubscribersMu sync.Mutex
 	menuSubscribers   map[chan struct{}]struct{}
 
-	costStore *costs.Store
+	costStore       *costs.Store
+	mutationLimiter *rate.Limiter
 }
 
 // NewServer creates a new web server with base routes and middleware.
@@ -65,6 +68,7 @@ func NewServer(cfg Config) *Server {
 		cfg:             cfg,
 		menuData:        menuData,
 		menuSubscribers: make(map[chan struct{}]struct{}),
+		mutationLimiter: rate.NewLimiter(rate.Limit(20), 40), // 20 req/s, burst 40
 	}
 	s.baseCtx, s.cancelBase = context.WithCancel(context.Background())
 	webLog := logging.ForComponent(logging.CompWeb)
@@ -97,6 +101,11 @@ func NewServer(cfg Config) *Server {
 	})
 	mux.HandleFunc("/api/menu", s.handleMenu)
 	mux.HandleFunc("/api/session/", s.handleSessionByID)
+	mux.HandleFunc("/api/sessions", s.handleSessionsCollection)
+	mux.HandleFunc("/api/sessions/", s.handleSessionByAction)
+	mux.HandleFunc("/api/groups", s.handleGroupsCollection)
+	mux.HandleFunc("/api/groups/", s.handleGroupByPath)
+	mux.HandleFunc("/api/settings", s.handleSettings)
 	mux.HandleFunc("/api/push/config", s.handlePushConfig)
 	mux.HandleFunc("/api/push/subscribe", s.handlePushSubscribe)
 	mux.HandleFunc("/api/push/unsubscribe", s.handlePushUnsubscribe)
@@ -247,4 +256,22 @@ func (s *Server) notifyMenuChanged() {
 		}
 	}
 	s.menuSubscribersMu.Unlock()
+}
+
+// checkMutationsAllowed writes a 403 response and returns false when web mutations are disabled.
+func (s *Server) checkMutationsAllowed(w http.ResponseWriter) bool {
+	if !s.cfg.WebMutations {
+		writeAPIError(w, http.StatusForbidden, ErrCodeForbidden, "web mutations are disabled")
+		return false
+	}
+	return true
+}
+
+// checkMutationRateLimit writes a 429 response and returns false when the rate limit is exceeded.
+func (s *Server) checkMutationRateLimit(w http.ResponseWriter) bool {
+	if !s.mutationLimiter.Allow() {
+		writeAPIError(w, http.StatusTooManyRequests, ErrCodeRateLimited, "too many requests")
+		return false
+	}
+	return true
 }
