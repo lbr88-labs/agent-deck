@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/asheshgoplani/agent-deck/internal/logging"
@@ -537,6 +538,49 @@ func (s *Server) handleCostsSessionDetail(w http.ResponseWriter, r *http.Request
 		"daily":         dailyResult,
 		"models":        modelResult,
 	})
+}
+
+func (s *Server) handleCostsBatch(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeAPIError(w, http.StatusMethodNotAllowed, "METHOD_NOT_ALLOWED", "method not allowed")
+		return
+	}
+	if !s.authorizeRequest(r) {
+		writeAPIError(w, http.StatusUnauthorized, "UNAUTHORIZED", "unauthorized")
+		return
+	}
+	// Graceful: no cost store means empty costs, not an error
+	if s.costStore == nil {
+		writeJSON(w, http.StatusOK, map[string]any{"costs": map[string]float64{}})
+		return
+	}
+
+	rawIDs := r.URL.Query().Get("ids")
+	if rawIDs == "" {
+		writeJSON(w, http.StatusOK, map[string]any{"costs": map[string]float64{}})
+		return
+	}
+
+	ids := strings.Split(rawIDs, ",")
+	const maxBatch = 200
+	if len(ids) > maxBatch {
+		ids = ids[:maxBatch]
+	}
+
+	sessionCosts := make(map[string]float64, len(ids))
+	for _, id := range ids {
+		id = strings.TrimSpace(id)
+		if id == "" {
+			continue
+		}
+		summary, err := s.costStore.TotalBySession(id)
+		if err != nil {
+			continue
+		}
+		sessionCosts[id] = microToUSD(summary.TotalCostMicrodollars)
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{"costs": sessionCosts})
 }
 
 func microToUSD(microdollars int64) float64 {
