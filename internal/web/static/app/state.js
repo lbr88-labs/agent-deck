@@ -34,3 +34,13 @@ export const sidebarOpenSignal = signal(
 // Focused session ID for keyboard navigation (NOT array index, stable across SSE updates)
 // Lives in state.js (not SessionList.js) so useKeyboardNav.js can import it without a circular dependency.
 export const focusedIdSignal = signal(null)
+
+// Dialog open/close signals (Phase 4: mutations)
+// createSessionDialogSignal: boolean (true = dialog open)
+export const createSessionDialogSignal = signal(false)
+
+// confirmDialogSignal: null or { message: string, onConfirm: function }
+export const confirmDialogSignal = signal(null)
+
+// groupNameDialogSignal: null or { mode: 'create'|'rename', groupPath: string, currentName: string, onSubmit: function }
+export const groupNameDialogSignal = signal(null)
