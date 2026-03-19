@@ -91,10 +91,12 @@ func NewServer(cfg Config) *Server {
 		}
 
 		resp := map[string]any{
-			"ok":       true,
-			"profile":  cfg.Profile,
-			"readOnly": cfg.ReadOnly,
-			"time":     time.Now().UTC().Format(time.RFC3339),
+			"ok":           true,
+			"profile":      cfg.Profile,
+			"readOnly":     cfg.ReadOnly,
+			"webMutations": cfg.WebMutations,
+			"version":      buildVersion(),
+			"time":         time.Now().UTC().Format(time.RFC3339),
 		}
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(resp)
