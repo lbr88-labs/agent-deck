@@ -3,6 +3,9 @@ package web
 import (
 	"encoding/json"
 	"net/http"
+	"strings"
+
+	"github.com/asheshgoplani/agent-deck/internal/session"
 )
 
 type groupsListResponse struct {
@@ -44,7 +47,21 @@ func (s *Server) handleGroupsCollection(w http.ResponseWriter, r *http.Request) 
 			writeAPIError(w, http.StatusBadRequest, ErrCodeBadRequest, "invalid request body")
 			return
 		}
-		writeAPIError(w, http.StatusNotImplemented, ErrCodeNotImplemented, "group creation not yet implemented")
+		if req.Name == "" {
+			writeAPIError(w, http.StatusBadRequest, ErrCodeBadRequest, "name is required")
+			return
+		}
+		if s.mutator == nil {
+			writeAPIError(w, http.StatusServiceUnavailable, ErrCodeNotImplemented, "mutations not available")
+			return
+		}
+		groupPath, err := s.mutator.CreateGroup(req.Name, req.ParentPath)
+		if err != nil {
+			writeAPIError(w, http.StatusInternalServerError, ErrCodeInternalError, err.Error())
+			return
+		}
+		s.notifyMenuChanged()
+		writeJSON(w, http.StatusCreated, map[string]string{"path": groupPath})
 
 	default:
 		writeAPIError(w, http.StatusMethodNotAllowed, ErrCodeMethodNotAllowed, "method not allowed")
@@ -54,6 +71,13 @@ func (s *Server) handleGroupsCollection(w http.ResponseWriter, r *http.Request) 
 func (s *Server) handleGroupByPath(w http.ResponseWriter, r *http.Request) {
 	if !s.authorizeRequest(r) {
 		writeAPIError(w, http.StatusUnauthorized, ErrCodeUnauthorized, "unauthorized")
+		return
+	}
+
+	const groupPrefix = "/api/groups/"
+	groupPath := strings.TrimPrefix(r.URL.Path, groupPrefix)
+	if groupPath == "" {
+		writeAPIError(w, http.StatusBadRequest, ErrCodeBadRequest, "group path is required")
 		return
 	}
 
@@ -70,7 +94,20 @@ func (s *Server) handleGroupByPath(w http.ResponseWriter, r *http.Request) {
 			writeAPIError(w, http.StatusBadRequest, ErrCodeBadRequest, "invalid request body")
 			return
 		}
-		writeAPIError(w, http.StatusNotImplemented, ErrCodeNotImplemented, "group rename not yet implemented")
+		if req.Name == "" {
+			writeAPIError(w, http.StatusBadRequest, ErrCodeBadRequest, "name is required")
+			return
+		}
+		if s.mutator == nil {
+			writeAPIError(w, http.StatusServiceUnavailable, ErrCodeNotImplemented, "mutations not available")
+			return
+		}
+		if err := s.mutator.RenameGroup(groupPath, req.Name); err != nil {
+			writeAPIError(w, http.StatusInternalServerError, ErrCodeInternalError, err.Error())
+			return
+		}
+		s.notifyMenuChanged()
+		writeJSON(w, http.StatusOK, map[string]string{"path": groupPath, "name": req.Name})
 
 	case http.MethodDelete:
 		if !s.checkMutationsAllowed(w) {
@@ -79,7 +116,20 @@ func (s *Server) handleGroupByPath(w http.ResponseWriter, r *http.Request) {
 		if !s.checkMutationRateLimit(w) {
 			return
 		}
-		writeAPIError(w, http.StatusNotImplemented, ErrCodeNotImplemented, "group deletion not yet implemented")
+		if groupPath == session.DefaultGroupPath {
+			writeAPIError(w, http.StatusBadRequest, ErrCodeBadRequest, "cannot delete default group")
+			return
+		}
+		if s.mutator == nil {
+			writeAPIError(w, http.StatusServiceUnavailable, ErrCodeNotImplemented, "mutations not available")
+			return
+		}
+		if err := s.mutator.DeleteGroup(groupPath); err != nil {
+			writeAPIError(w, http.StatusInternalServerError, ErrCodeInternalError, err.Error())
+			return
+		}
+		s.notifyMenuChanged()
+		writeJSON(w, http.StatusOK, map[string]string{"deleted": groupPath})
 
 	default:
 		writeAPIError(w, http.StatusMethodNotAllowed, ErrCodeMethodNotAllowed, "method not allowed")

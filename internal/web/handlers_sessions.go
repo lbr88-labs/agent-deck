@@ -51,7 +51,25 @@ func (s *Server) handleSessionsCollection(w http.ResponseWriter, r *http.Request
 			writeAPIError(w, http.StatusBadRequest, ErrCodeBadRequest, "invalid request body")
 			return
 		}
-		writeAPIError(w, http.StatusNotImplemented, ErrCodeNotImplemented, "session creation not yet implemented")
+		if req.Title == "" {
+			writeAPIError(w, http.StatusBadRequest, ErrCodeBadRequest, "title is required")
+			return
+		}
+		if req.ProjectPath == "" {
+			writeAPIError(w, http.StatusBadRequest, ErrCodeBadRequest, "projectPath is required")
+			return
+		}
+		if s.mutator == nil {
+			writeAPIError(w, http.StatusServiceUnavailable, ErrCodeNotImplemented, "mutations not available")
+			return
+		}
+		sessionID, err := s.mutator.CreateSession(req.Title, req.Tool, req.ProjectPath, req.GroupPath)
+		if err != nil {
+			writeAPIError(w, http.StatusInternalServerError, ErrCodeInternalError, err.Error())
+			return
+		}
+		s.notifyMenuChanged()
+		writeJSON(w, http.StatusCreated, SessionActionResponse{SessionID: sessionID})
 
 	default:
 		writeAPIError(w, http.StatusMethodNotAllowed, ErrCodeMethodNotAllowed, "method not allowed")
@@ -87,7 +105,16 @@ func (s *Server) handleSessionByAction(w http.ResponseWriter, r *http.Request) {
 		if !s.checkMutationRateLimit(w) {
 			return
 		}
-		writeAPIError(w, http.StatusNotImplemented, ErrCodeNotImplemented, "session deletion not yet implemented")
+		if s.mutator == nil {
+			writeAPIError(w, http.StatusServiceUnavailable, ErrCodeNotImplemented, "mutations not available")
+			return
+		}
+		if err := s.mutator.DeleteSession(sessionID); err != nil {
+			writeAPIError(w, http.StatusInternalServerError, ErrCodeInternalError, err.Error())
+			return
+		}
+		s.notifyMenuChanged()
+		writeJSON(w, http.StatusOK, map[string]string{"deleted": sessionID})
 		return
 	}
 
@@ -99,15 +126,40 @@ func (s *Server) handleSessionByAction(w http.ResponseWriter, r *http.Request) {
 		if !s.checkMutationRateLimit(w) {
 			return
 		}
+		if s.mutator == nil {
+			writeAPIError(w, http.StatusServiceUnavailable, ErrCodeNotImplemented, "mutations not available")
+			return
+		}
 		switch action {
 		case "stop":
-			writeAPIError(w, http.StatusNotImplemented, ErrCodeNotImplemented, "session stop not yet implemented")
+			if err := s.mutator.StopSession(sessionID); err != nil {
+				writeAPIError(w, http.StatusInternalServerError, ErrCodeInternalError, err.Error())
+				return
+			}
+			s.notifyMenuChanged()
+			writeJSON(w, http.StatusOK, SessionActionResponse{SessionID: sessionID})
 		case "start":
-			writeAPIError(w, http.StatusNotImplemented, ErrCodeNotImplemented, "session start not yet implemented")
+			if err := s.mutator.StartSession(sessionID); err != nil {
+				writeAPIError(w, http.StatusInternalServerError, ErrCodeInternalError, err.Error())
+				return
+			}
+			s.notifyMenuChanged()
+			writeJSON(w, http.StatusOK, SessionActionResponse{SessionID: sessionID})
 		case "restart":
-			writeAPIError(w, http.StatusNotImplemented, ErrCodeNotImplemented, "session restart not yet implemented")
+			if err := s.mutator.RestartSession(sessionID); err != nil {
+				writeAPIError(w, http.StatusInternalServerError, ErrCodeInternalError, err.Error())
+				return
+			}
+			s.notifyMenuChanged()
+			writeJSON(w, http.StatusOK, SessionActionResponse{SessionID: sessionID})
 		case "fork":
-			writeAPIError(w, http.StatusNotImplemented, ErrCodeNotImplemented, "session fork not yet implemented")
+			newID, err := s.mutator.ForkSession(sessionID)
+			if err != nil {
+				writeAPIError(w, http.StatusInternalServerError, ErrCodeInternalError, err.Error())
+				return
+			}
+			s.notifyMenuChanged()
+			writeJSON(w, http.StatusOK, SessionActionResponse{SessionID: newID})
 		default:
 			writeAPIError(w, http.StatusNotFound, ErrCodeNotFound, "unknown session action")
 		}

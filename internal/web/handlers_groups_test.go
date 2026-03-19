@@ -50,12 +50,17 @@ func TestGroupsCollectionGET(t *testing.T) {
 	}
 }
 
-func TestGroupsCollectionPOSTReturns501(t *testing.T) {
+func TestGroupsCollectionPOSTCreatesGroup(t *testing.T) {
 	srv := NewServer(Config{
 		ListenAddr:   "127.0.0.1:0",
 		WebMutations: true,
 	})
 	srv.menuData = &fakeMenuDataLoader{snapshot: &MenuSnapshot{}}
+	srv.mutator = &fakeMutator{
+		createGroupFn: func(name, parentPath string) (string, error) {
+			return "new-group", nil
+		},
+	}
 
 	body := strings.NewReader(`{"name":"newgroup"}`)
 	req := httptest.NewRequest(http.MethodPost, "/api/groups", body)
@@ -63,20 +68,45 @@ func TestGroupsCollectionPOSTReturns501(t *testing.T) {
 	rr := httptest.NewRecorder()
 	srv.Handler().ServeHTTP(rr, req)
 
-	if rr.Code != http.StatusNotImplemented {
-		t.Fatalf("expected status %d, got %d: %s", http.StatusNotImplemented, rr.Code, rr.Body.String())
+	if rr.Code != http.StatusCreated {
+		t.Fatalf("expected status %d, got %d: %s", http.StatusCreated, rr.Code, rr.Body.String())
 	}
-	if !strings.Contains(rr.Body.String(), ErrCodeNotImplemented) {
-		t.Errorf("expected NOT_IMPLEMENTED error, got: %s", rr.Body.String())
+	if !strings.Contains(rr.Body.String(), "new-group") {
+		t.Errorf("expected group path in response, got: %s", rr.Body.String())
 	}
 }
 
-func TestGroupRenamePATCHReturns501(t *testing.T) {
+func TestGroupCreateMissingName(t *testing.T) {
 	srv := NewServer(Config{
 		ListenAddr:   "127.0.0.1:0",
 		WebMutations: true,
 	})
 	srv.menuData = &fakeMenuDataLoader{snapshot: &MenuSnapshot{}}
+	srv.mutator = &fakeMutator{}
+
+	body := strings.NewReader(`{"parentPath":""}`)
+	req := httptest.NewRequest(http.MethodPost, "/api/groups", body)
+	req.Header.Set("Content-Type", "application/json")
+	rr := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("expected status %d, got %d: %s", http.StatusBadRequest, rr.Code, rr.Body.String())
+	}
+	if !strings.Contains(rr.Body.String(), ErrCodeBadRequest) {
+		t.Errorf("expected INVALID_REQUEST error, got: %s", rr.Body.String())
+	}
+}
+
+func TestGroupRenamePATCHOK(t *testing.T) {
+	srv := NewServer(Config{
+		ListenAddr:   "127.0.0.1:0",
+		WebMutations: true,
+	})
+	srv.menuData = &fakeMenuDataLoader{snapshot: &MenuSnapshot{}}
+	srv.mutator = &fakeMutator{
+		renameGroupFn: func(groupPath, newName string) error { return nil },
+	}
 
 	body := strings.NewReader(`{"name":"renamed"}`)
 	req := httptest.NewRequest(http.MethodPatch, "/api/groups/mygroup", body)
@@ -84,29 +114,46 @@ func TestGroupRenamePATCHReturns501(t *testing.T) {
 	rr := httptest.NewRecorder()
 	srv.Handler().ServeHTTP(rr, req)
 
-	if rr.Code != http.StatusNotImplemented {
-		t.Fatalf("expected status %d, got %d: %s", http.StatusNotImplemented, rr.Code, rr.Body.String())
-	}
-	if !strings.Contains(rr.Body.String(), ErrCodeNotImplemented) {
-		t.Errorf("expected NOT_IMPLEMENTED error, got: %s", rr.Body.String())
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected status %d, got %d: %s", http.StatusOK, rr.Code, rr.Body.String())
 	}
 }
 
-func TestGroupDeleteReturns501(t *testing.T) {
+func TestGroupDeleteOK(t *testing.T) {
 	srv := NewServer(Config{
 		ListenAddr:   "127.0.0.1:0",
 		WebMutations: true,
 	})
 	srv.menuData = &fakeMenuDataLoader{snapshot: &MenuSnapshot{}}
+	srv.mutator = &fakeMutator{
+		deleteGroupFn: func(groupPath string) error { return nil },
+	}
 
 	req := httptest.NewRequest(http.MethodDelete, "/api/groups/mygroup", nil)
 	rr := httptest.NewRecorder()
 	srv.Handler().ServeHTTP(rr, req)
 
-	if rr.Code != http.StatusNotImplemented {
-		t.Fatalf("expected status %d, got %d: %s", http.StatusNotImplemented, rr.Code, rr.Body.String())
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected status %d, got %d: %s", http.StatusOK, rr.Code, rr.Body.String())
 	}
-	if !strings.Contains(rr.Body.String(), ErrCodeNotImplemented) {
-		t.Errorf("expected NOT_IMPLEMENTED error, got: %s", rr.Body.String())
+}
+
+func TestGroupDeleteDefaultGroupReturns400(t *testing.T) {
+	srv := NewServer(Config{
+		ListenAddr:   "127.0.0.1:0",
+		WebMutations: true,
+	})
+	srv.menuData = &fakeMenuDataLoader{snapshot: &MenuSnapshot{}}
+	srv.mutator = &fakeMutator{}
+
+	req := httptest.NewRequest(http.MethodDelete, "/api/groups/my-sessions", nil)
+	rr := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("expected status %d, got %d: %s", http.StatusBadRequest, rr.Code, rr.Body.String())
+	}
+	if !strings.Contains(rr.Body.String(), "cannot delete default group") {
+		t.Errorf("expected default group protection message, got: %s", rr.Body.String())
 	}
 }
