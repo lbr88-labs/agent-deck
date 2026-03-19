@@ -1,13 +1,18 @@
-.PHONY: build run install clean dev release-local test fmt lint ci
+.PHONY: build run install clean dev release-local test fmt lint ci vendor-js
 
 BINARY_NAME=agent-deck
 BUILD_DIR=./build
 VERSION=$(shell git describe --tags --always --dirty 2>/dev/null || echo "dev")
 LDFLAGS=-ldflags "-X main.Version=$(VERSION)"
 
-# Build the binary
+# Build the binary (and sync to ~/.local/bin if it exists there, since PATH prefers it)
 build:
 	go build $(LDFLAGS) -o $(BUILD_DIR)/$(BINARY_NAME) ./cmd/agent-deck
+	@if [ -f $(HOME)/.local/bin/$(BINARY_NAME) ]; then \
+		cat $(BUILD_DIR)/$(BINARY_NAME) > $(HOME)/.local/bin/$(BINARY_NAME) && \
+		chmod +x $(HOME)/.local/bin/$(BINARY_NAME) && \
+		echo "Synced to $(HOME)/.local/bin/$(BINARY_NAME)"; \
+	fi
 
 # Run in development
 run:
@@ -64,6 +69,17 @@ lint:
 ci:
 	@which lefthook > /dev/null || (echo "ERROR: lefthook not found. Run: brew install lefthook" && exit 1)
 	lefthook run pre-push --force --no-auto-install
+
+# Download vendored JS/CSS dependencies (run once, files committed to repo)
+# Uses esm.sh versioned bundle paths to get self-contained ESM files with no CDN imports at runtime.
+vendor-js:
+	mkdir -p internal/web/static/vendor
+	curl -sL "https://esm.sh/preact@10.29.0/es2022/preact.mjs" -o internal/web/static/vendor/preact.mjs
+	curl -sL "https://esm.sh/preact@10.29.0/es2022/hooks.mjs" -o internal/web/static/vendor/preact-hooks.mjs
+	curl -sL "https://esm.sh/htm@3.1.1/es2022/htm.mjs" -o internal/web/static/vendor/htm.mjs
+	curl -sL "https://esm.sh/@preact/signals@2.8.2/es2022/signals.bundle.mjs" -o internal/web/static/vendor/signals.mjs
+	curl -sL "https://cdn.tailwindcss.com/3.4.17" -o internal/web/static/vendor/tailwind.js
+	@echo "Vendor JS downloaded to internal/web/static/vendor/"
 
 # Local release using GoReleaser
 # Prerequisites: brew install goreleaser

@@ -16,6 +16,8 @@ build/
 
 # Dependency directories
 vendor/
+# Exclude static/vendor from the vendor/ ignore (these are committed JS assets)
+!internal/web/static/vendor/
 
 # Go workspace file
 go.work
