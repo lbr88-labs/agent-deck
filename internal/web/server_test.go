@@ -164,6 +164,41 @@ func TestServiceWorkerServed(t *testing.T) {
 	}
 }
 
+func TestHealthzIncludesWebMutations(t *testing.T) {
+	srv := NewServer(Config{
+		ListenAddr:   "127.0.0.1:0",
+		Profile:      "test",
+		ReadOnly:     true,
+		WebMutations: false,
+	})
+	req := httptest.NewRequest(http.MethodGet, "/healthz", nil)
+	rr := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rr.Code)
+	}
+	body := rr.Body.String()
+	if !strings.Contains(body, `"webMutations":false`) {
+		t.Fatalf("expected webMutations:false in response, got: %s", body)
+	}
+	if !strings.Contains(body, `"version":`) {
+		t.Fatalf("expected version field in response, got: %s", body)
+	}
+}
+
+func TestHealthzIncludesVersion(t *testing.T) {
+	srv := NewServer(Config{ListenAddr: "127.0.0.1:0"})
+	req := httptest.NewRequest(http.MethodGet, "/healthz", nil)
+	rr := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rr, req)
+
+	body := rr.Body.String()
+	if !strings.Contains(body, `"version":"`) {
+		t.Fatalf("expected version string in response, got: %s", body)
+	}
+}
+
 func TestMenuChangeBroadcastNotifiesAllSubscribers(t *testing.T) {
 	srv := NewServer(Config{
 		ListenAddr: "127.0.0.1:0",
