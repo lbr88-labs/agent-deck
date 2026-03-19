@@ -11,6 +11,7 @@ import { Topbar } from './Topbar.js'
 import { CreateSessionDialog } from './CreateSessionDialog.js'
 import { ConfirmDialog } from './ConfirmDialog.js'
 import { GroupNameDialog } from './GroupNameDialog.js'
+import { TerminalPanel } from './TerminalPanel.js'
 
 export function AppShell() {
   const sidebarOpen = sidebarOpenSignal.value
@@ -90,13 +91,9 @@ export function AppShell() {
           <${Sidebar} />
         </aside>
 
-        <!-- Main content: terminal placeholder until Phase 5 -->
+        <!-- Main content: terminal panel -->
         <main class="flex-1 min-w-0 overflow-hidden dark:bg-tn-bg bg-tn-light-bg">
-          <div id="terminal-root-preact" class="h-full flex items-center justify-center">
-            <span class="dark:text-tn-muted text-gray-400 text-sm">
-              Select a session from the sidebar
-            </span>
-          </div>
+          <${TerminalPanel} />
         </main>
       </div>
 

@@ -968,6 +968,7 @@ import { sessionsSignal, selectedIdSignal, connectionSignal, authTokenSignal } f
   }
 
   function renderTerminal(session) {
+    if (window.__preactTerminalActive) return
     if (!session) {
       disconnectWS({ intentional: true })
       destroyTerminalUI()
@@ -996,6 +997,7 @@ import { sessionsSignal, selectedIdSignal, connectionSignal, authTokenSignal } f
   }
 
   function createTerminalUI(sessionId) {
+    if (window.__preactTerminalActive) return
     destroyTerminalUI()
 
     terminalRoot.className = ""
@@ -1363,6 +1365,7 @@ import { sessionsSignal, selectedIdSignal, connectionSignal, authTokenSignal } f
   }
 
   function connectWS(sessionId, options) {
+    if (window.__preactTerminalActive) return
     const opts = options || {}
     if (!sessionId) {
       return

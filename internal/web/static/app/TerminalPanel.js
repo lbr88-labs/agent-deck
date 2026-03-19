@@ -76,6 +76,12 @@ export function TerminalPanel() {
   const sessionId = selectedIdSignal.value
   const isMobile = isMobileDevice()
 
+  // Signal vanilla app.js to suppress its terminal path while TerminalPanel is mounted
+  useEffect(() => {
+    window.__preactTerminalActive = true
+    return () => { window.__preactTerminalActive = false }
+  }, [])
+
   // Cleanup function: dispose terminal, close WS, remove observers
   const cleanup = useCallback(() => {
     const ctx = ctxRef.current
