@@ -79,6 +79,11 @@ vendor-js:
 	curl -sL "https://esm.sh/htm@3.1.1/es2022/htm.mjs" -o internal/web/static/vendor/htm.mjs
 	curl -sL "https://esm.sh/@preact/signals@2.8.2/es2022/signals.bundle.mjs" -o internal/web/static/vendor/signals.mjs
 	curl -sL "https://cdn.tailwindcss.com/3.4.17" -o internal/web/static/vendor/tailwind.js
+	curl -sL "https://cdn.jsdelivr.net/npm/@xterm/xterm@6.0.0/lib/xterm.mjs" -o internal/web/static/vendor/xterm.mjs
+	curl -sL "https://cdn.jsdelivr.net/npm/@xterm/xterm@6.0.0/css/xterm.css" -o internal/web/static/vendor/xterm.css
+	curl -sL "https://cdn.jsdelivr.net/npm/@xterm/addon-fit@0.11.0/lib/addon-fit.mjs" -o internal/web/static/vendor/addon-fit.mjs
+	curl -sL "https://cdn.jsdelivr.net/npm/@xterm/addon-webgl@0.19.0/lib/addon-webgl.mjs" -o internal/web/static/vendor/addon-webgl.mjs
+	curl -sL "https://cdn.jsdelivr.net/npm/@xterm/addon-canvas@0.7.0/lib/addon-canvas.js" -o internal/web/static/vendor/addon-canvas.js
 	@echo "Vendor JS downloaded to internal/web/static/vendor/"
 
 # Local release using GoReleaser

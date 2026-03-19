@@ -32,6 +32,9 @@ func TestIndexImportMap(t *testing.T) {
 		`"preact/hooks"`,
 		`"htm/preact"`,
 		`"@preact/signals"`,
+		`"@xterm/xterm"`,
+		`"@xterm/addon-fit"`,
+		`"@xterm/addon-webgl"`,
 		`<script type="importmap">`,
 	} {
 		if !strings.Contains(body, want) {
@@ -75,6 +78,11 @@ func TestVendorFilesServed(t *testing.T) {
 	for _, path := range []string{
 		"/static/vendor/preact.mjs",
 		"/static/vendor/tailwind.js",
+		"/static/vendor/xterm.mjs",
+		"/static/vendor/xterm.css",
+		"/static/vendor/addon-fit.mjs",
+		"/static/vendor/addon-webgl.mjs",
+		"/static/vendor/addon-canvas.js",
 	} {
 		req := httptest.NewRequest(http.MethodGet, path, nil)
 		w := httptest.NewRecorder()
@@ -85,6 +93,17 @@ func TestVendorFilesServed(t *testing.T) {
 		if w.Body.Len() == 0 {
 			t.Errorf("GET %s: empty body", path)
 		}
+	}
+}
+
+func TestIndexXtermCSS(t *testing.T) {
+	s := NewServer(Config{Token: "test-token"})
+	req := httptest.NewRequest(http.MethodGet, "/?token=test-token", nil)
+	w := httptest.NewRecorder()
+	s.handleIndex(w, req)
+	body := w.Body.String()
+	if !strings.Contains(body, `href="/static/vendor/xterm.css"`) {
+		t.Error("index.html missing xterm.css stylesheet link")
 	}
 }
 

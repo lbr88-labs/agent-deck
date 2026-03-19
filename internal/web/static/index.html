@@ -58,7 +58,10 @@
         "preact":          "/static/vendor/preact.mjs",
         "preact/hooks":    "/static/vendor/preact-hooks.mjs",
         "htm/preact":      "/static/vendor/htm.mjs",
-        "@preact/signals": "/static/vendor/signals.mjs"
+        "@preact/signals": "/static/vendor/signals.mjs",
+        "@xterm/xterm":       "/static/vendor/xterm.mjs",
+        "@xterm/addon-fit":   "/static/vendor/addon-fit.mjs",
+        "@xterm/addon-webgl": "/static/vendor/addon-webgl.mjs"
       }
     }
     </script>
@@ -66,6 +69,7 @@
     <!-- 5. Preact app entry (module, deferred by default) -->
     <script type="module" src="/static/app/main.js"></script>
 
+    <link rel="stylesheet" href="/static/vendor/xterm.css" />
     <link rel="stylesheet" href="/static/styles.css" />
   </head>
   <body>
@@ -136,6 +140,9 @@
          app.js gracefully degrades: createTerminalUI() checks
          typeof window.Terminal === "function" and falls back to a <pre>
          element when xterm is absent. Phase 5 will vendor xterm.js. -->
+
+    <!-- xterm.js Canvas renderer addon (UMD, fallback for WebGL) -->
+    <script src="/static/vendor/addon-canvas.js"></script>
 
     <!-- Vanilla JS app (migrated to Preact components in phases 3-6) -->
     <script type="module" src="/static/app.js"></script>
