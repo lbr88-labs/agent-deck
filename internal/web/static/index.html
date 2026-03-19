@@ -3,21 +3,76 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <meta name="theme-color" content="#0f766e" />
+    <meta name="theme-color" content="#1a1b26" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-status-bar-style" content="default" />
     <meta name="apple-mobile-web-app-title" content="Agent Deck" />
     <link rel="manifest" href="/manifest.webmanifest" />
     <link rel="icon" href="/static/icons/logo.svg" sizes="120x80" />
     <link rel="apple-touch-icon" href="/static/icons/logo.svg" />
-    <title>Agent Deck Web</title>
-    <link
-      rel="stylesheet"
-      href="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/css/xterm.min.css"
-    />
+    <title>Agent Deck</title>
+
+    <!-- 1. Theme init (synchronous, prevents flash of wrong theme) -->
+    <script>
+      ;(function() {
+        var t = localStorage.getItem('theme')
+        if (t === 'dark' || (!t && window.matchMedia('(prefers-color-scheme: dark)').matches)) {
+          document.documentElement.classList.add('dark')
+        }
+      })()
+    </script>
+
+    <!-- 2. Tailwind Play CDN (vendored, no external requests) -->
+    <script src="/static/vendor/tailwind.js"></script>
+
+    <!-- 3. Tailwind config: Tokyo Night palette + dark mode via selector -->
+    <script>
+      tailwind.config = {
+        darkMode: 'selector',
+        theme: {
+          extend: {
+            colors: {
+              'tn-bg':     '#1a1b26',
+              'tn-panel':  '#16161e',
+              'tn-fg':     '#a9b1d6',
+              'tn-muted':  '#787c99',
+              'tn-blue':   '#7aa2f7',
+              'tn-green':  '#73daca',
+              'tn-red':    '#f7768e',
+              'tn-yellow': '#e0af68',
+              'tn-purple': '#bb9af7',
+              'tn-light-bg':    '#e6e7ed',
+              'tn-light-panel': '#d6d8df',
+              'tn-light-fg':    '#363c4d',
+              'tn-light-blue':  '#2959aa',
+            }
+          }
+        }
+      }
+    </script>
+
+    <!-- 4. Import map: single Preact instance via bare specifiers -->
+    <script type="importmap">
+    {
+      "imports": {
+        "preact":          "/static/vendor/preact.mjs",
+        "preact/hooks":    "/static/vendor/preact-hooks.mjs",
+        "htm/preact":      "/static/vendor/htm.mjs",
+        "@preact/signals": "/static/vendor/signals.mjs"
+      }
+    }
+    </script>
+
+    <!-- 5. Preact app entry (module, deferred by default) -->
+    <script type="module" src="/static/app/main.js"></script>
+
     <link rel="stylesheet" href="/static/styles.css" />
   </head>
   <body>
+    <!-- Preact app mounts here (phase 2 plan 02 creates components) -->
+    <div id="app-root"></div>
+
+    <!-- Existing vanilla JS app (coexists during migration, removed in phase 6) -->
     <div class="app">
       <header class="topbar">
         <div class="topbar-left">
@@ -29,11 +84,11 @@
             aria-controls="menu-panel"
             aria-expanded="false"
           >
-            ☰
+            &#9776;
           </button>
           <div class="brand">Agent Deck Web</div>
         </div>
-        <a href="/costs" class="costs-btn" title="Cost Dashboard" id="costs-link">💰 Costs</a>
+        <a href="/costs" class="costs-btn" title="Cost Dashboard" id="costs-link">Costs</a>
         <div class="meta" id="meta-state">connecting</div>
       </header>
 
@@ -77,8 +132,12 @@
       ></button>
     </div>
 
-    <script src="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/lib/xterm.min.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/@xterm/addon-fit@0.10.0/lib/addon-fit.min.js"></script>
+    <!-- xterm.js CDN scripts REMOVED per FOUND-03 (zero CDN at runtime).
+         app.js gracefully degrades: createTerminalUI() checks
+         typeof window.Terminal === "function" and falls back to a <pre>
+         element when xterm is absent. Phase 5 will vendor xterm.js. -->
+
+    <!-- Vanilla JS app (migrated to Preact components in phases 3-6) -->
     <script src="/static/app.js"></script>
   </body>
 </html>

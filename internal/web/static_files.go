@@ -45,6 +45,7 @@ func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
 	// token-stripping (history.replaceState) is the primary mitigation;
 	// this header ensures no Referer is sent even if the script runs late.
 	w.Header().Set("Referrer-Policy", "no-referrer")
+	w.Header().Set("Cache-Control", "no-cache, no-store, must-revalidate")
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write(index)
