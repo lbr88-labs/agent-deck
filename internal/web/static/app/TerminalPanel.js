@@ -6,6 +6,7 @@ import { selectedIdSignal, authTokenSignal, wsStateSignal, readOnlySignal } from
 import { Terminal } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
 import { WebglAddon } from '@xterm/addon-webgl'
+import { EmptyStateDashboard } from './EmptyStateDashboard.js'
 
 // Mobile detection: pointer:coarse for touch devices
 function isMobileDevice() {
@@ -301,13 +302,7 @@ export function TerminalPanel() {
   }, [sessionId, cleanup])
 
   if (!sessionId) {
-    return html`
-      <div class="h-full flex items-center justify-center">
-        <span class="dark:text-tn-muted text-gray-400 text-sm">
-          Select a session from the sidebar
-        </span>
-      </div>
-    `
+    return html`<${EmptyStateDashboard} />`
   }
 
   return html`
