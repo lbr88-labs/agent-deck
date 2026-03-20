@@ -54,12 +54,12 @@ export function SessionRow({ item, focused }) {
         type="button"
         onClick=${handleClick}
         class="w-full flex items-center gap-sp-8 px-sp-12 py-1.5 rounded text-left text-sm
-          transition-colors
+          transition-colors border-l-2
           ${isSelected
-            ? 'dark:bg-tn-blue/20 bg-blue-100 dark:text-tn-fg text-gray-900'
+            ? 'border-tn-blue dark:bg-tn-blue/25 bg-blue-100 dark:text-tn-fg text-gray-900 font-medium'
             : focused
-              ? 'dark:bg-tn-muted/10 bg-gray-100 dark:text-tn-fg text-gray-700'
-              : 'dark:hover:bg-tn-muted/10 hover:bg-gray-50 dark:text-tn-fg text-gray-700'
+              ? 'border-transparent dark:bg-tn-muted/10 bg-gray-100 dark:text-tn-fg text-gray-700'
+              : 'border-transparent dark:hover:bg-tn-muted/10 hover:bg-gray-50 dark:text-tn-fg text-gray-700'
           }"
         style="padding-left: calc(${item.level || 0} * 1rem + 0.75rem)"
         data-session-id=${session.id}
