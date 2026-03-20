@@ -73,78 +73,10 @@
     <link rel="stylesheet" href="/static/styles.css" />
   </head>
   <body>
-    <!-- Preact app mounts here (phase 2 plan 02 creates components) -->
+    <!-- Preact app mounts here -->
     <div id="app-root"></div>
 
-    <!-- Existing vanilla JS app (coexists during migration, removed in phase 6) -->
-    <div class="app">
-      <header class="topbar">
-        <div class="topbar-left">
-          <button
-            id="menu-toggle"
-            class="menu-toggle"
-            type="button"
-            aria-label="Open sessions menu"
-            aria-controls="menu-panel"
-            aria-expanded="false"
-          >
-            &#9776;
-          </button>
-          <div class="brand">Agent Deck Web</div>
-        </div>
-        <a href="/costs" class="costs-btn" title="Cost Dashboard" id="costs-link">Costs</a>
-        <div class="meta" id="meta-state">connecting</div>
-      </header>
-
-      <main class="layout">
-        <aside class="menu-panel" id="menu-panel">
-          <h2>Sessions</h2>
-          <div class="menu-tools">
-            <input
-              id="menu-filter"
-              class="menu-filter"
-              type="search"
-              placeholder="Filter sessions..."
-              autocomplete="off"
-            />
-            <div class="push-tools" id="push-tools" hidden>
-              <button id="push-toggle" class="push-toggle" type="button">
-                Enable notifications
-              </button>
-              <div class="push-status" id="push-status">
-                Push unavailable.
-              </div>
-            </div>
-          </div>
-          <div class="menu-list" id="menu-root">
-            <div class="menu-empty">Loading session menu...</div>
-          </div>
-        </aside>
-
-        <section class="terminal-panel">
-          <h2>Terminal</h2>
-          <div class="terminal-placeholder" id="terminal-root">
-            Select a session from the menu to start terminal streaming.
-          </div>
-        </section>
-      </main>
-      <button
-        id="menu-backdrop"
-        class="menu-backdrop"
-        type="button"
-        aria-label="Close sessions menu"
-      ></button>
-    </div>
-
-    <!-- xterm.js CDN scripts REMOVED per FOUND-03 (zero CDN at runtime).
-         app.js gracefully degrades: createTerminalUI() checks
-         typeof window.Terminal === "function" and falls back to a <pre>
-         element when xterm is absent. Phase 5 will vendor xterm.js. -->
-
-    <!-- xterm.js Canvas renderer addon (UMD, fallback for WebGL) -->
+    <!-- xterm.js Canvas renderer addon (UMD, loaded by TerminalPanel.js) -->
     <script src="/static/vendor/addon-canvas.js"></script>
-
-    <!-- Vanilla JS app (migrated to Preact components in phases 3-6) -->
-    <script type="module" src="/static/app.js"></script>
   </body>
 </html>
