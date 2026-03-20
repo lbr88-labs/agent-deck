@@ -139,7 +139,6 @@ func NewServer(cfg Config) *Server {
 	mux.HandleFunc("/api/costs/session", s.handleCostsSessionDetail)
 	mux.HandleFunc("/api/costs/batch", s.handleCostsBatch)
 	mux.HandleFunc("/api/costs/stream", s.handleCostsStream)
-	mux.HandleFunc("/costs", s.handleCostsPage)
 
 	handler := withRecover(mux)
 

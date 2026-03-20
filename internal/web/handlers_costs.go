@@ -399,23 +399,6 @@ func (c costSummarySSE) MarshalJSON() ([]byte, error) {
 	})
 }
 
-func (s *Server) handleCostsPage(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet && r.Method != http.MethodHead {
-		writeAPIError(w, http.StatusMethodNotAllowed, "METHOD_NOT_ALLOWED", "method not allowed")
-		return
-	}
-
-	page, err := embeddedStaticFiles.ReadFile("static/costs.html")
-	if err != nil {
-		http.Error(w, "costs page unavailable", http.StatusInternalServerError)
-		return
-	}
-
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	w.WriteHeader(http.StatusOK)
-	_, _ = w.Write(page)
-}
-
 func (s *Server) handleCostsGroups(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		writeAPIError(w, http.StatusMethodNotAllowed, "METHOD_NOT_ALLOWED", "method not allowed")
