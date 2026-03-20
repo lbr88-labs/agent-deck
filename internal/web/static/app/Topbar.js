@@ -28,7 +28,16 @@ export function Topbar({ onToggleSidebar, sidebarOpen }) {
               </svg>`
           }
         </button>
-        <span class="font-semibold text-sm dark:text-tn-fg text-gray-900">Agent Deck</span>
+        <span class="flex items-center gap-1.5">
+          <svg class="w-5 h-5" viewBox="0 0 64 64" fill="none" aria-hidden="true">
+            <rect x="18" y="8" width="36" height="44" rx="6" fill="currentColor" opacity="0.2"/>
+            <rect x="13" y="12" width="36" height="44" rx="6" fill="currentColor" opacity="0.4"/>
+            <rect x="8" y="16" width="36" height="44" rx="6" fill="currentColor" opacity="0.7"/>
+            <rect x="14" y="28" width="16" height="3" rx="1.5" fill="#73daca"/>
+            <circle cx="34" cy="29.5" r="2" fill="#73daca"/>
+          </svg>
+          <span class="font-semibold text-sm dark:text-tn-fg text-gray-900">Agent Deck</span>
+        </span>
       </div>
       <div class="flex items-center gap-3">
         <button

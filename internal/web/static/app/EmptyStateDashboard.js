@@ -22,7 +22,18 @@ export function EmptyStateDashboard() {
 
   return html`
     <div class="h-full flex flex-col items-center justify-center gap-sp-24 dark:text-tn-fg text-gray-700 p-sp-32">
-      <p class="text-lg font-semibold dark:text-tn-fg text-gray-700">Agent Deck</p>
+      <div class="flex flex-col items-center gap-sp-8">
+        <svg class="w-16 h-16" viewBox="0 0 64 64" fill="none" aria-hidden="true">
+          <rect x="18" y="8" width="36" height="44" rx="6" fill="#565f89" opacity="0.5"/>
+          <rect x="13" y="12" width="36" height="44" rx="6" fill="#7aa2f7" opacity="0.7"/>
+          <rect x="8" y="16" width="36" height="44" rx="6" fill="#7aa2f7"/>
+          <rect x="14" y="28" width="16" height="3" rx="1.5" fill="#73daca"/>
+          <circle cx="34" cy="29.5" r="2" fill="#73daca"/>
+          <rect x="14" y="36" width="12" height="2.5" rx="1.25" fill="#a9b1d6" opacity="0.5"/>
+          <rect x="14" y="42" width="20" height="2.5" rx="1.25" fill="#a9b1d6" opacity="0.3"/>
+        </svg>
+        <p class="text-lg font-semibold dark:text-tn-fg text-gray-700">Agent Deck</p>
+      </div>
 
       <div class="flex gap-sp-24">
         <div class="flex flex-col items-center gap-1">
