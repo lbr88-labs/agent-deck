@@ -12,6 +12,7 @@ import { CreateSessionDialog } from './CreateSessionDialog.js'
 import { ConfirmDialog } from './ConfirmDialog.js'
 import { GroupNameDialog } from './GroupNameDialog.js'
 import { TerminalPanel } from './TerminalPanel.js'
+import { CostDashboard } from './CostDashboard.js'
 
 export function AppShell() {
   const sidebarOpen = sidebarOpenSignal.value
@@ -98,9 +99,7 @@ export function AppShell() {
           <div class="${activeTab === 'terminal' ? 'h-full' : 'hidden'}">
             <${TerminalPanel} />
           </div>
-          ${activeTab === 'costs' && html`<div class="h-full overflow-y-auto" id="cost-dashboard-mount">
-            <div class="p-6 dark:text-tn-fg text-gray-700 text-sm">Cost dashboard loading...</div>
-          </div>`}
+          ${activeTab === 'costs' && html`<${CostDashboard} />`}
         </main>
       </div>
 
