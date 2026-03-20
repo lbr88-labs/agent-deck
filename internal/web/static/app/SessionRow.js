@@ -65,7 +65,7 @@ export function SessionRow({ item, focused }) {
         data-session-id=${session.id}
       >
         <span class="w-2 h-2 rounded-full flex-shrink-0 ${dotColor}"></span>
-        <span class="flex-1 truncate">${session.title || session.id}</span>
+        <span class="flex-1 break-all min-w-0">${session.title || session.id}</span>
         <span class="text-xs dark:text-tn-muted text-gray-400 flex-shrink-0">
           ${session.tool || 'shell'}
         </span>
