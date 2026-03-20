@@ -77,8 +77,9 @@ export function SessionRow({ item, focused }) {
         ${(focused || isSelected) && html`
           <span class="flex items-center gap-0.5 flex-shrink-0 ml-1">
             ${(session.status === 'running' || session.status === 'waiting') && html`
-              <button type="button" onClick=${handleStop} title="Stop (s)"
-                class="p-0.5 rounded dark:text-tn-muted hover:dark:text-tn-yellow hover:dark:bg-tn-yellow/10
+              <button type="button" onClick=${handleStop} title="Stop (s)" aria-label="Stop session"
+                class="min-w-[44px] min-h-[44px] flex items-center justify-center rounded
+                       dark:text-tn-muted hover:dark:text-tn-yellow hover:dark:bg-tn-yellow/10
                        text-gray-400 hover:text-yellow-600 hover:bg-yellow-50 transition-colors">
                 <svg class="w-3.5 h-3.5" fill="currentColor" viewBox="0 0 20 20">
                   <rect x="5" y="5" width="10" height="10" rx="1"/>
@@ -86,8 +87,9 @@ export function SessionRow({ item, focused }) {
               </button>
             `}
             ${(session.status === 'idle' || session.status === 'stopped' || session.status === 'error') && html`
-              <button type="button" onClick=${handleRestart} title="Restart (r)"
-                class="p-0.5 rounded dark:text-tn-muted hover:dark:text-tn-green hover:dark:bg-tn-green/10
+              <button type="button" onClick=${handleRestart} title="Restart (r)" aria-label="Restart session"
+                class="min-w-[44px] min-h-[44px] flex items-center justify-center rounded
+                       dark:text-tn-muted hover:dark:text-tn-green hover:dark:bg-tn-green/10
                        text-gray-400 hover:text-green-600 hover:bg-green-50 transition-colors">
                 <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
@@ -96,8 +98,9 @@ export function SessionRow({ item, focused }) {
               </button>
             `}
             ${session.tool === 'claude' && html`
-              <button type="button" onClick=${handleFork} title="Fork"
-                class="p-0.5 rounded dark:text-tn-muted hover:dark:text-tn-purple hover:dark:bg-tn-purple/10
+              <button type="button" onClick=${handleFork} title="Fork" aria-label="Fork session"
+                class="min-w-[44px] min-h-[44px] flex items-center justify-center rounded
+                       dark:text-tn-muted hover:dark:text-tn-purple hover:dark:bg-tn-purple/10
                        text-gray-400 hover:text-purple-600 hover:bg-purple-50 transition-colors">
                 <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
@@ -105,8 +108,9 @@ export function SessionRow({ item, focused }) {
                 </svg>
               </button>
             `}
-            <button type="button" onClick=${handleDelete} title="Delete (d)"
-              class="p-0.5 rounded dark:text-tn-muted hover:dark:text-tn-red hover:dark:bg-tn-red/10
+            <button type="button" onClick=${handleDelete} title="Delete (d)" aria-label="Delete session"
+              class="min-w-[44px] min-h-[44px] flex items-center justify-center rounded
+                     dark:text-tn-muted hover:dark:text-tn-red hover:dark:bg-tn-red/10
                      text-gray-400 hover:text-red-600 hover:bg-red-50 transition-colors">
               <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
