@@ -29,41 +29,24 @@ if (typeof window !== 'undefined') {
 export function ThemeToggle() {
   const current = themeSignal.value
 
+  const btn = (mode, label) => html`
+    <button
+      type="button"
+      onClick=${() => applyTheme(mode)}
+      class="px-2 py-0.5 text-xs font-medium transition-colors
+        ${current === mode
+          ? 'dark:bg-tn-blue bg-tn-light-blue text-white'
+          : 'dark:text-tn-muted text-gray-500 hover:dark:text-tn-fg hover:text-gray-700'}"
+      aria-pressed=${current === mode}
+      title="${label} theme"
+    >${label}</button>
+  `
+
   return html`
-    <div class="flex items-center gap-sp-4">
-      <button
-        onClick=${() => applyTheme('light')}
-        class="px-2 py-1 rounded text-xs font-medium transition-colors
-          ${current === 'light'
-            ? 'dark:bg-tn-blue bg-tn-light-blue text-white'
-            : 'dark:text-tn-muted text-gray-500 hover:dark:text-tn-fg hover:text-gray-700'}"
-        aria-pressed=${current === 'light'}
-        title="Light theme"
-      >
-        Light
-      </button>
-      <button
-        onClick=${() => applyTheme('dark')}
-        class="px-2 py-1 rounded text-xs font-medium transition-colors
-          ${current === 'dark'
-            ? 'dark:bg-tn-blue bg-tn-light-blue text-white'
-            : 'dark:text-tn-muted text-gray-500 hover:dark:text-tn-fg hover:text-gray-700'}"
-        aria-pressed=${current === 'dark'}
-        title="Dark theme"
-      >
-        Dark
-      </button>
-      <button
-        onClick=${() => applyTheme('system')}
-        class="px-2 py-1 rounded text-xs font-medium transition-colors
-          ${current === 'system'
-            ? 'dark:bg-tn-blue bg-tn-light-blue text-white'
-            : 'dark:text-tn-muted text-gray-500 hover:dark:text-tn-fg hover:text-gray-700'}"
-        aria-pressed=${current === 'system'}
-        title="Follow system preference"
-      >
-        System
-      </button>
+    <div class="flex items-center rounded border dark:border-tn-muted/30 border-gray-200 overflow-hidden">
+      ${btn('light', 'Light')}
+      ${btn('dark', 'Dark')}
+      ${btn('system', 'Auto')}
     </div>
   `
 }
