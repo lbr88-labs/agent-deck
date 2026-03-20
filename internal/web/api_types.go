@@ -48,6 +48,12 @@ type SettingsResponse struct {
 	Version      string `json:"version"`
 }
 
+// ProfilesResponse is returned by GET /api/profiles.
+type ProfilesResponse struct {
+	Current  string   `json:"current"`
+	Profiles []string `json:"profiles"`
+}
+
 // SSESessionEvent is emitted on session:created and session:updated events.
 type SSESessionEvent struct {
 	EventType string       `json:"eventType"`
