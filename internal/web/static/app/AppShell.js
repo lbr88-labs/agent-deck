@@ -5,7 +5,7 @@
 // Desktop (1024px+): sidebar always visible
 import { html } from 'htm/preact'
 import { useEffect } from 'preact/hooks'
-import { sidebarOpenSignal, createSessionDialogSignal, confirmDialogSignal, groupNameDialogSignal, activeTabSignal, infoDrawerOpenSignal } from './state.js'
+import { sidebarOpenSignal, selectedIdSignal, createSessionDialogSignal, confirmDialogSignal, groupNameDialogSignal, activeTabSignal, infoDrawerOpenSignal } from './state.js'
 import { Sidebar } from './Sidebar.js'
 import { Topbar } from './Topbar.js'
 import { CreateSessionDialog } from './CreateSessionDialog.js'
@@ -48,6 +48,13 @@ export function AppShell() {
     return () => document.removeEventListener('keydown', onKey)
   }, [drawerOpen])
 
+  // Auto-close mobile drawer when a session is selected
+  useEffect(() => {
+    if (selectedIdSignal.value && window.innerWidth < 768) {
+      sidebarOpenSignal.value = false
+    }
+  }, [selectedIdSignal.value])
+
   return html`
     <div class="flex flex-col h-screen dark:bg-tn-bg bg-tn-light-bg">
       <${Topbar} onToggleSidebar=${toggleSidebar} sidebarOpen=${sidebarOpen} />
@@ -56,7 +63,7 @@ export function AppShell() {
         <!-- Overlay backdrop: phone only, hidden on md+ -->
         ${sidebarOpen && html`
           <div
-            class="fixed inset-0 z-30 bg-black/50 md:hidden"
+            class="fixed inset-0 z-30 bg-black/50 md:hidden cursor-pointer"
             onClick=${toggleSidebar}
             aria-hidden="true"
           />`}
@@ -79,7 +86,7 @@ export function AppShell() {
             <span class="flex items-center gap-1">
               <button type="button"
                 onClick=${() => (groupNameDialogSignal.value = { mode: 'create', groupPath: '', currentName: '', onSubmit: null })}
-                class="p-1 rounded dark:text-tn-muted text-gray-400
+                class="p-2 min-w-[44px] min-h-[44px] flex items-center justify-center rounded dark:text-tn-muted text-gray-400
                        hover:dark:text-tn-fg hover:text-gray-700
                        hover:dark:bg-tn-muted/10 hover:bg-gray-100 transition-colors"
                 title="New group"
@@ -91,7 +98,7 @@ export function AppShell() {
               </button>
               <button type="button"
                 onClick=${() => (createSessionDialogSignal.value = true)}
-                class="p-1 rounded dark:text-tn-muted text-gray-400
+                class="p-2 min-w-[44px] min-h-[44px] flex items-center justify-center rounded dark:text-tn-muted text-gray-400
                        hover:dark:text-tn-fg hover:text-gray-700
                        hover:dark:bg-tn-muted/10 hover:bg-gray-100 transition-colors"
                 title="New session (n)"

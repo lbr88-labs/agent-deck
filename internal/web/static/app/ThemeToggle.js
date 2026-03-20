@@ -33,7 +33,7 @@ export function ThemeToggle() {
     <button
       type="button"
       onClick=${() => applyTheme(mode)}
-      class="px-2 py-0.5 text-xs font-medium transition-colors
+      class="px-3 py-1.5 text-xs font-medium transition-colors
         ${current === mode
           ? 'dark:bg-tn-blue bg-tn-light-blue text-white'
           : 'dark:text-tn-muted text-gray-500 hover:dark:text-tn-fg hover:text-gray-700'}"
