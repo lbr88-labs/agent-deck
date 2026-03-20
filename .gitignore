@@ -16,8 +16,12 @@ build/
 
 # Dependency directories
 vendor/
-# Exclude static/vendor from the vendor/ ignore (these are committed JS assets)
-!internal/web/static/vendor/
+node_modules/
+
+# Playwright
+tests/e2e/node_modules/
+tests/e2e/playwright-report/
+tests/e2e/test-results/
 
 # Go workspace file
 go.work
