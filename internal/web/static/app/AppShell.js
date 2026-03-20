@@ -62,7 +62,7 @@ export function AppShell() {
           md:relative md:z-auto md:w-64
           lg:translate-x-0
         ">
-          <div class="flex items-center justify-between px-3 py-2 border-b dark:border-tn-muted/20 border-gray-200">
+          <div class="flex items-center justify-between px-sp-12 py-sp-8 border-b dark:border-tn-muted/20 border-gray-200">
             <span class="text-xs font-semibold uppercase tracking-wide dark:text-tn-muted text-gray-500">Sessions</span>
             <span class="flex items-center gap-1">
               <button type="button"

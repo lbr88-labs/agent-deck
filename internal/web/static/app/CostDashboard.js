@@ -159,26 +159,26 @@ export function CostDashboard() {
   }
 
   return html`
-    <div class="p-4 md:p-6 overflow-y-auto h-full dark:text-tn-fg text-gray-700">
+    <div class="p-sp-16 md:p-sp-24 overflow-y-auto h-full dark:text-tn-fg text-gray-700">
 
       <!-- Summary cards -->
-      <div class="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
-        <div class="dark:bg-tn-panel bg-white rounded-lg p-4">
+      <div class="grid grid-cols-2 lg:grid-cols-4 gap-sp-16 mb-sp-24">
+        <div class="dark:bg-tn-card bg-white rounded-lg p-4">
           <div class="text-xs dark:text-tn-muted text-gray-500 uppercase">Today</div>
           <div class="text-2xl font-bold dark:text-[#7dcfff] text-teal-600 mt-1">${fmt(summary.today_usd)}</div>
           <div class="text-xs dark:text-tn-muted text-gray-400 mt-1">${summary.today_events} events</div>
         </div>
-        <div class="dark:bg-tn-panel bg-white rounded-lg p-4">
+        <div class="dark:bg-tn-card bg-white rounded-lg p-4">
           <div class="text-xs dark:text-tn-muted text-gray-500 uppercase">This Week</div>
           <div class="text-2xl font-bold dark:text-[#7dcfff] text-teal-600 mt-1">${fmt(summary.week_usd)}</div>
           <div class="text-xs dark:text-tn-muted text-gray-400 mt-1">${summary.week_events} events</div>
         </div>
-        <div class="dark:bg-tn-panel bg-white rounded-lg p-4">
+        <div class="dark:bg-tn-card bg-white rounded-lg p-4">
           <div class="text-xs dark:text-tn-muted text-gray-500 uppercase">This Month</div>
           <div class="text-2xl font-bold dark:text-[#7dcfff] text-teal-600 mt-1">${fmt(summary.month_usd)}</div>
           <div class="text-xs dark:text-tn-muted text-gray-400 mt-1">${summary.month_events} events</div>
         </div>
-        <div class="dark:bg-tn-panel bg-white rounded-lg p-4">
+        <div class="dark:bg-tn-card bg-white rounded-lg p-4">
           <div class="text-xs dark:text-tn-muted text-gray-500 uppercase">Projected</div>
           <div class="text-2xl font-bold dark:text-[#7dcfff] text-teal-600 mt-1">${fmt(summary.projected_usd)}</div>
           <div class="text-xs dark:text-tn-muted text-gray-400 mt-1">based on 7-day avg</div>
@@ -186,12 +186,12 @@ export function CostDashboard() {
       </div>
 
       <!-- Charts -->
-      <div class="grid grid-cols-1 lg:grid-cols-3 gap-4 mb-6">
-        <div class="lg:col-span-2 dark:bg-tn-panel bg-white rounded-lg p-4">
+      <div class="grid grid-cols-1 lg:grid-cols-3 gap-sp-16 mb-sp-24">
+        <div class="lg:col-span-2 dark:bg-tn-card bg-white rounded-lg p-4">
           <div class="text-sm dark:text-tn-muted text-gray-500 uppercase mb-3">Daily Spend (Last 30 Days)</div>
           <canvas ref=${dailyCanvasRef}></canvas>
         </div>
-        <div class="dark:bg-tn-panel bg-white rounded-lg p-4">
+        <div class="dark:bg-tn-card bg-white rounded-lg p-4">
           <div class="text-sm dark:text-tn-muted text-gray-500 uppercase mb-3">Cost by Model</div>
           <canvas ref=${modelCanvasRef}></canvas>
         </div>

@@ -11,7 +11,7 @@ export function Topbar({ onToggleSidebar, sidebarOpen }) {
   const [showSettings, setShowSettings] = useState(false)
 
   return html`
-    <header class="flex items-center justify-between px-3 py-2
+    <header class="flex items-center justify-between px-sp-12 py-sp-8
       dark:bg-tn-panel bg-white border-b dark:border-tn-muted/20 border-gray-200
       flex-shrink-0 relative z-50">
       <div class="flex items-center gap-3">
