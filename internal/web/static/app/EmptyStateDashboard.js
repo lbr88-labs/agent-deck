@@ -42,13 +42,13 @@ export function EmptyStateDashboard() {
       <div class="flex gap-sp-12">
         <button
           onClick=${openNewSession}
-          class="px-sp-16 py-sp-8 rounded dark:bg-tn-blue/20 dark:text-tn-blue dark:hover:bg-tn-blue/30 bg-blue-100 text-blue-700 hover:bg-blue-200 transition-colors text-sm font-medium"
+          class="px-sp-16 py-sp-8 min-h-[44px] rounded dark:bg-tn-blue/20 dark:text-tn-blue dark:hover:bg-tn-blue/30 bg-blue-100 text-blue-700 hover:bg-blue-200 transition-colors text-sm font-medium"
         >
           New Session (n)
         </button>
         <button
           onClick=${openNewGroup}
-          class="px-sp-16 py-sp-8 rounded dark:bg-tn-muted/20 dark:text-tn-muted dark:hover:bg-tn-muted/30 bg-gray-100 text-gray-600 hover:bg-gray-200 transition-colors text-sm font-medium"
+          class="px-sp-16 py-sp-8 min-h-[44px] rounded dark:bg-tn-muted/20 dark:text-tn-muted dark:hover:bg-tn-muted/30 bg-gray-100 text-gray-600 hover:bg-gray-200 transition-colors text-sm font-medium"
         >
           New Group
         </button>

@@ -531,3 +531,11 @@ body {
     max-height: 60vh;
   }
 }
+
+@media (max-width: 768px) {
+  :root {
+    --text-base: 16px;
+    --text-sm: 14px;
+    --text-xs: 13px;
+  }
+}

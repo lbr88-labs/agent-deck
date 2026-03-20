@@ -40,17 +40,17 @@ export function CreateSessionDialog() {
           <input autofocus required
             placeholder="Session title"
             value=${title} onInput=${e => setTitle(e.target.value)}
-            class="w-full px-3 py-2 rounded border dark:border-tn-muted/30 dark:bg-tn-bg dark:text-tn-fg
+            class="w-full px-3 py-2 min-h-[44px] rounded border dark:border-tn-muted/30 dark:bg-tn-bg dark:text-tn-fg
                    bg-gray-50 text-gray-900 border-gray-300
                    focus:outline-none focus:ring-2 focus:ring-tn-blue/50" />
           <input required
             placeholder="Working directory (absolute path)"
             value=${path} onInput=${e => setPath(e.target.value)}
-            class="w-full px-3 py-2 rounded border dark:border-tn-muted/30 dark:bg-tn-bg dark:text-tn-fg
+            class="w-full px-3 py-2 min-h-[44px] rounded border dark:border-tn-muted/30 dark:bg-tn-bg dark:text-tn-fg
                    bg-gray-50 text-gray-900 border-gray-300
                    focus:outline-none focus:ring-2 focus:ring-tn-blue/50" />
           <select value=${tool} onChange=${e => setTool(e.target.value)}
-            class="w-full px-3 py-2 rounded border dark:border-tn-muted/30 dark:bg-tn-bg dark:text-tn-fg
+            class="w-full px-3 py-2 min-h-[44px] rounded border dark:border-tn-muted/30 dark:bg-tn-bg dark:text-tn-fg
                    bg-gray-50 text-gray-900 border-gray-300">
             <option value="claude">claude</option>
             <option value="shell">shell</option>
@@ -61,12 +61,12 @@ export function CreateSessionDialog() {
           <div class="flex gap-sp-8 justify-end mt-2">
             <button type="button"
               onClick=${() => (createSessionDialogSignal.value = false)}
-              class="px-4 py-2 rounded dark:text-tn-muted text-gray-600
+              class="px-4 py-2 min-h-[44px] rounded dark:text-tn-muted text-gray-600
                      hover:dark:bg-tn-muted/10 hover:bg-gray-100 transition-colors">
               Cancel
             </button>
             <button type="submit" disabled=${submitting}
-              class="px-4 py-2 rounded dark:bg-tn-blue/20 bg-blue-100
+              class="px-4 py-2 min-h-[44px] rounded dark:bg-tn-blue/20 bg-blue-100
                      dark:text-tn-blue text-blue-700
                      hover:dark:bg-tn-blue/30 hover:bg-blue-200 transition-colors
                      disabled:opacity-50">
