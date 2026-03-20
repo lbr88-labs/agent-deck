@@ -5,7 +5,7 @@
 // Desktop (1024px+): sidebar always visible
 import { html } from 'htm/preact'
 import { useEffect } from 'preact/hooks'
-import { sidebarOpenSignal, createSessionDialogSignal, confirmDialogSignal, groupNameDialogSignal } from './state.js'
+import { sidebarOpenSignal, createSessionDialogSignal, confirmDialogSignal, groupNameDialogSignal, activeTabSignal } from './state.js'
 import { Sidebar } from './Sidebar.js'
 import { Topbar } from './Topbar.js'
 import { CreateSessionDialog } from './CreateSessionDialog.js'
@@ -18,6 +18,7 @@ export function AppShell() {
   const showCreateSession = createSessionDialogSignal.value
   const confirmData = confirmDialogSignal.value
   const groupNameData = groupNameDialogSignal.value
+  const activeTab = activeTabSignal.value
 
   function toggleSidebar() {
     const next = !sidebarOpenSignal.value
@@ -91,9 +92,15 @@ export function AppShell() {
           <${Sidebar} />
         </aside>
 
-        <!-- Main content: terminal panel -->
-        <main class="flex-1 min-w-0 overflow-hidden dark:bg-tn-bg bg-tn-light-bg">
-          <${TerminalPanel} />
+        <!-- Main content: terminal and costs tabs -->
+        <!-- TerminalPanel is always rendered (CSS hidden when costs active) to preserve xterm.js + WebSocket -->
+        <main class="flex-1 min-w-0 overflow-hidden dark:bg-tn-bg bg-tn-light-bg relative">
+          <div class="${activeTab === 'terminal' ? 'h-full' : 'hidden'}">
+            <${TerminalPanel} />
+          </div>
+          ${activeTab === 'costs' && html`<div class="h-full overflow-y-auto" id="cost-dashboard-mount">
+            <div class="p-6 dark:text-tn-fg text-gray-700 text-sm">Cost dashboard loading...</div>
+          </div>`}
         </main>
       </div>
 
