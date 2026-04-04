@@ -258,6 +258,22 @@ func (s *StateDB) Migrate() error {
 		return fmt.Errorf("statedb: create cost_events timestamp index: %w", err)
 	}
 
+	// ALTER TABLE migrations for existing databases.
+	// CREATE TABLE IF NOT EXISTS won't add new columns to tables that already exist.
+	// Each migration is idempotent: errors from "duplicate column" are silently ignored.
+	// See CLAUDE.md "Schema Migration Safety": every new column MUST have a corresponding ALTER TABLE.
+	alterMigrations := []string{
+		"ALTER TABLE instances ADD COLUMN acknowledged INTEGER NOT NULL DEFAULT 0",
+	}
+	for _, stmt := range alterMigrations {
+		if _, err := tx.Exec(stmt); err != nil {
+			// Ignore "duplicate column name" errors (column already exists)
+			if !strings.Contains(err.Error(), "duplicate column") {
+				return fmt.Errorf("statedb: alter migration: %w", err)
+			}
+		}
+	}
+
 	// Set schema version only when missing or changed.
 	// Avoiding a write on every open reduces lock contention between CLI processes.
 	schemaVersion := fmt.Sprintf("%d", SchemaVersion)
