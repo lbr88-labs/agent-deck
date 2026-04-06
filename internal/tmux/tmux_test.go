@@ -2711,3 +2711,48 @@ func TestStartCommandSpec_UserScope(t *testing.T) {
 	assert.Equal(t, "agentdeck-tmux-agentdeck-test-session-1234abcd", args[5])
 	assert.Equal(t, []string{"tmux", "new-session", "-d", "-s", "agentdeck_test-session_1234abcd", "-c", "/tmp/project"}, args[6:])
 }
+
+func TestResolvedAgentDeckTheme_COLORFGBG(t *testing.T) {
+	// Use temp HOME with no config so we fall through to auto-detection.
+	tempDir := t.TempDir()
+	t.Setenv("HOME", tempDir)
+
+	tests := []struct {
+		name      string
+		colorfgbg string
+		want      string
+	}{
+		{"dark terminal bg=0", "15;0", "dark"},
+		{"dark terminal bg=1", "15;1", "dark"},
+		{"light terminal bg=15", "0;15", "light"},
+		{"light terminal bg=8", "0;8", "light"},
+		{"three-part dark", "12;7;0", "dark"},
+		{"three-part light", "12;7;15", "light"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Setenv("COLORFGBG", tt.colorfgbg)
+			got := resolvedAgentDeckTheme()
+			assert.Equal(t, tt.want, got, "COLORFGBG=%q", tt.colorfgbg)
+		})
+	}
+}
+
+func TestResolvedAgentDeckTheme_ExplicitConfigOverridesCOLORFGBG(t *testing.T) {
+	tempDir := t.TempDir()
+	t.Setenv("HOME", tempDir)
+
+	// Write explicit dark config
+	agentDeckDir := filepath.Join(tempDir, ".agent-deck")
+	require.NoError(t, os.MkdirAll(agentDeckDir, 0700))
+	require.NoError(t, os.WriteFile(
+		filepath.Join(agentDeckDir, "config.toml"),
+		[]byte("theme = \"dark\"\n"), 0600,
+	))
+
+	// Even though COLORFGBG says light, explicit config wins
+	t.Setenv("COLORFGBG", "0;15")
+	got := resolvedAgentDeckTheme()
+	assert.Equal(t, "dark", got, "explicit config should override COLORFGBG")
+}
