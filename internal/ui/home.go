@@ -1115,6 +1115,16 @@ func (h *Home) moveCursorToSession(sessionID string) {
 	}
 }
 
+// moveCursorToGroup moves the cursor to the flat item matching the given group path.
+func (h *Home) moveCursorToGroup(path string) {
+	for i, fi := range h.flatItems {
+		if fi.Type == session.ItemTypeGroup && fi.Path == path {
+			h.cursor = i
+			return
+		}
+	}
+}
+
 // rebuildFlatItems rebuilds the flattened view from group tree
 func (h *Home) rebuildFlatItems() {
 	h.jumpMode = false
@@ -4941,12 +4951,19 @@ func (h *Home) handleMainKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			switch item.Type {
 			case session.ItemTypeGroup:
 				h.groupTree.MoveGroupUp(item.Path)
+				h.rebuildFlatItems()
+				h.moveCursorToGroup(item.Path)
+				if h.cursor >= len(h.flatItems) {
+					h.cursor = max(0, len(h.flatItems)-1)
+				}
 			case session.ItemTypeSession:
+				sessionID := item.Session.ID
 				h.groupTree.MoveSessionUp(item.Session)
-			}
-			h.rebuildFlatItems()
-			if h.cursor > 0 {
-				h.cursor--
+				h.rebuildFlatItems()
+				h.moveCursorToSession(sessionID)
+				if h.cursor >= len(h.flatItems) {
+					h.cursor = max(0, len(h.flatItems)-1)
+				}
 			}
 			h.saveInstances()
 		}
@@ -4959,12 +4976,19 @@ func (h *Home) handleMainKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			switch item.Type {
 			case session.ItemTypeGroup:
 				h.groupTree.MoveGroupDown(item.Path)
+				h.rebuildFlatItems()
+				h.moveCursorToGroup(item.Path)
+				if h.cursor >= len(h.flatItems) {
+					h.cursor = max(0, len(h.flatItems)-1)
+				}
 			case session.ItemTypeSession:
+				sessionID := item.Session.ID
 				h.groupTree.MoveSessionDown(item.Session)
-			}
-			h.rebuildFlatItems()
-			if h.cursor < len(h.flatItems)-1 {
-				h.cursor++
+				h.rebuildFlatItems()
+				h.moveCursorToSession(sessionID)
+				if h.cursor >= len(h.flatItems) {
+					h.cursor = max(0, len(h.flatItems)-1)
+				}
 			}
 			h.saveInstances()
 		}
