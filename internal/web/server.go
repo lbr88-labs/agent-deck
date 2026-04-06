@@ -114,6 +114,8 @@ func NewServer(cfg Config) *Server {
 	mux.HandleFunc("/api/costs/stream", s.handleCostsStream)
 	mux.HandleFunc("/costs", s.handleCostsPage)
 
+	mux.HandleFunc("/api/system/stats", s.handleSystemStats)
+
 	handler := withRecover(mux)
 
 	s.httpServer = &http.Server{

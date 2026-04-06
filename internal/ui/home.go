@@ -31,6 +31,7 @@ import (
 	"github.com/asheshgoplani/agent-deck/internal/logging"
 	"github.com/asheshgoplani/agent-deck/internal/session"
 	"github.com/asheshgoplani/agent-deck/internal/statedb"
+	"github.com/asheshgoplani/agent-deck/internal/sysinfo"
 	"github.com/asheshgoplani/agent-deck/internal/tmux"
 	"github.com/asheshgoplani/agent-deck/internal/update"
 	"github.com/asheshgoplani/agent-deck/internal/web"
@@ -393,6 +394,10 @@ type Home struct {
 	costRefreshTime   time.Time
 	showCostDashboard bool
 	costDashboard     costDashboard
+
+	// System stats collector (CPU, RAM, disk, etc.)
+	sysStatsCollector *sysinfo.Collector
+	sysStatsConfig    session.SystemStatsSettings
 }
 
 // reloadState preserves UI state during storage reload
@@ -704,8 +709,14 @@ func NewHomeWithProfileAndMode(profile string) *Home {
 	// Cache full-repaint setting (config.toml [display] full_repaint or AGENTDECK_REPAINT=full)
 	if cfg, _ := session.LoadUserConfig(); cfg != nil {
 		h.fullRepaint = cfg.Display.GetFullRepaint()
+		h.sysStatsConfig = cfg.SystemStats
 	} else {
 		h.fullRepaint = (session.DisplaySettings{}).GetFullRepaint()
+	}
+
+	// Initialize system stats collector if enabled
+	if h.sysStatsConfig.GetEnabled() {
+		h.sysStatsCollector = sysinfo.NewCollector(h.sysStatsConfig.GetRefreshSeconds(), nil)
 	}
 
 	// Keep settings panel profile-aware so profile overrides (e.g., Claude config dir)
@@ -1483,6 +1494,11 @@ func (h *Home) Init() tea.Cmd {
 	if _, err := os.Stat(configPath); os.IsNotExist(err) {
 		h.setupWizard.Show()
 		h.setupWizard.SetSize(h.width, h.height)
+	}
+
+	// Start system stats collection
+	if h.sysStatsCollector != nil {
+		h.sysStatsCollector.Start()
 	}
 
 	cmds := []tea.Cmd{
@@ -5703,6 +5719,10 @@ func (h *Home) performQuit(shutdownPool bool) tea.Cmd {
 // This is called via quitMsg after the splash screen has had time to render
 func (h *Home) performFinalShutdown(shutdownPool bool) tea.Cmd {
 	return func() tea.Msg {
+		// Stop system stats collector
+		if h.sysStatsCollector != nil {
+			h.sysStatsCollector.Stop()
+		}
 		// Signal background worker to stop
 		h.cancel()
 		// Wait for background worker to finish (prevents race on shutdown)
@@ -7535,6 +7555,16 @@ func (h *Home) View() string {
 		stats += statsSep + costText
 	}
 	_ = weekMicro // reserved for future weekly display
+
+	// System stats segment (CPU, RAM, etc.)
+	if h.sysStatsCollector != nil {
+		sysStats := h.sysStatsCollector.Get()
+		formatted := sysinfo.Format(sysStats, h.sysStatsConfig.GetFormat(), h.sysStatsConfig.GetShow())
+		if formatted != "" {
+			sysStyle := lipgloss.NewStyle().Foreground(ColorComment)
+			stats += statsSep + sysStyle.Render(formatted)
+		}
+	}
 
 	// Version badge (right-aligned, subtle inline style - no border to keep single line)
 	versionStyle := lipgloss.NewStyle().
@@ -9946,19 +9976,27 @@ func (h *Home) renderPreviewPane(width, height int) string {
 			if len(hints) == 0 {
 				hints = append(hints, "Create or import sessions to get started")
 			}
-			return renderEmptyStateResponsive(EmptyStateConfig{
+			content := renderEmptyStateResponsive(EmptyStateConfig{
 				Icon:     "✦",
 				Title:    "Ready to Go",
 				Subtitle: "Your workspace is set up",
 				Hints:    hints,
 			}, width, height)
+			if statsBlock := h.renderSystemStatsBlock(width); statsBlock != "" {
+				content += "\n" + statsBlock
+			}
+			return content
 		}
-		return renderEmptyStateResponsive(EmptyStateConfig{
+		content := renderEmptyStateResponsive(EmptyStateConfig{
 			Icon:     "◇",
 			Title:    "No Selection",
 			Subtitle: "Select a session to preview",
 			Hints:    nil,
 		}, width, height)
+		if statsBlock := h.renderSystemStatsBlock(width); statsBlock != "" {
+			content += "\n" + statsBlock
+		}
+		return content
 	}
 
 	item := h.flatItems[h.cursor]
@@ -11611,4 +11649,101 @@ func getSessionContent(inst *session.Instance) (string, error) {
 	}
 
 	return content, nil
+}
+
+// renderSystemStatsBlock renders a detailed system stats block for the empty state preview pane.
+func (h *Home) renderSystemStatsBlock(width int) string {
+	if h.sysStatsCollector == nil {
+		return ""
+	}
+
+	stats := h.sysStatsCollector.Get()
+	show := h.sysStatsConfig.GetShow()
+	showSet := make(map[string]bool, len(show))
+	for _, s := range show {
+		showSet[s] = true
+	}
+
+	labelStyle := lipgloss.NewStyle().Foreground(ColorComment).Width(8)
+	valStyle := lipgloss.NewStyle().Foreground(ColorText)
+	barWidth := width - 20
+	if barWidth < 10 {
+		barWidth = 10
+	}
+	if barWidth > 40 {
+		barWidth = 40
+	}
+
+	var lines []string
+
+	titleStyle := lipgloss.NewStyle().Foreground(ColorAccent).Bold(true)
+	lines = append(lines, titleStyle.Render("  System"))
+	lines = append(lines, "")
+
+	if showSet["cpu"] && stats.CPU.Available {
+		bar := renderBar(stats.CPU.UsagePercent, barWidth)
+		lines = append(lines, fmt.Sprintf("  %s %s %s", labelStyle.Render("CPU"), bar, valStyle.Render(fmt.Sprintf("%.0f%%", stats.CPU.UsagePercent))))
+	}
+	if showSet["ram"] && stats.Memory.Available {
+		bar := renderBar(stats.Memory.UsagePercent, barWidth)
+		used := sysinfo.FormatBytes(stats.Memory.UsedBytes)
+		total := sysinfo.FormatBytes(stats.Memory.TotalBytes)
+		lines = append(lines, fmt.Sprintf("  %s %s %s", labelStyle.Render("RAM"), bar, valStyle.Render(fmt.Sprintf("%s/%s", used, total))))
+	}
+	if showSet["disk"] && stats.Disk.Available {
+		bar := renderBar(stats.Disk.UsagePercent, barWidth)
+		used := sysinfo.FormatBytes(stats.Disk.UsedBytes)
+		total := sysinfo.FormatBytes(stats.Disk.TotalBytes)
+		lines = append(lines, fmt.Sprintf("  %s %s %s", labelStyle.Render("Disk"), bar, valStyle.Render(fmt.Sprintf("%s/%s", used, total))))
+	}
+	if showSet["load"] && stats.Load.Available {
+		lines = append(lines, fmt.Sprintf("  %s %s", labelStyle.Render("Load"), valStyle.Render(fmt.Sprintf("%.2f  %.2f  %.2f", stats.Load.Load1, stats.Load.Load5, stats.Load.Load15))))
+	}
+	if showSet["gpu"] && stats.GPU.Available {
+		bar := renderBar(stats.GPU.UsagePercent, barWidth)
+		label := "GPU"
+		if stats.GPU.Name != "" {
+			label = "GPU"
+		}
+		lines = append(lines, fmt.Sprintf("  %s %s %s", labelStyle.Render(label), bar, valStyle.Render(fmt.Sprintf("%.0f%%", stats.GPU.UsagePercent))))
+	}
+	if showSet["network"] && stats.Network.Available {
+		rx := sysinfo.FormatBytesPerSec(stats.Network.RxBytesPerSec)
+		tx := sysinfo.FormatBytesPerSec(stats.Network.TxBytesPerSec)
+		lines = append(lines, fmt.Sprintf("  %s %s", labelStyle.Render("Net"), valStyle.Render(fmt.Sprintf("↓ %s  ↑ %s", rx, tx))))
+	}
+
+	if len(lines) <= 2 {
+		return ""
+	}
+
+	return strings.Join(lines, "\n")
+}
+
+// renderBar creates an ASCII progress bar: [████░░░░░░]
+func renderBar(percent float64, width int) string {
+	if percent < 0 {
+		percent = 0
+	}
+	if percent > 100 {
+		percent = 100
+	}
+
+	filled := int(percent / 100 * float64(width))
+	empty := width - filled
+
+	var color lipgloss.Color
+	switch {
+	case percent >= 90:
+		color = ColorRed
+	case percent >= 70:
+		color = ColorYellow
+	default:
+		color = ColorGreen
+	}
+
+	filledStyle := lipgloss.NewStyle().Foreground(color)
+	emptyStyle := lipgloss.NewStyle().Foreground(ColorBorder)
+
+	return filledStyle.Render(strings.Repeat("█", filled)) + emptyStyle.Render(strings.Repeat("░", empty))
 }

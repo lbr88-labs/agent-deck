@@ -126,6 +126,9 @@ type UserConfig struct {
 
 	// Costs defines cost tracking and budget settings
 	Costs CostsSettings `toml:"costs"`
+
+	// SystemStats defines system stats display settings (CPU, RAM, etc.)
+	SystemStats SystemStatsSettings `toml:"system_stats"`
 }
 
 // OpenClawSettings configures the OpenClaw gateway connection.
@@ -1992,4 +1995,56 @@ func (c CostsSettings) GetTimezone() string {
 		return c.Timezone
 	}
 	return "Local"
+}
+
+// SystemStatsSettings configures the system stats display in the status bar.
+type SystemStatsSettings struct {
+	// Enabled controls whether system stats are collected and displayed (default: true)
+	Enabled *bool `toml:"enabled"`
+
+	// RefreshSeconds sets the collection interval in seconds (default: 5, min: 2)
+	RefreshSeconds int `toml:"refresh_seconds"`
+
+	// Format controls display density: "compact" (icons), "full" (labels), "minimal" (values only)
+	Format string `toml:"format"`
+
+	// Show lists which stats to display: "cpu", "ram", "disk", "load", "gpu", "network"
+	Show []string `toml:"show"`
+}
+
+// GetEnabled returns whether system stats display is enabled (default: true).
+func (s SystemStatsSettings) GetEnabled() bool {
+	if s.Enabled != nil {
+		return *s.Enabled
+	}
+	return true
+}
+
+// GetRefreshSeconds returns the collection interval, clamped to [2, 300].
+func (s SystemStatsSettings) GetRefreshSeconds() int {
+	if s.RefreshSeconds >= 2 {
+		if s.RefreshSeconds > 300 {
+			return 300
+		}
+		return s.RefreshSeconds
+	}
+	return 5
+}
+
+// GetFormat returns the display format (default: "compact").
+func (s SystemStatsSettings) GetFormat() string {
+	switch s.Format {
+	case "full", "minimal":
+		return s.Format
+	default:
+		return "compact"
+	}
+}
+
+// GetShow returns the list of stats to display. Defaults to cpu, ram, disk, network.
+func (s SystemStatsSettings) GetShow() []string {
+	if len(s.Show) > 0 {
+		return s.Show
+	}
+	return []string{"cpu", "ram", "disk", "network"}
 }
