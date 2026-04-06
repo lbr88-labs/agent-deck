@@ -1896,6 +1896,7 @@ func (i *Instance) Start() error {
 	// Sandbox sessions also get remain-on-exit for dead-pane detection.
 	i.tmuxSession.OptionOverrides = i.buildTmuxOptionOverrides()
 	i.tmuxSession.RunCommandAsInitialProcess = i.IsSandboxed()
+	i.tmuxSession.LaunchInUserScope = GetTmuxSettings().GetLaunchInUserScope()
 
 	// Start the tmux session
 	if err := i.tmuxSession.Start(command); err != nil {
@@ -2012,6 +2013,7 @@ func (i *Instance) StartWithMessage(message string) error {
 	// Sandbox sessions also get remain-on-exit for dead-pane detection.
 	i.tmuxSession.OptionOverrides = i.buildTmuxOptionOverrides()
 	i.tmuxSession.RunCommandAsInitialProcess = i.IsSandboxed()
+	i.tmuxSession.LaunchInUserScope = GetTmuxSettings().GetLaunchInUserScope()
 
 	// Start the tmux session
 	if err := i.tmuxSession.Start(command); err != nil {
@@ -3966,6 +3968,7 @@ func (i *Instance) Restart() error {
 	// Sandbox sessions also get remain-on-exit for dead-pane detection.
 	i.tmuxSession.OptionOverrides = i.buildTmuxOptionOverrides()
 	i.tmuxSession.RunCommandAsInitialProcess = i.IsSandboxed()
+	i.tmuxSession.LaunchInUserScope = GetTmuxSettings().GetLaunchInUserScope()
 
 	mcpLog.Debug("restart_starting_new_session", slog.String("command", command))
 
