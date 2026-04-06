@@ -708,6 +708,9 @@ func TestGetLayoutMode(t *testing.T) {
 }
 
 func TestHandleMainKeyEditNotesStartsEditor(t *testing.T) {
+	enabled := true
+	setPreviewShowNotesConfigForTest(t, &enabled)
+
 	home := NewHome()
 	home.width = 100
 	home.height = 30
@@ -967,6 +970,50 @@ func TestHandleMainKeyEditNotesDisabledWhenShowNotesFalse(t *testing.T) {
 	}
 	if h.notesEditingSessionID != "" {
 		t.Fatalf("notesEditingSessionID = %q, want empty", h.notesEditingSessionID)
+	}
+}
+
+func TestHandleMainKeyEditNotesDisabledByDefault(t *testing.T) {
+	// When no config exists (nil show_notes), notes should be OFF by default.
+	setPreviewShowNotesConfigForTest(t, nil)
+
+	home := NewHome()
+	home.width = 100
+	home.height = 30
+
+	inst := session.NewInstance("notes-default-off", t.TempDir())
+	home.flatItems = []session.Item{{Type: session.ItemTypeSession, Session: inst}}
+	home.cursor = 0
+
+	model, _ := home.handleMainKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'e'}})
+	h, ok := model.(*Home)
+	if !ok {
+		t.Fatal("handleMainKey should return *Home")
+	}
+	if h.notesEditing {
+		t.Fatal("notes editor should remain disabled when show_notes is not configured (default off)")
+	}
+}
+
+func TestHandleMainKeyEditNotesEnabledWhenShowNotesTrue(t *testing.T) {
+	enabled := true
+	setPreviewShowNotesConfigForTest(t, &enabled)
+
+	home := NewHome()
+	home.width = 100
+	home.height = 30
+
+	inst := session.NewInstance("notes-enabled", t.TempDir())
+	home.flatItems = []session.Item{{Type: session.ItemTypeSession, Session: inst}}
+	home.cursor = 0
+
+	model, _ := home.handleMainKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'e'}})
+	h, ok := model.(*Home)
+	if !ok {
+		t.Fatal("handleMainKey should return *Home")
+	}
+	if !h.notesEditing {
+		t.Fatal("notes editor should be enabled when show_notes=true")
 	}
 }
 

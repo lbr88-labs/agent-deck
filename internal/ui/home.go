@@ -10489,7 +10489,7 @@ func (h *Home) renderPreviewPane(width, height int) string {
 	showAnalytics := config != nil && config.GetShowAnalytics() &&
 		(session.IsClaudeCompatible(selected.Tool) || selected.Tool == "gemini")
 	showOutput := config == nil || config.GetShowOutput() // Default to true if config fails
-	showNotes := config == nil || config.GetShowNotes()   // Default to true if config fails
+	showNotes := config != nil && config.GetShowNotes() // Default to false if config fails
 	notesOutputSplit := 0.33
 	if config != nil {
 		notesOutputSplit = config.Preview.GetNotesOutputSplit()

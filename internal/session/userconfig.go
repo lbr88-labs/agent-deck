@@ -306,7 +306,7 @@ type PreviewSettings struct {
 	ShowAnalytics *bool `toml:"show_analytics"`
 
 	// ShowNotes shows session notes section in preview pane
-	// Default: true (pointer to distinguish "not set" from "explicitly false")
+	// Default: false (pointer to distinguish "not set" from "explicitly true")
 	ShowNotes *bool `toml:"show_notes"`
 
 	// Analytics configures which sections to show in the analytics panel
@@ -444,10 +444,10 @@ func (p *PreviewSettings) GetAnalyticsSettings() AnalyticsDisplaySettings {
 	return p.Analytics
 }
 
-// GetShowNotes returns whether to show notes section, defaulting to true
+// GetShowNotes returns whether to show notes section, defaulting to false
 func (p *PreviewSettings) GetShowNotes() bool {
 	if p.ShowNotes == nil {
-		return true // Default: notes ON
+		return false // Default: notes OFF
 	}
 	return *p.ShowNotes
 }
@@ -516,7 +516,7 @@ func (c *UserConfig) GetShowAnalytics() bool {
 	return c.Preview.GetShowAnalytics()
 }
 
-// GetShowNotes returns whether to show notes section, defaulting to true
+// GetShowNotes returns whether to show notes section, defaulting to false
 func (c *UserConfig) GetShowNotes() bool {
 	return c.Preview.GetShowNotes()
 }
@@ -1635,7 +1635,7 @@ func CreateExampleConfig() error {
 
 # Preview settings (optional)
 # [preview]
-# show_notes = true
+# show_notes = false
 # notes_output_split = 0.33
 
 # Claude Code integration
