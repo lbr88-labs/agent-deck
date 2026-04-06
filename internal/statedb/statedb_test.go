@@ -903,7 +903,7 @@ func TestMigrate_OldSchema_SchemaVersionUpdated(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetMeta after migrate: %v", err)
 	}
-	expected := "3" // current SchemaVersion
+	expected := "4" // current SchemaVersion
 	if postVersion != expected {
 		t.Errorf("expected schema_version=%s after migrate, got %q", expected, postVersion)
 	}

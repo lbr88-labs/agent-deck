@@ -586,7 +586,7 @@ func TestNewDialog_ShowInGroup_ResetsMultiRepo(t *testing.T) {
 	dialog.multiRepoPathCursor = 1
 	dialog.multiRepoEditing = true
 
-	dialog.ShowInGroup("projects", "Projects", "")
+	dialog.ShowInGroup("projects", "Projects", "", nil, "")
 
 	if dialog.multiRepoEnabled {
 		t.Error("multiRepoEnabled should be reset to false on ShowInGroup")
