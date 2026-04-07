@@ -94,7 +94,11 @@ export function GroupRow({ item }) {
         <span class="dark:text-tn-muted/60 text-gray-400 font-normal">
           (${countVisibleChildren(group.path, searchQuerySignal.value)})
         </span>
-        <span class="hidden group-hover:flex items-center gap-0.5 flex-shrink-0">
+        <span
+          onClick=${(e) => e.stopPropagation()}
+          onMouseDown=${(e) => e.stopPropagation()}
+          class="hidden group-hover:flex items-center gap-0.5 flex-shrink-0"
+        >
           <button type="button" onClick=${handleCreateGroup} title="New subgroup" aria-label="Create subgroup"
             class="min-w-[36px] min-h-[36px] flex items-center justify-center rounded
                    dark:text-tn-muted hover:dark:text-tn-blue hover:text-gray-700 transition-colors">
