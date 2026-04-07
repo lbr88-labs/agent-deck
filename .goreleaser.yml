@@ -6,7 +6,10 @@ version: 2
 before:
   hooks:
     - go mod tidy
-    - go generate ./internal/web/...
+    # Note: go generate is intentionally NOT run here.
+    # styles.css is a committed artifact with a drift gate enforced via lefthook
+    # and make css-verify. Release builds use the committed CSS directly to
+    # avoid requiring tailwindcss in the CI environment.
 
 env:
   - GOTOOLCHAIN=go1.24.0
