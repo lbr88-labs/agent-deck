@@ -86,8 +86,8 @@ export function SearchFilter() {
                  dark:text-tn-fg text-gray-900
                  dark:border-tn-muted/30 border-gray-300 border
                  dark:placeholder-tn-muted placeholder-gray-400
-                 focus:outline-none focus:ring-1 focus:dark:ring-tn-blue focus:ring-blue-500
-                 transition-colors"
+                 focus:outline focus:outline-2 focus:outline-blue-500 focus:dark:outline-tn-blue
+                 transition-[background-color,box-shadow] duration-150"
         />
         ${searchQuerySignal.value && html`
           <button
