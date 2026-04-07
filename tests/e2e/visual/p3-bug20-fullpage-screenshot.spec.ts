@@ -50,6 +50,27 @@ test.describe('BUG #20 / COSM-02 — full-page screenshot helper', () => {
     await page.goto('/?t=test');
     await page.waitForSelector('header', { state: 'attached', timeout: 15000 });
 
+    // The v1.3.4 redesign uses a fixed-viewport TUI layout — every
+    // internal pane is `overflow: hidden` and sized to viewport, so the
+    // app's own content never overflows 800px in the `_test` profile.
+    // The helper's job is to enable full-page capture of tall content
+    // that WOULD be clipped by body { overflow: hidden }. To exercise
+    // that behavior deterministically (independent of fixture data), we
+    // append a 2000px sentinel div to the body before the screenshot.
+    // Without the helper, `page.screenshot({ fullPage: true })` throws
+    // "Unable to capture screenshot" because body.offsetHeight stays at
+    // viewport height (800) while scrollHeight is 2800 — Playwright's
+    // fullPage walker errors on that mismatch under body { overflow:
+    // hidden }. With the helper, body.offsetHeight grows to 2800 and
+    // the full document is captured.
+    await page.evaluate(() => {
+      const sentinel = document.createElement('div');
+      sentinel.id = 'cosm02-sentinel';
+      sentinel.style.cssText =
+        'width: 100%; height: 2000px; background: linear-gradient(#ff0000, #0000ff);';
+      document.body.appendChild(sentinel);
+    });
+
     await expandForFullPageScreenshot(page);
 
     const buf = await page.screenshot({ fullPage: true });
@@ -57,9 +78,16 @@ test.describe('BUG #20 / COSM-02 — full-page screenshot helper', () => {
 
     await collapseAfterFullPageScreenshot(page);
 
+    // Clean up the sentinel so other tests in the describe block start
+    // from a clean DOM.
+    await page.evaluate(() => {
+      const s = document.getElementById('cosm02-sentinel');
+      if (s && s.parentNode) s.parentNode.removeChild(s);
+    });
+
     expect(
       height,
-      `full-page screenshot height (${height}) must exceed viewport height (800) — proves expandForFullPageScreenshot bypassed body { overflow: hidden } and Playwright captured the full document. If this fails to 800, the helper did not inject the overflow override.`,
+      `full-page screenshot height (${height}) must exceed viewport height (800) — proves expandForFullPageScreenshot bypassed body { overflow: hidden } and Playwright captured the full 2800px document (800px app shell + 2000px sentinel). If this fails to 800, the helper did not inject the overflow override or did not override the inline position:fixed on #app-root.`,
     ).toBeGreaterThan(800);
   });
 
