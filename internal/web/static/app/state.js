@@ -27,9 +27,46 @@ export const authTokenSignal = signal('')
 export const sessionCostsSignal = signal({})
 
 // Sidebar open state (for tablet/phone responsive toggle)
-export const sidebarOpenSignal = signal(
-  localStorage.getItem('agentdeck.sidebarOpen') !== 'false'
-)
+// LAYT-05: explicit localStorage value wins; otherwise default based on viewport
+// (open on tablet/desktop >= 768px, closed on phone < 768px). Prevents the
+// mobile sidebar overlay from covering the terminal on cold load.
+function initialSidebarOpen() {
+  try {
+    const stored = localStorage.getItem('agentdeck.sidebarOpen')
+    if (stored === 'true') return true
+    if (stored === 'false') return false
+  } catch (_) {
+    // localStorage may throw in incognito/privacy modes; fall through to viewport default.
+  }
+  return typeof window !== 'undefined' && window.innerWidth >= 768
+}
+export const sidebarOpenSignal = signal(initialSidebarOpen())
+
+// Sidebar width in pixels, persisted to localStorage. LAYT-01 (BUG #4 + #10).
+// Clamped to [200, 480]; default 280. Mobile overlay ignores this (keeps w-72 = 288px).
+const SIDEBAR_WIDTH_MIN = 200
+const SIDEBAR_WIDTH_MAX = 480
+const SIDEBAR_WIDTH_DEFAULT = 280
+function clampSidebarWidth(n) {
+  if (!Number.isFinite(n)) return SIDEBAR_WIDTH_DEFAULT
+  if (n < SIDEBAR_WIDTH_MIN) return SIDEBAR_WIDTH_MIN
+  if (n > SIDEBAR_WIDTH_MAX) return SIDEBAR_WIDTH_MAX
+  return Math.round(n)
+}
+function initialSidebarWidth() {
+  try {
+    const stored = localStorage.getItem('sidebar-width')
+    if (stored != null) {
+      const n = parseInt(stored, 10)
+      return clampSidebarWidth(n)
+    }
+  } catch (_) {
+    // localStorage may throw in incognito/privacy modes; fall through.
+  }
+  return SIDEBAR_WIDTH_DEFAULT
+}
+export const sidebarWidthSignal = signal(initialSidebarWidth())
+export { SIDEBAR_WIDTH_MIN, SIDEBAR_WIDTH_MAX, SIDEBAR_WIDTH_DEFAULT, clampSidebarWidth }
 
 // Focused session ID for keyboard navigation (NOT array index, stable across SSE updates)
 // Lives in state.js (not SessionList.js) so useKeyboardNav.js can import it without a circular dependency.

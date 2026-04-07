@@ -8,10 +8,10 @@ import { PushControls } from './PushControls.js'
 
 export function Topbar({ onToggleSidebar, sidebarOpen }) {
   return html`
-    <header class="flex items-center justify-between flex-wrap px-sp-12 py-sp-8
+    <header class="flex items-center justify-between px-sp-12 py-sp-8
       dark:bg-tn-panel bg-white border-b dark:border-tn-muted/20 border-gray-200
       flex-shrink-0 relative z-50">
-      <div class="flex items-center gap-3">
+      <div class="flex items-center gap-3 min-w-0">
         <button
           type="button"
           onClick=${onToggleSidebar}
@@ -36,10 +36,10 @@ export function Topbar({ onToggleSidebar, sidebarOpen }) {
             <rect x="14" y="28" width="16" height="3" rx="1.5" fill="#73daca"/>
             <circle cx="34" cy="29.5" r="2" fill="#73daca"/>
           </svg>
-          <span class="font-semibold text-sm dark:text-tn-fg text-gray-900">Agent Deck</span>
+          <span class="font-semibold text-sm dark:text-tn-fg text-gray-900 md:hidden lg:inline">Agent Deck</span>
         </span>
       </div>
-      <div class="flex items-center gap-3">
+      <div class="flex items-center gap-3 flex-shrink-0">
         <button
           type="button"
           onClick=${() => { activeTabSignal.value = activeTabSignal.value === 'costs' ? 'terminal' : 'costs' }}

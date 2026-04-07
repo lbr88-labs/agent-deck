@@ -165,6 +165,13 @@ test.describe('BUG #1 / CRIT-01 — group header click toggles without removing'
   });
 
   test('mobile 375x812: single click on a group flips aria-expanded without removing it', async ({ page }) => {
+    // Phase 3 / LAYT-05 made the mobile sidebar default to closed. The sidebar
+    // (and thus the group buttons) is off-screen on cold load. Force the
+    // sidebar open via localStorage BEFORE the Preact app boots so the test
+    // can interact with the group toggles.
+    await page.addInitScript(() => {
+      try { window.localStorage.setItem('agentdeck.sidebarOpen', 'true'); } catch (_) {}
+    });
     const errors = await gotoWithErrorListener(page, { width: 375, height: 812 });
     const count = await page.locator('#preact-session-list button[aria-expanded]').count();
     test.skip(count === 0, 'no fixture groups on mobile');

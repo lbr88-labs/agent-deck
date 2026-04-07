@@ -1,7 +1,23 @@
 // EmptyStateDashboard.js -- Empty state shown in the content area when no session is selected.
-// Displays live session counts (running/waiting/error), quick action buttons, and keyboard hints.
+// Displays live session counts (running/waiting/error), a "Recently active" list of up to 5
+// sessions when any exist (LAYT-07), quick action buttons, and keyboard hints.
 import { html } from 'htm/preact'
-import { sessionsSignal, createSessionDialogSignal, groupNameDialogSignal } from './state.js'
+import { sessionsSignal, selectedIdSignal, createSessionDialogSignal, groupNameDialogSignal } from './state.js'
+
+// Status priority for sorting the Recently active list: running > waiting > others.
+const STATUS_PRIORITY = {
+  running: 0,
+  starting: 1,
+  waiting: 2,
+  idle: 3,
+  error: 4,
+  stopped: 5,
+}
+
+function statusPriority(status) {
+  if (status in STATUS_PRIORITY) return STATUS_PRIORITY[status]
+  return 99
+}
 
 export function EmptyStateDashboard() {
   const items = sessionsSignal.value
@@ -12,12 +28,27 @@ export function EmptyStateDashboard() {
   const error = sessions.filter(s => s.session.status === 'error').length
   const total = sessions.length
 
+  // Recently active: sort by status priority, then by id for stable ordering; take first 5.
+  const recentlyActive = sessions
+    .slice()
+    .sort((a, b) => {
+      const pa = statusPriority(a.session.status)
+      const pb = statusPriority(b.session.status)
+      if (pa !== pb) return pa - pb
+      return String(a.session.id).localeCompare(String(b.session.id))
+    })
+    .slice(0, 5)
+
   function openNewSession() {
     createSessionDialogSignal.value = true
   }
 
   function openNewGroup() {
     groupNameDialogSignal.value = { mode: 'create', groupPath: '', currentName: '', onSubmit: null }
+  }
+
+  function selectRecent(id) {
+    selectedIdSignal.value = id
   }
 
   return html`
@@ -49,6 +80,31 @@ export function EmptyStateDashboard() {
           <span class="text-xs dark:text-tn-muted text-gray-400">Error</span>
         </div>
       </div>
+
+      ${total > 0 && html`
+        <div class="flex flex-col items-center gap-sp-8 w-full max-w-sm">
+          <span class="text-xs font-semibold uppercase tracking-wide dark:text-tn-muted text-gray-500">Recently active</span>
+          <ul class="flex flex-col gap-1 w-full" role="list">
+            ${recentlyActive.map(item => html`
+              <li key=${item.session.id}>
+                <button
+                  type="button"
+                  onClick=${() => selectRecent(item.session.id)}
+                  class="w-full min-w-0 flex items-center gap-sp-8 px-sp-12 py-2 min-h-[44px] rounded text-left text-sm
+                         dark:bg-tn-muted/10 bg-gray-50 dark:hover:bg-tn-muted/20 hover:bg-gray-100 transition-colors
+                         dark:text-tn-fg text-gray-700"
+                  data-session-id=${item.session.id}
+                  title=${item.session.title || item.session.id}
+                >
+                  <span class="w-2 h-2 rounded-full flex-shrink-0 ${item.session.status === 'running' || item.session.status === 'starting' ? 'bg-tn-green' : item.session.status === 'waiting' ? 'bg-tn-yellow' : item.session.status === 'error' ? 'bg-tn-red' : 'bg-tn-muted'}"></span>
+                  <span class="flex-1 truncate min-w-0" title=${item.session.title || item.session.id}>${item.session.title || item.session.id}</span>
+                  <span class="text-xs dark:text-tn-muted text-gray-400 flex-shrink-0">${item.session.status}</span>
+                </button>
+              </li>
+            `)}
+          </ul>
+        </div>
+      `}
 
       <div class="flex gap-sp-12">
         <button
