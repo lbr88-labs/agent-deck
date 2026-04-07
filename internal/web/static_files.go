@@ -8,6 +8,8 @@ import (
 	"strings"
 )
 
+//go:generate tailwindcss -i ./static/styles.src.css -o ./static/styles.css --minify
+
 //go:embed static/*
 var embeddedStaticFiles embed.FS
 

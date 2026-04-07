@@ -1,16 +1,77 @@
-.PHONY: build run install clean dev release-local test fmt lint ci
+.PHONY: build run install clean dev release-local test fmt lint ci css tools css-verify
 
 BINARY_NAME=agent-deck
 BUILD_DIR=./build
 VERSION=$(shell git describe --tags --always --dirty 2>/dev/null | sed 's/^v//' || echo "dev")
 LDFLAGS=-ldflags "-X main.Version=$(VERSION)"
 
+# Tailwind v4 standalone CLI (PERF-01)
+TAILWIND_VERSION=v4.2.2
+TAILWIND_BIN=$(HOME)/.local/bin/tailwindcss
+
 # Pin Go toolchain to 1.24.0 to prevent Go 1.25+ runtime regression on macOS
 export GOTOOLCHAIN=go1.24.0
 
-# Build the binary
-build:
+# Build the binary (requires compiled CSS via `make css`)
+build: css
 	go build $(LDFLAGS) -o $(BUILD_DIR)/$(BINARY_NAME) ./cmd/agent-deck
+
+# Download the pinned Tailwind v4 standalone CLI binary if missing or wrong version
+tools:
+	@mkdir -p $(HOME)/.local/bin
+	@OS=$$(uname -s | tr '[:upper:]' '[:lower:]'); \
+	ARCH=$$(uname -m); \
+	case "$$OS-$$ARCH" in \
+		linux-x86_64)  ASSET=tailwindcss-linux-x64 ;; \
+		linux-aarch64) ASSET=tailwindcss-linux-arm64 ;; \
+		darwin-arm64)  ASSET=tailwindcss-macos-arm64 ;; \
+		darwin-x86_64) ASSET=tailwindcss-macos-x64 ;; \
+		*) echo "ERROR: unsupported host $$OS-$$ARCH for Tailwind binary" && exit 1 ;; \
+	esac; \
+	if [ -x "$(TAILWIND_BIN)" ] && "$(TAILWIND_BIN)" --help 2>&1 | grep -q "$(TAILWIND_VERSION)"; then \
+		echo "tailwindcss $(TAILWIND_VERSION) already installed at $(TAILWIND_BIN)"; \
+	else \
+		echo "Downloading tailwindcss $(TAILWIND_VERSION) ($$ASSET) ..."; \
+		curl -sSL -o "$(TAILWIND_BIN)" \
+			"https://github.com/tailwindlabs/tailwindcss/releases/download/$(TAILWIND_VERSION)/$$ASSET"; \
+		chmod +x "$(TAILWIND_BIN)"; \
+		echo "Installed: $$( "$(TAILWIND_BIN)" --help 2>&1 | head -1 )"; \
+	fi
+
+# Compile Tailwind CSS (PERF-01 — replaces vendor/tailwind.js Play CDN runtime)
+# Runs the brute-force diff gate (Pitfall #1 mitigation): generate twice and
+# diff. Fails on any class present in brute-force output but missing from
+# targeted globs unless explicitly allowlisted.
+css: tools
+	@echo "==> Compiling Tailwind CSS (targeted globs)"
+	$(TAILWIND_BIN) -i ./internal/web/static/styles.src.css \
+		-o ./internal/web/static/styles.css \
+		--minify
+	@echo "==> Brute-force globbing diff (Pitfall #1 gate)"
+	@printf '@import "tailwindcss";\n@source "%s/**/*.{js,mjs,html}";\n' "$(CURDIR)/internal/web/static" > /tmp/agent-deck-tw-brute.src.css
+	@$(TAILWIND_BIN) -i /tmp/agent-deck-tw-brute.src.css \
+		-o /tmp/agent-deck-tw-brute.css \
+		--minify
+	@if ! diff -q ./internal/web/static/styles.css /tmp/agent-deck-tw-brute.css >/dev/null 2>&1; then \
+		if [ -f ./internal/web/static/.tailwind-allowlist.txt ]; then \
+			echo "Brute-force diff non-empty but allowlist file present; review manually."; \
+		else \
+			echo "ERROR: brute-force @source diff non-empty (Pitfall #1). Add classes to internal/web/static/.tailwind-allowlist.txt or fix @source globs in styles.src.css." >&2; \
+			diff ./internal/web/static/styles.css /tmp/agent-deck-tw-brute.css | head -40; \
+			exit 1; \
+		fi; \
+	fi
+	@SIZE=$$(gzip -c ./internal/web/static/styles.css | wc -c); \
+	echo "==> Compiled styles.css gzipped size: $$SIZE bytes"; \
+	if [ "$$SIZE" -gt 8192 ]; then \
+		echo "ERROR: gzipped size $$SIZE exceeds 8192-byte sanity ceiling"; \
+		exit 1; \
+	fi
+
+# Drift gate: regenerate CSS and fail if committed file differs from generated
+css-verify: css
+	@git diff --exit-code -- ./internal/web/static/styles.css || \
+		(echo "ERROR: internal/web/static/styles.css drifted from generated output. Run 'make css' and commit." && exit 1)
 
 # Run in development
 run:
