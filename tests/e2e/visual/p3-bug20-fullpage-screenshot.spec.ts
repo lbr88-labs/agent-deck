@@ -4,7 +4,7 @@ import { join } from 'path';
 import {
   expandForFullPageScreenshot,
   collapseAfterFullPageScreenshot,
-} from './screenshot-helpers.js';
+} from './screenshot-helpers';
 
 /**
  * Phase 4 / Plan 02 / Task 1: BUG #20 / COSM-02 regression test
