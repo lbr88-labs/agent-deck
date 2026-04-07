@@ -54,6 +54,36 @@ function formatErrors(errors: CapturedError[]): string {
   return errors.map((e, i) => `  [${i}] ${e.name}: ${e.message}`).join('\n');
 }
 
+/**
+ * Click the group header by targeting the arrow glyph (▸ or ▾) which is the
+ * first child span of the outer button. GroupRow.js wraps three nested action
+ * buttons (Create subgroup / Rename / Delete) inside the same outer button.
+ * Those nested buttons are `opacity-0 group-hover:opacity-100` but still
+ * capture clicks (Tailwind opacity-0 does not imply pointer-events-none), so
+ * Playwright's default centre-click on the outer button resolves onto the
+ * Create-subgroup button and opens the group-name dialog overlay, which then
+ * blocks any subsequent click. Targeting the arrow span is the stable way to
+ * hit the toggle area without hitting a nested action button. The span has no
+ * onClick of its own so the event bubbles up to the outer button's toggleGroup
+ * handler — which is the production click path any real user with a cursor
+ * would take when clicking the arrow or group name.
+ *
+ * This is a Phase 2 test-design accommodation. The invisible-but-clickable
+ * action buttons are tracked as a separate UX concern outside the Phase 2 P0
+ * scope.
+ */
+async function clickGroupToggle(
+  page: import('@playwright/test').Page,
+  button: import('@playwright/test').Locator,
+): Promise<void> {
+  // The arrow is the first span child of the outer button (see GroupRow.js
+  // line 54). The title span is the second child. Either avoids the nested
+  // action buttons in the third child span.
+  const arrow = button.locator('> span').first();
+  await arrow.click();
+  await page.waitForTimeout(150); // allow signal + Preact rerender
+}
+
 test.describe('BUG #1 / CRIT-01 — group header click toggles without removing', () => {
   test('desktop 1280x800: single click on a group flips aria-expanded without removing it', async ({ page }) => {
     const errors = await gotoWithErrorListener(page, { width: 1280, height: 800 });
@@ -64,8 +94,7 @@ test.describe('BUG #1 / CRIT-01 — group header click toggles without removing'
     const initialState = await target.getAttribute('aria-expanded');
     expect(initialState, 'initial aria-expanded must be "true" or "false"').toMatch(/^(true|false)$/);
 
-    await target.click();
-    await page.waitForTimeout(150); // allow signal + Preact rerender
+    await clickGroupToggle(page, target);
 
     // The clicked button must still be attached.
     await expect(target, 'clicked group must still be attached to the DOM').toBeAttached();
@@ -87,11 +116,9 @@ test.describe('BUG #1 / CRIT-01 — group header click toggles without removing'
 
     const target = page.locator('#preact-session-list button[aria-expanded]').first();
     const initial = await target.getAttribute('aria-expanded');
-    await target.click();
-    await page.waitForTimeout(150);
+    await clickGroupToggle(page, target);
     await expect(target).toBeAttached();
-    await target.click();
-    await page.waitForTimeout(150);
+    await clickGroupToggle(page, target);
     await expect(target).toBeAttached();
 
     const afterRoundTrip = await target.getAttribute('aria-expanded');
@@ -123,10 +150,8 @@ test.describe('BUG #1 / CRIT-01 — group header click toggles without removing'
     for (let i = 0; i < initialCount; i++) {
       const target = page.locator('#preact-session-list button[aria-expanded]').nth(i);
       if ((await target.count()) === 0) continue; // hidden by collapsed ancestor
-      await target.click();
-      await page.waitForTimeout(100);
-      await target.click();
-      await page.waitForTimeout(100);
+      await clickGroupToggle(page, target);
+      await clickGroupToggle(page, target);
     }
 
     const finalCount = await page.locator('#preact-session-list button[aria-expanded]').count();
@@ -146,8 +171,7 @@ test.describe('BUG #1 / CRIT-01 — group header click toggles without removing'
 
     const target = page.locator('#preact-session-list button[aria-expanded]').first();
     const initial = await target.getAttribute('aria-expanded');
-    await target.click();
-    await page.waitForTimeout(150);
+    await clickGroupToggle(page, target);
     await expect(target).toBeAttached();
     const after = await target.getAttribute('aria-expanded');
     expect(after, `mobile aria-expanded after click must differ from initial (${initial})`).not.toBe(initial);
