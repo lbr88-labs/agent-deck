@@ -69,3 +69,6 @@ export const searchVisibleSignal = signal(false)
 
 // Global error toasts (Issue F)
 export const toastsSignal = signal([])
+
+// Keyboard shortcuts overlay open/close (BUG #14 / UX-03)
+export const shortcutsOverlaySignal = signal(false)
