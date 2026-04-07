@@ -84,7 +84,7 @@ export function SessionRow({ item, focused }) {
         onClick=${handleClick}
         onMouseEnter=${() => setHovered(true)}
         onMouseLeave=${() => setHovered(false)}
-        class="group w-full flex items-center gap-sp-8 px-sp-12 py-2.5 min-h-[44px] rounded text-left text-sm
+        class="group w-full min-w-0 flex items-center gap-sp-8 px-sp-12 py-2.5 min-h-[44px] rounded text-left text-sm
           transition-colors border-l-2
           ${isSelected
             ? 'border-tn-blue dark:bg-tn-blue/25 bg-blue-100 dark:text-tn-fg text-gray-900 font-medium'

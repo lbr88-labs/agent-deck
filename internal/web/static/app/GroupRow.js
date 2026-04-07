@@ -43,7 +43,7 @@ export function GroupRow({ item }) {
       <button
         type="button"
         onClick=${() => toggleGroup(group.path, group.expanded)}
-        class="group w-full flex items-center gap-sp-8 px-sp-12 py-2.5 min-h-[44px] text-xs font-semibold
+        class="group w-full min-w-0 flex items-center gap-sp-8 px-sp-12 py-2.5 min-h-[44px] text-xs font-semibold
           uppercase tracking-wide dark:text-tn-muted text-gray-500
           dark:bg-tn-muted/5 bg-gray-50/50
           hover:dark:bg-tn-muted/10 hover:bg-gray-100
