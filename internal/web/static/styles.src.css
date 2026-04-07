@@ -9,7 +9,13 @@
  * Do NOT edit styles.css directly — edit this file and rerun `make css`.
  */
 
-@import "tailwindcss";
+/* source(none) disables Tailwind v4's automatic content detection. The
+   only files scanned for utility classes are the ones listed under
+   @source below. This makes the build cwd-invariant so `make css`
+   (from project root) and `go generate ./internal/web/...` (from the
+   package dir) produce byte-identical output — critical for the
+   css-verify drift gate. */
+@import "tailwindcss" source(none);
 
 /* ----- Class-based dark mode preserved from v3 darkMode: 'class' ----- */
 /* Tailwind v4 defaults to prefers-color-scheme. The early-script in
