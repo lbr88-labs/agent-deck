@@ -201,9 +201,13 @@ test.describe('BUG #4 + BUG #10 / LAYT-01 — responsive sidebar width with drag
   });
 
   test('runtime: width persists to localStorage across reload after drag', async ({ page }) => {
-    await initLocalStorage(page, {});
+    // Do NOT use addInitScript here — it would re-clear localStorage on
+    // page.reload() and wipe the dragged-in width. Clear once manually
+    // after the first navigation, then drag + reload.
     await page.setViewportSize({ width: 1280, height: 800 });
     await page.goto('/?t=test');
+    await page.evaluate(() => { try { window.localStorage.clear(); } catch (_) {} });
+    await page.reload();
     await page.waitForSelector('header', { state: 'attached', timeout: 15000 });
     await page.waitForTimeout(200);
 
@@ -223,8 +227,11 @@ test.describe('BUG #4 + BUG #10 / LAYT-01 — responsive sidebar width with drag
     await page.waitForTimeout(300);
 
     const widthBefore = await asideWidth(page);
+    // Confirm localStorage was actually written by the pointerup handler.
+    const stored = await page.evaluate(() => window.localStorage.getItem('sidebar-width'));
+    expect(stored, 'pointerup must have persisted sidebar-width to localStorage').not.toBeNull();
 
-    // Reload the page.
+    // Reload the page (no init script clears localStorage).
     await page.reload();
     await page.waitForSelector('header', { state: 'attached', timeout: 15000 });
     await page.waitForTimeout(200);
