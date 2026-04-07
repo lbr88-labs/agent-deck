@@ -22,7 +22,10 @@ export function App() {
           return
         }
       }
-      // Don't clear selection on popstate to root: user may still want it
+      // Clearing on popstate to / lets the empty dashboard render when the user navigates back.
+      if (path === '/') {
+        selectedIdSignal.value = null
+      }
     }
     window.addEventListener('popstate', onPopState)
     return () => window.removeEventListener('popstate', onPopState)
