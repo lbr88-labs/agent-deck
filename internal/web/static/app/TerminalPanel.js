@@ -315,7 +315,9 @@ export function TerminalPanel() {
           READ-ONLY: terminal input is disabled on mobile
         </div>
       `}
-      <div ref=${containerRef} class="flex-1 min-h-0 overflow-hidden" />
+      <div class="flex-1 min-h-0 p-sp-16 overflow-hidden">
+        <div ref=${containerRef} class="h-full w-full overflow-hidden" />
+      </div>
     </div>
   `
 }
