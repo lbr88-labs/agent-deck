@@ -70,8 +70,23 @@
 /* ===== BEGIN folded contents of original internal/web/static/styles.css ===== */
 /* These rules drive the light/dark theme via CSS custom properties. They
    MUST survive the migration verbatim — the cascade-order verification
-   in plan 03 will fail otherwise. */
+   in plan 03 will fail otherwise.
 
+   PHASE 1 / PLAN 03 NOTE: This entire folded block is wrapped in @layer base
+   so Tailwind utility classes (which live in @layer utilities) win the
+   cascade. Without this wrapper, `body { color: var(--text); background: var(--bg); }`
+   below silently overrode the body's `bg-gray-100 text-gray-900 dark:bg-tn-bg
+   dark:text-tn-fg` Tailwind utilities — the regression Pitfall #2 warned about.
+   The Play CDN era hid this conflict because Tailwind v3 emitted utility
+   classes UNLAYERED (winning by selector specificity 0,1,0 over the body
+   element's 0,0,1). Tailwind v4 emits them in @layer utilities, which by
+   default loses to unlayered rules. Wrapping the folded base/component rules
+   in @layer base restores the precedence contract: utilities > components > base.
+
+   @keyframes is hoisted OUTSIDE the layer block (Tailwind v4 + Lightning CSS
+   tolerate keyframes inside layers, but keeping them at top level is safer
+   and matches the spec convention). */
+@layer base {
 /* ===== Light mode (default) ===== */
 :root {
   /* Palette */
@@ -622,4 +637,5 @@ body {
     --text-xs: 13px;
   }
 }
+} /* === END @layer base === */
 /* ===== END folded contents of original internal/web/static/styles.css ===== */
