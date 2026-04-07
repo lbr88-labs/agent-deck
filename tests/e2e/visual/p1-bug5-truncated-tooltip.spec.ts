@@ -89,10 +89,9 @@ async function findMissingGroupTooltips(
       const btn = buttons[i] as HTMLElement;
       const label = (btn.textContent || '(unknown)').trim().slice(0, 40);
       const titleSpan = btn.querySelector('span.truncate') as HTMLElement | null;
-      if (!titleSpan) {
-        out.push({ role: 'group', identifier: label, title: null, text: '(no .truncate span)' });
-        continue;
-      }
+      // Only GroupRow buttons have a .truncate child span. Skip other
+      // aria-expanded buttons (profile dropdown, info popover, etc.).
+      if (!titleSpan) continue;
       const title = titleSpan.getAttribute('title');
       if (!title || title.trim() === '') {
         out.push({
