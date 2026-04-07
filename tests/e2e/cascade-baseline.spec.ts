@@ -15,8 +15,33 @@ import { join, dirname } from 'path';
  * DO NOT delete or regenerate this baseline without re-running plan 03.
  */
 
+// Selector list combines:
+//   1. Legacy named selectors from the hand-written styles.css (now folded into
+//      styles.src.css). The Preact redesign DOES NOT use these classes, so they
+//      will record found:false. They are kept in the baseline so plan 03 can
+//      diff "selectors that exist in the CSS but not in the DOM" — any drift
+//      there means a stylesheet rule changed semantics during the swap.
+//   2. Semantic / structural selectors that actually exist in the rendered DOM
+//      (body, #app-root, header, aside, main, footer). These carry the real
+//      cascade fingerprint and are what plan 03's diff actually compares.
+//   3. Tailwind utility-class anchors that the redesigned Preact components
+//      apply (dark:bg-tn-bg, dark:bg-tn-panel) so the Tokyo Night palette
+//      regression surface is captured.
 const SELECTORS = [
+  // --- Real DOM anchors (will be found:true on the redesigned page) ---
   'body',
+  '#app-root',
+  'header',
+  'aside',
+  'main',
+  'footer',
+  '.bg-tn-bg',
+  '.dark\\:bg-tn-bg',
+  '.dark\\:bg-tn-panel',
+  // --- Legacy class selectors from styles.src.css (will be found:false on
+  //     the redesigned Preact DOM, but their CSS rules are still emitted by
+  //     Tailwind v4 from the folded source — plan 03 must verify the rules
+  //     stay byte-equivalent across the cascade swap). ---
   '.topbar',
   '.brand',
   '.menu-toggle',
@@ -75,9 +100,13 @@ async function captureSnapshot(
 ): Promise<Snapshot> {
   await page.setViewportSize(viewport);
   await page.goto('/?t=test');
-  // Wait for either Preact to mount OR the static fallback to render.
-  await page.waitForSelector('body', { state: 'attached' });
-  await page.waitForTimeout(500); // allow Tailwind Play CDN to inject runtime styles
+  // Wait for Preact to mount: the <header> is the first thing the AppShell
+  // renders, so its appearance is the gate for "the page is fully styled".
+  await page.waitForSelector('header', { state: 'attached', timeout: 15000 });
+  // Wait for the Tailwind Play CDN to scan the DOM, generate utility CSS,
+  // and inject it. The CDN scans on next tick after each DOM mutation, so a
+  // 750 ms wait after the first paint is enough for the steady state.
+  await page.waitForTimeout(750);
 
   const entries: SnapshotEntry[] = await page.evaluate(
     ({ selectors, properties }) => {
@@ -122,9 +151,12 @@ test.describe('cascade-order baseline (Phase 1 / Plan 02)', () => {
     });
     expect(playCdnPresent, 'cascade baseline must be captured BEFORE plan 03 swaps to compiled CSS').toBe(true);
 
-    // At least body, .topbar, .menu-panel, .terminal-panel must exist on the rendered page.
+    // The redesigned Preact app uses Tailwind utility classes only — the legacy
+    // .topbar / .menu-panel / .terminal-panel class selectors from styles.src.css
+    // do not exist in the rendered DOM. Required selectors are therefore the
+    // structural anchors (body, #app-root, header, main) that the AppShell mounts.
     const requiredFound = desktop.entries.filter((e) =>
-      ['body', '.topbar', '.menu-panel', '.terminal-panel'].includes(e.selector),
+      ['body', '#app-root', 'header', 'main'].includes(e.selector),
     );
     for (const r of requiredFound) {
       expect(r.found, `required selector ${r.selector} not found in DOM`).toBe(true);
