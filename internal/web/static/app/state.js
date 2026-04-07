@@ -27,9 +27,20 @@ export const authTokenSignal = signal('')
 export const sessionCostsSignal = signal({})
 
 // Sidebar open state (for tablet/phone responsive toggle)
-export const sidebarOpenSignal = signal(
-  localStorage.getItem('agentdeck.sidebarOpen') !== 'false'
-)
+// LAYT-05: explicit localStorage value wins; otherwise default based on viewport
+// (open on tablet/desktop >= 768px, closed on phone < 768px). Prevents the
+// mobile sidebar overlay from covering the terminal on cold load.
+function initialSidebarOpen() {
+  try {
+    const stored = localStorage.getItem('agentdeck.sidebarOpen')
+    if (stored === 'true') return true
+    if (stored === 'false') return false
+  } catch (_) {
+    // localStorage may throw in incognito/privacy modes; fall through to viewport default.
+  }
+  return typeof window !== 'undefined' && window.innerWidth >= 768
+}
+export const sidebarOpenSignal = signal(initialSidebarOpen())
 
 // Focused session ID for keyboard navigation (NOT array index, stable across SSE updates)
 // Lives in state.js (not SessionList.js) so useKeyboardNav.js can import it without a circular dependency.
