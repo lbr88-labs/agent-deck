@@ -32,12 +32,35 @@ async function fetchBatchCosts(items) {
   }
 }
 
+// hasCollapsedAncestor walks from the root down to (and including) the given
+// path and returns true if any of those nodes is collapsed. Callers pass a
+// session's groupPath here, because a session's groupPath IS its direct
+// parent group and a collapsed parent must hide the session.
 function hasCollapsedAncestor(path) {
   if (!path) return false
   // Read the signal to subscribe
   void groupExpandedSignal.value
   const parts = path.split('/')
   for (let i = 1; i <= parts.length; i++) {
+    const ancestor = parts.slice(0, i).join('/')
+    if (!isGroupExpanded(ancestor, true)) return true
+  }
+  return false
+}
+
+// hasCollapsedStrictAncestor walks only the STRICT ancestors of the given
+// path (i.e. excludes the path itself). A group must never hide itself just
+// because its own collapse state is false — its own state governs whether
+// its children are shown, not whether IT is shown. This closes BUG #1 /
+// CRIT-01: collapsing a top-level group (parts.length === 1) previously made
+// hasCollapsedAncestor(group.path) return true and the group vanished from
+// the sidebar.
+function hasCollapsedStrictAncestor(path) {
+  if (!path) return false
+  // Read the signal to subscribe
+  void groupExpandedSignal.value
+  const parts = path.split('/')
+  for (let i = 1; i < parts.length; i++) {
     const ancestor = parts.slice(0, i).join('/')
     if (!isGroupExpanded(ancestor, true)) return true
   }
@@ -95,7 +118,7 @@ export function SessionList() {
   return html`<ul class="flex flex-col gap-0.5 py-sp-4" role="list" id="preact-session-list">
     ${filtered.map(item => {
       if (item.type === 'group' && item.group) {
-        if (!query && hasCollapsedAncestor(item.group.path)) return null
+        if (!query && hasCollapsedStrictAncestor(item.group.path)) return null
         return html`<${GroupRow} key=${item.group.path} item=${item} />`
       }
       if (item.type === 'session' && item.session) {
