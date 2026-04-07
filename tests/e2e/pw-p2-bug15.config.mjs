@@ -2,7 +2,7 @@
 // Used by Phase 4 / Plan 01 to reproduce and verify the BUG #15 / UX-04
 // search-placeholder consistency fix.
 //
-// Connects to a manually-started agent-deck web server on port 18420 so the
+// Connects to a manually-started agent-deck web server on port 18421 so the
 // spec does not race the default playwright.config.ts webServer (port 19999)
 // and works in environments where the default webServer hook cannot spawn
 // the TUI (e.g. inside a tmux session the binary rejects as nested).
@@ -14,7 +14,7 @@ export default defineConfig({
   timeout: 60000,
   retries: 0,
   use: {
-    baseURL: 'http://127.0.0.1:18420',
+    baseURL: 'http://127.0.0.1:18421',
     headless: true,
     viewport: { width: 1280, height: 800 },
     extraHTTPHeaders: {
