@@ -507,21 +507,24 @@ func ListBranchCandidates(repoDir string) ([]string, error) {
 		seen[branch] = struct{}{}
 	}
 
-	if defaultRemote, err := getDefaultRemote(repoDir); err == nil && defaultRemote != "" {
-		remoteBranches, err := listRefShortNames(repoDir, "refs/remotes/"+defaultRemote)
-		if err != nil {
-			return nil, err
-		}
-		prefix := defaultRemote + "/"
-		for _, branch := range remoteBranches {
-			if branch == defaultRemote+"/HEAD" {
+	// Iterate all remotes (origin, fork remotes, etc.) and keep the remote prefix
+	// so callers can distinguish local branches from remote-only branches.
+	remotes, err := listRemotes(repoDir)
+	if err == nil {
+		for _, remote := range remotes {
+			remoteBranches, err := listRefShortNames(repoDir, "refs/remotes/"+remote)
+			if err != nil {
 				continue
 			}
-			branch = strings.TrimPrefix(branch, prefix)
-			if branch == "" {
-				continue
+			for _, branch := range remoteBranches {
+				if branch == remote+"/HEAD" {
+					continue
+				}
+				if branch == "" {
+					continue
+				}
+				seen[branch] = struct{}{}
 			}
-			seen[branch] = struct{}{}
 		}
 	}
 
