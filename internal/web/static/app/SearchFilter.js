@@ -49,13 +49,13 @@ export function SearchFilter() {
                dark:text-tn-muted text-gray-400 hover:dark:text-tn-fg hover:text-gray-600
                hover:dark:bg-tn-muted/10 hover:bg-gray-100
                transition-colors rounded"
-        title="Search sessions (/ or ⌘K)"
+        title="Filter sessions (/ or ⌘K)"
       >
         <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
           <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
                 d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/>
         </svg>
-        <span>Search...</span>
+        <span>Filter sessions...</span>
         <kbd class="ml-auto text-[10px] dark:bg-tn-muted/20 bg-gray-200 px-1.5 py-0.5 rounded font-mono">/</kbd>
       </button>
     `
