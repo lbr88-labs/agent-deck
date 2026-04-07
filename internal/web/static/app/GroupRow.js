@@ -56,16 +56,16 @@ export function GroupRow({ item }) {
         <span class="dark:text-tn-muted/60 text-gray-400 font-normal">
           (${group.sessionCount || 0})
         </span>
-        <span class="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0">
+        <span class="hidden group-hover:flex items-center gap-0.5 flex-shrink-0">
           <button type="button" onClick=${handleCreateGroup} title="New subgroup" aria-label="Create subgroup"
-            class="min-w-[44px] min-h-[44px] flex items-center justify-center rounded
+            class="min-w-[36px] min-h-[36px] flex items-center justify-center rounded
                    dark:text-tn-muted hover:dark:text-tn-blue hover:text-gray-700 transition-colors">
             <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/>
             </svg>
           </button>
           <button type="button" onClick=${handleRename} title="Rename group" aria-label="Rename group"
-            class="min-w-[44px] min-h-[44px] flex items-center justify-center rounded
+            class="min-w-[36px] min-h-[36px] flex items-center justify-center rounded
                    dark:text-tn-muted hover:dark:text-tn-blue hover:text-gray-700 transition-colors">
             <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
@@ -73,7 +73,7 @@ export function GroupRow({ item }) {
             </svg>
           </button>
           <button type="button" onClick=${handleDeleteGroup} title="Delete group" aria-label="Delete group"
-            class="min-w-[44px] min-h-[44px] flex items-center justify-center rounded
+            class="min-w-[36px] min-h-[36px] flex items-center justify-center rounded
                    dark:text-tn-muted hover:dark:text-tn-red hover:text-gray-700 transition-colors">
             <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
