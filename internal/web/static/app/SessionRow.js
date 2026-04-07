@@ -85,15 +85,16 @@ export function SessionRow({ item, focused }) {
         onMouseEnter=${() => setHovered(true)}
         onMouseLeave=${() => setHovered(false)}
         class="group w-full min-w-0 flex items-center gap-sp-8 px-sp-12 py-2.5 min-h-[44px] rounded text-left text-sm
-          transition-colors border-l-2
+          transition-colors border-l-4
           ${isSelected
-            ? 'border-tn-blue dark:bg-tn-blue/25 bg-blue-100 dark:text-tn-fg text-gray-900 font-medium'
+            ? 'border-tn-blue dark:bg-tn-blue/30 bg-blue-100 dark:text-tn-fg text-gray-900 font-medium'
             : focused
               ? 'border-transparent dark:bg-tn-muted/10 bg-gray-100 dark:text-tn-fg text-gray-700'
               : 'border-transparent dark:hover:bg-tn-muted/10 hover:bg-gray-50 dark:text-tn-fg text-gray-700'
           }"
         style="padding-left: calc(${item.level || 0} * 1rem + 0.75rem)"
         data-session-id=${session.id}
+        aria-current=${isSelected ? 'true' : 'false'}
       >
         <span class="w-2.5 h-2.5 rounded-full flex-shrink-0 ${dotColor}" title=${session.status}></span>
         <span class="flex-1 truncate min-w-0" title=${session.title || session.id}>${session.title || session.id}</span>
