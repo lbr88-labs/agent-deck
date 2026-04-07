@@ -12,7 +12,9 @@
     <link rel="apple-touch-icon" href="/static/icons/logo.svg" />
     <title>Agent Deck</title>
 
-    <!-- 1. Theme init (synchronous, prevents flash of wrong theme) -->
+    <!-- 1. Theme init (synchronous, prevents flash of wrong theme).
+         This script drives the @variant dark (&:where(.dark, .dark *))
+         override in styles.src.css — do NOT remove or reorder. -->
     <script>
       ;(function() {
         var t = localStorage.getItem('theme')
@@ -22,60 +24,10 @@
       })()
     </script>
 
-    <!-- 2. Tailwind Play CDN (vendored, no external requests) -->
-    <script src="/static/vendor/tailwind.js"></script>
-
-
-    <!-- 3. Tailwind config: Tokyo Night palette + dark mode via selector -->
-    <script>
-      tailwind.config = {
-        darkMode: 'class',
-        theme: {
-          extend: {
-            fontFamily: {
-              sans: ['-apple-system', 'BlinkMacSystemFont', 'Segoe UI', 'Roboto', 'Helvetica Neue', 'Arial', 'sans-serif'],
-            },
-            fontSize: {
-              'xs': '12px',
-              'sm': '14px',
-              'base': '14px',
-              'lg': '16px',
-              'xl': '20px',
-              '2xl': '24px',
-            },
-            spacing: {
-              'sp-4': '4px',
-              'sp-8': '8px',
-              'sp-12': '12px',
-              'sp-16': '16px',
-              'sp-24': '24px',
-              'sp-32': '32px',
-            },
-            colors: {
-              'tn-bg':     '#1a1b26',
-              'tn-panel':  '#16161e',
-              'tn-fg':     '#a9b1d6',
-              'tn-muted':  '#787c99',
-              'tn-blue':   '#7aa2f7',
-              'tn-green':  '#73daca',
-              'tn-red':    '#f7768e',
-              'tn-yellow': '#e0af68',
-              'tn-purple': '#bb9af7',
-              'tn-card':   '#24283b',
-              'tn-light-bg':    '#e6e7ed',
-              'tn-light-panel': '#d6d8df',
-              'tn-light-fg':    '#363c4d',
-              'tn-light-blue':  '#2959aa',
-            }
-          }
-        }
-      }
-    </script>
-
-    <!-- 3b. Chart.js UMD (sets window.Chart, must load before ES modules) -->
+    <!-- 2. Chart.js UMD (sets window.Chart, must load before ES modules) -->
     <script src="/static/chart.umd.min.js"></script>
 
-    <!-- 4. Import map: single Preact instance via bare specifiers -->
+    <!-- 3. Import map: single Preact instance via bare specifiers -->
     <script type="importmap">
     {
       "imports": {
@@ -90,9 +42,14 @@
     }
     </script>
 
-    <!-- 5. Preact app entry (module, deferred by default) -->
+    <!-- 4. Preact app entry (module, deferred by default) -->
     <script type="module" src="/static/app/main.js"></script>
 
+    <!-- 5. Stylesheets — LAST in <head> to win the cascade.
+         styles.css is the compiled Tailwind v4 output (see internal/web/static_files.go
+         //go:generate directive). It MUST load AFTER xterm.css so utility classes
+         take precedence over vendor overrides. Preserving this order matches the
+         cascade-order baseline captured in tests/e2e/baselines/cascade-order.json. -->
     <link rel="stylesheet" href="/static/vendor/xterm.css" />
     <link rel="stylesheet" href="/static/styles.css" />
   </head>
