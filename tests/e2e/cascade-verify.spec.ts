@@ -379,11 +379,15 @@ test.describe('cascade-order verification (Phase 1 / Plan 03)', () => {
     // Sanity: confirm Play CDN is GONE (post-swap state).
     await page.goto('/?t=test');
     const playCdnPresent = await page.evaluate(() => {
-      return Array.from(document.querySelectorAll('script')).some(
-        (s) => (s as HTMLScriptElement).src.includes('/static/vendor/tailwind.js'),
-      );
+      const scripts = document.querySelectorAll('script');
+      for (let i = 0; i < scripts.length; i++) {
+        const src = scripts[i].src || '';
+        if (src.indexOf('/static/vendor/tailwind.js') !== -1) return true;
+      }
+      return false;
     });
-    expect(playCdnPresent, 'cascade verify must run AFTER plan 03 task 1 swap').toBe(false);
+    // cascade verify must run AFTER plan 03 task 1 swap
+    expect(playCdnPresent).toBe(false);
 
     // Derive selectors + properties from the baseline entries.
     const selectors = baseline.desktop.entries.map((e) => e.selector);
