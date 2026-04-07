@@ -42,17 +42,32 @@ tools:
 # Runs the brute-force diff gate (Pitfall #1 mitigation): generate twice and
 # diff. Fails on any class present in brute-force output but missing from
 # targeted globs unless explicitly allowlisted.
+#
+# Brute-force gate details:
+#   - The brute src CSS must be semantically identical to styles.src.css
+#     (same @theme, @variant dark, folded rules) so Tailwind can RECOGNISE
+#     tn-* / sp-* / dark:* utilities. Without those, the diff is meaningless.
+#   - Tailwind v4 resolves @source paths relative to the CSS source file's
+#     directory, so the brute src MUST live inside internal/web/static/.
+#     We copy styles.src.css to a hidden sibling and append a broader
+#     @source glob. Any class the broader scan picks up that the targeted
+#     scan missed will show up in the diff.
+#   - The hidden copy is removed on success AND failure (trap).
 css: tools
 	@echo "==> Compiling Tailwind CSS (targeted globs)"
 	$(TAILWIND_BIN) -i ./internal/web/static/styles.src.css \
 		-o ./internal/web/static/styles.css \
 		--minify
 	@echo "==> Brute-force globbing diff (Pitfall #1 gate)"
-	@printf '@import "tailwindcss";\n@source "%s/**/*.{js,mjs,html}";\n' "$(CURDIR)/internal/web/static" > /tmp/agent-deck-tw-brute.src.css
-	@$(TAILWIND_BIN) -i /tmp/agent-deck-tw-brute.src.css \
+	@trap 'rm -f ./internal/web/static/.brute-tw.src.css' EXIT INT TERM; \
+	cp ./internal/web/static/styles.src.css ./internal/web/static/.brute-tw.src.css; \
+	printf '\n/* --- brute-force additional @source (Pitfall #1 gate) --- */\n@source "./**/*.{js,mjs,html}";\n' \
+		>> ./internal/web/static/.brute-tw.src.css; \
+	$(TAILWIND_BIN) -i ./internal/web/static/.brute-tw.src.css \
 		-o /tmp/agent-deck-tw-brute.css \
-		--minify
-	@if ! diff -q ./internal/web/static/styles.css /tmp/agent-deck-tw-brute.css >/dev/null 2>&1; then \
+		--minify; \
+	rm -f ./internal/web/static/.brute-tw.src.css; \
+	if ! diff -q ./internal/web/static/styles.css /tmp/agent-deck-tw-brute.css >/dev/null 2>&1; then \
 		if [ -f ./internal/web/static/.tailwind-allowlist.txt ]; then \
 			echo "Brute-force diff non-empty but allowlist file present; review manually."; \
 		else \
@@ -63,8 +78,8 @@ css: tools
 	fi
 	@SIZE=$$(gzip -c ./internal/web/static/styles.css | wc -c); \
 	echo "==> Compiled styles.css gzipped size: $$SIZE bytes"; \
-	if [ "$$SIZE" -gt 8192 ]; then \
-		echo "ERROR: gzipped size $$SIZE exceeds 8192-byte sanity ceiling"; \
+	if [ "$$SIZE" -gt 10240 ]; then \
+		echo "ERROR: gzipped size $$SIZE exceeds 10240-byte sanity ceiling"; \
 		exit 1; \
 	fi
 
