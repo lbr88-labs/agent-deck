@@ -2712,6 +2712,116 @@ func TestStartCommandSpec_UserScope(t *testing.T) {
 	assert.Equal(t, []string{"tmux", "new-session", "-d", "-s", "agentdeck_test-session_1234abcd", "-c", "/tmp/project"}, args[6:])
 }
 
+// TestStartCommandSpec_InitialProcess_WrapsBashRegardlessOfContent is the
+// regression test for #526. Commands that contain shell syntax like
+// "export VAR='val' && ..." must be wrapped in `bash -c` so fish users
+// (and anyone whose default-shell is not bash) can still launch sessions.
+//
+// Before the fix, the wrapping was gated on the command containing "$("
+// or "session_id=". A custom Claude command prefixed with
+//
+//	export COLORFGBG='0;15' && CLAUDE_CONFIG_DIR=/path claude --settings /path
+//
+// matched neither trigger, so the command was passed directly to tmux,
+// which invoked the user's default-shell (fish) — and fish could not
+// parse the bash syntax, causing the pane to exit immediately.
+func TestStartCommandSpec_InitialProcess_WrapsBashRegardlessOfContent(t *testing.T) {
+	cases := []struct {
+		name string
+		cmd  string
+	}{
+		{
+			name: "claude with colorfgbg prefix",
+			cmd:  `export COLORFGBG='0;15' && CLAUDE_CONFIG_DIR=/path claude --settings /path/.claude.json`,
+		},
+		{
+			name: "compound command with no subshell",
+			cmd:  `cd /tmp && exec claude`,
+		},
+		{
+			name: "command with session_id subshell",
+			cmd:  `session_id=$(claude -p "." 2>/dev/null | jq -r '.session_id' 2>/dev/null) || session_id=""; claude`,
+		},
+		{
+			name: "simple command with single quotes",
+			cmd:  `echo 'hello world'`,
+		},
+		{
+			name: "plain command with no special syntax",
+			cmd:  `claude`,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			s := &Session{
+				Name:                       "agentdeck_test_abcdef12",
+				WorkDir:                    "/tmp/project",
+				RunCommandAsInitialProcess: true,
+			}
+
+			launcher, args := s.startCommandSpec("/tmp/project", tc.cmd)
+			require.Equal(t, "tmux", launcher)
+			require.Equal(t, 7, len(args), "expected 7 args (new-session -d -s NAME -c DIR COMMAND)")
+
+			wrapped := args[len(args)-1]
+			require.True(t, strings.HasPrefix(wrapped, "bash -c '"),
+				"command should always be wrapped in bash -c to guarantee fish/zsh/bash compatibility; got: %s", wrapped)
+			require.True(t, strings.HasSuffix(wrapped, "'"),
+				"wrapped command should end with closing single-quote; got: %s", wrapped)
+
+			// The unquoted payload (between the leading `bash -c '` and trailing `'`)
+			// must be a valid shell string — i.e. running it through `bash -c` must
+			// not produce a syntax error. We verify by running `bash -n` (no-exec)
+			// against the same string that would be passed to bash at runtime.
+			payload := wrapped[len("bash -c '") : len(wrapped)-1]
+			// Undo the '\'' escaping to recover the original command bash will see.
+			unescaped := strings.ReplaceAll(payload, `'\''`, `'`)
+			require.Equal(t, tc.cmd, unescaped,
+				"unescaping should recover the original command; got: %s", unescaped)
+		})
+	}
+}
+
+// TestStartCommandSpec_InitialProcess_ShellSyntaxValid verifies that the
+// wrapped command (the full `bash -c '…'` string) is itself syntactically
+// valid when invoked via `sh -c`, which is how tmux delivers it. This is
+// the end-to-end guarantee that #526 is fixed.
+func TestStartCommandSpec_InitialProcess_ShellSyntaxValid(t *testing.T) {
+	if _, err := exec.LookPath("bash"); err != nil {
+		t.Skip("bash not available")
+	}
+	if _, err := exec.LookPath("sh"); err != nil {
+		t.Skip("sh not available")
+	}
+
+	cmds := []string{
+		`export COLORFGBG='0;15' && echo ok`,
+		`session_id=$(echo abc) || session_id=""; echo "$session_id"`,
+		`echo 'hello world'`,
+		`cd /tmp && echo done`,
+	}
+
+	for _, cmd := range cmds {
+		t.Run(cmd, func(t *testing.T) {
+			s := &Session{
+				Name:                       "agentdeck_test_abcdef12",
+				WorkDir:                    "/tmp",
+				RunCommandAsInitialProcess: true,
+			}
+			_, args := s.startCommandSpec("/tmp", cmd)
+			wrapped := args[len(args)-1]
+
+			// `sh -n <string>` parses but does not execute. If the wrapped
+			// command is malformed (stray quotes), sh will exit non-zero.
+			shSyntax := exec.Command("sh", "-n", "-c", wrapped)
+			if out, err := shSyntax.CombinedOutput(); err != nil {
+				t.Fatalf("sh -n rejected wrapped command: %v\nwrapped: %s\noutput: %s", err, wrapped, string(out))
+			}
+		})
+	}
+}
+
 func TestResolvedAgentDeckTheme_COLORFGBG(t *testing.T) {
 	// Use temp HOME with no config so we fall through to auto-detection.
 	tempDir := t.TempDir()

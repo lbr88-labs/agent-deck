@@ -789,16 +789,29 @@ func sanitizeSystemdUnitComponent(raw string) string {
 	return out
 }
 
+// bashCWrap returns the given command wrapped in `bash -c '…'` with
+// single quotes safely escaped via the POSIX `'\''` pattern. The result
+// is a single shell word that can be passed to any `sh -c` invocation
+// (e.g. tmux's default shell-command delivery) and will always be
+// executed under bash, giving consistent semantics regardless of the
+// user's login shell.
+func bashCWrap(command string) string {
+	escaped := strings.ReplaceAll(command, `'`, `'\''`)
+	return "bash -c '" + escaped + "'"
+}
+
 func (s *Session) startCommandSpec(workDir, command string) (string, []string) {
 	startWithInitialProcess := command != "" && s.RunCommandAsInitialProcess
 	args := []string{"new-session", "-d", "-s", s.Name, "-c", workDir}
 	if startWithInitialProcess {
-		cmdToStart := command
-		if strings.Contains(command, "$(") || strings.Contains(command, "session_id=") {
-			escapedCmd := strings.ReplaceAll(command, "'", "'\"'\"'")
-			cmdToStart = fmt.Sprintf("bash -c '%s'", escapedCmd)
-		}
-		args = append(args, cmdToStart)
+		// Always wrap the command in `bash -c '…'` so it runs under bash
+		// regardless of the user's default-shell. This guarantees fish users
+		// can launch sessions whose commands use bash syntax (inline env
+		// vars, `&&`, `$(...)`, etc.) — previously the wrapping was gated
+		// on `$(` or `session_id=` appearing in the command, which missed
+		// simple compound commands like `export COLORFGBG='0;15' && claude …`
+		// and caused those sessions to die immediately on fish (#526).
+		args = append(args, bashCWrap(command))
 	}
 
 	if !s.LaunchInUserScope {
@@ -1433,13 +1446,9 @@ func (s *Session) Start(command string) error {
 
 	// Fallback: if RunCommandAsInitialProcess is false, send command via send-keys.
 	if command != "" && !s.RunCommandAsInitialProcess {
-		cmdToSend := command
-		// Commands containing bash-specific syntax must be wrapped for fish users.
-		if strings.Contains(command, "$(") || strings.Contains(command, "session_id=") {
-			escapedCmd := strings.ReplaceAll(command, "'", "'\"'\"'")
-			cmdToSend = fmt.Sprintf("bash -c '%s'", escapedCmd)
-		}
-		if err := s.SendKeysAndEnter(cmdToSend); err != nil {
+		// Always wrap in bash -c so the command runs under bash regardless
+		// of the user's login shell. See #526 and bashCWrap for details.
+		if err := s.SendKeysAndEnter(bashCWrap(command)); err != nil {
 			return fmt.Errorf("failed to send command: %w", err)
 		}
 	}
