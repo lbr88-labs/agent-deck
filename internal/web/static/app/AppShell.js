@@ -15,6 +15,7 @@ import { TerminalPanel } from './TerminalPanel.js'
 import { CostDashboard } from './CostDashboard.js'
 import { SettingsPanel } from './SettingsPanel.js'
 import { ToastContainer } from './Toast.js'
+import { ToastHistoryDrawer } from './ToastHistoryDrawer.js'
 
 function SidebarResizeHandle() {
   function onPointerDown(e) {
@@ -203,6 +204,7 @@ export function AppShell() {
         </div>
       `}
       <${ToastContainer} />
+      <${ToastHistoryDrawer} />
     </div>
   `
 }

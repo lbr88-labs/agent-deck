@@ -5,6 +5,7 @@ import { ProfileDropdown } from './ProfileDropdown.js'
 import { ConnectionIndicator } from './ConnectionIndicator.js'
 import { activeTabSignal, infoDrawerOpenSignal } from './state.js'
 import { PushControls } from './PushControls.js'
+import { ToastHistoryDrawerToggle } from './ToastHistoryDrawer.js'
 
 export function Topbar({ onToggleSidebar, sidebarOpen }) {
   return html`
@@ -62,6 +63,7 @@ export function Topbar({ onToggleSidebar, sidebarOpen }) {
         >
           Info
         </button>
+        <${ToastHistoryDrawerToggle} />
         <${PushControls} />
       </div>
     </header>
