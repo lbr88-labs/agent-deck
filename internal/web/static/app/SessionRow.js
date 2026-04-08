@@ -84,7 +84,7 @@ export function SessionRow({ item, focused }) {
         onClick=${handleClick}
         onMouseEnter=${() => setHovered(true)}
         onMouseLeave=${() => setHovered(false)}
-        class="group w-full min-w-0 flex items-center gap-sp-8 px-sp-12 py-2.5 min-h-[44px] rounded text-left text-sm
+        class="group w-full min-w-0 relative flex items-center gap-sp-8 px-sp-12 py-2.5 min-h-[44px] rounded text-left text-sm
           transition-colors border-l-4
           ${isSelected
             ? 'border-tn-blue dark:bg-tn-blue/30 bg-blue-100 dark:text-tn-fg text-gray-900 font-medium'
@@ -106,17 +106,22 @@ export function SessionRow({ item, focused }) {
             ${costLabel}
           </span>
         `}
-        <span
+        <div
+          role="toolbar"
+          aria-label="Session actions"
           onClick=${(e) => e.stopPropagation()}
           onMouseDown=${(e) => e.stopPropagation()}
-          class="flex items-center gap-0.5 flex-shrink-0 ml-1 transition-opacity
-          ${(hovered || focused || isSelected) ? 'opacity-100' : 'opacity-0 pointer-events-none'}"
+          class="absolute right-2 top-1/2 -translate-y-1/2 flex items-center gap-0.5
+                 transition-opacity duration-[120ms] motion-reduce:transition-none
+                 ${(hovered || focused || isSelected) ? 'opacity-100 pointer-events-auto' : 'opacity-0 pointer-events-none'}
+                 group-focus-within:opacity-100 group-focus-within:pointer-events-auto"
         >
           ${(displayStatus === 'running' || displayStatus === 'waiting') && html`
             <button type="button" onClick=${handleStop} disabled=${mutating} title="Stop (s)" aria-label="Stop session"
               class="min-w-[44px] min-h-[44px] flex items-center justify-center rounded
                      dark:text-tn-muted hover:dark:text-tn-yellow hover:dark:bg-tn-yellow/10
                      text-gray-400 hover:text-yellow-600 hover:bg-yellow-50 transition-colors
+                     focus-visible:opacity-100 focus-visible:pointer-events-auto
                      disabled:opacity-40 disabled:pointer-events-none">
               <svg class="w-3.5 h-3.5" fill="currentColor" viewBox="0 0 20 20">
                 <rect x="5" y="5" width="10" height="10" rx="1"/>
@@ -128,6 +133,7 @@ export function SessionRow({ item, focused }) {
               class="min-w-[44px] min-h-[44px] flex items-center justify-center rounded
                      dark:text-tn-muted hover:dark:text-tn-green hover:dark:bg-tn-green/10
                      text-gray-400 hover:text-green-600 hover:bg-green-50 transition-colors
+                     focus-visible:opacity-100 focus-visible:pointer-events-auto
                      disabled:opacity-40 disabled:pointer-events-none">
               <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
@@ -139,7 +145,8 @@ export function SessionRow({ item, focused }) {
             <button type="button" onClick=${handleFork} title="Fork" aria-label="Fork session"
               class="min-w-[44px] min-h-[44px] flex items-center justify-center rounded
                      dark:text-tn-muted hover:dark:text-tn-purple hover:dark:bg-tn-purple/10
-                     text-gray-400 hover:text-purple-600 hover:bg-purple-50 transition-colors">
+                     text-gray-400 hover:text-purple-600 hover:bg-purple-50 transition-colors
+                     focus-visible:opacity-100 focus-visible:pointer-events-auto">
               <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
                       d="M8 7v8a2 2 0 002 2h6M8 7V5a2 2 0 012-2h4.586a1 1 0 01.707.293l4.414 4.414a1 1 0 01.293.707V15a2 2 0 01-2 2h-2"/>
@@ -149,13 +156,14 @@ export function SessionRow({ item, focused }) {
           <button type="button" onClick=${handleDelete} title="Delete (d)" aria-label="Delete session"
             class="min-w-[44px] min-h-[44px] flex items-center justify-center rounded
                    dark:text-tn-muted hover:dark:text-tn-red hover:dark:bg-tn-red/10
-                   text-gray-400 hover:text-red-600 hover:bg-red-50 transition-colors">
+                   text-gray-400 hover:text-red-600 hover:bg-red-50 transition-colors
+                   focus-visible:opacity-100 focus-visible:pointer-events-auto">
             <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
                     d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/>
             </svg>
           </button>
-        </span>
+        </div>
       </button>
     </li>
   `
