@@ -3,6 +3,7 @@ package main
 import (
 	"os"
 	"os/exec"
+	"path/filepath"
 	"testing"
 
 	"github.com/asheshgoplani/agent-deck/internal/session"
@@ -273,4 +274,80 @@ func TestIsDuplicateSession(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestEnsureTmuxInPath(t *testing.T) {
+	// ensureTmuxInPath should succeed when tmux is genuinely installed.
+	if _, err := exec.LookPath("tmux"); err != nil {
+		t.Skip("tmux not available")
+	}
+
+	t.Run("found_via_LookPath", func(t *testing.T) {
+		if err := ensureTmuxInPath(); err != nil {
+			t.Fatalf("ensureTmuxInPath() failed: %v", err)
+		}
+	})
+
+	t.Run("found_via_fallback", func(t *testing.T) {
+		// Discover the real tmux path so we can verify the fallback finds it.
+		realPath, err := exec.LookPath("tmux")
+		if err != nil {
+			t.Skip("tmux not in PATH")
+		}
+
+		// Strip PATH down to something that definitely does NOT contain tmux,
+		// then let ensureTmuxInPath try the fallback paths.
+		origPath := os.Getenv("PATH")
+		os.Setenv("PATH", "/nonexistent-dir-for-test")
+		defer os.Setenv("PATH", origPath)
+
+		err = ensureTmuxInPath()
+		if err != nil {
+			// Only fail if the real tmux lived in one of the fallback dirs.
+			dir := filepath.Dir(realPath)
+			wellKnown := []string{
+				"/usr/bin",
+				"/usr/local/bin",
+				"/opt/homebrew/bin",
+				"/home/linuxbrew/.linuxbrew/bin",
+				"/snap/bin",
+			}
+			for _, d := range wellKnown {
+				if d == dir {
+					t.Fatalf("ensureTmuxInPath() should have found tmux at %s via fallback", realPath)
+				}
+			}
+			t.Skipf("tmux at %s is not in a well-known fallback dir; fallback correctly failed", realPath)
+		}
+
+		// Verify that PATH was updated so LookPath now succeeds.
+		if _, err := exec.LookPath("tmux"); err != nil {
+			t.Fatalf("after ensureTmuxInPath(), exec.LookPath still fails: %v", err)
+		}
+	})
+
+	t.Run("not_found_anywhere", func(t *testing.T) {
+		origPath := os.Getenv("PATH")
+		os.Setenv("PATH", "/nonexistent-dir-for-test")
+		defer os.Setenv("PATH", origPath)
+
+		// Temporarily check: if tmux is in a well-known path, this test can't
+		// assert failure. Only run the assertion when no well-known path exists.
+		wellKnown := []string{
+			"/usr/bin/tmux",
+			"/usr/local/bin/tmux",
+			"/opt/homebrew/bin/tmux",
+			"/home/linuxbrew/.linuxbrew/bin/tmux",
+			"/snap/bin/tmux",
+		}
+		for _, p := range wellKnown {
+			if _, err := os.Stat(p); err == nil {
+				t.Skipf("tmux exists at well-known path %s; cannot test not-found case", p)
+			}
+		}
+
+		if err := ensureTmuxInPath(); err == nil {
+			t.Fatal("ensureTmuxInPath() should have failed when tmux is not installed")
+		}
+	})
 }

@@ -12,6 +12,7 @@ import (
 	"os/exec"
 	"os/signal"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"syscall"
 	"time"
@@ -324,11 +325,22 @@ func main() {
 		return
 	}
 
-	// Check if tmux is available
-	if _, err := exec.LookPath("tmux"); err != nil {
-		fmt.Println("Error: tmux not found in PATH")
-		fmt.Println("\nAgent Deck requires tmux. Install with:")
-		fmt.Println("  brew install tmux")
+	// Check if tmux is available (with fallback path search)
+	if err := ensureTmuxInPath(); err != nil {
+		fmt.Fprintln(os.Stderr, "Error: tmux not found")
+		fmt.Fprintln(os.Stderr, "")
+		fmt.Fprintln(os.Stderr, "Agent Deck requires tmux. Install with:")
+		switch runtime.GOOS {
+		case "darwin":
+			fmt.Fprintln(os.Stderr, "  brew install tmux")
+		case "linux":
+			fmt.Fprintln(os.Stderr, "  sudo apt install tmux    # Debian/Ubuntu")
+			fmt.Fprintln(os.Stderr, "  sudo dnf install tmux    # Fedora/RHEL")
+			fmt.Fprintln(os.Stderr, "  sudo pacman -S tmux      # Arch")
+		default:
+			fmt.Fprintln(os.Stderr, "  See: https://github.com/tmux/tmux/wiki/Installing")
+		}
+		fmt.Fprintf(os.Stderr, "\nSearched PATH: %s\n", os.Getenv("PATH"))
 		os.Exit(1)
 	}
 
@@ -2908,6 +2920,41 @@ func handleUninstall(args []string) {
 // Uses GetCurrentSessionID() which checks if the current tmux session name matches agentdeck_*.
 func isNestedSession() bool {
 	return GetCurrentSessionID() != ""
+}
+
+// ensureTmuxInPath checks that tmux is reachable. If exec.LookPath fails
+// (common when the Go binary inherits a minimal PATH from a desktop launcher,
+// systemd unit, or non-login shell), it probes well-known installation
+// directories. When tmux is found via fallback, the containing directory is
+// prepended to PATH so every subsequent exec.Command("tmux", …) succeeds.
+func ensureTmuxInPath() error {
+	if _, err := exec.LookPath("tmux"); err == nil {
+		return nil
+	}
+
+	// Well-known paths where tmux is commonly installed.
+	fallbacks := []string{
+		"/usr/bin/tmux",
+		"/usr/local/bin/tmux",
+		"/opt/homebrew/bin/tmux",
+		"/home/linuxbrew/.linuxbrew/bin/tmux",
+		"/snap/bin/tmux",
+	}
+
+	for _, p := range fallbacks {
+		info, err := os.Stat(p)
+		if err != nil {
+			continue
+		}
+		// Must be a regular file (or symlink target) with at least one execute bit.
+		if info.Mode().IsRegular() && info.Mode()&0111 != 0 {
+			dir := filepath.Dir(p)
+			_ = os.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+			return nil
+		}
+	}
+
+	return fmt.Errorf("tmux not found in PATH or common locations")
 }
 
 // formatSize formats bytes into human-readable size
