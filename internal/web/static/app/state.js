@@ -129,3 +129,9 @@ export const toastHistorySignal = signal(initialToastHistory())
 
 // Toast history drawer open/close (WEB-P0-4 + POL-7)
 export const toastHistoryOpenSignal = signal(false)
+
+// Mutations gate (WEB-P0-4 prevention layer): when /api/settings returns
+// webMutations=false, the UI hides write buttons so users cannot generate
+// 403 error spam. Defaults to true (optimistic) until AppShell mount fetches
+// /api/settings and assigns the real value.
+export const mutationsEnabledSignal = signal(true)
