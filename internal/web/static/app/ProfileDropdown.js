@@ -87,7 +87,7 @@ export function ProfileDropdown() {
         </svg>
       </button>
       ${open && html`
-        <div class="absolute top-full right-0 mt-1 rounded-lg shadow-lg
+        <div class="absolute top-full right-0 mt-1 z-dropdown rounded-lg shadow-lg
                     dark:bg-tn-panel bg-white border dark:border-tn-muted/20 border-gray-200
                     min-w-[220px] max-w-[90vw] py-1"
              role="listbox"

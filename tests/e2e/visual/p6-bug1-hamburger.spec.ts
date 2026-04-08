@@ -91,18 +91,20 @@ test.describe('WEB-P0-1 — hamburger z-index + tap-through', () => {
   test('structural: Topbar.js right-side controls use z-topbar (not z-topbar-primary)', () => {
     const src = readFileSync(join(APP_DIR, 'Topbar.js'), 'utf-8');
     // The right-side container holds Costs / ConnectionIndicator / ThemeToggle
-    // / ProfileDropdown / Info / PushControls. Find the <${ConnectionIndicator}>
-    // reference — the enclosing div class must contain `z-topbar` (which is
-    // DIFFERENT from `z-topbar-primary`; the boundary check enforces this).
-    const connIdx = src.indexOf('ConnectionIndicator');
-    expect(connIdx, 'Topbar.js must reference ConnectionIndicator').toBeGreaterThan(-1);
-    const classBefore = src.slice(Math.max(0, connIdx - 1000), connIdx);
-    // Match `z-topbar` followed by a word boundary that is NOT `-primary`.
-    // `\bz-topbar\b` matches `z-topbar` but not `z-topbar-primary` because
-    // `-` is a word-boundary-capable character in JS regex when followed by
-    // a word char. Use a negative lookahead to be explicit.
+    // / ProfileDropdown / Info / PushControls. Find the `<${ConnectionIndicator}`
+    // component reference (NOT the import at the top of the file) — the
+    // enclosing div's class must contain `z-topbar` and NOT `z-topbar-primary`.
+    const connIdx = src.indexOf('<${ConnectionIndicator}');
     expect(
-      /z-topbar(?!-primary)/.test(classBefore),
+      connIdx,
+      'Topbar.js must render <${ConnectionIndicator} in the right-side controls wrapper',
+    ).toBeGreaterThan(-1);
+    // Walk backwards up to 1500 chars to find the enclosing div's class attribute.
+    const classBefore = src.slice(Math.max(0, connIdx - 1500), connIdx);
+    // Match `z-topbar` where the next char is NOT `-` (so `z-topbar-primary`
+    // does not count). Negative lookahead makes this explicit.
+    expect(
+      /\bz-topbar(?!-)/.test(classBefore),
       'right-side controls wrapper in Topbar.js must contain `z-topbar` class (not `z-topbar-primary`). 06-CONTEXT.md line 52.',
     ).toBe(true);
   });

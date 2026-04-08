@@ -19,7 +19,7 @@ export function ToastContainer() {
   if (toasts.length === 0) return null
 
   return html`
-    <div class="fixed bottom-4 right-4 z-[100] flex flex-col gap-2 max-w-sm" role="alert" aria-live="polite">
+    <div class="fixed bottom-4 right-4 z-toast flex flex-col gap-2 max-w-sm" role="alert" aria-live="polite">
       ${toasts.map(toast => html`
         <${ToastItem} key=${toast.id} ...${toast} />
       `)}
