@@ -327,11 +327,21 @@ func (d *EditPathsDialog) View() string {
 		Padding(2, 4).
 		Width(dialogWidth)
 
+	// Inner content width: dialogWidth minus border (2) minus padding (8)
+	innerWidth := dialogWidth - 10
+	if innerWidth < 20 {
+		innerWidth = 20
+	}
+
 	var content strings.Builder
 
 	content.WriteString(titleStyle.Render("Edit Multi-Repo Paths"))
 	content.WriteString("\n")
-	content.WriteString(dimStyle.Render(fmt.Sprintf("  session: %s", d.sessionTitle)))
+	sessionLabel := fmt.Sprintf("  session: %s", d.sessionTitle)
+	if len(sessionLabel) > innerWidth {
+		sessionLabel = sessionLabel[:innerWidth-1] + "…"
+	}
+	content.WriteString(dimStyle.Render(sessionLabel))
 	content.WriteString("\n\n")
 
 	content.WriteString(activeLabelStyle.Render("▶ Paths:"))
@@ -343,8 +353,15 @@ func (d *EditPathsDialog) View() string {
 		if isSelected {
 			prefix = "  ▸ "
 		}
+		labelPrefix := fmt.Sprintf("%s%d. ", prefix, i+1)
 		if isSelected && d.editing {
-			content.WriteString(fmt.Sprintf("%s%d. ", prefix, i+1))
+			// Constrain textinput width to fit inside the dialog frame
+			inputWidth := innerWidth - len(labelPrefix)
+			if inputWidth < 10 {
+				inputWidth = 10
+			}
+			d.pathInput.Width = inputWidth
+			content.WriteString(labelPrefix)
 			content.WriteString(d.pathInput.View())
 			content.WriteString("\n")
 		} else {
@@ -352,17 +369,26 @@ func (d *EditPathsDialog) View() string {
 			if display == "" {
 				display = "(empty)"
 			}
+			// Truncate path to fit within the dialog frame
+			maxPathLen := innerWidth - len(labelPrefix)
+			if maxPathLen > 0 && len(display) > maxPathLen {
+				display = "…" + display[len(display)-maxPathLen+1:]
+			}
 			if isSelected {
 				content.WriteString(lipgloss.NewStyle().Foreground(ColorCyan).Bold(true).Render(
-					fmt.Sprintf("%s%d. %s", prefix, i+1, display)))
+					labelPrefix + display))
 			} else {
 				content.WriteString(dimStyle.Render(
-					fmt.Sprintf("%s%d. %s", prefix, i+1, display)))
+					labelPrefix + display))
 			}
 			content.WriteString("\n")
 		}
 	}
-	content.WriteString(dimStyle.Render("    [a: add, d: remove, enter: edit, ↑↓: navigate]"))
+	hint := "    [a: add, d: remove, enter: edit, ↑↓: navigate]"
+	if len(hint) > innerWidth {
+		hint = hint[:innerWidth]
+	}
+	content.WriteString(dimStyle.Render(hint))
 	content.WriteString("\n")
 
 	// Record line offset for suggestions overlay
