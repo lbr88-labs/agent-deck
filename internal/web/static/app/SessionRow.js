@@ -28,6 +28,12 @@ export function SessionRow({ item, focused }) {
   const displayStatus = optimisticStatus || session.status
   const dotColor = STATUS_COLORS[displayStatus] || 'bg-tn-muted'
   const [hovered, setHovered] = useState(false)
+  // Track focus-within via Preact state rather than CSS `group-focus-within`
+  // because at equal-or-higher specificity the plain `.opacity-0` utility
+  // still wins due to Tailwind v4 utility ordering quirks. Focus events
+  // bubble from the inner action buttons up to this outer button, so a
+  // single onFocus/onBlur pair suffices.
+  const [hasFocusWithin, setHasFocusWithin] = useState(false)
 
   function handleClick() {
     selectedIdSignal.value = session.id
@@ -84,6 +90,8 @@ export function SessionRow({ item, focused }) {
         onClick=${handleClick}
         onMouseEnter=${() => setHovered(true)}
         onMouseLeave=${() => setHovered(false)}
+        onFocus=${() => setHasFocusWithin(true)}
+        onBlur=${() => setHasFocusWithin(false)}
         class="group w-full min-w-0 relative flex items-center gap-sp-8 px-sp-12 py-2.5 min-h-[44px] rounded text-left text-sm
           transition-colors border-l-4
           ${isSelected
@@ -113,7 +121,7 @@ export function SessionRow({ item, focused }) {
           onMouseDown=${(e) => e.stopPropagation()}
           class="absolute right-2 top-1/2 -translate-y-1/2 flex items-center gap-0.5
                  transition-opacity duration-[120ms] motion-reduce:transition-none
-                 ${(hovered || focused || isSelected) ? 'opacity-100 pointer-events-auto' : 'opacity-0 pointer-events-none'}
+                 ${(hovered || focused || isSelected || hasFocusWithin) ? 'opacity-100 pointer-events-auto' : 'opacity-0 pointer-events-none'}
                  group-focus-within:opacity-100 group-focus-within:pointer-events-auto"
         >
           ${(displayStatus === 'running' || displayStatus === 'waiting') && html`
