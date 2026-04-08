@@ -6220,11 +6220,15 @@ func (h *Home) applyMultiRepoPathChanges(inst *session.Instance, newPaths []stri
 			}
 		}
 
+		// Update instance fields under write lock to avoid races with
+		// the background status worker that reads via instanceByID.
+		h.instancesMu.Lock()
 		current.ProjectPath = newProjectPath
 		current.AdditionalPaths = newAdditionalPaths
 		if current.GetTmuxSession() != nil {
 			current.GetTmuxSession().WorkDir = tempDir
 		}
+		h.instancesMu.Unlock()
 
 		h.saveInstances()
 
