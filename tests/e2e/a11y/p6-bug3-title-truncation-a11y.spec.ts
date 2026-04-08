@@ -34,6 +34,16 @@ test.describe('WEB-P0-3 a11y — session action toolbar', () => {
     await page
       .waitForSelector('#preact-session-list', { state: 'attached', timeout: 15000 })
       .catch(() => {});
+    // WEB-P0-4 prevention layer (06-05): the toolbar is gated on
+    // mutationsEnabledSignal, which reads /api/settings.webMutations on
+    // AppShell mount. The test server may run with webMutations=false,
+    // in which case the toolbar correctly does not render. This spec
+    // tests the 06-03 toolbar a11y contract, so force the signal on.
+    await page.evaluate(async () => {
+      const state: any = await import('/static/app/state.js');
+      state.mutationsEnabledSignal.value = true;
+    });
+    await page.waitForTimeout(200);
     const rowCount = await page.locator('button[data-session-id]').count();
     test.skip(rowCount === 0, 'no fixture sessions — axe needs a rendered toolbar');
     // Hover the first row so the toolbar is opacity:1 (axe ignores
@@ -62,6 +72,16 @@ test.describe('WEB-P0-3 a11y — session action toolbar', () => {
     await page
       .waitForSelector('#preact-session-list', { state: 'attached', timeout: 15000 })
       .catch(() => {});
+    // WEB-P0-4 prevention layer (06-05): the toolbar is gated on
+    // mutationsEnabledSignal, which reads /api/settings.webMutations on
+    // AppShell mount. The test server may run with webMutations=false,
+    // in which case the toolbar correctly does not render. This spec
+    // tests the 06-03 toolbar a11y contract, so force the signal on.
+    await page.evaluate(async () => {
+      const state: any = await import('/static/app/state.js');
+      state.mutationsEnabledSignal.value = true;
+    });
+    await page.waitForTimeout(200);
     const rowCount = await page.locator('button[data-session-id]').count();
     test.skip(rowCount === 0, 'no fixture sessions');
     const toolbar = page.locator('[role="toolbar"][aria-label="Session actions"]').first();
@@ -74,6 +94,16 @@ test.describe('WEB-P0-3 a11y — session action toolbar', () => {
     await page
       .waitForSelector('#preact-session-list', { state: 'attached', timeout: 15000 })
       .catch(() => {});
+    // WEB-P0-4 prevention layer (06-05): the toolbar is gated on
+    // mutationsEnabledSignal, which reads /api/settings.webMutations on
+    // AppShell mount. The test server may run with webMutations=false,
+    // in which case the toolbar correctly does not render. This spec
+    // tests the 06-03 toolbar a11y contract, so force the signal on.
+    await page.evaluate(async () => {
+      const state: any = await import('/static/app/state.js');
+      state.mutationsEnabledSignal.value = true;
+    });
+    await page.waitForTimeout(200);
     const rowCount = await page.locator('button[data-session-id]').count();
     test.skip(rowCount === 0, 'no fixture sessions');
 
@@ -106,6 +136,16 @@ test.describe('WEB-P0-3 a11y — session action toolbar', () => {
     await page
       .waitForSelector('#preact-session-list', { state: 'attached', timeout: 15000 })
       .catch(() => {});
+    // WEB-P0-4 prevention layer (06-05): the toolbar is gated on
+    // mutationsEnabledSignal, which reads /api/settings.webMutations on
+    // AppShell mount. The test server may run with webMutations=false,
+    // in which case the toolbar correctly does not render. This spec
+    // tests the 06-03 toolbar a11y contract, so force the signal on.
+    await page.evaluate(async () => {
+      const state: any = await import('/static/app/state.js');
+      state.mutationsEnabledSignal.value = true;
+    });
+    await page.waitForTimeout(200);
     const rowCount = await page.locator('button[data-session-id]').count();
     test.skip(rowCount === 0, 'no fixture sessions');
     const row = page.locator('button[data-session-id]').first();

@@ -148,6 +148,16 @@ test.describe('WEB-P0-3 — absolute-positioned action toolbar', () => {
     await page
       .waitForSelector('#preact-session-list', { state: 'attached', timeout: 15000 })
       .catch(() => {});
+    // WEB-P0-4 prevention layer (06-05): the toolbar is now gated on
+    // mutationsEnabledSignal. The manually-managed test server may be
+    // running with webMutations=false, in which case the toolbar is
+    // correctly removed from the DOM. This test is about the 06-03
+    // toolbar structure, not the 06-05 gating, so force the signal on.
+    await page.evaluate(async () => {
+      const state: any = await import('/static/app/state.js');
+      state.mutationsEnabledSignal.value = true;
+    });
+    await page.waitForTimeout(200);
     const rowCount = await page.locator('button[data-session-id]').count();
     test.skip(rowCount === 0, 'no fixture rows');
     const toolbar = page.locator('[role="toolbar"][aria-label="Session actions"]').first();
@@ -160,6 +170,13 @@ test.describe('WEB-P0-3 — absolute-positioned action toolbar', () => {
     await page
       .waitForSelector('#preact-session-list', { state: 'attached', timeout: 15000 })
       .catch(() => {});
+    // WEB-P0-4 prevention layer (06-05): force mutationsEnabled=true so
+    // the toolbar renders; see the prior test for the explanation.
+    await page.evaluate(async () => {
+      const state: any = await import('/static/app/state.js');
+      state.mutationsEnabledSignal.value = true;
+    });
+    await page.waitForTimeout(200);
     const rowCount = await page.locator('button[data-session-id]').count();
     test.skip(rowCount === 0, 'no fixture rows');
     const row = page.locator('button[data-session-id]').first();
