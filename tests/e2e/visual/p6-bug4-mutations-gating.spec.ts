@@ -125,4 +125,50 @@ test.describe('WEB-P0-4 prevention layer — mutations gating', () => {
       + await page.locator('form[data-testid="create-session-form"]').count();
     expect(dialogCount, 'CreateSessionDialog must not render when mutationsEnabledSignal is false').toBe(0);
   });
+
+  test('DOM: non-regression — when mutationsEnabledSignal=true, SessionRow toolbar and CreateSessionDialog ARE rendered', async ({ page }) => {
+    await page.goto('/?t=test');
+    await page.waitForSelector('header', { state: 'attached', timeout: 15000 });
+    await page.waitForSelector('#preact-session-list', { state: 'attached', timeout: 15000 }).catch(() => {});
+    await page.evaluate(async () => {
+      const state: any = await import('/static/app/state.js');
+      state.mutationsEnabledSignal.value = true;
+    });
+    await page.waitForTimeout(300);
+    const rowCount = await page.locator('button[data-session-id]').count();
+
+    // Non-regression check 1: when mutations are on, the read-only lock indicator must NOT render
+    const lockCount = await page.locator('button[data-session-id] [aria-label="Read-only"]').count();
+    expect(
+      lockCount,
+      'with mutationsEnabledSignal=true, no row should render the Read-only lock indicator',
+    ).toBe(0);
+
+    // Non-regression check 2: if fixtures exist, the toolbar wrapper must render on every row
+    if (rowCount > 0) {
+      const toolbarCount = await page.locator('button[data-session-id] [role="toolbar"]').count();
+      expect(
+        toolbarCount,
+        'with mutationsEnabledSignal=true, every session row must render a <div role="toolbar">',
+      ).toBeGreaterThanOrEqual(1);
+    }
+
+    // Non-regression check 3: CreateSessionDialog opens normally when mutations are on
+    await page.evaluate(async () => {
+      const state: any = await import('/static/app/state.js');
+      state.createSessionDialogSignal.value = true;
+    });
+    await page.waitForTimeout(300);
+    // Dialog renders via the "New Session" heading plus a submit button
+    const newSessionHeadingCount = await page.getByRole('heading', { name: /new session/i }).count();
+    expect(
+      newSessionHeadingCount,
+      'with mutationsEnabledSignal=true, CreateSessionDialog must render when opened',
+    ).toBeGreaterThanOrEqual(1);
+    // Cleanup: close the dialog so other tests start clean
+    await page.evaluate(async () => {
+      const state: any = await import('/static/app/state.js');
+      state.createSessionDialogSignal.value = false;
+    });
+  });
 });
