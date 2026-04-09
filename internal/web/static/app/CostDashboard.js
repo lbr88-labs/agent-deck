@@ -4,8 +4,20 @@ import { html } from 'htm/preact'
 import { useEffect, useRef, useState } from 'preact/hooks'
 import { apiFetch } from './api.js'
 
+// POL-5 (Phase 9, plan 02): locale-aware currency formatting. Constructed
+// once at module load — Intl.NumberFormat is non-trivial to build (reads
+// ICU data) and the user's locale does not change during a session. Both
+// the summary card fmt() helper and the Chart.js y-axis tick callback
+// delegate to this instance so they never drift. Currency stays USD
+// regardless of locale (no conversion) — only symbol placement, digit
+// grouping, and decimal separator follow navigator.language.
+const currencyFormatter = new Intl.NumberFormat(navigator.language, {
+  style: 'currency',
+  currency: 'USD',
+})
+
 function fmt(v) {
-  return '$' + (v || 0).toFixed(2)
+  return currencyFormatter.format(v || 0)
 }
 
 // readChartTheme reads chart palette CSS variables from the document root.
@@ -117,7 +129,7 @@ export function CostDashboard() {
             scales: {
               x: { ticks: { color: t.text }, grid: { color: t.grid } },
               y: {
-                ticks: { color: t.text, callback: v => '$' + v.toFixed(2) },
+                ticks: { color: t.text, callback: v => currencyFormatter.format(v || 0) },
                 grid: { color: t.grid },
               },
             },
