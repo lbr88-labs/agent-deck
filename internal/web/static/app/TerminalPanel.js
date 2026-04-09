@@ -73,7 +73,7 @@ function installTouchScroll(container, xtermEl) {
 
 export function TerminalPanel() {
   const containerRef = useRef(null)
-  const ctxRef = useRef(null)  // { terminal, fitAddon, ws, resizeObserver, touchDispose, decoder, reconnectTimer, reconnectAttempt, wsReconnectEnabled, terminalAttached }
+  const ctxRef = useRef(null)  // { terminal, fitAddon, ws, resizeObserver, windowResizeController, touchDispose, decoder, reconnectTimer, reconnectAttempt, wsReconnectEnabled, terminalAttached }
   const sessionId = selectedIdSignal.value
   const isMobile = isMobileDevice()
 
@@ -90,6 +90,7 @@ export function TerminalPanel() {
     if (ctx.reconnectTimer) clearTimeout(ctx.reconnectTimer)
     if (ctx.ws) { ctx.ws.close(); ctx.ws = null }
     if (ctx.resizeObserver) ctx.resizeObserver.disconnect()
+    if (ctx.windowResizeController) ctx.windowResizeController.abort()
     if (ctx.touchDispose) ctx.touchDispose()
     if (ctx.terminal) ctx.terminal.dispose()
     ctxRef.current = null
@@ -159,6 +160,7 @@ export function TerminalPanel() {
       fitAddon,
       ws: null,
       resizeObserver: null,
+      windowResizeController: null,
       touchDispose: null,
       decoder: new TextDecoder(),
       reconnectTimer: null,
@@ -186,6 +188,18 @@ export function TerminalPanel() {
       observer.observe(container)
       ctx.resizeObserver = observer
     }
+
+    // WEB-P1-1: Window resize fallback. ResizeObserver fires on container
+    // changes, but the viewport can change without the immediate parent
+    // resizing (devtools open, mobile soft keyboard, orientation change).
+    // The window resize listener catches those cases. Use AbortController
+    // so cleanup is a single .abort() call (matches PERF-E pattern from
+    // Phase 8).
+    const windowResizeController = new AbortController()
+    window.addEventListener('resize', () => scheduleFitAndResize(120), {
+      signal: windowResizeController.signal,
+    })
+    ctx.windowResizeController = windowResizeController
 
     // Touch scrolling for mobile
     ctx.touchDispose = installTouchScroll(container, terminal.element)
@@ -315,7 +329,7 @@ export function TerminalPanel() {
           READ-ONLY: terminal input is disabled on mobile
         </div>
       `}
-      <div class="flex-1 min-h-0 p-sp-16 overflow-hidden">
+      <div class="flex-1 min-h-0 min-w-0 p-sp-16 overflow-hidden">
         <div ref=${containerRef} class="h-full w-full overflow-hidden" />
       </div>
     </div>

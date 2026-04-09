@@ -183,8 +183,11 @@ export function AppShell() {
 
         <!-- Main content: terminal and costs tabs -->
         <!-- TerminalPanel is always rendered (CSS hidden when costs active) to preserve xterm.js + WebSocket -->
-        <main class="flex-1 min-w-0 overflow-hidden dark:bg-tn-bg bg-tn-light-bg relative">
-          <div class="${activeTab === 'terminal' ? 'h-full' : 'hidden'}">
+        <!-- WEB-P1-1: main element needs flex flex-col + min-h-0 so inner h-full resolves and
+             flex-1 children can shrink below intrinsic content height. Inner wrapper gets
+             h-full + min-h-0 + flex flex-col so TerminalPanels own h-full chain works. -->
+        <main class="flex flex-col flex-1 min-w-0 min-h-0 overflow-hidden dark:bg-tn-bg bg-tn-light-bg relative">
+          <div class="${activeTab === 'terminal' ? 'h-full min-h-0 flex flex-col' : 'hidden'}">
             <${TerminalPanel} />
           </div>
           ${activeTab === 'costs' && html`<${CostDashboard} />`}
