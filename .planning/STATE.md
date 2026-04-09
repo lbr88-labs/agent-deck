@@ -3,13 +3,13 @@ gsd_state_version: 1.0
 milestone: v1.5
 milestone_name: milestone
 status: unknown
-stopped_at: Phase 9 plan 09-02 COMPLETE (parallel Wave 1 with 09-01) — POL-3 profile dropdown _* filter + max-h-[300px] scroll; POL-5 CostDashboard Intl.NumberFormat locale-aware currency; 3 atomic commits, 21 Playwright tests green, WEB-P0-2 Option B invariants preserved
-last_updated: "2026-04-09T17:41:58Z"
+stopped_at: Phase 9 plan 09-01 COMPLETE (Wave 1, parallel to 09-02 and 09-03) — POL-1 sidebar skeleton loader + POL-2 GroupRow 120ms opacity fade + POL-4 group-header density reduction; 3 atomic commits (test → feat → fix); 13/14 Playwright tests green (1 skipped on fixture); SessionRow 06-03 regression guard added; zero Claude attribution
+last_updated: "2026-04-09T17:48:00.204Z"
 progress:
   total_phases: 7
   completed_phases: 2
   total_plans: 18
-  completed_plans: 11
+  completed_plans: 12
 ---
 
 # Project State
@@ -36,7 +36,7 @@ See `/home/ashesh-goplani/agent-deck/.planning/REQUIREMENTS.md` for the 43 requi
 ## Current Position
 
 Phase: 09 (polish) — EXECUTING
-Plan: 1 of 4
+Plan: 2 of 4 (01 complete, 02/03 in parallel, 04 pending)
 
 ## Phase Progress
 
@@ -46,7 +46,7 @@ Plan: 1 of 4
 | 6 | Web App Critical P0 Bugs | COMPLETE 2026-04-08 (5/5 plans, WEB-P0-1 ✓ WEB-P0-2 ✓ WEB-P0-3 ✓ WEB-P0-4 mitigation ✓ WEB-P0-4 prevention ✓ + POL-7 ✓) | 4 (WEB-P0-1..4 all ✓) | 5 |
 | 7 | Web App P1 Layout Bugs | COMPLETE 2026-04-09 (4/4 plans, WEB-P1-1 ✓ WEB-P1-2 ✓ WEB-P1-3 ✓ WEB-P1-4 ✓ WEB-P1-5 ✓) | 5 (WEB-P1-1..5 all ✓) | 4 |
 | 8 | Performance (Premium Feel) | Not started | 11 (PERF-A..K) | 5 |
-| 9 | Polish (Premium UX) | Not started | 7 (POL-1..7) | 4 |
+| 9 | Polish (Premium UX) | IN PROGRESS 2026-04-09 (plan 01 ✓, plan 09-02 POL-3+POL-5 ✓ via parallel, plan 09-03 POL-7 ✓ via docs traceability, plan 09-04 POL-6 pending) | 7 (POL-1..7: 1 ✓ 2 ✓ 3 ✓ 4 ✓ 5 ✓ 7 ✓; POL-6 remaining) | 4 |
 | 10 | Automated Testing | Not started | 5 (TEST-A..E) | 4 |
 | 11 | Release v1.5.0 | Not started | 5 (REL-1..5) | 3 |
 
@@ -129,6 +129,21 @@ Plan: 1 of 4
 - **Phase 9 plan count of 4 preserved** without re-implementing shipped code. Plan 09-04 (POL-6 light theme audit) can assume `Toast.js` and `ToastHistoryDrawer.js` surfaces are stable inputs to its audit — the regression guard will fail loudly if a POL-6 contrast fix accidentally breaks a POL-7 invariant.
 - **POL-7 remains `[x]` in REQUIREMENTS.md line 68.** This plan verified the mark is still justified without modifying the file.
 
+### Plan 09-01 Complete (2026-04-09)
+
+- **POL-1 + POL-2 + POL-4 shipped in one atomic plan** because all three touch `SessionList.js` + `GroupRow.js` + `state.js` and splitting would cross-race a parallel wave. ~20 min execution.
+- **POL-1 skeleton loader:** `sessionsLoadedSignal = signal(false)` appended at state.js tail (honors the 06-05 additive-tail interface rule). `main.js` imports it and flips it to `true` in BOTH `loadMenu()` success branch AND the SSE `menu` event handler; catch branch intentionally left unflipped so skeleton stays during offline. `SessionList.js` renders `<ul data-testid="sidebar-skeleton">` with 8 placeholder rows + `animate-pulse motion-reduce:animate-none` before the existing empty-state branch. Active search bypasses the skeleton (pulsing while a user types would feel broken).
+- **POL-2 GroupRow fade + SessionRow regression guard:** GroupRow.js action cluster switched from `hidden group-hover:flex` (display-based snap, not transitionable) to `opacity-0 pointer-events-none group-hover:opacity-100 group-hover:pointer-events-auto group-focus-within:opacity-100 group-focus-within:pointer-events-auto transition-opacity duration-[120ms] motion-reduce:transition-none`. No Preact state needed (unlike SessionRow's 06-03 hasFocusWithin workaround) because GroupRow has no competing `.opacity-0` sibling that could shadow the group-hover variant. SessionRow.js 06-03 toolbar wiring is now asserted by a dedicated readFileSync + regex regression guard in `p9-pol2-transitions.spec.ts`.
+- **POL-4 group density:** GroupRow.js outer button `py-2.5 min-h-[44px]` → `py-1 min-h-[40px]`. The 40 px min-h is still a reasonable tap target for a passive expand/collapse; inner action cluster buttons retain their 36 px targets. Plan DOM density assertion skipped on current fixture (needs session-then-group adjacency; `_test` has two groups at level 0 with no session between).
+- **TDD ordering verified:** `test(09-01)` commit `03b191f` → `feat(09-01)` commit `7f91b26` (POL-1) → `fix(09-01)` commit `44d38e2` (POL-2 + POL-4). Initial RED run: 9 failed / 2 passed / 3 skipped. Final GREEN run: 13 passed / 1 skipped / 0 failed.
+- **Playwright baseURL query-string gotcha:** `baseURL: 'http://127.0.0.1:18420/?token=test'` + `page.goto('/')` clobbers the query string — Playwright replaces path AND clears query, so /api/menu returned 401. Fix: all `page.goto` calls use `'/?token=test'` explicitly. Applied to all three p9-pol*.spec.ts files.
+- **Stale embed.FS bundle trap (same as 09-02's discovery):** `make build` only runs `css` + `go build`, not `go generate`. After editing GroupRow.js the embedded PERF-H bundle `dist/main.<hash>.js` kept serving the old classes until I ran `GOTOOLCHAIN=go1.24.0 go generate ./internal/web/... && make build && restart server`. The correct recipe for any plan touching `internal/web/static/app/**/*.js` is: edit → `make css` → `go generate ./internal/web/...` → `make build` → kill all port 18420 processes → restart server.
+- **Test server lifecycle via tmux:** `script -qc` pty wrapper + `nohup` both failed (`could not open a new TTY`) because the nested agent-deck environment lacks a real pty. Fix: spawn inside `tmux new-session -d -s adeck-p9-test '...agent-deck web...'`. tmux provides a real pty, TUI's `/dev/tty` open succeeds, server stays alive indefinitely. Cleaner than 09-02's `script -qfc` approach.
+- **Parallel coordination with 09-02 and 09-03:** zero file overlap. 09-01 owned state.js/main.js/SessionList.js/GroupRow.js; 09-02 owned ProfileDropdown.js/CostDashboard.js/etc; 09-03 owned docs + SessionRow regression spec only. My git log shows interleaved commits (`03b191f 09-01 test → a83a6d5 09-03 docs → 83e2d6e 09-03 test → 39a0838 09-02 test → 3cbf3ab 09-03 docs → 7f91b26 09-01 feat → e5c4b42 09-02 fix → 23b4d04 09-02 feat → 44d38e2 09-01 fix`). No merge conflicts. State.js additive-tail interface held: 09-01 and 09-02 both append and the appends are orthogonal.
+- **Hard rules honored:** no push, no tag, no PR, no merge. Zero Claude attribution in any plan-01 commit (verified `git log --format=%B 5539ce3..HEAD | grep -c 'Claude\|Co-Authored-By'` → 0 across all 3 plan-01 commits). No `rm` — used `trash` for stale dist bundles.
+- **State.js interface at end of plan 09-01:** tail is now `mutationsEnabledSignal` → `sessionsLoadedSignal`. Any future plan adding a signal MUST append AFTER `sessionsLoadedSignal`.
+- **`make ci` failures are all carry-forward** from deferred-items.md items #1, #3, #7, #9: same 5 lint errors + same 6 `TestSyncSessionIDsFromTmux_*` / `TestInstance_*` SetEnvironment failures. Zero new failures. `internal/web` tests pass (4.5s). TUI smoke tests pass.
+
 ### Plan 09-02 Complete (2026-04-09)
 
 - **POL-3 and POL-5 shipped in a single Wave 1 plan** running parallel to 09-01 with zero file overlap. 09-01 owned SessionList/GroupRow/state; 09-02 owned ProfileDropdown/CostDashboard.
@@ -207,11 +222,11 @@ Phase 7 is COMPLETE. 10 commits live on local main, NOT pushed (per HARD RULES �
 
 ## Last session
 
-- **Stopped at:** Phase 9 plan 09-02 COMPLETE (Wave 1, parallel to 09-01) — POL-3 profile dropdown `_*` filter + max-h-[300px] scroll; POL-5 CostDashboard Intl.NumberFormat locale-aware currency; 3 atomic commits (test → fix → feat); 21 Playwright tests green across chromium-en-US + chromium-de-DE; WEB-P0-2 Option B invariants preserved; zero Claude attribution
-- **Timestamp:** 2026-04-09T17:41:58Z
-- **Duration:** ~55 min (includes service worker interception debug detour + esbuild bundling pipeline discovery)
-- **Commits:** 39a0838 (test(09-02) failing specs + pw-p9-plan2 config), e5c4b42 (fix(09-02) POL-3 filter + max-h + serviceWorkers:block), 23b4d04 (feat(09-02) POL-5 Intl.NumberFormat memoized)
-- **Key issues handled in-flight:** (1) Playwright `page.route()` silently bypassed by production PWA service worker — fix was `serviceWorkers: 'block'` in the plan-2 config; (2) `make build` only runs `css` + `go build`, NOT esbuild — must invoke `GOTOOLCHAIN=go1.24.0 go generate ./internal/web/` after any `internal/web/static/app/**/*.js` edit; (3) `./build/agent-deck web` needs a controlling TTY — wrapped in `script -qfc` (util-linux) to allocate a pseudo-TTY and keep the binary alive under nohup-style detachment.
+- **Stopped at:** Phase 9 plan 09-01 COMPLETE (Wave 1, parallel to 09-02 and 09-03) — POL-1 sidebar skeleton loader + POL-2 GroupRow 120ms opacity fade + POL-4 group-header density reduction; 3 atomic commits (test → feat → fix); 13/14 Playwright tests green (1 skipped on fixture); SessionRow 06-03 regression guard added; zero Claude attribution
+- **Timestamp:** 2026-04-09T17:42:25Z
+- **Duration:** ~20 min (tmux-hosted test server avoided 09-02's `script -qfc` debug detour)
+- **Commits:** 03b191f (test(09-01) failing specs + pw-p9-plan1 config), 7f91b26 (feat(09-01) POL-1 skeleton loader), 44d38e2 (fix(09-01) POL-2 GroupRow fade + POL-4 density)
+- **Key issues handled in-flight:** (1) Playwright `baseURL: '/?token=test'` + `page.goto('/')` clobbers the query string — each test must use `page.goto('/?token=test')` explicitly; (2) stale embed.FS bundle after source edit — `make build` alone is insufficient, must run `go generate ./internal/web/...` first to refresh `dist/main.<hash>.js`; (3) test server TTY requirement — wrapped in `tmux new-session -d -s adeck-p9-test` which provides a real pty, cleaner than `script -qfc` from 09-02.
 
 ## Performance Metrics
 
@@ -228,3 +243,4 @@ Phase 7 is COMPLETE. 10 commits live on local main, NOT pushed (per HARD RULES �
 | 07 | 02 | ~45 min (incl. Tailwind v4 @utility discovery) | 4 | 4 (+ 4 created) | 2026-04-09 |
 | 09 | 03 | ~4 min | 2 | 0 (+ 3 created, 0 internal/) | 2026-04-09 |
 | 09 | 02 | ~55 min (incl. service worker debug + esbuild pipeline discovery) | 3 | 2 (+ 4 created) | 2026-04-09 |
+| 09 | 01 | ~20 min | 3 | 4 (+ 4 created) | 2026-04-09 |
