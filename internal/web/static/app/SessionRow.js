@@ -96,7 +96,7 @@ export function SessionRow({ item, focused }) {
         onMouseLeave=${() => setHovered(false)}
         onFocus=${() => setHasFocusWithin(true)}
         onBlur=${() => setHasFocusWithin(false)}
-        class="group w-full min-w-0 relative flex items-center gap-sp-8 px-sp-12 py-2.5 min-h-[44px] rounded text-left text-sm
+        class="group w-full min-w-0 relative flex items-center gap-sp-8 px-sp-12 py-1.5 min-h-[40px] leading-tight rounded text-left text-sm
           transition-colors border-l-4
           ${isSelected
             ? 'border-tn-blue dark:bg-tn-blue/30 bg-blue-100 dark:text-tn-fg text-gray-900 font-medium'
