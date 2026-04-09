@@ -53,10 +53,25 @@ const FIXTURE_SETTINGS = { webMutations: true };
 // the given selector. Walks ancestors if background is transparent.
 const computeContrastInPage = `
 (function(selector) {
-  function parseRgb(s) {
-    const m = s.match(/rgba?\\((\\d+),\\s*(\\d+),\\s*(\\d+)(?:,\\s*([\\d.]+))?/);
-    if (!m) return null;
-    return [parseInt(m[1], 10), parseInt(m[2], 10), parseInt(m[3], 10), m[4] != null ? parseFloat(m[4]) : 1];
+  // Color parser that handles rgb(), rgba(), oklch(), hsl(), hex, etc.
+  // Strategy: let the browser normalize via a canvas 2D context. Setting
+  // ctx.fillStyle accepts any valid CSS color; reading it back on older
+  // browsers returns rgb(...); on modern browsers some colors are returned
+  // as oklch(...) unchanged. We use getImageData on a 1x1 fill to get the
+  // definitive sRGB bytes regardless of input format — this always works.
+  function cssColorToRgba(cssColor) {
+    if (!cssColor || cssColor === 'transparent') return [0, 0, 0, 0];
+    const canvas = document.createElement('canvas');
+    canvas.width = 1;
+    canvas.height = 1;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return null;
+    // Clear to transparent and fill with the color in SRC mode so alpha is preserved.
+    ctx.clearRect(0, 0, 1, 1);
+    ctx.fillStyle = cssColor;
+    ctx.fillRect(0, 0, 1, 1);
+    const data = ctx.getImageData(0, 0, 1, 1).data;
+    return [data[0], data[1], data[2], data[3] / 255];
   }
   function toLinear(c) {
     const s = c / 255;
@@ -66,9 +81,8 @@ const computeContrastInPage = `
     return 0.2126 * toLinear(r) + 0.7152 * toLinear(g) + 0.0722 * toLinear(b);
   }
   function compositeOverWhite(rgba) {
-    // Approximate background blending against the page's bg-white (255,255,255)
     const [r, g, b, a] = rgba;
-    if (a >= 1) return [r, g, b];
+    if (a >= 0.999) return [r, g, b];
     return [
       Math.round(r * a + 255 * (1 - a)),
       Math.round(g * a + 255 * (1 - a)),
@@ -77,10 +91,10 @@ const computeContrastInPage = `
   }
   function findOpaqueBg(el) {
     let node = el;
-    while (node && node !== document.body) {
+    while (node && node !== document.documentElement) {
       const cs = getComputedStyle(node);
       const bg = cs.backgroundColor;
-      const rgba = parseRgb(bg);
+      const rgba = cssColorToRgba(bg);
       if (rgba && rgba[3] > 0) {
         return compositeOverWhite(rgba);
       }
@@ -91,7 +105,7 @@ const computeContrastInPage = `
   const el = document.querySelector(selector);
   if (!el) return { error: 'element not found: ' + selector };
   const cs = getComputedStyle(el);
-  const fgRaw = parseRgb(cs.color);
+  const fgRaw = cssColorToRgba(cs.color);
   if (!fgRaw) return { error: 'cannot parse fg color: ' + cs.color };
   const fg = [fgRaw[0], fgRaw[1], fgRaw[2]];
   const bg = findOpaqueBg(el);
@@ -102,6 +116,7 @@ const computeContrastInPage = `
   const ratio = (hi + 0.05) / (lo + 0.05);
   return {
     fg: 'rgb(' + fg.join(',') + ')',
+    fgRaw: cs.color,
     bg: 'rgb(' + bg.join(',') + ')',
     ratio: Math.round(ratio * 100) / 100,
     fontSize: cs.fontSize,
@@ -149,14 +164,15 @@ test.describe('POL-6 targeted luminance contrast checks', () => {
   });
 
   test('L2 session row cost badge has contrast >= 4.5', async ({ page }) => {
+    // Seed a cost for s1 via the `/api/costs/batch` endpoint. The handler
+    // returns { costs: { <id>: <usd> } } (see SessionList.js line 40).
+    await page.route('**/api/costs/batch*', r => r.fulfill({ json: { costs: { s1: 1.23, s2: 0.5, s3: 2.0, s4: 0.75 } } }));
     await page.goto('/?token=test');
     await waitForAppReady(page);
-    // Seed a cost for s1 via sessionCostsSignal
-    await page.evaluate(async () => {
-      const state: any = await import('/static/app/state.js');
-      state.sessionCostsSignal.value = { s1: 1.23 };
-    });
-    await page.waitForTimeout(150);
+    await page.waitForFunction(
+      () => !!document.querySelector('button[data-session-id="s1"] span.font-mono'),
+      { timeout: 10000 },
+    );
     const result: any = await page.evaluate(`(${computeContrastInPage})('button[data-session-id=\"s1\"] span.font-mono')`);
     expect(result.error, JSON.stringify(result)).toBeUndefined();
     expect(result.ratio, `fg=${result.fg} bg=${result.bg} ratio=${result.ratio}`).toBeGreaterThanOrEqual(4.5);
@@ -206,18 +222,21 @@ test.describe('POL-6 targeted luminance contrast checks', () => {
   test('L5 cost summary card subtitle has contrast >= 4.5', async ({ page }) => {
     await page.goto('/?token=test');
     await waitForAppReady(page);
-    await page.evaluate(async () => {
-      const state: any = await import('/static/app/state.js');
-      state.activeTabSignal.value = 'costs';
-    });
-    await page.waitForSelector('text=Today', { state: 'visible' });
+    await page.locator('button[title="Cost Dashboard"]').click();
+    await page.waitForFunction(
+      () => {
+        const grid = document.querySelector('.grid.grid-cols-2');
+        return !!(grid && grid.textContent && grid.textContent.includes('events'));
+      },
+      { timeout: 10000 },
+    );
     // The "events" subtitle line under each card (e.g. "5 events")
     const result: any = await page.evaluate(`(function() {
-      const divs = Array.from(document.querySelectorAll('main .grid > div'));
-      if (!divs.length) return { error: 'no cost cards' };
-      const card = divs[0];
-      const subtitle = Array.from(card.querySelectorAll('div')).find(d => /events|avg/.test((d.textContent || '').trim()) && d.querySelectorAll('div').length === 0);
-      if (!subtitle) return { error: 'subtitle not found' };
+      const cards = Array.from(document.querySelectorAll('.grid.grid-cols-2 > div'));
+      if (!cards.length) return { error: 'no cost cards', gridCount: document.querySelectorAll('.grid').length };
+      const firstCard = cards[0];
+      const subtitle = Array.from(firstCard.querySelectorAll('div.mt-1')).find(d => /events|avg/.test((d.textContent || '').trim()));
+      if (!subtitle) return { error: 'subtitle not found', cardHtml: firstCard.outerHTML.slice(0, 500) };
       subtitle.setAttribute('data-pol6-target', 'cost-subtitle');
       return { found: true };
     })()`);
@@ -228,17 +247,18 @@ test.describe('POL-6 targeted luminance contrast checks', () => {
   });
 
   test('L6 toast history drawer timestamp has contrast >= 4.5', async ({ page }) => {
-    await page.goto('/?token=test');
-    await waitForAppReady(page);
-    await page.evaluate(async () => {
-      const state: any = await import('/static/app/state.js');
-      state.toastHistorySignal.value = [
+    // Seed localStorage so the drawer populates when opened.
+    await page.addInitScript(() => {
+      localStorage.setItem('theme', 'light');
+      localStorage.setItem('agentdeck_toast_history', JSON.stringify([
         { id: 1, message: 'info message', type: 'info', createdAt: Date.now() - 60000 },
         { id: 2, message: 'another info', type: 'info', createdAt: Date.now() - 30000 },
-      ];
-      state.toastHistoryOpenSignal.value = true;
+      ]));
     });
-    await page.waitForSelector('[role="dialog"][aria-label="Toast history"] ul li');
+    await page.goto('/?token=test');
+    await waitForAppReady(page);
+    await page.locator('[data-testid="toast-history-toggle"]').click();
+    await page.waitForSelector('[role="dialog"][aria-label="Toast history"] ul li', { state: 'visible', timeout: 5000 });
     // The timestamp is the first font-mono span inside a non-error history row
     const result: any = await page.evaluate(`(function() {
       const lis = Array.from(document.querySelectorAll('[role="dialog"][aria-label="Toast history"] ul li'));
