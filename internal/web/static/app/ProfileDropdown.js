@@ -25,7 +25,18 @@ export function ProfileDropdown() {
       .then(r => r.json())
       .then(data => {
         setCurrent(data.current || 'default')
-        setProfiles(data.profiles || [data.current])
+        // POL-3 (Phase 9, plan 02): hide internal `_*` test profiles from the
+        // rendered list. The server's currently-bound `current` is preserved
+        // even if it starts with `_` (e.g. CI running under
+        // AGENTDECK_PROFILE=_test) — the user still sees their real active
+        // profile in the button label; they just don't see `_*` entries as
+        // "would switch to" options. Since WEB-P0-2 shipped Option B (listbox
+        // is display-only), filtering cannot hide a reachable action. When
+        // the filter reduces the list to a single entry, the branch below
+        // falls through to the single-profile `role="status"` path.
+        const all = data.profiles || [data.current]
+        const visible = all.filter(p => !p.startsWith('_'))
+        setProfiles(visible)
       })
       .catch(() => setProfiles([]))
   }, [])
@@ -89,7 +100,7 @@ export function ProfileDropdown() {
       ${open && html`
         <div class="absolute top-full right-0 mt-1 z-dropdown rounded-lg shadow-lg
                     dark:bg-tn-panel bg-white border dark:border-tn-muted/20 border-gray-200
-                    min-w-[220px] max-w-[90vw] py-1"
+                    min-w-[220px] max-w-[90vw] max-h-[300px] overflow-y-auto py-1"
              role="listbox"
              aria-label="Available profiles (read-only)">
           ${profiles.map(p => html`

@@ -25,6 +25,11 @@ export default defineConfig({
     baseURL: 'http://127.0.0.1:18420/?token=test',
     headless: true,
     viewport: { width: 1280, height: 800 },
+    // Block service workers so page.route() can intercept /api/* requests.
+    // The production PWA service worker (static/sw.js) handles fetch events
+    // from its own context, which Playwright cannot mock. Blocking SW
+    // registration keeps all network traffic in the page context.
+    serviceWorkers: 'block',
   },
   projects: [
     {
