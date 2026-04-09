@@ -4,6 +4,7 @@ import { useState } from 'preact/hooks'
 import { selectedIdSignal, sessionCostsSignal, confirmDialogSignal, mutationsEnabledSignal } from './state.js'
 import { apiFetch } from './api.js'
 import { addToast } from './Toast.js'
+import { memo } from './preactCompat.js'
 
 const STATUS_COLORS = {
   running:  'bg-tn-green animate-pulse',
@@ -14,7 +15,7 @@ const STATUS_COLORS = {
   stopped:  'bg-tn-muted/50',
 }
 
-export function SessionRow({ item, focused }) {
+function SessionRowImpl({ item, focused }) {
   const session = item.session
   const isSelected = selectedIdSignal.value === session.id
   const costUSD = sessionCostsSignal.value[session.id]
@@ -193,3 +194,29 @@ export function SessionRow({ item, focused }) {
     </li>
   `
 }
+
+// PERF-G: wrap SessionRow in memo() so individual row rerenders are
+// bailed out when their props didn't actually change. Without this, the
+// sidebar re-renders every SessionRow on any parent update (cost update,
+// selection change, SSE delta), which defeats the virtualization gains
+// from plan 08-04. The comparator short-circuits on the props that
+// actually drive the rendered output.
+function areSessionRowPropsEqual(prev, next) {
+  const prevS = prev.item && prev.item.session
+  const nextS = next.item && next.item.session
+  if (prevS === nextS) {
+    return prev.focused === next.focused
+  }
+  if (!prevS || !nextS) return false
+  return (
+    prevS.id === nextS.id &&
+    prevS.title === nextS.title &&
+    prevS.status === nextS.status &&
+    prevS.tool === nextS.tool &&
+    prevS.groupPath === nextS.groupPath &&
+    prev.focused === next.focused &&
+    prev.item.level === next.item.level
+  )
+}
+
+export const SessionRow = memo(SessionRowImpl, areSessionRowPropsEqual)

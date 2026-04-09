@@ -1,5 +1,6 @@
 // GroupRow.js -- Collapsible group header row
 import { html } from 'htm/preact'
+import { useState } from 'preact/hooks'
 import { groupExpandedSignal, toggleGroup, isGroupExpanded } from './groupState.js'
 import { groupNameDialogSignal, confirmDialogSignal, sessionsSignal, searchQuerySignal } from './state.js'
 import { apiFetch } from './api.js'
@@ -44,9 +45,21 @@ function countVisibleChildren(groupPath, query) {
 
 export function GroupRow({ item }) {
   const group = item.group
-  // Read groupExpandedSignal.value to subscribe this component
+  // PERF-G: hold the collapse state locally in a useState so toggling one
+  // group does not force a render of every other GroupRow via shared
+  // signal subscription alone. We still subscribe to groupExpandedSignal
+  // so external changes (SSE deltas, cross-tab sync) propagate to this
+  // row; when they do, we mirror the signal into local state via a safe
+  // set-state-during-render check. Preact's useState bailout short-circuits
+  // the rerender when local state already matches the derived external
+  // value, so unrelated group toggles cost zero extra renders for this row.
   void groupExpandedSignal.value
-  const expanded = isGroupExpanded(group.path, group.expanded)
+  const externalExpanded = isGroupExpanded(group.path, group.expanded)
+  const [isOpen, setIsOpen] = useState(externalExpanded)
+  if (externalExpanded !== isOpen) {
+    setIsOpen(externalExpanded)
+  }
+  const expanded = isOpen
 
   function handleRename(e) {
     e.stopPropagation()

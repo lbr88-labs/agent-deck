@@ -6,8 +6,12 @@ import { isGroupExpanded, groupExpandedSignal } from './groupState.js'
 import { GroupRow } from './GroupRow.js'
 import { SessionRow } from './SessionRow.js'
 import { useKeyboardNav } from './useKeyboardNav.js'
+import { useDebounced } from './useDebounced.js'
 
-// Fetch batch costs once after the session list first loads
+// Fetch batch costs once after the session list first loads.
+// PERF-I: POST /api/costs/batch with a JSON body {ids:[...]} so long lists
+// do not hit the 414 URI Too Long limit that the GET + query-string form
+// would trigger once the sidebar grows past ~50 sessions.
 let costsFetched = false
 async function fetchBatchCosts(items) {
   if (costsFetched) return
@@ -17,13 +21,19 @@ async function fetchBatchCosts(items) {
   if (ids.length === 0) return
   costsFetched = true
 
-  const url = '/api/costs/batch?ids=' + ids.join(',')
-  const headers = { Accept: 'application/json' }
+  const headers = {
+    Accept: 'application/json',
+    'Content-Type': 'application/json',
+  }
   const token = authTokenSignal.value
   if (token) headers.Authorization = 'Bearer ' + token
 
   try {
-    const res = await fetch(url, { headers })
+    const res = await fetch('/api/costs/batch', {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ ids }),
+    })
     if (!res.ok) return
     const data = await res.json()
     sessionCostsSignal.value = data.costs || {}
@@ -89,7 +99,13 @@ function matchesSearch(item, query) {
 export function SessionList() {
   const items = sessionsSignal.value
   const focusedId = focusedIdSignal.value
-  const query = searchQuerySignal.value
+  // PERF-F: debounce the search term by 250 ms so the filter closure does
+  // not rerun on every keystroke. The raw signal still updates immediately
+  // so the search input stays responsive; only the downstream filter is
+  // delayed. useDebounced returns the raw value on the first render so
+  // the filter has something to match against before the timer fires.
+  const rawQuery = searchQuerySignal.value
+  const query = useDebounced(rawQuery, 250)
 
   useKeyboardNav()
 

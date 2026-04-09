@@ -156,6 +156,28 @@ export function TerminalPanel() {
     // cleanup that only removed touchstart.
     const controller = new AbortController()
 
+    // PERF-D: hint the browser to preload the WebGL addon in parallel with
+    // the WebSocket open. The static import at the top of this file still
+    // does the actual load — the <link rel="preload"> tag only nudges the
+    // browser to fetch the bytes early rather than deferring until the
+    // module graph walks to addon-webgl. Pitfall 5: we do NOT switch to a
+    // dynamic import() here because that causes a renderer switch FOUC +
+    // tmux byte race during the gap. Desktop only (mobile skips WebGL).
+    // The preload <link> is bound to controller.signal so it is removed
+    // when the terminal unmounts, preventing stale tags from accumulating
+    // across session reconnects.
+    if (!mobile && typeof document !== 'undefined') {
+      const preloadLink = document.createElement('link')
+      preloadLink.rel = 'preload'
+      preloadLink.as = 'script'
+      preloadLink.crossOrigin = 'anonymous'
+      preloadLink.href = '/static/vendor/addon-webgl.mjs'
+      document.head.appendChild(preloadLink)
+      controller.signal.addEventListener('abort', () => {
+        if (preloadLink.parentNode) preloadLink.parentNode.removeChild(preloadLink)
+      })
+    }
+
     // Context object for this session
     const ctx = {
       sessionId,
