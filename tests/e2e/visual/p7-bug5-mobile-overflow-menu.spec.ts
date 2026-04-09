@@ -98,11 +98,17 @@ test.describe('WEB-P1-5 — mobile topbar collapses to overflow menu <600 px', (
     await page.goto('/?t=test');
     await page.waitForSelector('header', { state: 'attached', timeout: 15000 });
     await page.waitForTimeout(200);
-    // Count visible buttons (display !== none AND visibility !== hidden)
+    // Count visible buttons. `offsetParent === null` when the element OR any
+    // ancestor is `display: none`, which is the correct check for "actually
+    // rendered to the user" — the Topbar collapses the desktop controls via
+    // `max-[599px]:hidden` on the PARENT wrapper, so the child buttons must
+    // be detected as hidden through their ancestor's computed display.
     const visibleButtonCount = await page.locator('header button').evaluateAll(buttons =>
       buttons.filter(b => {
-        const style = window.getComputedStyle(b as Element);
-        return style.display !== 'none' && style.visibility !== 'hidden';
+        const el = b as HTMLElement;
+        if (el.offsetParent === null) return false;
+        const style = window.getComputedStyle(el);
+        return style.visibility !== 'hidden';
       }).length,
     );
     expect(
