@@ -46,7 +46,7 @@ Next: Phase 10 (Automated Testing) or Phase 8 (Performance) per roadmap dependen
 | 5 | Critical Regressions | COMPLETE (shipped in v1.4.1) | 6 (REG-01..06 ✓) | — |
 | 6 | Web App Critical P0 Bugs | COMPLETE 2026-04-08 (5/5 plans, WEB-P0-1 ✓ WEB-P0-2 ✓ WEB-P0-3 ✓ WEB-P0-4 mitigation ✓ WEB-P0-4 prevention ✓ + POL-7 ✓) | 4 (WEB-P0-1..4 all ✓) | 5 |
 | 7 | Web App P1 Layout Bugs | COMPLETE 2026-04-09 (4/4 plans, WEB-P1-1 ✓ WEB-P1-2 ✓ WEB-P1-3 ✓ WEB-P1-4 ✓ WEB-P1-5 ✓) | 5 (WEB-P1-1..5 all ✓) | 4 |
-| 8 | Performance (Premium Feel) | Not started | 11 (PERF-A..K) | 5 |
+| 8 | Performance (Premium Feel) | COMPLETE 2026-04-09 (5/5 plans, PERF-A..K all ✓) | 11 (PERF-A..K) | 5 |
 | 9 | Polish (Premium UX) | COMPLETE 2026-04-09 (4/4 plans, POL-1 ✓ POL-2 ✓ POL-3 ✓ POL-4 ✓ POL-5 ✓ POL-6 ✓ POL-7 ✓) | 7 (POL-1..7 all ✓) | 4 |
 | 10 | Automated Testing | Not started | 5 (TEST-A..E) | 4 |
 | 11 | Release v1.5.0 | Not started | 5 (REL-1..5) | 3 |
