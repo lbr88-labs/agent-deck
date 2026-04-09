@@ -95,16 +95,16 @@ export function GroupRow({ item }) {
         type="button"
         onClick=${() => toggleGroup(group.path, group.expanded)}
         class="group w-full min-w-0 flex items-center gap-sp-8 px-sp-12 py-1 min-h-[40px] text-xs font-semibold
-          uppercase tracking-wide dark:text-tn-muted text-gray-500
+          uppercase tracking-wide dark:text-tn-muted text-gray-700
           dark:bg-tn-muted/5 bg-gray-50/50
           hover:dark:bg-tn-muted/10 hover:bg-gray-100
-          hover:dark:text-tn-fg hover:text-gray-700 transition-colors"
+          hover:dark:text-tn-fg hover:text-gray-900 transition-colors"
         style="padding-left: calc(${item.level || 0} * 1rem + 0.75rem)"
         aria-expanded=${expanded}
       >
         <span class="text-base leading-none select-none">${expanded ? '\u25BE' : '\u25B8'}</span>
         <span class="flex-1 truncate min-w-0 text-left" title=${group.name || group.path}>${group.name || group.path}</span>
-        <span class="dark:text-tn-muted/60 text-gray-400 font-normal">
+        <span class="dark:text-tn-muted/60 text-gray-600 font-normal">
           (${countVisibleChildren(group.path, searchQuerySignal.value)})
         </span>
         <span
