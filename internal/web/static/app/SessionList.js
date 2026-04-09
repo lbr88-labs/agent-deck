@@ -7,6 +7,7 @@ import { GroupRow } from './GroupRow.js'
 import { SessionRow } from './SessionRow.js'
 import { useKeyboardNav } from './useKeyboardNav.js'
 import { useDebounced } from './useDebounced.js'
+import { useVirtualList } from './useVirtualList.js'
 
 // Fetch batch costs once after the session list first loads.
 // PERF-I: POST /api/costs/batch with a JSON body {ids:[...]} so long lists
@@ -131,18 +132,101 @@ export function SessionList() {
     </div>`
   }
 
+  // Apply the group-collapse visibility filter BEFORE handing the list to
+  // the virtualizer. Otherwise the virtual window would budget space for
+  // hidden rows and the scroll surface would be larger than the rendered
+  // content. The small cost of two filter passes (one here, one in the
+  // non-virtualized branch) is acceptable — for lists > 50 the cost is
+  // dwarfed by the DOM node savings.
+  const visible = []
+  for (const item of filtered) {
+    if (item.type === 'group' && item.group) {
+      if (!query && hasCollapsedStrictAncestor(item.group.path)) continue
+      visible.push(item)
+    } else if (item.type === 'session' && item.session) {
+      if (!query && hasCollapsedAncestor(item.session.groupPath)) continue
+      visible.push(item)
+    }
+  }
+
+  // PERF-K: opt-in virtualization. Gated at visible.length > 50 AND the
+  // localStorage feature flag `agentdeck_virtualize === '1'`. Below either
+  // threshold the original non-virtualized render path runs unchanged, so
+  // the default experience is untouched. Power users with many sessions
+  // can flip the flag to get a windowed render. Rules-of-hooks are
+  // satisfied by always routing through VirtualizedList (which always
+  // calls useVirtualList) when virtualization is on — extracting to a
+  // dedicated component means the non-virtualized path never calls
+  // useVirtualList at all, so the hook order stays stable per branch.
+  const virtualizationEnabled =
+    visible.length > 50 &&
+    typeof localStorage !== 'undefined' &&
+    localStorage.getItem('agentdeck_virtualize') === '1'
+
+  if (virtualizationEnabled) {
+    return html`<${VirtualizedList} items=${visible} focusedId=${focusedId} />`
+  }
+
   return html`<ul class="flex flex-col gap-0.5 py-sp-4 min-w-0" role="list" id="preact-session-list">
-    ${filtered.map(item => {
+    ${visible.map(item => {
       if (item.type === 'group' && item.group) {
-        if (!query && hasCollapsedStrictAncestor(item.group.path)) return null
         return html`<${GroupRow} key=${item.group.path} item=${item} />`
       }
       if (item.type === 'session' && item.session) {
-        if (!query && hasCollapsedAncestor(item.session.groupPath)) return null
         const isFocused = focusedId === item.session.id
         return html`<${SessionRow} key=${item.session.id} item=${item} focused=${isFocused} />`
       }
       return null
     })}
   </ul>`
+}
+
+// VirtualizedList is the PERF-K windowed render path. Lives in the same
+// file as SessionList so the rules-of-hooks argument is local: this
+// component always calls useVirtualList, the parent decides whether to
+// mount it at all. Per ROADMAP.md Open Question 5, the > 50 gate is
+// enforced by the caller; this component assumes items is already the
+// visible (post collapse-filter) slice.
+function VirtualizedList({ items, focusedId }) {
+  const { virtualItems, totalHeight, containerProps } = useVirtualList({
+    items,
+    estimateSize: (item) => (item && item.type === 'group' ? 44 : 40),
+    overscan: 6,
+  })
+
+  return html`
+    <div
+      ...${containerProps}
+      id="preact-session-list"
+      class="flex-1 min-h-0"
+    >
+      <div style=${{ height: totalHeight + 'px', position: 'relative' }}>
+        ${virtualItems.map(({ index, item, offset, size }) => {
+          const key = item && item.type === 'group'
+            ? item.group.path
+            : (item && item.session ? item.session.id : String(index))
+          return html`
+            <div
+              key=${key}
+              role="listitem"
+              aria-rowindex=${index + 1}
+              style=${{
+                position: 'absolute',
+                top: offset + 'px',
+                left: 0,
+                right: 0,
+                height: size + 'px',
+              }}
+            >
+              ${item && item.type === 'group' && item.group
+                ? html`<${GroupRow} item=${item} />`
+                : item && item.session
+                  ? html`<${SessionRow} item=${item} focused=${focusedId === item.session.id} />`
+                  : null}
+            </div>
+          `
+        })}
+      </div>
+    </div>
+  `
 }
