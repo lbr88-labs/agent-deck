@@ -94,7 +94,7 @@ export function GroupRow({ item }) {
       <button
         type="button"
         onClick=${() => toggleGroup(group.path, group.expanded)}
-        class="group w-full min-w-0 flex items-center gap-sp-8 px-sp-12 py-2.5 min-h-[44px] text-xs font-semibold
+        class="group w-full min-w-0 flex items-center gap-sp-8 px-sp-12 py-1 min-h-[40px] text-xs font-semibold
           uppercase tracking-wide dark:text-tn-muted text-gray-500
           dark:bg-tn-muted/5 bg-gray-50/50
           hover:dark:bg-tn-muted/10 hover:bg-gray-100
@@ -110,7 +110,11 @@ export function GroupRow({ item }) {
         <span
           onClick=${(e) => e.stopPropagation()}
           onMouseDown=${(e) => e.stopPropagation()}
-          class="hidden group-hover:flex items-center gap-0.5 flex-shrink-0"
+          class="flex items-center gap-0.5 flex-shrink-0
+            opacity-0 pointer-events-none
+            group-hover:opacity-100 group-hover:pointer-events-auto
+            group-focus-within:opacity-100 group-focus-within:pointer-events-auto
+            transition-opacity duration-[120ms] motion-reduce:transition-none"
         >
           <button type="button" onClick=${handleCreateGroup} title="New subgroup" aria-label="Create subgroup"
             class="min-w-[36px] min-h-[36px] flex items-center justify-center rounded
