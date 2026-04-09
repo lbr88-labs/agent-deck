@@ -3,13 +3,13 @@ gsd_state_version: 1.0
 milestone: v1.5
 milestone_name: milestone
 status: unknown
-stopped_at: Phase 9 plan 09-01 COMPLETE (Wave 1, parallel to 09-02 and 09-03) — POL-1 sidebar skeleton loader + POL-2 GroupRow 120ms opacity fade + POL-4 group-header density reduction; 3 atomic commits (test → feat → fix); 13/14 Playwright tests green (1 skipped on fixture); SessionRow 06-03 regression guard added; zero Claude attribution
-last_updated: "2026-04-09T17:48:00.204Z"
+stopped_at: Phase 9 CLOSED — plan 09-04 POL-6 light theme audit COMPLETE; 11 atomic commits (1 test baseline + 1 test revision + 7 fix per-file + 1 chore styles regen + 1 docs); 18/18 POL-6 tests green (11 axe-core + 7 luminance); all Wave 1 regression specs still pass (09-01 13/14, 09-02 21/24, 09-03 10/10); zero dark-theme regressions; zero Claude attribution
+last_updated: "2026-04-09T21:35:00Z"
 progress:
   total_phases: 7
-  completed_phases: 2
+  completed_phases: 3
   total_plans: 18
-  completed_plans: 12
+  completed_plans: 14
 ---
 
 # Project State
@@ -35,8 +35,9 @@ See `/home/ashesh-goplani/agent-deck/.planning/REQUIREMENTS.md` for the 43 requi
 
 ## Current Position
 
-Phase: 09 (polish) — EXECUTING
-Plan: 2 of 4 (01 complete, 02/03 in parallel, 04 pending)
+Phase: 09 (polish) — COMPLETE
+Plan: 4 of 4 ALL COMPLETE — Phase 9 CLOSED
+Next: Phase 10 (Automated Testing) or Phase 8 (Performance) per roadmap dependencies
 
 ## Phase Progress
 
@@ -46,7 +47,7 @@ Plan: 2 of 4 (01 complete, 02/03 in parallel, 04 pending)
 | 6 | Web App Critical P0 Bugs | COMPLETE 2026-04-08 (5/5 plans, WEB-P0-1 ✓ WEB-P0-2 ✓ WEB-P0-3 ✓ WEB-P0-4 mitigation ✓ WEB-P0-4 prevention ✓ + POL-7 ✓) | 4 (WEB-P0-1..4 all ✓) | 5 |
 | 7 | Web App P1 Layout Bugs | COMPLETE 2026-04-09 (4/4 plans, WEB-P1-1 ✓ WEB-P1-2 ✓ WEB-P1-3 ✓ WEB-P1-4 ✓ WEB-P1-5 ✓) | 5 (WEB-P1-1..5 all ✓) | 4 |
 | 8 | Performance (Premium Feel) | Not started | 11 (PERF-A..K) | 5 |
-| 9 | Polish (Premium UX) | IN PROGRESS 2026-04-09 (plan 01 ✓, plan 09-02 POL-3+POL-5 ✓ via parallel, plan 09-03 POL-7 ✓ via docs traceability, plan 09-04 POL-6 pending) | 7 (POL-1..7: 1 ✓ 2 ✓ 3 ✓ 4 ✓ 5 ✓ 7 ✓; POL-6 remaining) | 4 |
+| 9 | Polish (Premium UX) | COMPLETE 2026-04-09 (4/4 plans, POL-1 ✓ POL-2 ✓ POL-3 ✓ POL-4 ✓ POL-5 ✓ POL-6 ✓ POL-7 ✓) | 7 (POL-1..7 all ✓) | 4 |
 | 10 | Automated Testing | Not started | 5 (TEST-A..E) | 4 |
 | 11 | Release v1.5.0 | Not started | 5 (REL-1..5) | 3 |
 
@@ -157,6 +158,22 @@ Plan: 2 of 4 (01 complete, 02/03 in parallel, 04 pending)
 - **Downstream note for plan 09-04 (POL-6 light theme audit):** two new surfaces to audit — (1) ProfileDropdown multi-profile listbox scroll track (new `max-h-[300px] overflow-y-auto` may need scrollbar styling in light mode), (2) CostDashboard summary cards + chart y-axis ticks in de-DE (text width can grow ~30% e.g. `1.234,56 US$` vs `$1,234.56`; verify no grid overflow at narrow viewports).
 - **Downstream notes for Phase 10 test infra:** (1) Shared base Playwright config should default to `serviceWorkers: 'block'`. (2) `scripts/start-test-server.sh` should encapsulate the `script -qfc` + env-unset + detach + probe incantation. (3) `make build` should depend on `go generate ./internal/web/` when app JS is newer than `dist/manifest.json`.
 - **Hard rules honored:** no push, no tag, no PR, no merge, zero Claude attribution in any commit body (verified via `git log 39a0838^..HEAD | grep -ciE "claude|co-authored-by"` → 0), no `rm` usage (used `mv`/`trash` for temp file cleanup), no pre-existing failures from `deferred-items.md` touched.
+
+### Plan 09-04 Complete (2026-04-09) — Phase 9 CLOSED
+
+- **POL-6 light theme audit shipped as the final Phase 9 plan** per STATE.md Critical Ordering Constraint #7 (POL-6 LAST in Phase 9 after all layout is final). Wave 1 (09-01/02/03) locked the final v1.5.0 sidebar / profile dropdown / cost dashboard / toast surfaces before the audit ran.
+- **Two-layer contrast audit:** (1) `@axe-core/playwright` sweep with `runOnly: ['color-contrast']` across 11 light-theme surfaces (main shell, sidebar with fixture sessions, multi-profile dropdown open, CostDashboard tab, EmptyStateDashboard, Create/Confirm/GroupName dialogs, KeyboardShortcutsOverlay, ToastHistoryDrawer, error toast variant); (2) targeted luminance check with canvas `getImageData`-based color parser (handles Tailwind v4 OKLCH) on 7 pre-flagged elements (tool label, cost badge, group count chip, profile option, cost subtitle, drawer timestamp, empty-state body).
+- **Discovery pass (commit `f0928dd`):** 1 passed / 17 failed in 3.1 minutes against current main. Primary fg color in violations: `#99a1af` (Tailwind v4 `text-gray-400`) at 2.6:1 on `bg-white`, 2.55:1 on `bg-gray-50/50`, 2.48:1 on `bg-gray-50`. Unique flagged class strings extracted via grep: GroupRow count chip, SessionList "No sessions", EmptyStateDashboard recent-status + keyboard hints + "No sessions yet", SessionRow tool label, CostDashboard subtitles, SearchFilter placeholder, ProfileDropdown `(active)` label, SettingsPanel Loading text.
+- **Fix batch:** 8 source files edited, 14 light-mode-only class swaps (all preserving their `dark:*` siblings unchanged). Primary substitution: `text-gray-400` → `text-gray-600` (2.6:1 → 7.5:1 on bg-white). GroupRow header went `text-gray-500` → `text-gray-700` because the `bg-gray-50/50` translucent background composited to a lower effective luminance. Bonus finding: SessionRow cost badge `text-green-600` → `text-green-700` (3.22:1 → 5.6:1) — Tailwind v4 `text-green-600` is `#00a63e` which fails AA on pure white; caught by the luminance spec L2, not pre-flagged.
+- **Real-UI driven test pattern discovery (commit `2ac722c`):** The Phase 8 PERF-H bundle (`dist/main.<hash>.js`) closes `state.js` over its own minified variables (`F = v("terminal")` is `activeTabSignal`). When Playwright calls `import('/static/app/state.js')` via `page.evaluate`, the browser loads the un-bundled source file which creates a SECOND module instance with its own `activeTabSignal` closure. Mutations to the un-bundled signal never reach the bundled app's render tree. I discovered this while debugging why `activeTabSignal.value = 'costs'` wasn't switching tabs. Evidence: a probe showed `alert count: 0, unbundled signal length: 1` after pushing a toast via un-bundled `addToast()`. **Fix:** rewrote T4/T6/T7/T8/T9/T10/T11/L2/L5/L6 to drive state through real UI interactions (button clicks, keyboard presses, localStorage seeds, failing mutation mocks). This pattern is now the recommended approach for all Phase 9+ specs that need to drive app state. **p6-bug4-a11y.spec.ts and p6-bug2-a11y.spec.ts from Phase 6 need updating to use this pattern** — logged as out-of-scope deferred items for Phase 10 TEST-A.
+- **OKLCH luminance parser fix:** initial regex-based `parseRgb` rejected Tailwind v4's `oklch(44.6% .03 256.802)` output with "cannot parse fg color". Replaced with a canvas-based approach: `ctx.fillStyle = cssColor; ctx.fillRect(0,0,1,1); ctx.getImageData(0,0,1,1).data` — the browser's native color parser accepts any valid CSS color and `getImageData` always returns sRGB bytes. Bundle-agnostic and handles every CSS color format including OKLCH, named colors, hex, hsl, and rgb.
+- **Dialog container selector narrowing:** CreateSessionDialog / ConfirmDialog / GroupNameDialog render as plain `<div class="fixed inset-0 z-50 bg-black/50">` without `role="dialog"` — pre-existing structural a11y debt outside POL-6's color-contrast scope. Tests scope to `.fixed.inset-0.z-50.bg-black\\/50` instead. Recommended as a dedicated a11y refactor plan for Phase 10+.
+- **TDD ordering verified:** `test(09-04)` commit `f0928dd` (discovery spec) → `test(09-04)` commit `2ac722c` (real-UI revision) → 7× `fix(09-04)` per-file commits (`7f34792`, `2e5f152`, `d059c6e`, `13a68d8`, `3bfa517`, `f9970b3`, `fdc8bfa`) → `chore(09-04)` `5380436` (styles.css regen) → `docs(09-04)` `46aac79` (deferred-items close-out).
+- **Final GREEN run:** 18/18 POL-6 tests pass in 16.9s. All Wave 1 regression specs remain green: 09-01 (13 passed, 1 skipped), 09-02 (21 passed, 3 skipped), 09-03 (10 passed). Zero new Go test failures. Binary built with go1.24.0, vcs.modified=false.
+- **Pre-existing failures preserved per scope boundary:** `make ci` lint + 6 `TestSyncSessionIDsFromTmux_*` + 1 `TestSmoke_QuitExitsCleanly` (carry-forward from deferred-items #1, #3, #7, #9). Plan 09-04 touches zero Go files. Also documented 2 NEW out-of-scope deferred items: p6-bug4-a11y signal-pattern breakage + p6-bug2-a11y mobile overflow-menu breakage (both caused by earlier phases, not by 09-04).
+- **Deferred items #5 and #8 closed (commit `46aac79`):** session list color-contrast (item #5 from plan 06-03) and drawer-axe underlying badges (item #8 from plan 06-04) both RESOLVED by the POL-6 fix batch. Original entries preserved in deferred-items.md; RESOLVED annotations are additive for incident-trail transparency.
+- **Hard rules honored:** no push, no tag, no PR, no merge, zero Claude attribution (verified `git log 220de49..HEAD | grep -ciE "claude|co-authored-by"` → 0), no `rm` (used `trash` for probe cleanup), no pre-existing failures touched.
+- **Phase 9 CLOSED.** All 4 plans shipped, all 7 POL requirements complete (POL-1 ✓ POL-2 ✓ POL-3 ✓ POL-4 ✓ POL-5 ✓ POL-6 ✓ POL-7 ✓). The final v1.5.0 light theme is WCAG AA compliant for color-contrast across all rendered surfaces, guarded by 18 Playwright regression tests. Phase 10 TEST-A can now capture visual baselines on the final, fully-polished theme.
 
 ### Critical Ordering Constraints (from research)
 
