@@ -103,7 +103,7 @@ export function EmptyStateDashboard() {
                   >
                     <span class="w-2 h-2 rounded-full flex-shrink-0 ${item.session.status === 'running' || item.session.status === 'starting' ? 'bg-tn-green' : item.session.status === 'waiting' ? 'bg-tn-yellow' : item.session.status === 'error' ? 'bg-tn-red' : 'bg-tn-muted'}"></span>
                     <span class="flex-1 truncate min-w-0" title=${item.session.title || item.session.id}>${item.session.title || item.session.id}</span>
-                    <span class="text-xs dark:text-tn-muted text-gray-400 flex-shrink-0">${item.session.status}</span>
+                    <span class="text-xs dark:text-tn-muted text-gray-600 flex-shrink-0">${item.session.status}</span>
                   </button>
                 </li>
               `)}
@@ -127,12 +127,12 @@ export function EmptyStateDashboard() {
               New Group
             </button>
           </div>
-          <p class="text-xs dark:text-tn-muted text-gray-400 text-center">
+          <p class="text-xs dark:text-tn-muted text-gray-600 text-center">
             Press <kbd class="px-1.5 py-0.5 rounded dark:bg-tn-card bg-gray-100 font-mono text-xs">n</kbd> to create a session,
             <kbd class="px-1.5 py-0.5 rounded dark:bg-tn-card bg-gray-100 font-mono text-xs">j</kbd>/<kbd class="px-1.5 py-0.5 rounded dark:bg-tn-card bg-gray-100 font-mono text-xs">k</kbd> to navigate
           </p>
           ${total === 0 && html`
-            <p class="text-sm dark:text-tn-muted/70 text-gray-400">
+            <p class="text-sm dark:text-tn-muted/70 text-gray-600">
               No sessions yet. Create your first one to get started.
             </p>
           `}
