@@ -158,7 +158,7 @@ export function SessionList() {
     : items
 
   if (!filtered || filtered.length === 0) {
-    return html`<div class="px-sp-12 py-sp-16 dark:text-tn-muted text-gray-400 text-sm">
+    return html`<div class="px-sp-12 py-sp-16 dark:text-tn-muted text-gray-600 text-sm">
       ${query ? 'No matching sessions' : 'No sessions'}
     </div>`
   }
