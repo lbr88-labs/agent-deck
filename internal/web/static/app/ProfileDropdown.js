@@ -113,7 +113,7 @@ export function ProfileDropdown() {
                 ${p === current
                   ? 'dark:text-tn-blue text-tn-light-blue font-medium'
                   : 'dark:text-tn-muted text-gray-500'}"
-            >${p}${p === current ? html` <span class="dark:text-tn-muted text-gray-400 ml-1">(active)</span>` : ''}</div>
+            >${p}${p === current ? html` <span class="dark:text-tn-muted text-gray-600 ml-1">(active)</span>` : ''}</div>
           `)}
           <div class="border-t dark:border-tn-muted/20 border-gray-200 mt-1 pt-1 px-3 py-1.5">
             <span class="text-[11px] dark:text-tn-muted/80 text-gray-500 italic">${HELP_TEXT}</span>
