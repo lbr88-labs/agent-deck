@@ -1,0 +1,215 @@
+---
+gsd_state_version: 1.0
+milestone: v1.5
+milestone_name: milestone
+status: unknown
+stopped_at: Phase 7 COMPLETE — all 5 P1 layout bugs fixed (WEB-P1-1..5), 4 plans landed, all regression specs green, TDD ordering verified, no Claude attribution
+last_updated: "2026-04-09T17:21:27.550Z"
+progress:
+  total_phases: 7
+  completed_phases: 2
+  total_plans: 18
+  completed_plans: 9
+---
+
+# Project State
+
+## Project Reference
+
+**Project:** Agent Deck
+**Repository:** /home/ashesh-goplani/agent-deck
+**Branch:** main
+**Current version:** v1.4.1
+**Target version:** v1.5.0
+
+See `/home/ashesh-goplani/agent-deck/.planning/PROJECT.md` for full project context.
+See `/home/ashesh-goplani/agent-deck/.planning/ROADMAP.md` for the full v1.5.0 roadmap.
+See `/home/ashesh-goplani/agent-deck/.planning/REQUIREMENTS.md` for the 43 requirements and their phase mappings.
+
+## Milestone: v1.5.0 — Premium Web App
+
+**Goal:** Ship a premium-quality v1.5.0 where the web app feels instant and snappy, all 4 remaining P0 bugs + 5 P1 bugs are fixed, first-load wire size drops from 668 KB to <150 KB gzipped, FCP<500ms / LCP<1s / TBT<100ms, automated visual regression tests block merge on >0.1% diff, and mobile is fully functional. The app should represent what agent-deck deserves: premium, polished, production-ready.
+
+**Source spec:** `docs/WEB-APP-V15-SPEC.md`
+**Starting point:** v1.4.1 (emergency patch that fixed 6 regressions shipped in v1.4.0)
+
+## Current Position
+
+Phase: 09 (polish) — EXECUTING
+Plan: 1 of 4
+
+## Phase Progress
+
+| # | Phase | Status | Requirements | Plans |
+|---|-------|--------|--------------|-------|
+| 5 | Critical Regressions | COMPLETE (shipped in v1.4.1) | 6 (REG-01..06 ✓) | — |
+| 6 | Web App Critical P0 Bugs | COMPLETE 2026-04-08 (5/5 plans, WEB-P0-1 ✓ WEB-P0-2 ✓ WEB-P0-3 ✓ WEB-P0-4 mitigation ✓ WEB-P0-4 prevention ✓ + POL-7 ✓) | 4 (WEB-P0-1..4 all ✓) | 5 |
+| 7 | Web App P1 Layout Bugs | COMPLETE 2026-04-09 (4/4 plans, WEB-P1-1 ✓ WEB-P1-2 ✓ WEB-P1-3 ✓ WEB-P1-4 ✓ WEB-P1-5 ✓) | 5 (WEB-P1-1..5 all ✓) | 4 |
+| 8 | Performance (Premium Feel) | Not started | 11 (PERF-A..K) | 5 |
+| 9 | Polish (Premium UX) | Not started | 7 (POL-1..7) | 4 |
+| 10 | Automated Testing | Not started | 5 (TEST-A..E) | 4 |
+| 11 | Release v1.5.0 | Not started | 5 (REL-1..5) | 3 |
+
+**Total active plans across Phases 6-11:** 24
+**Total active requirements:** 37
+
+## Accumulated Context
+
+### v1.5.0 Milestone Init (2026-04-08)
+
+- Previous milestone (v1.4.0) shipped with 4 phases executed. v1.4.1 was an emergency patch for 6 regressions. Post-v1.4.1 user testing surfaced that 4 P0 bugs from v1.3.4 audit were NOT actually fixed in v1.4.0.
+- v1.5.0 scope: 43 requirements total — 6 pre-complete (Phase 5, v1.4.1), 37 active (4 P0, 5 P1, 11 perf, 7 polish, 5 testing, 5 release).
+- Research (`/.planning/research/SUMMARY.md`) completed with HIGH confidence overall. Stack locked: 2 new Go dependencies only (`klauspost/compress/gzhttp`, `esbuild/pkg/api`). Everything else is hand-roll or deletion.
+- Roadmap (`/.planning/ROADMAP.md`) created 2026-04-08 with 7 phases, 24 plans, 100% requirement coverage.
+
+### Plan 06-01 Complete (2026-04-08)
+
+- **WEB-P0-2 decision gate closed: Option B ships.** Verified that `server.go:79` binds `cfg.Profile` once at `NewServer()` time with no per-request profile resolver, so Option A (query-string reload) is infeasible without re-architecting profile isolation (explicitly OUT OF SCOPE per REQUIREMENTS.md line 121).
+- **Fix shipped:** `internal/web/static/app/ProfileDropdown.js` rewritten — single profile renders `<div role="status">` (screen-reader-correct), multi profile renders a non-interactive listbox with always-visible "Switch profiles by restarting agent-deck with -p <name>" help text.
+- **TDD ordering verified:** `test(06-01)` commit `e68eeef` → `fix(06-01)` commit `7b39232` → `test(06-01) a11y` commit `285a9bd`. Regression spec + a11y spec (axe-core, keyboard, 44px touch target) both green.
+- **Phase 6 Wave 2 unblocked.** Plans 06-02 (hamburger z-index), 06-03 (action toolbar), 06-04 (toast cap + POL-7) can now run in parallel. Plan 06-05 (mutations-gating) stays in Wave 3.
+- **Deferred items logged** for pre-existing `internal/session` tmux test failures, `TestSmoke_QuitExitsCleanly`, and 5 golangci-lint errors in unrelated files — see `.planning/phases/06-critical-p0-bugs/deferred-items.md`.
+
+### Plan 06-02 Complete (2026-04-08)
+
+- **WEB-P0-1 fixed:** mobile hamburger now clickable at 375x667 and all sub-1024px viewports. Runtime proof at RED (Playwright click timeout message: "Costs button from right-side subtree intercepts pointer events") and GREEN (`elementFromPoint` at hamburger center resolves to the hamburger, click flips `aria-expanded`).
+- **Systematic 7-level z-index scale shipped.** Named tokens in `styles.src.css` @theme block: `--z-index-base/sticky/dropdown/topbar/topbar-primary/modal/toast` drive Tailwind v4 utility generation. Mirrored `--z-*` aliases serve as structural-test anchors and human-readable documentation.
+- **Tailwind v4 theme namespace discovery:** the z-index utility is driven by `--z-index-*`, NOT `--z-*` (the latter produces zero utilities). The plan's 06-CONTEXT.md locked in `--z-*` tokens verbatim — I verified empirically by building a minimal test fixture and shipped both namespaces so Tailwind generates utilities AND the structural tests pass as written. Documented in the @theme block comment for future maintainers.
+- **Class migrations:** `Topbar.js` hamburger `<button>` gains `relative z-topbar-primary pointer-events-auto`; right-side controls wrapper gains `relative z-topbar`; `<header>` demoted from `z-50` to `z-sticky`. `Toast.js` `z-[100]` → `z-toast`. `ProfileDropdown.js` multi-profile listbox adds `z-dropdown`.
+- **TDD ordering verified:** `test(06-02)` commit `914a9ff` → `fix(06-02)` commit `8f466c8` → `test(06-02) a11y` commit `432ea9d`. 9/9 regression tests + 4/4 a11y tests pass.
+- **Workflow note:** test server MUST be rebuilt (`make build`) AND restarted after web static edits — `internal/web/static/*` is embedded into the Go binary via `embed.FS`, so a running server serves a frozen asset snapshot until it's replaced.
+- **Phase 7 WEB-P1-5 unblocked** per STATE.md ordering constraint #3 (topbar z-index fix is prerequisite for mobile overflow menu).
+- **Deferred items appended:** `TestSmoke_TUIRenders` pre-existing profile-state pollution (verified on baseline `2e0520f` with `go clean -testcache`) and `vcs.modified=true` warning from parallel Wave 2 dirty worktree. Neither caused by plan 06-02 edits.
+- **Parallel execution note:** plan 06-03's commit `278e136` picked up my in-flight regenerated `styles.css` because 06-03 ran `make css` while my `styles.src.css` edits were live on disk. The source of truth (`styles.src.css`) still ships in my commit `8f466c8`; `make css && git diff --exit-code internal/web/static/styles.css` is clean.
+
+### Plan 06-05 Complete (2026-04-08) — Phase 6 CLOSED
+
+- **WEB-P0-4 prevention layer shipped.** mutationsEnabledSignal seeded optimistically in `state.js` (appended after `toastHistoryOpenSignal`), `AppShell.js` fetches `/api/settings` on mount and assigns `mutationsEnabledSignal.value` from `webMutations`. Network failures keep the optimistic default so the UI is not locked out on transient errors. Confirmed end-to-end against the test server running with `webMutations=false` — the write UI correctly disappears.
+- **SessionRow toolbar gated + lock indicator.** The entire `<div role="toolbar">` from 06-03 is wrapped in `${mutationsEnabled && html`...`}` (short-circuit removes it from the DOM, no orphan ARIA). A small read-only lock icon (`aria-label="Read-only"`) renders between the cost label and the (hidden) toolbar when `!mutationsEnabledSignal.value`.
+- **CreateSessionDialog dual-gated.** Early-returns `null` after the useState hooks (rules-of-hooks compliance; matches PushControls.js / SystemStats.js pattern), AND the submit button's `disabled` prop becomes `${submitting || !mutationsEnabledSignal.value}` as belt-and-braces.
+- **TDD ordering verified:** `test(06-05)` commit `f582929` → `fix(06-05)` commit `52497f3` → `test(06-05)` non-regression `34b88bd` → `test(06-05)` a11y + cross-plan fix `515c318`. 11/11 mutations-gating tests (10 gating + 1 non-regression) + 6/6 a11y tests pass.
+- **Cross-plan test isolation fix.** 06-03's p6-bug3 DOM specs (2 tests) and p6-bug3 a11y specs (4 tests) broke against the `webMutations=false` test server because they assumed the 06-03 toolbar was unconditionally in the DOM. Rather than reconfiguring the server, added an `await page.evaluate(() => state.mutationsEnabledSignal.value = true)` preamble to each affected test. Both 06-03 specs plus p6-bug1 (9/9), p6-bug1-a11y (4/4), p6-bug2 (6/6), p6-bug2-a11y (3/3), p6-bug4 toast-cap (13/13), p6-bug4-a11y (6/6), p0-bug3 (6/6) all remain green.
+- **`make ci` failures are all pre-existing** (carry-forward from items #1, #2, #3, #7 in deferred-items.md). Same 5 lint failures + 6 session test failures + 1 TUI smoke test failure. None touch plan 06-05's files. Logged as item #9 in deferred-items.md; item #10 documents the cross-plan test isolation decision.
+- **Phase 6 CLOSED.** All 4 P0 bugs (WEB-P0-1 hamburger ✓, WEB-P0-2 profile switcher ✓, WEB-P0-3 title truncation ✓, WEB-P0-4 toast spam ✓ with BOTH mitigation and prevention layers) shipped across 5 plans. POL-7 shipped early in 06-04 per ordering constraint #8.
+- **State.js interface final form for Phase 7+:** `toastsSignal`, `shortcutsOverlaySignal`, `toastHistorySignal`, `toastHistoryOpenSignal`, `mutationsEnabledSignal` — all additive-only tail appends from plans 06-04 and 06-05. Any future plan that needs a new signal should append after `mutationsEnabledSignal`.
+
+### Plan 06-04 Complete (2026-04-08)
+
+- **WEB-P0-4 mitigation layer + POL-7 shipped in a single PR.** `Toast.js` rewritten with eviction-with-history pattern: visible stack capped at 3 (literal `next.length > 3` per Task 1 regex), oldest non-error evicted first, errors evicted FIFO only when all 3 visible are errors, errors no longer auto-dismiss, info / success keep 5s `setTimeout`. Dismissed toasts push into `toastHistorySignal` (capped at 50 via `slice(-50)`) persisted to `localStorage` key `agentdeck_toast_history`.
+- **New `ToastHistoryDrawer.js` component** exports `ToastHistoryDrawer` (`role="dialog" aria-modal="true"` panel listing history newest-first, errors highlighted) AND `ToastHistoryDrawerToggle` (clock icon + entry count, 44x44 touch target, `data-testid="toast-history-toggle"`). Mounted by `AppShell.js` next to `ToastContainer`. Toggle button slotted into `Topbar.js` right-side `z-topbar` wrapper between Info and PushControls (does NOT touch the hamburger stacking classes from 06-02).
+- **ARIA live region split** by severity: errors get `role="alert" aria-live="assertive"` (interrupts screen readers), info / success get `role="status" aria-live="polite"` (queued). Verified by Playwright a11y test.
+- **Tailwind v4 token-vs-utility distinction discovered.** The `--z-index-modal: 50` token existed in `styles.src.css` after 06-02, but `.z-modal` was NOT in compiled `styles.css` because no source consumed it. Tailwind v4 only emits utilities for tokens actually USED in JS. Once `ToastHistoryDrawer.js` referenced `z-modal`, `make css` regenerated styles.css with the rule. Documented in summary's "Issues Encountered".
+- **TDD ordering verified:** `test(06-04)` commit `80fea0d` → `feat(06-04)` `d3b4f35` (state.js signals) → `fix(06-04)` `aa1c974` (Toast.js refactor) → `feat(06-04)` `a7f2548` (drawer + Topbar + AppShell) → `test(06-04)` `cf8322e` (a11y spec + inline contrast fix). 13/13 regression tests + 6/6 a11y tests pass.
+- **Inline a11y fix on the brand-new component:** `text-gray-400` → `text-gray-600` on the drawer history row timestamp (~2.6:1 → ~5.7:1 contrast). Pre-existing badge contrast violations elsewhere remain POL-6 territory in Phase 9.
+- **Embedded asset reload friction worth documenting:** the test server on port 18420 serves a frozen `embed.FS` snapshot from the Go binary; required `make build` + kill PID + restart server twice during this plan (after Task 3 and Task 4) so Playwright DOM tests reflected new code.
+- **State.js interface for 06-05:** all edits are PURELY ADDITIVE — `toastHistorySignal` and `toastHistoryOpenSignal` appended after `shortcutsOverlaySignal`. Plan 06-05 should append `mutationsEnabledSignal` after `toastHistoryOpenSignal` for clean merging. SessionRow.js was NOT touched (per scope boundary), so 06-05's plan to gate the absolute-positioned toolbar from 06-03 is unblocked.
+- **POL-7 marked complete in this phase.** Phase 9 POL-7 entry can be marked done without re-implementation work.
+- **Deferred items appended (item #7):** the same 5 lint failures + 6 + 1 test failures from items #1, #2, #3 reproduce on plan 06-04's baseline `a7f2548` (verified by stashing and re-running `make ci`). All in files plan 06-04 doesn't touch. Item #8 documents the axe drawer scope narrowing decision.
+
+### Plan 06-03 Complete (2026-04-08)
+
+- **WEB-P0-3 fixed:** session title truncation resolved by converting the SessionRow.js action button container from an in-flow `<span>` (that reserved 186px of flex space even when hidden via `opacity-0 pointer-events-none`) to an absolute-positioned `<div role="toolbar" aria-label="Session actions">` overlay. Measured title span ratio at 1280x800: **0.30 → 0.66 (82.3px → 184.3px of 279px row width, +124%)**.
+- **Fix details:** outer button gains `relative` between `min-w-0` and `flex items-center`; toolbar uses `absolute right-2 top-1/2 -translate-y-1/2 flex items-center gap-0.5 transition-opacity duration-[120ms] motion-reduce:transition-none`; each of the 4 inner action buttons gains `focus-visible:opacity-100 focus-visible:pointer-events-auto` as a secondary defense. Title span class (`flex-1 truncate min-w-0`) is unchanged — now occupies full row width because the toolbar no longer participates in the flex layout.
+- **Row height stability (PERF-K prereq satisfied):** row height stays at 44px regardless of toolbar visibility (measured via DOM). Since `position: absolute` removes the toolbar from the flex flow, the row only honors its own `min-h-[44px]` from the dot/title/badge baseline. Phase 8 virtualization can safely assume a stable row height.
+- **Tailwind v4 cascade quirk discovered:** the pure-CSS `group-focus-within:opacity-100` utility loses the cascade to a plain `.opacity-0` sibling despite the expected higher specificity of `:is(:where(.group):focus-within *)`. Empirically verified via a cssRules walk + `matches()` check — both rules match, yet `.opacity-0` wins. Workaround: added a Preact `hasFocusWithin` state + `onFocus`/`onBlur` bubble handlers on the outer button; focus events bubble from inner buttons so a single handler pair catches all cases. The `group-focus-within:*` class is retained in source as a documentation anchor, but the state-based approach is the load-bearing mechanism.
+- **TDD ordering verified:** `test(06-03)` commit `526d711` → `fix(06-03)` commit `278e136` → `test(06-03) a11y` commit `0840d88`. 11/11 regression tests (8 structural + 3 DOM) + 4/4 a11y tests pass.
+- **Cross-plan regex relaxations:** `p0-bug3-session-name-width.spec.ts` and `p1-bug7-selected-indicator.spec.ts` had structural regexes requiring `min-w-0` to be immediately followed by `flex items-center`. My insertion of `relative` between them required relaxing both regexes to `/group w-full\s+min-w-0(?:\s+[-\w\[\]/:.]+)*\s+flex items-center/`. The BUG #3 / CRIT-03 and LAYT-04 invariants (both require `min-w-0` presence on the outer button) are still enforced. Both specs still pass 6/6.
+- **Phase 8 PERF-K + Phase 7 WEB-P1-3 unblocked.** Row height stability was the prerequisite. Plan 06-05 (mutations-gating) depends on this plan's toolbar structure and can land cleanly because all 4 inner action buttons + their click handlers + 44px touch targets are preserved unchanged.
+- **Deferred items appended (deferred-items.md #5 and #6):** pre-existing axe violations in the session list region (color-contrast on badges for POL-6 in Phase 9, nested-interactive on the outer button tree for a future a11y refactor) and pre-existing P2 DOM-test servers not running on ports 18425/18428/18429 (structural tests all pass; DOM tests fail with ERR_CONNECTION_REFUSED). Both categories verified to reproduce on the plan's baseline commit.
+
+### Plan 09-03 Complete (2026-04-09)
+
+- **POL-7 traceability + regression guard shipped (zero production code).** Plan 09-03 is a paperwork + guard plan: POL-7 itself already landed in Phase 6 plan 04 per ordering constraint #8, so this plan's only job is to document the ship location and install a forward-looking regression guard. Zero files under `internal/`, `cmd/`, or `pkg/` were touched.
+- **Traceability document:** `.planning/phases/09-polish/09-03-POL-7-TRACEABILITY.md` maps every POL-7 requirement bullet (REQUIREMENTS.md line 68) to the specific commit SHA and file in Phase 6 plan 04 that satisfied it — `80fea0d` (failing test), `d3b4f35` (state.js signals), `aa1c974` (Toast.js refactor + ARIA split), `a7f2548` (ToastHistoryDrawer.js + Topbar + AppShell), `cf8322e` (a11y spec + contrast fix). Committed via `git add -f` because `.planning/` is in `.git/info/exclude`; local-only, never pushed.
+- **Regression guard spec:** `tests/e2e/visual/p9-pol7-regression-guard.spec.ts` holds 10 structural assertions grouped into three describe blocks (Toast eviction / History drawer / state.js signals). All assertions are `readFileSync` + `toMatch` on `Toast.js`, `ToastHistoryDrawer.js`, and `state.js` — no server boot, no DOM navigation, runs in 827ms. A future refactor that removes `next.length > 3`, `role="alert"`, `aria-live="assertive"`, `role="status"`, `aria-live="polite"`, `export function ToastHistoryDrawer`, `export function ToastHistoryDrawerToggle`, `role="dialog"`, `aria-modal="true"`, `data-testid="toast-history-toggle"`, the 44x44 touch target, `toastHistorySignal`, `toastHistoryOpenSignal`, or the `agentdeck_toast_history` localStorage key will fail this guard loudly before it can silently break POL-7.
+- **All 10 assertions passed on current main (baseline `5539ce3`) in 827ms.** Zero regressions — POL-7 shipped in 06-04 is fully intact in the current source tree. The plan's premise is confirmed.
+- **Minimal per-plan config:** `tests/e2e/pw-p9-plan3.config.mjs` points only at the regression-guard spec, mirroring the `pw-p7-bugN` / `pw-p6-bugN` per-bug config pattern (plan 09-01's `pw-p9-plan1.config.mjs` did not yet exist when Task 2 was drafted because 09-01 is a parallel Wave 1 sibling).
+- **TDD note:** Task 2 is a forward-looking guard, not a driving test, so there is no RED → GREEN pair. All 10 assertions passed on the first run against current main (`5539ce3`).
+- **Commits (local only, no push):** `a83a6d5` `docs(09-03): POL-7 traceability record — shipped in Phase 6 plan 04` → `83e2d6e` `test(09-03): POL-7 regression guard spec`. Both are atomic; only plan 09-03's own files were staged (parallel plans 09-01 and 09-02 had untracked `tests/e2e/` files which were deliberately left alone).
+- **Phase 9 plan count of 4 preserved** without re-implementing shipped code. Plan 09-04 (POL-6 light theme audit) can assume `Toast.js` and `ToastHistoryDrawer.js` surfaces are stable inputs to its audit — the regression guard will fail loudly if a POL-6 contrast fix accidentally breaks a POL-7 invariant.
+- **POL-7 remains `[x]` in REQUIREMENTS.md line 68.** This plan verified the mark is still justified without modifying the file.
+
+### Critical Ordering Constraints (from research)
+
+These are non-negotiable dependencies — enforce during planning:
+
+1. **WEB-P1-3 BLOCKED BY WEB-P0-3** — virtual list (PERF-K) requires stable row height
+2. **WEB-P0-3 BLOCKS PERF-K** — same SessionList.js component
+3. **WEB-P0-1 BLOCKS WEB-P1-5** — topbar z-index fix is prerequisite for mobile overflow menu
+4. **PERF-E BEFORE PERF-D** — listener cleanup before dynamic WebGL import
+5. **PERF-A + PERF-J SAME PR** — both are middleware
+6. **PERF-H LAST in Phase 8** — minification obscures pre-existing bugs
+7. **POL-6 LAST in Phase 9** — light theme audit after all layout is final
+8. **POL-7 SHIPS WITH WEB-P0-4** — same Toast.js refactor, in Phase 6
+9. **TEST-A BASELINES captured at END of Phase 9**, not Phase 10 start
+10. **WEB-P0-2 DECISION GATE** — first task of Phase 6 investigates backend per-request profile support
+
+### Top Decisions Open (from research)
+
+1. ~~**WEB-P0-2 backend support**~~ — RESOLVED 2026-04-08. Backend does NOT support per-request profile override (`server.go:79` binds `cfg.Profile` once at NewServer() time). Option B shipped in plan 06-01 (commit `7b39232`).
+2. **TEST-E scope** — alert-only (strongly recommended) or auto-fix? Default: alert-only per Pitfall 15.
+3. ~~**Toast history drawer**~~ — RESOLVED 2026-04-08. Shipped in plan 06-04 alongside WEB-P0-4 mitigation (POL-7 satisfied early; commits `a7f2548` and `cf8322e`). Phase 9 POL-7 entry can be marked done.
+4. **Service worker cache versioning** (DURING Phase 8) — bundle into PERF-J, not separate.
+5. **PERF-K root cause investigation** (BEFORE PERF-K) — why 876 DOM nodes for 0 sessions? Simpler fix may exist.
+6. **Lighthouse CI threshold calibration** (DURING Phase 10) — 10 baseline runs on main before setting thresholds.
+
+### Archive Reference
+
+Previous milestone (v1.4.0) state archived to `.planning/archive/v1.4.0/`:
+
+- `phases/` — 4 executed phase directories with plans and verification reports
+- `ROADMAP.md` — v1.4.0 9-phase roadmap (5 phases abandoned)
+- `REQUIREMENTS.md` — v1.4.0 44 requirements
+- `STATE.md` — final v1.4.0 state
+- `research/` — v1.4.0 research (Stack, Features, Architecture, Pitfalls, Summary)
+
+### Incident-Driven Rules (Non-Negotiable)
+
+Carried forward from v1.4.0 constraints:
+
+- **Go 1.24.0 toolchain pinned.** Go 1.25 silently breaks macOS TUI (2026-03-26 incident).
+- **No SQLite schema changes this milestone.** localStorage for any new persistence. PR #385 broke all existing users without ALTER TABLE migration.
+- **Small merge batches (3-5 PRs).** Never 15+ at once (the v0.27.0 anti-pattern).
+- **Visual verification mandatory before release.** `scripts/visual-verify.sh` must pass for all 5 TUI states.
+- **Every bug is a missing test.** Regression test written BEFORE fix; test fails without fix.
+- **macOS TUI smoke test after every merge.** Session create, restart, stop with existing state.db.
+
+## Workflow Configuration
+
+From `.planning/config.json`:
+
+- Mode: yolo (auto-approve)
+- Granularity: standard
+- Parallelization: enabled
+- Model profile: balanced (Sonnet)
+- Research: enabled (per-phase)
+- Plan check: enabled (per-phase)
+- Verifier: enabled (per-phase)
+- Auto-advance: **disabled** (user explicitly wants each stage in fresh session for context hygiene)
+
+## Next Action
+
+Phase 7 is COMPLETE. 10 commits live on local main, NOT pushed (per HARD RULES — user owns push/PR/merge/tag). Next: Phase 8 (Performance / Premium Feel — 11 PERF requirements across 5 plans). Phase 8 PERF-K virtualization is now unblocked because Phase 7 plan 03 stabilized SessionRow height at exactly 40 px. Recommended next command in a fresh session: `/gsd:plan-phase 8`.
+
+## Last session
+
+- **Stopped at:** Phase 7 COMPLETE — all 5 P1 layout bugs fixed (WEB-P1-1..5), 4 plans landed, all regression specs green, TDD ordering verified, no Claude attribution
+- **Timestamp:** 2026-04-09T10:00:00Z
+- **Duration:** ~120 min (autonomous resume of crashed gsd-exec-7 incarnation; picked up WIP for 07-03 SessionRow + 07-04 Topbar, fixed in-flight, then executed Wave 2 plan 07-02 fresh)
+- **Commits:** 07e2175 (07-01 fix from prior incarnation), 078f399 (07-03 fix), bd0ea71 (07-04 test refinement), 4de4679 (07-04 fix), c08f45f (07-02 tests), 29ab0cb (07-02 fluid sidebar fix), c721c38 (07-02 empty state fix)
+- **Key issues handled in-flight:** (1) Topbar.js browser parse error from a stray backtick inside an HTML comment in the WIP — tagged template literal closed prematurely. (2) Tailwind v4 `@layer utilities` not variant-aware — must use `@utility` directive for `md:sidebar-fluid` to compile. (3) p7-bug5 visibility filter test flaw — switched from `getComputedStyle().display` to `offsetParent !== null` to detect ancestor display:none. (4) `make ci` shows pre-existing internal/session test failures from deferred-items.md — left alone per brief.
+
+## Performance Metrics
+
+| Phase | Plan | Duration | Tasks | Files Modified | Completed |
+|-------|------|----------|-------|----------------|-----------|
+| 06 | 01 | 10 min | 3 | 4 (+ 5 created) | 2026-04-08 |
+| 06 | 02 | 14 min | 3 | 5 (+ 4 created) | 2026-04-08 |
+| 06 | 03 | 20 min | 3 | 4 (+ 4 created) | 2026-04-08 |
+| 06 | 04 | 32 min | 5 | 5 (+ 5 created) | 2026-04-08 |
+| 06 | 05 | 14 min | 3 | 6 (+ 4 created) | 2026-04-08 |
+| 07 | 01 | (prior) | 3 | 2 (+ 2 created) | 2026-04-09 |
+| 07 | 03 | ~25 min (incl. WIP triage) | 3 | 1 (+ 2 created) | 2026-04-09 |
+| 07 | 04 | ~35 min (incl. WIP triage + parse error fix + test patch) | 3 | 1 (+ 2 created) | 2026-04-09 |
+| 07 | 02 | ~45 min (incl. Tailwind v4 @utility discovery) | 4 | 4 (+ 4 created) | 2026-04-09 |
+| 09 | 03 | ~4 min | 2 | 0 (+ 3 created, 0 internal/) | 2026-04-09 |
