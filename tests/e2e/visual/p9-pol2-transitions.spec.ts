@@ -78,7 +78,7 @@ test.describe('POL-2 — 120ms opacity fade on action clusters', () => {
   // ===== Layer 2: DOM computed-style checks =====
 
   test('DOM: GroupRow action cluster computed transition-property contains opacity on hover-capable viewports', async ({ page }) => {
-    await page.goto('/');
+    await page.goto('/?token=test');
     // Wait for Preact to mount
     await page.waitForFunction(
       () => window.__preactSessionListActive === true,
@@ -103,7 +103,7 @@ test.describe('POL-2 — 120ms opacity fade on action clusters', () => {
   test('DOM: reduced-motion emulation makes GroupRow action cluster transition-property `none`', async ({ page, browserName }) => {
     test.skip(browserName !== 'chromium', 'emulateMedia reducedMotion is chromium-only in this config');
     await page.emulateMedia({ reducedMotion: 'reduce' });
-    await page.goto('/');
+    await page.goto('/?token=test');
     await page.waitForFunction(
       () => window.__preactSessionListActive === true,
       null,

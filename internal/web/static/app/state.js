@@ -135,3 +135,10 @@ export const toastHistoryOpenSignal = signal(false)
 // 403 error spam. Defaults to true (optimistic) until AppShell mount fetches
 // /api/settings and assigns the real value.
 export const mutationsEnabledSignal = signal(true)
+
+// POL-1 (Phase 9, plan 01): sidebar load state for skeleton render gate.
+// Initialized false; flipped to true on the first /api/menu response OR the
+// first SSE `menu` snapshot in main.js. Never flips back — once the sidebar
+// has seen real data, it is past the skeleton phase forever. Per 06-05 STATE.md
+// handoff: new signals are APPENDED AT THE TAIL to preserve clean merges.
+export const sessionsLoadedSignal = signal(false)

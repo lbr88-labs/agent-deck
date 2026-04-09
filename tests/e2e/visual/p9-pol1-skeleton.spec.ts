@@ -118,7 +118,7 @@ test.describe('POL-1 — sidebar skeleton loader', () => {
     await page.route('**/events/menu*', () => {
       // Never fulfill — SSE stream stalls before open
     });
-    await page.goto('/');
+    await page.goto('/?token=test');
     // Wait for the skeleton to appear (Preact mount + first render)
     const skeleton = page.locator('[data-testid="sidebar-skeleton"]');
     await expect(skeleton).toBeVisible({ timeout: 3000 });
@@ -130,7 +130,7 @@ test.describe('POL-1 — sidebar skeleton loader', () => {
   });
 
   test('DOM: skeleton disappears once the real menu has settled', async ({ page }) => {
-    await page.goto('/');
+    await page.goto('/?token=test');
     // Wait for the skeleton to be gone (real menu arrived OR empty-state took over)
     await page.waitForFunction(
       () => !document.querySelector('[data-testid="sidebar-skeleton"]'),

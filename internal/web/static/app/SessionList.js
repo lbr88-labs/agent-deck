@@ -1,7 +1,7 @@
 // SessionList.js -- Renders groups + sessions from sessionsSignal
 import { html } from 'htm/preact'
 import { useEffect } from 'preact/hooks'
-import { sessionsSignal, selectedIdSignal, authTokenSignal, sessionCostsSignal, focusedIdSignal, searchQuerySignal } from './state.js'
+import { sessionsSignal, sessionsLoadedSignal, selectedIdSignal, authTokenSignal, sessionCostsSignal, focusedIdSignal, searchQuerySignal } from './state.js'
 import { isGroupExpanded, groupExpandedSignal } from './groupState.js'
 import { GroupRow } from './GroupRow.js'
 import { SessionRow } from './SessionRow.js'
@@ -120,6 +120,37 @@ export function SessionList() {
     window.__preactSessionListActive = true
     return () => { window.__preactSessionListActive = false }
   }, [])
+
+  // POL-1 (Phase 9 plan 01): skeleton gate. Show a layout-matched placeholder
+  // stack until the first /api/menu response OR SSE `menu` snapshot flips
+  // sessionsLoadedSignal to true. The skeleton uses Tailwind's built-in
+  // `animate-pulse` and respects `prefers-reduced-motion` via
+  // `motion-reduce:animate-none` — no library, no CSS additions beyond what
+  // Tailwind v4 already emits. 8 placeholder rows is a sensible first-screen
+  // guess. When the user is searching we bypass the skeleton: a visible
+  // pulse stack while they type would feel broken.
+  if (!sessionsLoadedSignal.value && !query) {
+    return html`
+      <ul
+        data-testid="sidebar-skeleton"
+        class="flex flex-col gap-0.5 py-sp-4 min-w-0"
+        role="list"
+        aria-label="Loading sessions"
+        aria-busy="true"
+      >
+        ${[0, 1, 2, 3, 4, 5, 6, 7].map(i => html`
+          <li
+            key=${i}
+            class="flex items-center gap-sp-8 px-sp-12 py-1.5 min-h-[40px] animate-pulse motion-reduce:animate-none"
+          >
+            <span class="w-2.5 h-2.5 rounded-full flex-shrink-0 dark:bg-tn-muted/30 bg-gray-300"></span>
+            <span class="flex-1 h-3 rounded dark:bg-tn-muted/30 bg-gray-300"></span>
+            <span class="w-10 h-3 rounded dark:bg-tn-muted/30 bg-gray-300"></span>
+          </li>
+        `)}
+      </ul>
+    `
+  }
 
   // When searching, show all matching sessions (ignore group collapse state)
   const filtered = query

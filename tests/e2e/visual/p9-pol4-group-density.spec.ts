@@ -58,7 +58,7 @@ test.describe('POL-4 — group header density', () => {
   // ===== Layer 2: DOM density measurement =====
 
   test('DOM: gap from last session bottom to next group title top is ≤ 16 px', async ({ page }) => {
-    await page.goto('/');
+    await page.goto('/?token=test');
     await page.waitForFunction(
       () => window.__preactSessionListActive === true,
       null,
