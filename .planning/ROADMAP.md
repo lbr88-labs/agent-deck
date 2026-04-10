@@ -52,7 +52,7 @@ Merge policy: 3-5 PRs per batch with `make ci` + macOS TUI smoke test between ba
 | 10 | 4/4 | Complete   | 2026-04-10 | Partial (TEST-A first, TEST-B after PERF-H, TEST-C/D parallel) | Phase 11 |
 | 11 | Release v1.5.0 | 5 | 3 | No (sequential release gate) | — |
 | 12 | DB Schema and Config Foundation | 6 | 2 | Partial (plan 1 serial; plan 2 after plan 1) | Phase 13 |
-| 13 | Watcher Engine Core | 7 | TBD | TBD | Phases 14, 15, 16 |
+| 13 | Watcher Engine Core | 7 | 2 | Partial (Wave 1 types/router/health, Wave 2 engine) | Phases 14, 15, 16 |
 
 **Total requirements mapped:** 43 / 43 (100%)
 **Total plans across active phases:** ~25 (Phase 5 excluded; plan counts refined in plan-phase stage)
@@ -293,7 +293,15 @@ Plans:
 
 **Canonical refs:** `internal/statedb/statedb.go` (watcher CRUD from Phase 12), `internal/session/conductor.go` (lifecycle pattern), `internal/session/event_watcher.go` (fsnotify goroutine pattern), `docs/superpowers/specs/2026-04-10-watcher-framework-design.md` (router spec, event schema)
 
-**Plans:** TBD (created during plan-phase)
+**Plans:** 2 plans across 2 waves
+
+Plans:
+- [ ] 13-01-PLAN.md — WatcherAdapter interface, Event struct, Router (clients.json loading + exact/wildcard matching), HealthTracker (rolling rate, silence detection, error counting), CompWatcher logging constant (Wave 1)
+- [ ] 13-02-PLAN.md — Engine event loop with single-writer goroutine, adapter lifecycle via derived contexts, dedup via INSERT OR IGNORE + rows-affected, MockAdapter, goleak goroutine leak test (Wave 2; depends on 13-01)
+
+**Wave structure:**
+- **Wave 1:** 13-01 (types, router, health tracker — all independent of engine)
+- **Wave 2 (after 13-01):** 13-02 (engine imports and orchestrates all Wave 1 components)
 
 **Research flag:** Standard patterns (mirrors StorageWatcher, StatusEventWatcher lifecycle). Skip research-phase.
 
@@ -311,7 +319,7 @@ Plans:
 | 10. Automated Testing | 0/4 | Not started | — |
 | 11. Release v1.5.0 | 0/3 | Not started | — |
 | 12. DB Schema and Config | 2/2 | COMPLETE | 2026-04-10 |
-| 13. Watcher Engine Core | 0/TBD | Not started | — |
+| 13. Watcher Engine Core | 0/2 | Planned | — |
 
 ---
 
