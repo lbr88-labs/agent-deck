@@ -129,6 +129,9 @@ type UserConfig struct {
 
 	// SystemStats defines system stats display settings (CPU, RAM, etc.)
 	SystemStats SystemStatsSettings `toml:"system_stats"`
+
+	// Watcher defines event watcher settings
+	Watcher WatcherSettings `toml:"watcher"`
 }
 
 // OpenClawSettings configures the OpenClaw gateway connection.
@@ -2142,4 +2145,40 @@ func (s SystemStatsSettings) GetShow() []string {
 		return s.Show
 	}
 	return []string{"cpu", "ram", "disk", "network"}
+}
+
+// WatcherSettings configures the event watcher system.
+type WatcherSettings struct {
+	// MaxEventsPerWatcher is the maximum number of events to retain per watcher (default: 500)
+	MaxEventsPerWatcher int `toml:"max_events_per_watcher"`
+
+	// MaxSilenceMinutes triggers a health warning when no events received (default: 60)
+	MaxSilenceMinutes int `toml:"max_silence_minutes"`
+
+	// HealthCheckIntervalSeconds is the interval between health checks in seconds (default: 30)
+	HealthCheckIntervalSeconds int `toml:"health_check_interval_seconds"`
+}
+
+// GetMaxEventsPerWatcher returns the max events per watcher (default: 500).
+func (w WatcherSettings) GetMaxEventsPerWatcher() int {
+	if w.MaxEventsPerWatcher > 0 {
+		return w.MaxEventsPerWatcher
+	}
+	return 500
+}
+
+// GetMaxSilenceMinutes returns the silence threshold in minutes (default: 60).
+func (w WatcherSettings) GetMaxSilenceMinutes() int {
+	if w.MaxSilenceMinutes > 0 {
+		return w.MaxSilenceMinutes
+	}
+	return 60
+}
+
+// GetHealthCheckIntervalSeconds returns the health check interval in seconds (default: 30).
+func (w WatcherSettings) GetHealthCheckIntervalSeconds() int {
+	if w.HealthCheckIntervalSeconds > 0 {
+		return w.HealthCheckIntervalSeconds
+	}
+	return 30
 }
