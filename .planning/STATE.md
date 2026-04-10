@@ -1,15 +1,17 @@
 ---
 gsd_state_version: 1.0
-milestone: v1.6
-milestone_name: watcher-framework
-status: defining_requirements
-stopped_at: null
-last_updated: "2026-04-10T12:00:00.000Z"
+milestone: v1.5.0
+milestone_name: "**Goal:** Ship v1.5.0 with all gates green — clean build, Go 1.24.0 verified, visual verification pass, macOS smoke test, real-device mobile test, comprehensive changelog. Locked by CLAUDE.md release rules."
+status: Defining requirements
+stopped_at: Phase 13 context gathered (assumptions mode)
+last_updated: "2026-04-10T12:57:10.137Z"
+last_activity: 2026-04-10
 progress:
-  total_phases: 0
-  completed_phases: 0
-  total_plans: 0
-  completed_plans: 0
+  total_phases: 9
+  completed_phases: 1
+  total_plans: 2
+  completed_plans: 2
+  percent: 100
 ---
 
 # Project State
@@ -35,10 +37,10 @@ See `/home/ashesh-goplani/agent-deck/.planning/REQUIREMENTS.md` for requirements
 
 ## Current Position
 
-Phase: Not started (defining requirements)
-Plan: —
+Phase: 12
+Plan: Not started
 Status: Defining requirements
-Last activity: 2026-04-10 — Milestone v1.6.0 started
+Last activity: 2026-04-10
 
 ## Phase Progress
 
@@ -268,7 +270,7 @@ Phase 7 is COMPLETE. 10 commits live on local main, NOT pushed (per HARD RULES �
 
 ## Last session
 
-- **Stopped at:** Phase 10 plan 10-03 COMPLETE — TEST-C (session lifecycle + group CRUD E2E, 9 tests) and TEST-D (mobile E2E at 3 viewports, 20 pass + 1 skip); 6 atomic commits; combined pw-p10-e2e.config.mjs covers all 30 runs
+- **Stopped at:** Phase 13 context gathered (assumptions mode)
 - **Timestamp:** 2026-04-09T17:42:25Z
 - **Duration:** ~20 min (tmux-hosted test server avoided 09-02's `script -qfc` debug detour)
 - **Commits:** 03b191f (test(09-01) failing specs + pw-p9-plan1 config), 7f91b26 (feat(09-01) POL-1 skeleton loader), 44d38e2 (fix(09-01) POL-2 GroupRow fade + POL-4 density)
