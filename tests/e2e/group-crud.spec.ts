@@ -22,9 +22,6 @@ test.describe('Group CRUD E2E', () => {
     await waitForAppReady(page)
     await page.waitForSelector('#preact-session-list', { state: 'attached', timeout: 10000 })
 
-    // Count existing groups
-    const beforeCount = await page.locator('#preact-session-list button[aria-expanded]').count()
-
     // Click the "New group" button in the sidebar header
     const newGroupBtn = page.locator('button[aria-label="New group"]')
     await newGroupBtn.click()

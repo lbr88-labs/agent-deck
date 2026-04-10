@@ -22,9 +22,6 @@ test.describe('Session lifecycle E2E', () => {
     await waitForAppReady(page)
     await page.waitForSelector('#preact-session-list', { state: 'attached', timeout: 10000 })
 
-    // Count existing sessions before create
-    const beforeCount = await page.locator('#preact-session-list [data-session-id]').count()
-
     // Open the create session dialog
     const newBtn = page.locator('button[aria-label="New session"]')
     await newBtn.click()
