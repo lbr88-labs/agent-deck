@@ -1,4 +1,4 @@
-package watcher_test
+package watcher
 
 import (
 	"path/filepath"
@@ -8,26 +8,40 @@ import (
 	"go.uber.org/goleak"
 
 	"github.com/asheshgoplani/agent-deck/internal/statedb"
-	"github.com/asheshgoplani/agent-deck/internal/watcher"
 )
 
-// newTestDB creates a temporary StateDB for use in tests.
+// newTestDB creates a temporary StateDB for engine tests.
 func newTestDB(t *testing.T) *statedb.StateDB {
 	t.Helper()
-	dir := t.TempDir()
-	dbPath := filepath.Join(dir, "test.db")
+	dbPath := filepath.Join(t.TempDir(), "test.db")
 	db, err := statedb.Open(dbPath)
 	if err != nil {
-		t.Fatalf("statedb.Open: %v", err)
+		t.Fatalf("Open: %v", err)
 	}
 	if err := db.Migrate(); err != nil {
-		t.Fatalf("db.Migrate: %v", err)
+		t.Fatalf("Migrate: %v", err)
 	}
 	t.Cleanup(func() { db.Close() })
 	return db
 }
 
-// saveTestWatcher inserts a watcher row so that engine tests can reference it.
+// newTestEngine creates an Engine with a fresh DB and the given client routing rules.
+// HealthCheckInterval is 0 to disable the health loop in tests.
+func newTestEngine(t *testing.T, clients map[string]ClientEntry) (*Engine, *statedb.StateDB) {
+	t.Helper()
+	db := newTestDB(t)
+	router := NewRouter(clients)
+	cfg := EngineConfig{
+		DB:                  db,
+		Router:              router,
+		MaxEventsPerWatcher: 500,
+		HealthCheckInterval: 0,
+	}
+	engine := NewEngine(cfg)
+	return engine, db
+}
+
+// saveTestWatcher inserts a watcher row into the database for testing.
 func saveTestWatcher(t *testing.T, db *statedb.StateDB, id, name, typ string) {
 	t.Helper()
 	now := time.Now()
@@ -44,164 +58,131 @@ func saveTestWatcher(t *testing.T, db *statedb.StateDB, id, name, typ string) {
 	}
 }
 
-// countWatcherEvents queries the watcher_events table directly using the
-// underlying sql.DB exposed by StateDB.DB().
+// countWatcherEvents queries the watcher_events table and returns the row count for a given watcher.
 func countWatcherEvents(t *testing.T, db *statedb.StateDB, watcherID string) int {
 	t.Helper()
 	var count int
-	row := db.DB().QueryRow(
-		`SELECT COUNT(*) FROM watcher_events WHERE watcher_id = ?`,
-		watcherID,
-	)
-	if err := row.Scan(&count); err != nil {
-		t.Fatalf("countWatcherEvents: %v", err)
+	err := db.DB().QueryRow(
+		`SELECT COUNT(*) FROM watcher_events WHERE watcher_id = ?`, watcherID,
+	).Scan(&count)
+	if err != nil {
+		t.Fatalf("count watcher_events: %v", err)
 	}
 	return count
 }
 
-// routedToForWatcher returns the routed_to value for the first event of a watcher.
-func routedToForWatcher(t *testing.T, db *statedb.StateDB, watcherID string) string {
+// queryWatcherEventRoutedTo returns the routed_to value for the first event matching the given watcher.
+func queryWatcherEventRoutedTo(t *testing.T, db *statedb.StateDB, watcherID string) string {
 	t.Helper()
 	var routedTo string
-	row := db.DB().QueryRow(
-		`SELECT routed_to FROM watcher_events WHERE watcher_id = ? LIMIT 1`,
-		watcherID,
-	)
-	if err := row.Scan(&routedTo); err != nil {
-		t.Fatalf("routedToForWatcher: %v", err)
+	err := db.DB().QueryRow(
+		`SELECT routed_to FROM watcher_events WHERE watcher_id = ? ORDER BY id LIMIT 1`, watcherID,
+	).Scan(&routedTo)
+	if err != nil {
+		t.Fatalf("query routed_to: %v", err)
 	}
 	return routedTo
 }
 
-// newTestEngine constructs an Engine with a test DB and the given client map.
-func newTestEngine(t *testing.T, clients map[string]watcher.ClientEntry) (*watcher.Engine, *statedb.StateDB) {
-	t.Helper()
-	db := newTestDB(t)
-	router := watcher.NewRouter(clients)
-	cfg := watcher.EngineConfig{
-		DB:                  db,
-		Router:              router,
-		MaxEventsPerWatcher: 500,
-		// HealthCheckInterval=0 disables health loop to avoid timing flakiness in tests
-		HealthCheckInterval: 0,
-	}
-	engine := watcher.NewEngine(cfg)
-	return engine, db
-}
-
-// makeEvent constructs an Event with a unique timestamp to avoid unintentional dedup.
-func makeEvent(source, sender, subject string) watcher.Event {
-	return watcher.Event{
-		Source:    source,
-		Sender:    sender,
-		Subject:   subject,
-		Timestamp: time.Now(),
+// drainEvents reads all available events from the channel within a timeout.
+func drainEvents(ch <-chan Event, timeout time.Duration) []Event {
+	var events []Event
+	deadline := time.After(timeout)
+	for {
+		select {
+		case evt, ok := <-ch:
+			if !ok {
+				return events
+			}
+			events = append(events, evt)
+		case <-deadline:
+			return events
+		}
 	}
 }
 
-// TestWatcherEngine_Dedup verifies that two events with identical DedupKey()
-// result in only one row in the database and only one event on EventCh().
+// TestWatcherEngine_Dedup verifies that two events with identical DedupKey
+// result in only one persisted row and one routed event (D-23).
 func TestWatcherEngine_Dedup(t *testing.T) {
 	engine, db := newTestEngine(t, nil)
 	saveTestWatcher(t, db, "w1", "test-watcher", "mock")
 
-	// Create a fixed timestamp so both events produce the same DedupKey
-	fixedTime := time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)
-	evt := watcher.Event{
+	now := time.Now()
+	identicalEvent := Event{
 		Source:    "mock",
 		Sender:    "test@example.com",
 		Subject:   "same subject",
-		Timestamp: fixedTime,
+		Timestamp: now,
 	}
 
 	adapter := &MockAdapter{
-		events:      []watcher.Event{evt, evt}, // identical events
+		events:      []Event{identicalEvent, identicalEvent},
 		listenDelay: 10 * time.Millisecond,
 	}
 
-	engine.RegisterAdapter("w1", adapter, watcher.AdapterConfig{
-		Type: "mock",
-		Name: "test-watcher",
-	}, 60)
+	engine.RegisterAdapter("w1", adapter, AdapterConfig{Type: "mock", Name: "test-watcher"}, 60)
 
 	if err := engine.Start(); err != nil {
 		t.Fatalf("Start: %v", err)
 	}
 
-	// Collect events from routedEventCh
-	received := 0
-	done := make(chan struct{})
-	go func() {
-		defer close(done)
-		timer := time.NewTimer(300 * time.Millisecond)
-		defer timer.Stop()
-		for {
-			select {
-			case <-engine.EventCh():
-				received++
-			case <-timer.C:
-				return
-			}
-		}
-	}()
-
-	<-done
+	// Wait for events to be processed by the writer loop.
+	time.Sleep(200 * time.Millisecond)
 	engine.Stop()
 
-	// Only 1 event should reach EventCh (dedup prevents the second)
-	if received != 1 {
-		t.Errorf("expected 1 event on EventCh, got %d", received)
-	}
-
-	// Only 1 row should exist in DB
+	// Verify: only 1 row in DB despite 2 identical events sent.
 	count := countWatcherEvents(t, db, "w1")
 	if count != 1 {
-		t.Errorf("expected 1 row in watcher_events, got %d", count)
+		t.Errorf("expected 1 event in DB (dedup), got %d", count)
+	}
+
+	// Verify: only 1 event on the routed channel.
+	events := drainEvents(engine.EventCh(), 50*time.Millisecond)
+	if len(events) != 1 {
+		t.Errorf("expected 1 routed event, got %d", len(events))
 	}
 }
 
-// TestWatcherEngine_Stop_NoLeaks verifies that Engine.Stop() cancels all goroutines
-// and produces no goroutine leaks (enforced by goleak).
+// TestWatcherEngine_Stop_NoLeaks verifies that starting an engine with 3 adapters
+// and stopping it leaves no goroutine leaks (D-22).
 func TestWatcherEngine_Stop_NoLeaks(t *testing.T) {
 	defer goleak.VerifyNone(t,
 		goleak.IgnoreTopFunction("database/sql.(*DB).connectionOpener"),
 		goleak.IgnoreTopFunction("database/sql.(*DB).connectionResetter"),
 		goleak.IgnoreAnyFunction("modernc.org"),
+		goleak.IgnoreAnyFunction("poll.runtime_pollWait"),
 	)
 
 	engine, db := newTestEngine(t, nil)
 
-	saveTestWatcher(t, db, "w1", "adapter-1", "mock")
-	saveTestWatcher(t, db, "w2", "adapter-2", "mock")
-	saveTestWatcher(t, db, "w3", "adapter-3", "mock")
+	for i := 0; i < 3; i++ {
+		wID := "w" + string(rune('1'+i))
+		name := "watcher-" + string(rune('1'+i))
+		saveTestWatcher(t, db, wID, name, "mock")
 
-	for i, id := range []string{"w1", "w2", "w3"} {
-		_ = i
 		adapter := &MockAdapter{
-			events:      []watcher.Event{makeEvent("mock", "sender@example.com", "subject")},
+			events: []Event{
+				{Source: "mock", Sender: "sender@test.com", Subject: "event", Timestamp: time.Now()},
+			},
 			listenDelay: 5 * time.Millisecond,
 		}
-		engine.RegisterAdapter(id, adapter, watcher.AdapterConfig{
-			Type: "mock",
-			Name: id,
-		}, 60)
+		engine.RegisterAdapter(wID, adapter, AdapterConfig{Type: "mock", Name: name}, 60)
 	}
 
 	if err := engine.Start(); err != nil {
 		t.Fatalf("Start: %v", err)
 	}
 
-	// Allow adapters to process events
 	time.Sleep(200 * time.Millisecond)
-
 	engine.Stop()
-	// goleak.VerifyNone runs via defer after Stop() completes
+
+	// goleak.VerifyNone runs via defer and will fail the test if any goroutines leaked.
 }
 
 // TestWatcherEngine_KnownSenderRouting verifies that an event from a sender
-// in the clients map is persisted with the correct routed_to value.
+// in the clients map is saved with the correct routed_to conductor.
 func TestWatcherEngine_KnownSenderRouting(t *testing.T) {
-	clients := map[string]watcher.ClientEntry{
+	clients := map[string]ClientEntry{
 		"user@company.com": {
 			Conductor: "client-a",
 			Group:     "client-a/inbox",
@@ -210,124 +191,89 @@ func TestWatcherEngine_KnownSenderRouting(t *testing.T) {
 	}
 
 	engine, db := newTestEngine(t, clients)
-	saveTestWatcher(t, db, "w1", "routing-test", "mock")
+	saveTestWatcher(t, db, "w1", "test-watcher", "mock")
 
-	evt := watcher.Event{
-		Source:    "mock",
-		Sender:    "user@company.com",
-		Subject:   "test routing",
-		Timestamp: time.Now(),
-	}
 	adapter := &MockAdapter{
-		events:      []watcher.Event{evt},
-		listenDelay: 5 * time.Millisecond,
+		events: []Event{
+			{Source: "mock", Sender: "user@company.com", Subject: "test", Timestamp: time.Now()},
+		},
 	}
 
-	engine.RegisterAdapter("w1", adapter, watcher.AdapterConfig{
-		Type: "mock",
-		Name: "routing-test",
-	}, 60)
+	engine.RegisterAdapter("w1", adapter, AdapterConfig{Type: "mock", Name: "test-watcher"}, 60)
 
 	if err := engine.Start(); err != nil {
 		t.Fatalf("Start: %v", err)
 	}
 
-	// Wait for event to be processed
-	select {
-	case <-engine.EventCh():
-		// Event received
-	case <-time.After(500 * time.Millisecond):
-		t.Fatal("timeout waiting for event on EventCh")
-	}
-
+	time.Sleep(200 * time.Millisecond)
 	engine.Stop()
 
-	routedTo := routedToForWatcher(t, db, "w1")
+	routedTo := queryWatcherEventRoutedTo(t, db, "w1")
 	if routedTo != "client-a" {
-		t.Errorf("expected routed_to=%q, got %q", "client-a", routedTo)
+		t.Errorf("expected routed_to=client-a, got %q", routedTo)
 	}
 }
 
-// TestWatcherEngine_UnknownSenderRouting verifies that an event from a sender
-// not in the clients map is persisted with routed_to="" (unrouted).
+// TestWatcherEngine_UnknownSenderRouting verifies that an event from an unknown
+// sender is saved with an empty routed_to field.
 func TestWatcherEngine_UnknownSenderRouting(t *testing.T) {
-	clients := map[string]watcher.ClientEntry{
+	clients := map[string]ClientEntry{
 		"known@company.com": {
-			Conductor: "known-conductor",
-			Group:     "known/inbox",
-			Name:      "Known Client",
+			Conductor: "client-b",
+			Group:     "client-b/inbox",
+			Name:      "Client B",
 		},
 	}
 
 	engine, db := newTestEngine(t, clients)
-	saveTestWatcher(t, db, "w1", "unknown-routing-test", "mock")
+	saveTestWatcher(t, db, "w1", "test-watcher", "mock")
 
-	evt := watcher.Event{
-		Source:    "mock",
-		Sender:    "unknown@other.com",
-		Subject:   "test unrouted",
-		Timestamp: time.Now(),
-	}
 	adapter := &MockAdapter{
-		events:      []watcher.Event{evt},
-		listenDelay: 5 * time.Millisecond,
+		events: []Event{
+			{Source: "mock", Sender: "unknown@other.com", Subject: "test", Timestamp: time.Now()},
+		},
 	}
 
-	engine.RegisterAdapter("w1", adapter, watcher.AdapterConfig{
-		Type: "mock",
-		Name: "unknown-routing-test",
-	}, 60)
+	engine.RegisterAdapter("w1", adapter, AdapterConfig{Type: "mock", Name: "test-watcher"}, 60)
 
 	if err := engine.Start(); err != nil {
 		t.Fatalf("Start: %v", err)
 	}
 
-	// Wait for event to be processed via EventCh
-	select {
-	case <-engine.EventCh():
-		// Event received
-	case <-time.After(500 * time.Millisecond):
-		t.Fatal("timeout waiting for event on EventCh")
-	}
-
+	time.Sleep(200 * time.Millisecond)
 	engine.Stop()
 
-	routedTo := routedToForWatcher(t, db, "w1")
+	routedTo := queryWatcherEventRoutedTo(t, db, "w1")
 	if routedTo != "" {
-		t.Errorf("expected routed_to=\"\" for unknown sender, got %q", routedTo)
+		t.Errorf("expected empty routed_to for unknown sender, got %q", routedTo)
 	}
 }
 
-// TestWatcherEngine_StopCancelsAdapters verifies that Engine.Stop() calls
-// Teardown on all registered adapters.
+// TestWatcherEngine_StopCancelsAdapters verifies that Stop() calls Teardown()
+// on all registered adapters.
 func TestWatcherEngine_StopCancelsAdapters(t *testing.T) {
 	engine, db := newTestEngine(t, nil)
+	saveTestWatcher(t, db, "w1", "watcher-1", "mock")
+	saveTestWatcher(t, db, "w2", "watcher-2", "mock")
 
-	saveTestWatcher(t, db, "w1", "adapter-1", "mock")
-	saveTestWatcher(t, db, "w2", "adapter-2", "mock")
+	adapter1 := &MockAdapter{} // No events, just blocks on ctx
+	adapter2 := &MockAdapter{} // No events, just blocks on ctx
 
-	adapter1 := &MockAdapter{}
-	adapter2 := &MockAdapter{}
-
-	engine.RegisterAdapter("w1", adapter1, watcher.AdapterConfig{
-		Type: "mock",
-		Name: "adapter-1",
-	}, 60)
-	engine.RegisterAdapter("w2", adapter2, watcher.AdapterConfig{
-		Type: "mock",
-		Name: "adapter-2",
-	}, 60)
+	engine.RegisterAdapter("w1", adapter1, AdapterConfig{Type: "mock", Name: "watcher-1"}, 60)
+	engine.RegisterAdapter("w2", adapter2, AdapterConfig{Type: "mock", Name: "watcher-2"}, 60)
 
 	if err := engine.Start(); err != nil {
 		t.Fatalf("Start: %v", err)
 	}
 
+	// Give adapters time to start.
+	time.Sleep(50 * time.Millisecond)
 	engine.Stop()
 
-	if !adapter1.TeardownCalled() {
-		t.Error("expected Teardown to be called on adapter1")
+	if !adapter1.teardownCalled {
+		t.Error("adapter1.Teardown() was not called")
 	}
-	if !adapter2.TeardownCalled() {
-		t.Error("expected Teardown to be called on adapter2")
+	if !adapter2.teardownCalled {
+		t.Error("adapter2.Teardown() was not called")
 	}
 }

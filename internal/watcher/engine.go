@@ -10,15 +10,34 @@ import (
 	"github.com/asheshgoplani/agent-deck/internal/statedb"
 )
 
-// eventEnvelope wraps an Event with metadata needed by the writerLoop
-// so we can route and persist without modifying the public Event type.
+// EngineConfig holds the configuration for the watcher Engine.
+type EngineConfig struct {
+	// DB is the state database for event persistence and dedup.
+	DB *statedb.StateDB
+
+	// Router routes events to conductors based on sender.
+	Router *Router
+
+	// MaxEventsPerWatcher limits the number of stored events per watcher (pruning threshold).
+	MaxEventsPerWatcher int
+
+	// HealthCheckInterval controls how often adapter health checks run.
+	// Set to 0 to disable the health check loop (useful in tests).
+	HealthCheckInterval time.Duration
+
+	// Logger is the structured logger. Defaults to logging.ForComponent(logging.CompWatcher).
+	Logger *slog.Logger
+}
+
+// eventEnvelope wraps an Event with metadata for the single-writer goroutine.
+// This avoids modifying the public Event struct with internal routing fields.
 type eventEnvelope struct {
 	event     Event
 	watcherID string
 	tracker   *HealthTracker
 }
 
-// adapterEntry holds a registered adapter and its associated state.
+// adapterEntry holds a registered adapter with its associated metadata.
 type adapterEntry struct {
 	adapter   WatcherAdapter
 	config    AdapterConfig
@@ -27,59 +46,45 @@ type adapterEntry struct {
 	cancel    context.CancelFunc
 }
 
-// EngineConfig configures an Engine instance.
-type EngineConfig struct {
-	// DB is the StateDB used to persist events via SaveWatcherEvent.
-	DB *statedb.StateDB
-
-	// Router routes incoming events to conductors based on sender.
-	Router *Router
-
-	// MaxEventsPerWatcher is the maximum number of events to keep per watcher in the DB.
-	MaxEventsPerWatcher int
-
-	// HealthCheckInterval is how often to run adapter health checks.
-	// Set to 0 to disable the health check loop (useful in tests).
-	HealthCheckInterval time.Duration
-
-	// Logger overrides the default component logger. Optional.
-	Logger *slog.Logger
-}
-
-// Engine orchestrates the full event pipeline:
-//   - Adapter goroutines produce Events via WatcherAdapter.Listen
-//   - A single-writer goroutine serializes all DB writes through a buffered channel
-//   - Dedup is handled by INSERT OR IGNORE in SaveWatcherEvent
-//   - The router determines event routing (routed_to field in DB)
-//   - Health trackers are updated after each write
+// Engine orchestrates the watcher event pipeline: adapter goroutines produce Events,
+// a single-writer goroutine serializes DB writes via a buffered channel, dedup is
+// handled by INSERT OR IGNORE, and the router determines event routing.
+//
+// Lifecycle: NewEngine -> RegisterAdapter (1..N) -> Start -> Stop.
 type Engine struct {
 	cfg      EngineConfig
-	adapters []*adapterEntry
-	// eventCh receives envelopes from adapter goroutines
+	adapters []adapterEntry
+
+	// eventCh is the internal channel from adapter goroutines to the single-writer.
+	// Capacity 64 per D-12 / T-13-06.
 	eventCh chan eventEnvelope
-	// routedEventCh delivers successfully saved events to TUI consumers (D-20)
+
+	// routedEventCh is the exported channel for TUI consumption (D-20).
+	// Successfully persisted events are forwarded here.
 	routedEventCh chan Event
-	// healthCh delivers health state snapshots to TUI consumers (D-20)
+
+	// healthCh is the exported channel for health state updates (D-20).
 	healthCh chan HealthState
-	ctx      context.Context
-	cancel   context.CancelFunc
-	wg       sync.WaitGroup
-	log      *slog.Logger
-	mu       sync.Mutex // protects adapters slice during RegisterAdapter vs Start
+
+	ctx    context.Context
+	cancel context.CancelFunc
+	wg     sync.WaitGroup
+	log    *slog.Logger
 }
 
-// NewEngine creates a new Engine with the given configuration.
-// Call RegisterAdapter to add adapters before calling Start.
+// NewEngine creates a new Engine with the provided configuration.
+// Call RegisterAdapter to add adapters, then Start to begin processing.
 func NewEngine(cfg EngineConfig) *Engine {
-	ctx, cancel := context.WithCancel(context.Background())
-
 	logger := cfg.Logger
 	if logger == nil {
 		logger = logging.ForComponent(logging.CompWatcher)
 	}
 
+	ctx, cancel := context.WithCancel(context.Background())
+
 	return &Engine{
 		cfg:           cfg,
+		adapters:      make([]adapterEntry, 0),
 		eventCh:       make(chan eventEnvelope, 64),
 		routedEventCh: make(chan Event, 64),
 		healthCh:      make(chan HealthState, 16),
@@ -90,14 +95,11 @@ func NewEngine(cfg EngineConfig) *Engine {
 }
 
 // RegisterAdapter adds an adapter to the engine. Must be called before Start.
-// watcherID is the statedb watcher ID used for event persistence.
-// maxSilenceMinutes controls when the health tracker reports silence warnings.
+// watcherID is the statedb watcher ID used for SaveWatcherEvent persistence.
+// maxSilenceMinutes is the threshold for silence detection in the health tracker.
 func (e *Engine) RegisterAdapter(watcherID string, adapter WatcherAdapter, config AdapterConfig, maxSilenceMinutes int) {
-	e.mu.Lock()
-	defer e.mu.Unlock()
-
 	tracker := NewHealthTracker(config.Name, maxSilenceMinutes)
-	e.adapters = append(e.adapters, &adapterEntry{
+	e.adapters = append(e.adapters, adapterEntry{
 		adapter:   adapter,
 		config:    config,
 		watcherID: watcherID,
@@ -105,22 +107,19 @@ func (e *Engine) RegisterAdapter(watcherID string, adapter WatcherAdapter, confi
 	})
 }
 
-// Start initializes all registered adapters and begins the event processing pipeline.
-// Adapter goroutines, the single-writer goroutine, and (optionally) the health check
-// goroutine are all launched here. Returns an error only if no adapters were registered.
+// Start begins the event pipeline. For each registered adapter, it calls Setup,
+// then launches an adapter goroutine. It also starts the single-writer goroutine
+// and optionally the health check loop.
 func (e *Engine) Start() error {
-	e.mu.Lock()
-	entries := make([]*adapterEntry, len(e.adapters))
-	copy(entries, e.adapters)
-	e.mu.Unlock()
+	for i := range e.adapters {
+		entry := &e.adapters[i]
 
-	for _, entry := range entries {
 		if err := entry.adapter.Setup(e.ctx, entry.config); err != nil {
-			e.log.Error("adapter_setup_failed",
+			e.log.Warn("adapter_setup_failed",
 				slog.String("watcher", entry.config.Name),
+				slog.String("type", entry.config.Type),
 				slog.String("error", err.Error()),
 			)
-			// Skip this adapter; others continue
 			continue
 		}
 
@@ -131,9 +130,11 @@ func (e *Engine) Start() error {
 		go e.runAdapter(adapterCtx, entry)
 	}
 
+	// Single-writer goroutine serializes all DB writes (D-13).
 	e.wg.Add(1)
 	go e.writerLoop()
 
+	// Health check loop (optional, disabled when HealthCheckInterval is 0).
 	if e.cfg.HealthCheckInterval > 0 {
 		e.wg.Add(1)
 		go e.healthLoop()
@@ -142,124 +143,114 @@ func (e *Engine) Start() error {
 	return nil
 }
 
-// runAdapter calls adapter.Listen in a goroutine, wrapping each received Event
-// in an eventEnvelope before forwarding it to the single-writer goroutine.
+// runAdapter runs a single adapter's Listen loop in its own goroutine.
+// Events are wrapped in envelopes and sent to the single-writer via eventCh.
 func (e *Engine) runAdapter(ctx context.Context, entry *adapterEntry) {
 	defer e.wg.Done()
 
-	// adapterEventCh receives raw events from the adapter
-	adapterEventCh := make(chan Event, 64)
+	// Create an intermediary channel for the adapter to send events to.
+	// We wrap each event in an envelope before forwarding to the engine's eventCh.
+	adapterCh := make(chan Event, 64)
 
-	// Drain goroutine: wrap events in envelopes and forward to the engine channel
-	var drainWg sync.WaitGroup
-	drainWg.Add(1)
+	// Launch a goroutine to forward events from the adapter channel to the engine channel.
+	done := make(chan struct{})
 	go func() {
-		defer drainWg.Done()
-		for evt := range adapterEventCh {
-			envelope := eventEnvelope{
+		defer close(done)
+		for evt := range adapterCh {
+			env := eventEnvelope{
 				event:     evt,
 				watcherID: entry.watcherID,
 				tracker:   entry.tracker,
 			}
+			// Non-blocking send to prevent adapter goroutine hang if channel full (T-13-06).
 			select {
-			case e.eventCh <- envelope:
-			case <-ctx.Done():
-				return
+			case e.eventCh <- env:
+			default:
+				e.log.Warn("event_channel_full",
+					slog.String("watcher", entry.config.Name),
+					slog.String("sender", evt.Sender),
+				)
 			}
 		}
 	}()
 
-	if err := entry.adapter.Listen(ctx, adapterEventCh); err != nil {
-		if ctx.Err() == nil {
-			// Error before context was cancelled — record it
-			e.log.Error("adapter_listen_error",
-				slog.String("watcher", entry.config.Name),
-				slog.String("error", err.Error()),
-			)
-			entry.tracker.RecordError()
-		}
-	}
+	err := entry.adapter.Listen(ctx, adapterCh)
+	close(adapterCh)
+	<-done
 
-	// Close adapterEventCh to signal drain goroutine to exit
-	close(adapterEventCh)
-	drainWg.Wait()
+	if err != nil && ctx.Err() == nil {
+		e.log.Error("adapter_listen_error",
+			slog.String("watcher", entry.config.Name),
+			slog.String("error", err.Error()),
+		)
+		entry.tracker.RecordError()
+	}
 }
 
-// writerLoop is the single-writer goroutine that serializes all DB writes.
-// It reads eventEnvelopes from eventCh, calls SaveWatcherEvent for dedup,
-// updates health trackers, and forwards new events to routedEventCh.
-//
-// Per D-13: single writer prevents SQLite contention.
-// Per D-10: INSERT OR IGNORE is the dedup mechanism.
+// writerLoop is the single-writer goroutine that serializes all DB writes (D-13).
+// It reads event envelopes from eventCh, performs dedup via SaveWatcherEvent,
+// routes events, updates health trackers, and forwards persisted events to routedEventCh.
 func (e *Engine) writerLoop() {
 	defer e.wg.Done()
 
 	for {
 		select {
-		case envelope := <-e.eventCh:
-			e.processEnvelope(envelope)
-		case <-e.ctx.Done():
-			// Drain remaining envelopes before exiting
-			for {
-				select {
-				case envelope := <-e.eventCh:
-					e.processEnvelope(envelope)
-				default:
-					return
+		case env, ok := <-e.eventCh:
+			if !ok {
+				return
+			}
+
+			// Route the event via the router (D-08).
+			var routedTo string
+			if e.cfg.Router != nil {
+				result := e.cfg.Router.Match(env.event.Sender)
+				if result != nil {
+					routedTo = result.Conductor
 				}
 			}
-		}
-	}
-}
 
-// processEnvelope routes and persists a single event envelope.
-func (e *Engine) processEnvelope(envelope eventEnvelope) {
-	evt := envelope.event
-	watcherID := envelope.watcherID
-	tracker := envelope.tracker
-
-	// Route: find conductor for this sender
-	routedTo := ""
-	if result := e.cfg.Router.Match(evt.Sender); result != nil {
-		routedTo = result.Conductor
-	}
-
-	inserted, err := e.cfg.DB.SaveWatcherEvent(
-		watcherID,
-		evt.DedupKey(),
-		evt.Sender,
-		evt.Subject,
-		routedTo,
-		"",
-		e.cfg.MaxEventsPerWatcher,
-	)
-	if err != nil {
-		e.log.Error("save_watcher_event_failed",
-			slog.String("watcher_id", watcherID),
-			slog.String("sender", evt.Sender),
-			slog.String("error", err.Error()),
-		)
-		tracker.RecordError()
-		return
-	}
-
-	if inserted {
-		tracker.RecordEvent()
-		// Non-blocking send to TUI channel (T-13-06 mitigation)
-		select {
-		case e.routedEventCh <- evt:
-		default:
-			e.log.Warn("routed_event_ch_full",
-				slog.String("watcher_id", watcherID),
-				slog.String("sender", evt.Sender),
+			// Persist with dedup via INSERT OR IGNORE (D-10, D-23).
+			inserted, err := e.cfg.DB.SaveWatcherEvent(
+				env.watcherID,
+				env.event.DedupKey(),
+				env.event.Sender,
+				env.event.Subject,
+				routedTo,
+				"", // sessionID: populated later when session is launched
+				e.cfg.MaxEventsPerWatcher,
 			)
+
+			if err != nil {
+				e.log.Error("save_event_failed",
+					slog.String("watcher_id", env.watcherID),
+					slog.String("sender", env.event.Sender),
+					slog.String("error", err.Error()),
+				)
+				env.tracker.RecordError()
+				continue
+			}
+
+			if inserted {
+				// New event: update health tracker and forward to TUI (D-14).
+				env.tracker.RecordEvent()
+
+				// Non-blocking send to routedEventCh for TUI consumption.
+				select {
+				case e.routedEventCh <- env.event:
+				default:
+					e.log.Debug("routed_event_channel_full",
+						slog.String("sender", env.event.Sender),
+					)
+				}
+			}
+
+		case <-e.ctx.Done():
+			return
 		}
 	}
-	// If not inserted: duplicate, silently discarded (dedup succeeded)
 }
 
-// healthLoop periodically calls HealthCheck on each adapter and emits HealthState
-// snapshots to healthCh for TUI consumption.
+// healthLoop periodically checks adapter health and emits HealthState snapshots.
 func (e *Engine) healthLoop() {
 	defer e.wg.Done()
 
@@ -269,12 +260,9 @@ func (e *Engine) healthLoop() {
 	for {
 		select {
 		case <-ticker.C:
-			e.mu.Lock()
-			entries := make([]*adapterEntry, len(e.adapters))
-			copy(entries, e.adapters)
-			e.mu.Unlock()
+			for i := range e.adapters {
+				entry := &e.adapters[i]
 
-			for _, entry := range entries {
 				if err := entry.adapter.HealthCheck(); err != nil {
 					entry.tracker.SetAdapterHealth(false)
 					entry.tracker.RecordError()
@@ -283,12 +271,17 @@ func (e *Engine) healthLoop() {
 				}
 
 				state := entry.tracker.Check()
+
+				// Non-blocking send to healthCh.
 				select {
 				case e.healthCh <- state:
 				default:
-					// Health channel full; drop oldest state (non-critical)
+					e.log.Debug("health_channel_full",
+						slog.String("watcher", entry.config.Name),
+					)
 				}
 			}
+
 		case <-e.ctx.Done():
 			return
 		}
@@ -298,37 +291,30 @@ func (e *Engine) healthLoop() {
 // Stop cancels all adapter contexts, calls Teardown on each adapter,
 // and waits for all goroutines to exit. Safe to call multiple times.
 func (e *Engine) Stop() {
-	// Cancel root context — propagates to all adapter contexts (D-18)
+	// Cancel root context, which propagates to all derived adapter contexts.
 	e.cancel()
 
-	// Best-effort teardown for each adapter
-	e.mu.Lock()
-	entries := make([]*adapterEntry, len(e.adapters))
-	copy(entries, e.adapters)
-	e.mu.Unlock()
-
-	for _, entry := range entries {
+	// Best-effort teardown of all adapters.
+	for i := range e.adapters {
+		entry := &e.adapters[i]
 		if err := entry.adapter.Teardown(); err != nil {
-			e.log.Error("adapter_teardown_failed",
+			e.log.Warn("adapter_teardown_error",
 				slog.String("watcher", entry.config.Name),
 				slog.String("error", err.Error()),
 			)
 		}
 	}
 
-	// Wait for all goroutines to exit (goleak test enforces this)
+	// Wait for all goroutines (adapters + writer + health) to exit.
 	e.wg.Wait()
 }
 
-// EventCh returns a read-only channel that receives events that were
-// successfully persisted (de-duplicated) to the database. Intended for
-// TUI consumption (D-20).
+// EventCh returns a read-only channel of routed events for TUI consumption (D-20).
 func (e *Engine) EventCh() <-chan Event {
 	return e.routedEventCh
 }
 
-// HealthCh returns a read-only channel that receives HealthState snapshots
-// emitted by the health check loop. Intended for TUI consumption (D-20).
+// HealthCh returns a read-only channel of health state updates for TUI consumption (D-20).
 func (e *Engine) HealthCh() <-chan HealthState {
 	return e.healthCh
 }
