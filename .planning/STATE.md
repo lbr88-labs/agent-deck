@@ -3,13 +3,13 @@ gsd_state_version: 1.0
 milestone: v1.5
 milestone_name: milestone
 status: unknown
-stopped_at: Phase 10 plan 10-01 COMPLETE — 18-test Playwright visual regression suite with Docker-only pixel-diff baselines; 6 atomic commits; TEST-A complete; CI workflow blocks PR merge on >0.1% diff
-last_updated: "2026-04-10T02:32:00.000Z"
+stopped_at: "Completed 10-automated-testing 10-02-PLAN.md (TEST-B: Lighthouse CI gate)"
+last_updated: "2026-04-10T02:42:46.716Z"
 progress:
   total_phases: 7
   completed_phases: 3
   total_plans: 22
-  completed_plans: 14
+  completed_plans: 15
 ---
 
 # Project State
@@ -36,7 +36,7 @@ See `/home/ashesh-goplani/agent-deck/.planning/REQUIREMENTS.md` for the 43 requi
 ## Current Position
 
 Phase: 10 (automated-testing) — EXECUTING
-Plan: 2 of 4
+Plan: 3 of 4
 
 ## Phase Progress
 
@@ -47,7 +47,7 @@ Plan: 2 of 4
 | 7 | Web App P1 Layout Bugs | COMPLETE 2026-04-09 (4/4 plans, WEB-P1-1 ✓ WEB-P1-2 ✓ WEB-P1-3 ✓ WEB-P1-4 ✓ WEB-P1-5 ✓) | 5 (WEB-P1-1..5 all ✓) | 4 |
 | 8 | Performance (Premium Feel) | COMPLETE 2026-04-09 (5/5 plans, PERF-A..K all ✓) | 11 (PERF-A..K) | 5 |
 | 9 | Polish (Premium UX) | COMPLETE 2026-04-09 (4/4 plans, POL-1 ✓ POL-2 ✓ POL-3 ✓ POL-4 ✓ POL-5 ✓ POL-6 ✓ POL-7 ✓) | 7 (POL-1..7 all ✓) | 4 |
-| 10 | Automated Testing | EXECUTING 1/4 (TEST-A ✓) | 5 (TEST-A..E) | 4 |
+| 10 | Automated Testing | EXECUTING 2/4 (TEST-A ✓ TEST-B ✓) | 5 (TEST-A..E, TEST-B ✓) | 4 |
 | 11 | Release v1.5.0 | Not started | 5 (REL-1..5) | 3 |
 
 **Total active plans across Phases 6-11:** 24
@@ -184,6 +184,14 @@ Plan: 2 of 4
 - **Scoped baseline update pattern established:** always use `-g` filter with `--update-snapshots`. Never run blanket `--update-snapshots` (would silently accept regressions). Documented in `tests/e2e/visual-regression/README.md`.
 - **TDD ordering compressed:** plan 10-01 ran `--update-snapshots` once per spec group during Docker generation (Tasks 2 and 4). The Docker container wrote baselines immediately — no separate RED run without server was achievable since Docker always connects to live server. Net result: all 18 tests pass, all baselines committed. Acceptance criteria met.
 
+### Plan 10-02 Complete (2026-04-10)
+
+- **TEST-B shipped:** Lighthouse CI merge-blocking performance gate with two-tier assertion model. Hard gates (`error`): `total-byte-weight` (180KB), `resource-summary:script:size` (120KB), `cumulative-layout-shift` (0.1). Soft warnings (`warn`): FCP (800ms), LCP (1500ms), TBT (200ms), speed-index (1500ms).
+- **GitHub Actions workflow:** `.github/workflows/lighthouse-ci.yml` triggers on PRs touching `internal/web/**` or `.lighthouserc.json`. Builds binary with `GOTOOLCHAIN=go1.24.0`, uses `treosh/lighthouse-ci-action@v12`, `numberOfRuns:5` median, `temporary-public-storage` upload. `cancel-in-progress:true` concurrency group.
+- **Local tooling:** `tests/lighthouse/budget-check.sh` (pre-push verification, port 19999) and `tests/lighthouse/calibrate.sh` (10-run p95+10%/20% threshold calibration, port 19998). Both scripts include pre-flight checks, server lifecycle management, healthz polling, pre-warm.
+- **Pre-calibration fallback used:** `./build/agent-deck web` cannot start inside agent-deck sessions (nested-session detection exits immediately). Conservative Phase 8 spec + CI noise buffers used as documented in the plan. Run `calibrate.sh` from a plain terminal to replace with real calibrated values.
+- **Documentation:** `tests/lighthouse/README.md` covers threshold tiers, CI flow, local verification, recalibration process, troubleshooting (including nested-session limitation), and design decisions (JSON vs CJS, temporary-public-storage, 5 runs, desktop preset).
+
 ### Critical Ordering Constraints (from research)
 
 These are non-negotiable dependencies — enforce during planning:
@@ -248,7 +256,7 @@ Phase 7 is COMPLETE. 10 commits live on local main, NOT pushed (per HARD RULES �
 
 ## Last session
 
-- **Stopped at:** Phase 9 plan 09-01 COMPLETE (Wave 1, parallel to 09-02 and 09-03) — POL-1 sidebar skeleton loader + POL-2 GroupRow 120ms opacity fade + POL-4 group-header density reduction; 3 atomic commits (test → feat → fix); 13/14 Playwright tests green (1 skipped on fixture); SessionRow 06-03 regression guard added; zero Claude attribution
+- **Stopped at:** Completed 10-automated-testing 10-02-PLAN.md (TEST-B: Lighthouse CI gate)
 - **Timestamp:** 2026-04-09T17:42:25Z
 - **Duration:** ~20 min (tmux-hosted test server avoided 09-02's `script -qfc` debug detour)
 - **Commits:** 03b191f (test(09-01) failing specs + pw-p9-plan1 config), 7f91b26 (feat(09-01) POL-1 skeleton loader), 44d38e2 (fix(09-01) POL-2 GroupRow fade + POL-4 density)
@@ -270,3 +278,4 @@ Phase 7 is COMPLETE. 10 commits live on local main, NOT pushed (per HARD RULES �
 | 09 | 03 | ~4 min | 2 | 0 (+ 3 created, 0 internal/) | 2026-04-09 |
 | 09 | 02 | ~55 min (incl. service worker debug + esbuild pipeline discovery) | 3 | 2 (+ 4 created) | 2026-04-09 |
 | 09 | 01 | ~20 min | 3 | 4 (+ 4 created) | 2026-04-09 |
+| Phase 10-automated-testing P02 | 5 | 4 tasks | 5 files |
