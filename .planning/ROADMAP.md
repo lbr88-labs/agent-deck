@@ -33,7 +33,7 @@ Merge policy: 3-5 PRs per batch with `make ci` + macOS TUI smoke test between ba
 - [x] **Phase 7: P1 Layout Bugs** — Fix 5 layout bugs (terminal fill, sidebar width, row density, empty state, mobile topbar overflow) (COMPLETE 2026-04-09; 4/4 plans)
 - [x] **Phase 8: Performance** — Ship 11 perf wins to hit <150 KB gzipped first-load, FCP<500ms, LCP<1s, TBT<100ms (COMPLETE 2026-04-09; 5/5 plans)
 - [x] **Phase 9: Polish** — 7 premium UX refinements (skeleton loader, transitions, profile dropdown, light theme audit) (COMPLETE 2026-04-09; 4/4 plans)
-- [ ] **Phase 10: Automated Testing** — Visual regression + Lighthouse CI + E2E coverage blocking future regressions
+- [x] **Phase 10: Automated Testing** — Visual regression + Lighthouse CI + E2E coverage blocking future regressions (completed 2026-04-10)
 - [ ] **Phase 11: Release v1.5.0** — Tag, visual verification, macOS smoke test, changelog, real-device mobile verification
 
 ---
@@ -47,7 +47,7 @@ Merge policy: 3-5 PRs per batch with `make ci` + macOS TUI smoke test between ba
 | 7 | P1 Layout Bugs | 5 | 4 | Partial (P1-1, P1-2, P1-4 parallel; P1-3 + P1-5 have deps) | Phases 8 (PERF-K), 9, 10 |
 | 8 | Performance | 11 | 5 | Partial (strict internal ordering; PERF-H last) | Phases 9 (POL-1), 10 (TEST-A, TEST-B) |
 | 9 | Polish | 7 | 4 | Partial (POL-1..5 parallel; POL-6 last; POL-7 with P0-4) | Phase 10 (TEST-A baselines) |
-| 10 | 3/4 | In Progress|  | Partial (TEST-A first, TEST-B after PERF-H, TEST-C/D parallel) | Phase 11 |
+| 10 | 4/4 | Complete   | 2026-04-10 | Partial (TEST-A first, TEST-B after PERF-H, TEST-C/D parallel) | Phase 11 |
 | 11 | Release v1.5.0 | 5 | 3 | No (sequential release gate) | — |
 
 **Total requirements mapped:** 43 / 43 (100%)

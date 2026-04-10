@@ -3,13 +3,13 @@ gsd_state_version: 1.0
 milestone: v1.5
 milestone_name: milestone
 status: unknown
-stopped_at: Phase 10 plan 10-03 COMPLETE — TEST-C (session lifecycle + group CRUD E2E, 9 tests) and TEST-D (mobile E2E at 3 viewports, 20 pass + 1 skip); 6 atomic commits; combined pw-p10-e2e.config.mjs covers all 30 runs
-last_updated: "2026-04-10T02:56:33.517Z"
+stopped_at: Phase 10 plan 10-04 COMPLETE — TEST-E weekly regression alerting (alert-only workflow, issue template, format validator, 7 edge case tests); 3 atomic commits + 1 metadata commit
+last_updated: "2026-04-10T03:07:00.000Z"
 progress:
   total_phases: 7
-  completed_phases: 3
+  completed_phases: 4
   total_plans: 22
-  completed_plans: 16
+  completed_plans: 17
 ---
 
 # Project State
@@ -35,8 +35,8 @@ See `/home/ashesh-goplani/agent-deck/.planning/REQUIREMENTS.md` for the 43 requi
 
 ## Current Position
 
-Phase: 10 (automated-testing) — EXECUTING
-Plan: 3 of 4
+Phase: 10 (automated-testing) — COMPLETE
+Plan: 4 of 4 DONE
 
 ## Phase Progress
 
@@ -47,7 +47,7 @@ Plan: 3 of 4
 | 7 | Web App P1 Layout Bugs | COMPLETE 2026-04-09 (4/4 plans, WEB-P1-1 ✓ WEB-P1-2 ✓ WEB-P1-3 ✓ WEB-P1-4 ✓ WEB-P1-5 ✓) | 5 (WEB-P1-1..5 all ✓) | 4 |
 | 8 | Performance (Premium Feel) | COMPLETE 2026-04-09 (5/5 plans, PERF-A..K all ✓) | 11 (PERF-A..K) | 5 |
 | 9 | Polish (Premium UX) | COMPLETE 2026-04-09 (4/4 plans, POL-1 ✓ POL-2 ✓ POL-3 ✓ POL-4 ✓ POL-5 ✓ POL-6 ✓ POL-7 ✓) | 7 (POL-1..7 all ✓) | 4 |
-| 10 | Automated Testing | EXECUTING 2/4 (TEST-A ✓ TEST-B ✓) | 5 (TEST-A..E, TEST-B ✓) | 4 |
+| 10 | Automated Testing | COMPLETE 2026-04-10 (4/4 plans, TEST-A ✓ TEST-B ✓ TEST-C ✓ TEST-D ✓ TEST-E ✓) | 5 (TEST-A..E all ✓) | 4 |
 | 11 | Release v1.5.0 | Not started | 5 (REL-1..5) | 3 |
 
 **Total active plans across Phases 6-11:** 24
@@ -191,6 +191,16 @@ Plan: 3 of 4
 - **Local tooling:** `tests/lighthouse/budget-check.sh` (pre-push verification, port 19999) and `tests/lighthouse/calibrate.sh` (10-run p95+10%/20% threshold calibration, port 19998). Both scripts include pre-flight checks, server lifecycle management, healthz polling, pre-warm.
 - **Pre-calibration fallback used:** `./build/agent-deck web` cannot start inside agent-deck sessions (nested-session detection exits immediately). Conservative Phase 8 spec + CI noise buffers used as documented in the plan. Run `calibrate.sh` from a plain terminal to replace with real calibrated values.
 - **Documentation:** `tests/lighthouse/README.md` covers threshold tiers, CI flow, local verification, recalibration process, troubleshooting (including nested-session limitation), and design decisions (JSON vs CJS, temporary-public-storage, 5 runs, desktop preset).
+
+### Plan 10-04 Complete (2026-04-10) — Phase 10 CLOSED
+
+- **TEST-E shipped:** Alert-only weekly regression workflow (Sunday midnight UTC + `workflow_dispatch`) that runs visual regression + Lighthouse CI, creates a labeled GitHub issue with idempotency on failure, and stays silent on success. Three files: `.github/workflows/weekly-regression.yml`, `.github/weekly-regression-issue-template.md` (11 placeholder tokens), and the shell validator `tests/ci/weekly-alert-format.test.sh` (6 structural checks).
+- **grep -- separator discovery:** `grep -qP '- \*\*...'` with empty stdin throws `invalid option -- ' '` because the pattern starting with `- ` is parsed as a flag. Fix: add `--` end-of-options separator before the pattern.
+- **Config filename correction:** Plan specified `pw-visual-regression.config.mjs` but Plan 10-01 created `pw-visual-regression.config.ts`. Updated workflow to use the actual artifact filename.
+- **7 edge case tests** in `tests/ci/weekly-alert-format-edge-cases.sh` all pass: empty input, title-only, missing section, wrong title format, both-PASS, standard valid body, large body with 55 results.
+- **Phase 10 CLOSED.** All 4 plans shipped: TEST-A (visual regression PR gate, 18 tests) ✓, TEST-B (Lighthouse CI performance gate) ✓, TEST-C (session lifecycle + group CRUD E2E, 9 tests) ✓, TEST-D (mobile E2E, 3 viewports, 20 pass + 1 skip) ✓, TEST-E (weekly regression alerting) ✓.
+- **Phase 11 unblocked.** All testing infrastructure is in place. Release v1.5.0 can begin.
+- **TEST-E scope resolved:** alert-only as recommended by Pitfall 15. Decision #2 from Top Decisions Open is now CLOSED.
 
 ### Critical Ordering Constraints (from research)
 

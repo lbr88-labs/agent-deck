@@ -73,7 +73,7 @@ Layout issues making the desktop experience feel broken on large monitors and th
 - [x] **TEST-B**: Lighthouse CI runs on every PR via `@lhci/cli@0.15.1` + `treosh/lighthouse-ci-action@v12` with `numberOfRuns: 5` (median) to fight runner variance. Upload target: `temporary-public-storage` (no LHCI server). Byte-weight assertions are HARD gates (deterministic). FCP/LCP/TBT thresholds are soft warnings. `.lighthouserc.json` in repo root. CI workflow `.github/workflows/lighthouse-ci.yml`.
 - [x] **TEST-C**: Functional E2E covering (a) session lifecycle (create → attach → send input → verify output → stop → delete) and (b) group CRUD via web (create group → add session → reorder → delete). New file: `tests/e2e/session-lifecycle.spec.ts`, `tests/e2e/group-crud.spec.ts`.
 - [x] **TEST-D**: Mobile E2E at 3 viewports (iPhone SE 375×667, iPhone 14 390×844, iPad 768×1024) via Playwright `projects` config. Covers hamburger tap, overflow menu, sidebar drawer, terminal attach, form input.
-- [ ] **TEST-E**: Auto-fix loop on scheduled weekly workflow. **Scoped DOWN to alert-only** per pitfalls research (high-risk, low-value as a full auto-fix). Workflow runs visual regression + Lighthouse, on failure posts an issue with diff images and failed metrics, tags the on-call dev. Does NOT automatically create fix PRs. Agent-driven auto-fix deferred to v1.6 or later.
+- [x] **TEST-E**: Auto-fix loop on scheduled weekly workflow. **Scoped DOWN to alert-only** per pitfalls research (high-risk, low-value as a full auto-fix). Workflow runs visual regression + Lighthouse, on failure posts an issue with diff images and failed metrics, tags the on-call dev. Does NOT automatically create fix PRs. Agent-driven auto-fix deferred to v1.6 or later.
 
 ### Release (Phase 11)
 
@@ -173,7 +173,7 @@ Which phases cover which requirements. Filled by roadmapper; `pending` until map
 | TEST-B | Phase 10: Automated Testing | Complete |
 | TEST-C | Phase 10: Automated Testing | Complete |
 | TEST-D | Phase 10: Automated Testing | Complete |
-| TEST-E | Phase 10: Automated Testing | Pending |
+| TEST-E | Phase 10: Automated Testing | Complete |
 | REL-1 | Phase 11: Release v1.5.0 | Pending |
 | REL-2 | Phase 11: Release v1.5.0 | Pending |
 | REL-3 | Phase 11: Release v1.5.0 | Pending |
