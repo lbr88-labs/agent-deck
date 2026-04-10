@@ -62,6 +62,18 @@ type WatcherRow struct {
 	UpdatedAt  time.Time
 }
 
+// WatcherEventRow represents a single event row from the watcher_events table.
+type WatcherEventRow struct {
+	ID        int64
+	WatcherID string
+	DedupKey  string
+	Sender    string
+	Subject   string
+	RoutedTo  string
+	SessionID string
+	CreatedAt time.Time
+}
+
 // GroupRow represents a group row in the database.
 type GroupRow struct {
 	Path        string
@@ -1003,4 +1015,64 @@ func (s *StateDB) pruneWatcherEvents(watcherID string, maxCount int) error {
 		)
 	`, watcherID, watcherID, maxCount)
 	return err
+}
+
+// LoadWatcherByName returns the watcher with the given name, or nil if not found.
+// A missing watcher is not an error; (nil, nil) is returned.
+func (s *StateDB) LoadWatcherByName(name string) (*WatcherRow, error) {
+	var w WatcherRow
+	var createdAt, updatedAt int64
+	err := s.db.QueryRow(`
+		SELECT id, name, type, config_path, status, conductor, created_at, updated_at
+		FROM watchers WHERE name = ?
+	`, name).Scan(&w.ID, &w.Name, &w.Type, &w.ConfigPath, &w.Status, &w.Conductor, &createdAt, &updatedAt)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	w.CreatedAt = time.Unix(createdAt, 0)
+	w.UpdatedAt = time.Unix(updatedAt, 0)
+	return &w, nil
+}
+
+// LoadWatcherEvents returns up to limit events for the given watcher, ordered most recent first.
+func (s *StateDB) LoadWatcherEvents(watcherID string, limit int) ([]WatcherEventRow, error) {
+	rows, err := s.db.Query(`
+		SELECT id, watcher_id, dedup_key, sender, subject, routed_to, session_id, created_at
+		FROM watcher_events WHERE watcher_id = ?
+		ORDER BY created_at DESC LIMIT ?
+	`, watcherID, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var result []WatcherEventRow
+	for rows.Next() {
+		var e WatcherEventRow
+		var createdAt int64
+		if err := rows.Scan(&e.ID, &e.WatcherID, &e.DedupKey, &e.Sender, &e.Subject, &e.RoutedTo, &e.SessionID, &createdAt); err != nil {
+			return nil, err
+		}
+		e.CreatedAt = time.Unix(createdAt, 0)
+		result = append(result, e)
+	}
+	return result, rows.Err()
+}
+
+// UpdateWatcherStatus sets the status field on a watcher row.
+// Returns an error if no watcher with the given ID exists.
+func (s *StateDB) UpdateWatcherStatus(watcherID string, status string) error {
+	result, err := s.db.Exec(`
+		UPDATE watchers SET status = ?, updated_at = ? WHERE id = ?
+	`, status, time.Now().Unix(), watcherID)
+	if err != nil {
+		return err
+	}
+	n, _ := result.RowsAffected()
+	if n == 0 {
+		return fmt.Errorf("no watcher found with id=%q", watcherID)
+	}
+	return nil
 }
