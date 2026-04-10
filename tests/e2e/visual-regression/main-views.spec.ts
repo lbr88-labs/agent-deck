@@ -48,8 +48,8 @@ test.describe('Main views visual baselines', () => {
     await mockEndpoints(page);
     await page.goto('/?token=test');
     await prepareForScreenshot(page);
-    // Open mobile sidebar via hamburger
-    const hamburger = page.locator('button[aria-label="Toggle sidebar"]');
+    // Open mobile sidebar via hamburger — the actual aria-label is "Open sidebar"
+    const hamburger = page.locator('button[aria-label="Open sidebar"]');
     await hamburger.waitFor({ state: 'visible', timeout: 5000 });
     await hamburger.click();
     // Wait for sidebar drawer to animate open
@@ -64,10 +64,10 @@ test.describe('Main views visual baselines', () => {
     await mockEndpoints(page, { menu: EMPTY_MENU });
     await page.goto('/?token=test');
     await prepareForScreenshot(page);
-    // Open settings via the settings button
-    const settingsBtn = page.locator('button[title="Settings"]');
-    await settingsBtn.waitFor({ state: 'visible', timeout: 5000 });
-    await settingsBtn.click();
+    // Open the info panel which contains the settings — aria-label is "Open info panel"
+    const infoBtn = page.locator('button[aria-label="Open info panel"]');
+    await infoBtn.waitFor({ state: 'visible', timeout: 5000 });
+    await infoBtn.click();
     // Wait for settings panel to render
     await page.waitForTimeout(300);
     await prepareForScreenshot(page);
