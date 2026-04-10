@@ -249,6 +249,127 @@ func TestWatcherEngine_UnknownSenderRouting(t *testing.T) {
 	}
 }
 
+// TestWatcherEngine_ThreadReplyRouting verifies that an event with ParentDedupKey
+// whose parent has a session_id gets ThreadSessionID set on the routed event.
+func TestWatcherEngine_ThreadReplyRouting(t *testing.T) {
+	engine, db := newTestEngine(t, nil)
+	saveTestWatcher(t, db, "w1", "test-watcher", "mock")
+
+	// Pre-insert a parent event with a known session_id
+	_, err := db.DB().Exec(
+		`INSERT INTO watcher_events (watcher_id, dedup_key, sender, subject, routed_to, session_id, created_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?)`,
+		"w1", "slack-C123-1712345678.000", "slack:C123", "parent msg", "", "sess-123", time.Now().Unix(),
+	)
+	if err != nil {
+		t.Fatalf("insert parent event: %v", err)
+	}
+
+	// Thread reply: ParentDedupKey points to the parent
+	replyEvent := Event{
+		Source:         "slack",
+		Sender:         "slack:C123",
+		Subject:        "reply msg",
+		Timestamp:      time.Now(),
+		CustomDedupKey: "slack-C123-1712345679.000",
+		ParentDedupKey: "slack-C123-1712345678.000",
+	}
+
+	adapter := &MockAdapter{events: []Event{replyEvent}}
+	engine.RegisterAdapter("w1", adapter, AdapterConfig{Type: "mock", Name: "test-watcher"}, 60)
+
+	if err := engine.Start(); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+
+	// Drain the routed event channel
+	events := drainEvents(engine.EventCh(), 2*time.Second)
+	engine.Stop()
+
+	if len(events) != 1 {
+		t.Fatalf("expected 1 routed event, got %d", len(events))
+	}
+	if events[0].ThreadSessionID != "sess-123" {
+		t.Errorf("expected ThreadSessionID=sess-123, got %q", events[0].ThreadSessionID)
+	}
+}
+
+// TestWatcherEngine_ThreadReplyFallback verifies that an event with ParentDedupKey
+// whose parent has an empty session_id falls back to normal routing (ThreadSessionID empty).
+func TestWatcherEngine_ThreadReplyFallback(t *testing.T) {
+	engine, db := newTestEngine(t, nil)
+	saveTestWatcher(t, db, "w1", "test-watcher", "mock")
+
+	// Pre-insert a parent event with empty session_id
+	_, err := db.DB().Exec(
+		`INSERT INTO watcher_events (watcher_id, dedup_key, sender, subject, routed_to, session_id, created_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?)`,
+		"w1", "slack-C123-1712345680.000", "slack:C123", "parent msg", "", "", time.Now().Unix(),
+	)
+	if err != nil {
+		t.Fatalf("insert parent event: %v", err)
+	}
+
+	replyEvent := Event{
+		Source:         "slack",
+		Sender:         "slack:C123",
+		Subject:        "reply msg",
+		Timestamp:      time.Now(),
+		CustomDedupKey: "slack-C123-1712345681.000",
+		ParentDedupKey: "slack-C123-1712345680.000",
+	}
+
+	adapter := &MockAdapter{events: []Event{replyEvent}}
+	engine.RegisterAdapter("w1", adapter, AdapterConfig{Type: "mock", Name: "test-watcher"}, 60)
+
+	if err := engine.Start(); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+
+	events := drainEvents(engine.EventCh(), 2*time.Second)
+	engine.Stop()
+
+	if len(events) != 1 {
+		t.Fatalf("expected 1 routed event, got %d", len(events))
+	}
+	if events[0].ThreadSessionID != "" {
+		t.Errorf("expected empty ThreadSessionID for fallback, got %q", events[0].ThreadSessionID)
+	}
+}
+
+// TestWatcherEngine_ThreadReplyNoParent verifies that an event with ParentDedupKey
+// but no parent event in DB falls back to normal routing.
+func TestWatcherEngine_ThreadReplyNoParent(t *testing.T) {
+	engine, db := newTestEngine(t, nil)
+	saveTestWatcher(t, db, "w1", "test-watcher", "mock")
+
+	replyEvent := Event{
+		Source:         "slack",
+		Sender:         "slack:C123",
+		Subject:        "orphan reply",
+		Timestamp:      time.Now(),
+		CustomDedupKey: "slack-C123-1712345682.000",
+		ParentDedupKey: "slack-C123-nonexistent.000",
+	}
+
+	adapter := &MockAdapter{events: []Event{replyEvent}}
+	engine.RegisterAdapter("w1", adapter, AdapterConfig{Type: "mock", Name: "test-watcher"}, 60)
+
+	if err := engine.Start(); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+
+	events := drainEvents(engine.EventCh(), 2*time.Second)
+	engine.Stop()
+
+	if len(events) != 1 {
+		t.Fatalf("expected 1 routed event, got %d", len(events))
+	}
+	if events[0].ThreadSessionID != "" {
+		t.Errorf("expected empty ThreadSessionID when parent not found, got %q", events[0].ThreadSessionID)
+	}
+}
+
 // TestWatcherEngine_StopCancelsAdapters verifies that Stop() calls Teardown()
 // on all registered adapters.
 func TestWatcherEngine_StopCancelsAdapters(t *testing.T) {
