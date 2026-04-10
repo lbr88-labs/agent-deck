@@ -209,6 +209,29 @@ func (e *Engine) writerLoop() {
 				}
 			}
 
+			// Thread reply routing (D-07): if the event has a ParentDedupKey,
+			// look up the parent's session_id and route the reply to the same session.
+			var threadSessionID string
+			if env.event.ParentDedupKey != "" {
+				sid, lookupErr := e.cfg.DB.LookupWatcherEventSessionByDedupKey(env.watcherID, env.event.ParentDedupKey)
+				if lookupErr != nil {
+					e.log.Warn("thread_reply_lookup_failed",
+						slog.String("watcher_id", env.watcherID),
+						slog.String("parent_dedup_key", env.event.ParentDedupKey),
+						slog.String("error", lookupErr.Error()),
+					)
+				}
+				if sid != "" {
+					threadSessionID = sid
+					e.log.Debug("thread_reply_routed",
+						slog.String("watcher_id", env.watcherID),
+						slog.String("parent_dedup_key", env.event.ParentDedupKey),
+						slog.String("session_id", sid),
+					)
+				}
+				// D-08: if sid is empty, fall through to normal routing (routedTo from Router.Match)
+			}
+
 			// Persist with dedup via INSERT OR IGNORE (D-10, D-23).
 			inserted, err := e.cfg.DB.SaveWatcherEvent(
 				env.watcherID,
@@ -233,6 +256,11 @@ func (e *Engine) writerLoop() {
 			if inserted {
 				// New event: update health tracker and forward to TUI (D-14).
 				env.tracker.RecordEvent()
+
+				// Set thread session ID for downstream routing (D-07).
+				if threadSessionID != "" {
+					env.event.ThreadSessionID = threadSessionID
+				}
 
 				// Non-blocking send to routedEventCh for TUI consumption.
 				select {
