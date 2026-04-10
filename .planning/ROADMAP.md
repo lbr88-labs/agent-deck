@@ -36,7 +36,7 @@ Merge policy: 3-5 PRs per batch with `make ci` + macOS TUI smoke test between ba
 - [x] **Phase 10: Automated Testing** — Visual regression + Lighthouse CI + E2E coverage blocking future regressions (completed 2026-04-10)
 - [ ] **Phase 11: Release v1.5.0** — Tag, visual verification, macOS smoke test, changelog, real-device mobile verification
 - [x] **Phase 12: DB Schema and Config Foundation** — Watchers + watcher_events tables, WatcherSettings config, WatcherMeta filesystem persistence (COMPLETE 2026-04-10; 2/2 plans)
-- [ ] **Phase 13: Watcher Engine Core** — WatcherAdapter interface, Event struct, config-driven router, event dedup engine, single-writer goroutine, health tracker
+- [x] **Phase 13: Watcher Engine Core** — WatcherAdapter interface, Event struct, config-driven router, event dedup engine, single-writer goroutine, health tracker (completed 2026-04-10)
 
 ---
 
@@ -293,11 +293,11 @@ Plans:
 
 **Canonical refs:** `internal/statedb/statedb.go` (watcher CRUD from Phase 12), `internal/session/conductor.go` (lifecycle pattern), `internal/session/event_watcher.go` (fsnotify goroutine pattern), `docs/superpowers/specs/2026-04-10-watcher-framework-design.md` (router spec, event schema)
 
-**Plans:** 2 plans across 2 waves
+**Plans:** 2/2 plans complete
 
 Plans:
-- [ ] 13-01-PLAN.md — WatcherAdapter interface, Event struct, Router (clients.json loading + exact/wildcard matching), HealthTracker (rolling rate, silence detection, error counting), CompWatcher logging constant (Wave 1)
-- [ ] 13-02-PLAN.md — Engine event loop with single-writer goroutine, adapter lifecycle via derived contexts, dedup via INSERT OR IGNORE + rows-affected, MockAdapter, goleak goroutine leak test (Wave 2; depends on 13-01)
+- [x] 13-01-PLAN.md — WatcherAdapter interface, Event struct, Router (clients.json loading + exact/wildcard matching), HealthTracker (rolling rate, silence detection, error counting), CompWatcher logging constant (Wave 1)
+- [x] 13-02-PLAN.md — Engine event loop with single-writer goroutine, adapter lifecycle via derived contexts, dedup via INSERT OR IGNORE + rows-affected, MockAdapter, goleak goroutine leak test (Wave 2; depends on 13-01)
 
 **Wave structure:**
 - **Wave 1:** 13-01 (types, router, health tracker — all independent of engine)
