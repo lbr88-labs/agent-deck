@@ -16,7 +16,7 @@ import { defineConfig } from '@playwright/test';
 
 export default defineConfig({
   testDir: '.',
-  testMatch: /^mobile-e2e\.spec\.ts$/,
+  testMatch: 'mobile-e2e.spec.ts',
   timeout: 30000,
   retries: 0,
   use: {

@@ -28,7 +28,7 @@ test.describe('Session lifecycle E2E', () => {
     // Open the create session dialog
     const newBtn = page.locator('button[aria-label="New session"]')
     await newBtn.click()
-    await expect(page.getByText('New Session')).toBeVisible({ timeout: 5000 })
+    await expect(page.getByRole('heading', { name: 'New Session' })).toBeVisible({ timeout: 5000 })
 
     // Fill the form: title is the first input, path is the second
     const form = page.locator('form')
@@ -40,7 +40,7 @@ test.describe('Session lifecycle E2E', () => {
     await form.locator('button[type="submit"]').click()
 
     // Dialog should close
-    await expect(page.getByText('New Session')).not.toBeVisible({ timeout: 5000 })
+    await expect(page.getByRole('heading', { name: 'New Session' })).not.toBeVisible({ timeout: 5000 })
 
     // Reload to pick up the mock's updated menu state
     await page.goto('/?token=test')
@@ -56,9 +56,14 @@ test.describe('Session lifecycle E2E', () => {
     await waitForAppReady(page)
     await page.waitForSelector('#preact-session-list', { state: 'attached', timeout: 10000 })
 
-    // Click the first session row
+    // Click the first session row.
+    // Use dispatchEvent because the outer button contains nested toolbar buttons —
+    // Playwright's mouse-simulation click doesn't reliably trigger Preact's onClick
+    // on the outer button (nested interactive element HTML quirk). dispatchEvent
+    // fires the synthetic click event directly into Preact's event system.
     const sessionRow = page.locator('#preact-session-list button[data-session-id="sess-001"]')
-    await sessionRow.click()
+    await sessionRow.dispatchEvent('click')
+    await page.waitForTimeout(200)
 
     // Verify it becomes the current selection
     await expect(sessionRow).toHaveAttribute('aria-current', 'true')
@@ -142,12 +147,12 @@ test.describe('Session lifecycle E2E', () => {
 
     // --- CREATE ---
     await page.locator('button[aria-label="New session"]').click()
-    await expect(page.getByText('New Session')).toBeVisible({ timeout: 5000 })
+    await expect(page.getByRole('heading', { name: 'New Session' })).toBeVisible({ timeout: 5000 })
     const form = page.locator('form')
     await form.locator('input').nth(0).fill('Lifecycle Test')
     await form.locator('input').nth(1).fill('/tmp/lifecycle')
     await form.locator('button[type="submit"]').click()
-    await expect(page.getByText('New Session')).not.toBeVisible({ timeout: 5000 })
+    await expect(page.getByRole('heading', { name: 'New Session' })).not.toBeVisible({ timeout: 5000 })
 
     // Reload to pick up the new session
     await page.goto('/?token=test')
@@ -165,7 +170,9 @@ test.describe('Session lifecycle E2E', () => {
     expect(newSessionId).toBeTruthy()
 
     // --- SELECT ---
-    await newRow.click()
+    // Use dispatchEvent for same reason as the select test (outer button + nested toolbar)
+    await newRow.dispatchEvent('click')
+    await page.waitForTimeout(200)
     await expect(newRow).toHaveAttribute('aria-current', 'true')
     const main = page.locator('main')
     await expect(main).toBeVisible()

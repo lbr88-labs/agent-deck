@@ -15,7 +15,7 @@ import { defineConfig } from '@playwright/test';
 
 export default defineConfig({
   testDir: '.',
-  testMatch: /^(session-lifecycle|group-crud)\.spec\.ts$/,
+  testMatch: '{session-lifecycle,group-crud}.spec.ts',
   timeout: 30000,
   retries: 0,
   use: {

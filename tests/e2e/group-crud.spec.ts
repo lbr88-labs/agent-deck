@@ -30,7 +30,7 @@ test.describe('Group CRUD E2E', () => {
     await newGroupBtn.click()
 
     // GroupNameDialog should appear with "New Group" heading
-    await expect(page.getByText('New Group')).toBeVisible({ timeout: 5000 })
+    await expect(page.getByRole('heading', { name: 'New Group' })).toBeVisible({ timeout: 5000 })
 
     // Fill the group name
     const dialog = page.locator('.fixed.inset-0.z-50.bg-black\\/50')
@@ -40,7 +40,7 @@ test.describe('Group CRUD E2E', () => {
     await dialog.locator('button[type="submit"]').click()
 
     // Dialog should close
-    await expect(page.getByText('New Group')).not.toBeVisible({ timeout: 5000 })
+    await expect(page.getByRole('heading', { name: 'New Group' })).not.toBeVisible({ timeout: 5000 })
 
     // Reload to pick up mock's updated menu
     await page.goto('/?token=test')
@@ -135,11 +135,11 @@ test.describe('Group CRUD E2E', () => {
 
     // --- CREATE ---
     await page.locator('button[aria-label="New group"]').click()
-    await expect(page.getByText('New Group')).toBeVisible({ timeout: 5000 })
+    await expect(page.getByRole('heading', { name: 'New Group' })).toBeVisible({ timeout: 5000 })
     const createDialog = page.locator('.fixed.inset-0.z-50.bg-black\\/50')
     await createDialog.locator('input').fill('Temporary Group')
     await createDialog.locator('button[type="submit"]').click()
-    await expect(page.getByText('New Group')).not.toBeVisible({ timeout: 5000 })
+    await expect(page.getByRole('heading', { name: 'New Group' })).not.toBeVisible({ timeout: 5000 })
 
     // Reload to pick up the new group
     await page.goto('/?token=test')
