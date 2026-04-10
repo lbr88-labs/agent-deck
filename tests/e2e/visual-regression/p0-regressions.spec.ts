@@ -1,7 +1,7 @@
 import { test, expect } from '@playwright/test';
 import {
   freezeClock, mockEndpoints, prepareForScreenshot,
-  getDynamicContentMasks, FIXTURE_MENU,
+  getDynamicContentMasks,
 } from './visual-helpers.js';
 
 test.describe('P0 bug regression baselines', () => {
