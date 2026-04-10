@@ -1222,3 +1222,130 @@ func TestWatcherCRUD(t *testing.T) {
 		t.Errorf("timestamp mismatch: created=%v updated=%v, want %v", got.CreatedAt, got.UpdatedAt, now)
 	}
 }
+
+func TestLoadWatcherByName(t *testing.T) {
+	db := newTestDB(t)
+
+	now := time.Now().Truncate(time.Second)
+	w := &WatcherRow{
+		ID: "w-byname-1", Name: "test-watcher", Type: "webhook",
+		ConfigPath: "/path/to/config", Status: "stopped",
+		Conductor: "", CreatedAt: now, UpdatedAt: now,
+	}
+	if err := db.SaveWatcher(w); err != nil {
+		t.Fatalf("SaveWatcher: %v", err)
+	}
+
+	// Found case
+	got, err := db.LoadWatcherByName("test-watcher")
+	if err != nil {
+		t.Fatalf("LoadWatcherByName: %v", err)
+	}
+	if got == nil {
+		t.Fatal("expected a watcher, got nil")
+	}
+	if got.ID != "w-byname-1" || got.Name != "test-watcher" || got.Type != "webhook" {
+		t.Errorf("unexpected watcher: %+v", got)
+	}
+	if !got.CreatedAt.Equal(now) {
+		t.Errorf("timestamp mismatch: created=%v want=%v", got.CreatedAt, now)
+	}
+
+	// Not-found case returns nil, nil
+	notFound, err := db.LoadWatcherByName("nonexistent")
+	if err != nil {
+		t.Fatalf("LoadWatcherByName(nonexistent) returned error: %v", err)
+	}
+	if notFound != nil {
+		t.Errorf("expected nil for nonexistent watcher, got %+v", notFound)
+	}
+}
+
+func TestLoadWatcherEvents(t *testing.T) {
+	db := newTestDB(t)
+
+	now := time.Now().Truncate(time.Second)
+	if err := db.SaveWatcher(&WatcherRow{
+		ID: "w-events-1", Name: "events-watcher", Type: "ntfy",
+		CreatedAt: now, UpdatedAt: now,
+	}); err != nil {
+		t.Fatalf("SaveWatcher: %v", err)
+	}
+
+	// Insert 5 events with unique dedup keys using direct SQL for reliable ordering
+	for i := 0; i < 5; i++ {
+		_, err := db.DB().Exec(`
+			INSERT INTO watcher_events (watcher_id, dedup_key, sender, subject, routed_to, session_id, created_at)
+			VALUES ('w-events-1', ?, ?, ?, '', '', ?)
+		`, fmt.Sprintf("key-%d", i),
+			fmt.Sprintf("sender%d@example.com", i),
+			fmt.Sprintf("Subject %d", i),
+			int64(1000+i))
+		if err != nil {
+			t.Fatalf("insert event %d: %v", i, err)
+		}
+	}
+
+	// LoadWatcherEvents with limit=3 should return 3 most recent
+	events, err := db.LoadWatcherEvents("w-events-1", 3)
+	if err != nil {
+		t.Fatalf("LoadWatcherEvents: %v", err)
+	}
+	if len(events) != 3 {
+		t.Fatalf("expected 3 events, got %d", len(events))
+	}
+
+	// Events should be ordered by created_at DESC (most recent first)
+	for i, e := range events {
+		if e.WatcherID != "w-events-1" {
+			t.Errorf("event %d: expected watcher_id 'w-events-1', got %q", i, e.WatcherID)
+		}
+		if e.Sender == "" {
+			t.Errorf("event %d: sender should not be empty", i)
+		}
+	}
+
+	// Verify DESC ordering: event at index 0 should have the highest created_at
+	if !events[0].CreatedAt.After(events[1].CreatedAt) && !events[0].CreatedAt.Equal(events[1].CreatedAt) {
+		t.Errorf("events not in DESC order: events[0].CreatedAt=%v events[1].CreatedAt=%v",
+			events[0].CreatedAt, events[1].CreatedAt)
+	}
+}
+
+func TestUpdateWatcherStatus(t *testing.T) {
+	db := newTestDB(t)
+
+	now := time.Now().Truncate(time.Second)
+	if err := db.SaveWatcher(&WatcherRow{
+		ID: "w-status-1", Name: "status-watcher", Type: "webhook",
+		Status: "stopped", CreatedAt: now, UpdatedAt: now,
+	}); err != nil {
+		t.Fatalf("SaveWatcher: %v", err)
+	}
+
+	// Update status to running
+	if err := db.UpdateWatcherStatus("w-status-1", "running"); err != nil {
+		t.Fatalf("UpdateWatcherStatus: %v", err)
+	}
+
+	// Verify via LoadWatcherByName
+	got, err := db.LoadWatcherByName("status-watcher")
+	if err != nil {
+		t.Fatalf("LoadWatcherByName: %v", err)
+	}
+	if got == nil {
+		t.Fatal("expected watcher, got nil")
+	}
+	if got.Status != "running" {
+		t.Errorf("expected status 'running', got %q", got.Status)
+	}
+	if !got.UpdatedAt.After(now) && !got.UpdatedAt.Equal(now) {
+		t.Logf("updated_at=%v, original=%v", got.UpdatedAt, now)
+	}
+
+	// Error on nonexistent watcher ID
+	err = db.UpdateWatcherStatus("nonexistent-id", "running")
+	if err == nil {
+		t.Error("expected error for nonexistent watcher ID, got nil")
+	}
+}
