@@ -2,12 +2,18 @@ package main
 
 import (
 	"encoding/json"
+	"flag"
 	"fmt"
 	"os"
 	"path/filepath"
 	"sort"
+	"text/tabwriter"
+	"time"
+
+	"github.com/google/uuid"
 
 	"github.com/asheshgoplani/agent-deck/internal/session"
+	"github.com/asheshgoplani/agent-deck/internal/statedb"
 	"github.com/asheshgoplani/agent-deck/internal/watcher"
 )
 
@@ -29,6 +35,20 @@ func handleWatcher(profile string, args []string) {
 	switch args[0] {
 	case "import":
 		handleWatcherImport(profile, args[1:])
+	case "create":
+		handleWatcherCreate(profile, args[1:])
+	case "start":
+		handleWatcherStart(profile, args[1:])
+	case "stop":
+		handleWatcherStop(profile, args[1:])
+	case "list":
+		handleWatcherList(profile, args[1:])
+	case "status":
+		handleWatcherStatus(profile, args[1:])
+	case "test":
+		handleWatcherTest(profile, args[1:])
+	case "routes":
+		handleWatcherRoutes(profile, args[1:])
 	case "help", "--help", "-h":
 		printWatcherHelp()
 	default:
@@ -37,6 +57,542 @@ func handleWatcher(profile string, args []string) {
 		printWatcherHelp()
 		os.Exit(1)
 	}
+}
+
+// openWatcherDB opens the statedb for the given profile.
+func openWatcherDB(profile string) (*statedb.StateDB, error) {
+	dbPath, err := session.GetDBPathForProfile(profile)
+	if err != nil {
+		return nil, fmt.Errorf("resolve db path: %w", err)
+	}
+	db, err := statedb.Open(dbPath)
+	if err != nil {
+		return nil, fmt.Errorf("open statedb: %w", err)
+	}
+	if err := db.Migrate(); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("migrate statedb: %w", err)
+	}
+	return db, nil
+}
+
+// validWatcherTypes lists all supported adapter types.
+var validWatcherTypes = []string{"webhook", "ntfy", "github", "slack"}
+
+// isValidWatcherType reports whether t is a known adapter type.
+func isValidWatcherType(t string) bool {
+	for _, v := range validWatcherTypes {
+		if v == t {
+			return true
+		}
+	}
+	return false
+}
+
+// handleWatcherCreate creates a new watcher entry in statedb and writes meta.json.
+func handleWatcherCreate(profile string, args []string) {
+	fs := flag.NewFlagSet("watcher create", flag.ExitOnError)
+	name := fs.String("name", "", "Watcher name (required)")
+	port := fs.Int("port", 0, "Port for webhook adapter")
+	topic := fs.String("topic", "", "Topic for ntfy or slack adapter")
+	secret := fs.String("secret", "", "HMAC secret for github adapter")
+
+	fs.Usage = func() {
+		fmt.Println("Usage: agent-deck watcher create <type> --name <name> [options]")
+		fmt.Println()
+		fmt.Println("Types: webhook, ntfy, github, slack")
+		fmt.Println()
+		fmt.Println("Options:")
+		fs.PrintDefaults()
+	}
+
+	if err := fs.Parse(normalizeArgs(fs, args)); err != nil {
+		os.Exit(1)
+	}
+
+	remaining := fs.Args()
+	if len(remaining) < 1 {
+		fmt.Fprintln(os.Stderr, "Error: adapter type is required")
+		fmt.Fprintln(os.Stderr)
+		fs.Usage()
+		os.Exit(1)
+	}
+	adapterType := remaining[0]
+
+	// Validate type (T-16-01)
+	if !isValidWatcherType(adapterType) {
+		fmt.Fprintf(os.Stderr, "Error: unknown adapter type %q. Valid types: %v\n", adapterType, validWatcherTypes)
+		os.Exit(1)
+	}
+
+	if *name == "" {
+		fmt.Fprintln(os.Stderr, "Error: --name is required")
+		os.Exit(1)
+	}
+
+	// Validate type-specific required flags
+	switch adapterType {
+	case "webhook":
+		if *port == 0 {
+			fmt.Fprintln(os.Stderr, "Error: --port is required for webhook adapter")
+			os.Exit(1)
+		}
+	case "ntfy":
+		if *topic == "" {
+			fmt.Fprintln(os.Stderr, "Error: --topic is required for ntfy adapter")
+			os.Exit(1)
+		}
+	case "github":
+		if *secret == "" {
+			fmt.Fprintln(os.Stderr, "Error: --secret is required for github adapter")
+			os.Exit(1)
+		}
+	case "slack":
+		if *topic == "" {
+			fmt.Fprintln(os.Stderr, "Error: --topic is required for slack adapter")
+			os.Exit(1)
+		}
+	}
+
+	db, err := openWatcherDB(profile)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
+	defer db.Close()
+
+	configPath, err := session.WatcherNameDir(*name)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error resolving watcher dir: %v\n", err)
+		os.Exit(1)
+	}
+
+	now := time.Now()
+	row := statedb.WatcherRow{
+		ID:         uuid.New().String(),
+		Name:       *name,
+		Type:       adapterType,
+		ConfigPath: configPath,
+		Status:     "stopped",
+		Conductor:  "",
+		CreatedAt:  now,
+		UpdatedAt:  now,
+	}
+
+	if err := db.SaveWatcher(&row); err != nil {
+		fmt.Fprintf(os.Stderr, "Error saving watcher: %v\n", err)
+		os.Exit(1)
+	}
+
+	if err := session.SaveWatcherMeta(&session.WatcherMeta{
+		Name:      *name,
+		Type:      adapterType,
+		CreatedAt: now.Format(time.RFC3339),
+	}); err != nil {
+		fmt.Fprintf(os.Stderr, "Error saving watcher meta: %v\n", err)
+		os.Exit(1)
+	}
+
+	fmt.Printf("Created watcher: %s (type: %s)\n", *name, adapterType)
+}
+
+// handleWatcherStart marks a watcher as running in statedb.
+func handleWatcherStart(profile string, args []string) {
+	fs := flag.NewFlagSet("watcher start", flag.ExitOnError)
+	fs.Usage = func() {
+		fmt.Println("Usage: agent-deck watcher start <name>")
+	}
+	if err := fs.Parse(normalizeArgs(fs, args)); err != nil {
+		os.Exit(1)
+	}
+	if fs.NArg() < 1 {
+		fmt.Fprintln(os.Stderr, "Error: watcher name is required")
+		fs.Usage()
+		os.Exit(1)
+	}
+	name := fs.Arg(0)
+
+	db, err := openWatcherDB(profile)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
+	defer db.Close()
+
+	w, err := db.LoadWatcherByName(name)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
+	if w == nil {
+		fmt.Fprintf(os.Stderr, "Error: watcher %q not found\n", name)
+		os.Exit(1)
+	}
+
+	if err := db.UpdateWatcherStatus(w.ID, "running"); err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
+
+	fmt.Printf("Started watcher: %s (status will be picked up by TUI engine)\n", name)
+}
+
+// handleWatcherStop marks a watcher as stopped in statedb.
+func handleWatcherStop(profile string, args []string) {
+	fs := flag.NewFlagSet("watcher stop", flag.ExitOnError)
+	fs.Usage = func() {
+		fmt.Println("Usage: agent-deck watcher stop <name>")
+	}
+	if err := fs.Parse(normalizeArgs(fs, args)); err != nil {
+		os.Exit(1)
+	}
+	if fs.NArg() < 1 {
+		fmt.Fprintln(os.Stderr, "Error: watcher name is required")
+		fs.Usage()
+		os.Exit(1)
+	}
+	name := fs.Arg(0)
+
+	db, err := openWatcherDB(profile)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
+	defer db.Close()
+
+	w, err := db.LoadWatcherByName(name)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
+	if w == nil {
+		fmt.Fprintf(os.Stderr, "Error: watcher %q not found\n", name)
+		os.Exit(1)
+	}
+
+	if err := db.UpdateWatcherStatus(w.ID, "stopped"); err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
+
+	fmt.Printf("Stopped watcher: %s\n", name)
+}
+
+// handleWatcherList lists all watchers with name, type, status, event rate, and health.
+func handleWatcherList(profile string, args []string) {
+	fs := flag.NewFlagSet("watcher list", flag.ExitOnError)
+	jsonOutput := fs.Bool("json", false, "Output as JSON")
+	fs.Usage = func() {
+		fmt.Println("Usage: agent-deck watcher list [--json]")
+	}
+	if err := fs.Parse(normalizeArgs(fs, args)); err != nil {
+		os.Exit(1)
+	}
+
+	db, err := openWatcherDB(profile)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
+	defer db.Close()
+
+	watchers, err := db.LoadWatchers()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error loading watchers: %v\n", err)
+		os.Exit(1)
+	}
+
+	type watcherListEntry struct {
+		Name         string  `json:"name"`
+		Type         string  `json:"type"`
+		Status       string  `json:"status"`
+		EventsPerHour float64 `json:"events_per_hour"`
+		Health       string  `json:"health"`
+	}
+
+	cutoff := time.Now().Add(-time.Hour)
+	entries := make([]watcherListEntry, 0, len(watchers))
+	for _, w := range watchers {
+		events, _ := db.LoadWatcherEvents(w.ID, 100)
+		var eventsLastHour int
+		for _, e := range events {
+			if e.CreatedAt.After(cutoff) {
+				eventsLastHour++
+			}
+		}
+
+		var health string
+		switch {
+		case w.Status == "stopped":
+			health = "stopped"
+		case eventsLastHour > 0:
+			health = "healthy"
+		default:
+			health = "unknown"
+		}
+
+		entries = append(entries, watcherListEntry{
+			Name:          w.Name,
+			Type:          w.Type,
+			Status:        w.Status,
+			EventsPerHour: float64(eventsLastHour),
+			Health:        health,
+		})
+	}
+
+	if *jsonOutput {
+		out, _ := json.MarshalIndent(entries, "", "  ")
+		fmt.Println(string(out))
+		return
+	}
+
+	if len(entries) == 0 {
+		fmt.Println("No watchers configured.")
+		fmt.Println("Run 'agent-deck watcher create <type> --name <name>' to create one.")
+		return
+	}
+
+	tw := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
+	fmt.Fprintln(tw, "NAME\tTYPE\tSTATUS\tEVENTS/HR\tHEALTH")
+	for _, e := range entries {
+		fmt.Fprintf(tw, "%s\t%s\t%s\t%.0f\t%s\n", e.Name, e.Type, e.Status, e.EventsPerHour, e.Health)
+	}
+	tw.Flush()
+}
+
+// handleWatcherStatus shows detailed info for a named watcher including recent events.
+func handleWatcherStatus(profile string, args []string) {
+	fs := flag.NewFlagSet("watcher status", flag.ExitOnError)
+	jsonOutput := fs.Bool("json", false, "Output as JSON")
+	fs.Usage = func() {
+		fmt.Println("Usage: agent-deck watcher status <name> [--json]")
+	}
+
+	// Extract positional arg before flags
+	var name string
+	var flagArgs []string
+	for _, arg := range args {
+		if len(arg) > 0 && arg[0] == '-' {
+			flagArgs = append(flagArgs, arg)
+		} else if name == "" {
+			name = arg
+		} else {
+			flagArgs = append(flagArgs, arg)
+		}
+	}
+
+	if err := fs.Parse(normalizeArgs(fs, flagArgs)); err != nil {
+		os.Exit(1)
+	}
+
+	if name == "" {
+		fmt.Fprintln(os.Stderr, "Error: watcher name is required")
+		fs.Usage()
+		os.Exit(1)
+	}
+
+	db, err := openWatcherDB(profile)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
+	defer db.Close()
+
+	w, err := db.LoadWatcherByName(name)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
+	if w == nil {
+		fmt.Fprintf(os.Stderr, "Error: watcher %q not found\n", name)
+		os.Exit(1)
+	}
+
+	meta, _ := session.LoadWatcherMeta(name)
+	events, _ := db.LoadWatcherEvents(w.ID, 10)
+
+	if *jsonOutput {
+		type eventOut struct {
+			Timestamp string `json:"timestamp"`
+			Sender    string `json:"sender"`
+			Subject   string `json:"subject"`
+			RoutedTo  string `json:"routed_to"`
+		}
+		type output struct {
+			ID         string     `json:"id"`
+			Name       string     `json:"name"`
+			Type       string     `json:"type"`
+			Status     string     `json:"status"`
+			ConfigPath string     `json:"config_path"`
+			Conductor  string     `json:"conductor"`
+			CreatedAt  string     `json:"created_at"`
+			UpdatedAt  string     `json:"updated_at"`
+			Events     []eventOut `json:"recent_events"`
+		}
+		out := output{
+			ID:         w.ID,
+			Name:       w.Name,
+			Type:       w.Type,
+			Status:     w.Status,
+			ConfigPath: w.ConfigPath,
+			Conductor:  w.Conductor,
+			CreatedAt:  w.CreatedAt.Format(time.RFC3339),
+			UpdatedAt:  w.UpdatedAt.Format(time.RFC3339),
+		}
+		for _, e := range events {
+			out.Events = append(out.Events, eventOut{
+				Timestamp: e.CreatedAt.Format(time.RFC3339),
+				Sender:    e.Sender,
+				Subject:   e.Subject,
+				RoutedTo:  e.RoutedTo,
+			})
+		}
+		data, _ := json.MarshalIndent(out, "", "  ")
+		fmt.Println(string(data))
+		return
+	}
+
+	fmt.Printf("Watcher: %s\n", w.Name)
+	fmt.Printf("  Type:    %s\n", w.Type)
+	fmt.Printf("  Status:  %s\n", w.Status)
+	fmt.Printf("  ID:      %s\n", w.ID)
+	if meta != nil {
+		fmt.Printf("  Created: %s\n", meta.CreatedAt)
+	}
+	if w.Conductor != "" {
+		fmt.Printf("  Conductor: %s\n", w.Conductor)
+	}
+	fmt.Println()
+
+	if len(events) == 0 {
+		fmt.Println("Recent Events: (none)")
+	} else {
+		fmt.Println("Recent Events:")
+		tw := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
+		fmt.Fprintln(tw, "TIMESTAMP\tSENDER\tSUBJECT\tROUTED_TO")
+		for _, e := range events {
+			fmt.Fprintf(tw, "%s\t%s\t%s\t%s\n",
+				e.CreatedAt.Format("2006-01-02 15:04:05"),
+				e.Sender, e.Subject, e.RoutedTo)
+		}
+		tw.Flush()
+	}
+}
+
+// handleWatcherTest runs a synthetic event through the router for the named watcher.
+func handleWatcherTest(profile string, args []string) {
+	fs := flag.NewFlagSet("watcher test", flag.ExitOnError)
+	fs.Usage = func() {
+		fmt.Println("Usage: agent-deck watcher test <name>")
+	}
+	if err := fs.Parse(normalizeArgs(fs, args)); err != nil {
+		os.Exit(1)
+	}
+	if fs.NArg() < 1 {
+		fmt.Fprintln(os.Stderr, "Error: watcher name is required")
+		fs.Usage()
+		os.Exit(1)
+	}
+	name := fs.Arg(0)
+
+	db, err := openWatcherDB(profile)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
+	defer db.Close()
+
+	w, err := db.LoadWatcherByName(name)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
+	if w == nil {
+		fmt.Fprintf(os.Stderr, "Error: watcher %q not found\n", name)
+		os.Exit(1)
+	}
+
+	// Load clients.json and build router
+	router, err := watcher.LoadFromWatcherDir()
+	if err != nil {
+		fmt.Printf("Routing config: not available (%v)\n", err)
+		fmt.Println("  Create ~/.agent-deck/watchers/clients.json to enable routing.")
+		return
+	}
+
+	// Synthetic event
+	testSender := "test@synthetic.local"
+	result := router.Match(testSender)
+
+	fmt.Printf("Watcher: %s (type: %s)\n", w.Name, w.Type)
+	fmt.Printf("Sender:  %s\n", testSender)
+	fmt.Printf("Subject: Test event from watcher test command\n")
+	fmt.Printf("Time:    %s\n", time.Now().Format(time.RFC3339))
+	fmt.Println()
+
+	if result == nil {
+		fmt.Println("Match:   none")
+		fmt.Println("Routes to: (no matching route — would go to triage)")
+	} else {
+		fmt.Printf("Match:   %s\n", result.MatchType)
+		fmt.Printf("Routes to conductor: %s\n", result.Conductor)
+		if result.Group != "" {
+			fmt.Printf("Group:   %s\n", result.Group)
+		}
+	}
+}
+
+// handleWatcherRoutes lists all routing rules from clients.json.
+func handleWatcherRoutes(profile string, args []string) {
+	fs := flag.NewFlagSet("watcher routes", flag.ExitOnError)
+	jsonOutput := fs.Bool("json", false, "Output as JSON")
+	fs.Usage = func() {
+		fmt.Println("Usage: agent-deck watcher routes [--json]")
+	}
+	if err := fs.Parse(normalizeArgs(fs, args)); err != nil {
+		os.Exit(1)
+	}
+	_ = profile
+
+	watcherDir, err := session.WatcherDir()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error resolving watcher directory: %v\n", err)
+		os.Exit(1)
+	}
+	clientsPath := filepath.Join(watcherDir, "clients.json")
+
+	clients, err := watcher.LoadClientsJSON(clientsPath)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error loading clients.json: %v\n", err)
+		fmt.Fprintln(os.Stderr, "Run 'agent-deck watcher import <channels.json>' to generate client routing rules.")
+		os.Exit(1)
+	}
+
+	if *jsonOutput {
+		out, _ := json.MarshalIndent(clients, "", "  ")
+		fmt.Println(string(out))
+		return
+	}
+
+	if len(clients) == 0 {
+		fmt.Println("No routing rules configured.")
+		return
+	}
+
+	// Sort for stable output
+	keys := make([]string, 0, len(clients))
+	for k := range clients {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+
+	tw := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
+	fmt.Fprintln(tw, "SENDER\tCONDUCTOR\tGROUP\tNAME")
+	for _, k := range keys {
+		e := clients[k]
+		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\n", k, e.Conductor, e.Group, e.Name)
+	}
+	tw.Flush()
 }
 
 // handleWatcherImport reads a bash issue-watcher channels.json and generates
@@ -243,7 +799,12 @@ func printWatcherHelp() {
 	fmt.Println("Usage: agent-deck watcher <command> [args]")
 	fmt.Println()
 	fmt.Println("Commands:")
-	fmt.Println("  import <path>    Migrate bash issue-watcher channels.json to Go watcher config")
-	fmt.Println()
-	fmt.Println("  (More commands coming in a future release: create, start, stop, list, status, test, routes)")
+	fmt.Println("  create <type> --name <name>   Create a new watcher (types: webhook, ntfy, github, slack)")
+	fmt.Println("  start <name>                  Mark a watcher as running (picked up by TUI engine)")
+	fmt.Println("  stop <name>                   Mark a watcher as stopped")
+	fmt.Println("  list [--json]                 List all watchers with status and event rate")
+	fmt.Println("  status <name> [--json]        Show detailed watcher info including recent events")
+	fmt.Println("  test <name>                   Route a synthetic event to verify routing config")
+	fmt.Println("  routes [--json]               Show all routing rules from clients.json")
+	fmt.Println("  import <path>                 Migrate bash issue-watcher channels.json to Go watcher config")
 }
