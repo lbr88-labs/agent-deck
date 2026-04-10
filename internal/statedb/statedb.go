@@ -18,7 +18,7 @@ import (
 
 // SchemaVersion tracks the current database schema version.
 // Bump this when adding migrations.
-const SchemaVersion = 4
+const SchemaVersion = 5
 
 // StateDB wraps a SQLite database for session/group persistence.
 // Thread-safe for concurrent use from multiple goroutines within one process.
@@ -48,6 +48,18 @@ type InstanceRow struct {
 	WorktreeRepo    string
 	WorktreeBranch  string
 	ToolData        json.RawMessage // JSON blob for tool-specific data
+}
+
+// WatcherRow represents a watcher row in the database.
+type WatcherRow struct {
+	ID         string
+	Name       string
+	Type       string
+	ConfigPath string
+	Status     string
+	Conductor  string
+	CreatedAt  time.Time
+	UpdatedAt  time.Time
 }
 
 // GroupRow represents a group row in the database.
@@ -260,6 +272,46 @@ func (s *StateDB) Migrate() error {
 		return fmt.Errorf("statedb: create cost_events timestamp index: %w", err)
 	}
 
+	// watchers table (v5)
+	if _, err := tx.Exec(`
+		CREATE TABLE IF NOT EXISTS watchers (
+			id          TEXT PRIMARY KEY,
+			name        TEXT UNIQUE NOT NULL,
+			type        TEXT NOT NULL,
+			config_path TEXT NOT NULL,
+			status      TEXT NOT NULL DEFAULT 'stopped',
+			conductor   TEXT NOT NULL DEFAULT '',
+			created_at  INTEGER NOT NULL,
+			updated_at  INTEGER NOT NULL
+		)
+	`); err != nil {
+		return fmt.Errorf("statedb: create watchers: %w", err)
+	}
+
+	// watcher_events table (v5)
+	if _, err := tx.Exec(`
+		CREATE TABLE IF NOT EXISTS watcher_events (
+			id         INTEGER PRIMARY KEY AUTOINCREMENT,
+			watcher_id TEXT NOT NULL REFERENCES watchers(id),
+			dedup_key  TEXT NOT NULL,
+			sender     TEXT NOT NULL DEFAULT '',
+			subject    TEXT NOT NULL DEFAULT '',
+			routed_to  TEXT NOT NULL DEFAULT '',
+			session_id TEXT NOT NULL DEFAULT '',
+			created_at INTEGER NOT NULL,
+			UNIQUE(watcher_id, dedup_key)
+		)
+	`); err != nil {
+		return fmt.Errorf("statedb: create watcher_events: %w", err)
+	}
+
+	if _, err := tx.Exec(`
+		CREATE INDEX IF NOT EXISTS idx_watcher_events_watcher_created
+		ON watcher_events(watcher_id, created_at DESC)
+	`); err != nil {
+		return fmt.Errorf("statedb: create watcher_events index: %w", err)
+	}
+
 	// ALTER TABLE migrations for existing databases.
 	// CREATE TABLE IF NOT EXISTS won't add new columns to tables that already exist.
 	// Each migration is idempotent: errors from "duplicate column" are silently ignored.
@@ -302,6 +354,10 @@ func (s *StateDB) Migrate() error {
 			if _, err := tx.Exec(`UPDATE instances SET is_conductor = 1 WHERE title LIKE 'conductor-%'`); err != nil {
 				return fmt.Errorf("statedb: migrate v4 backfill is_conductor: %w", err)
 			}
+		}
+		if oldVer < 5 {
+			// Watcher tables are new (CREATE TABLE IF NOT EXISTS handles creation).
+			// No column backfill needed for v5.
 		}
 		if _, err := tx.Exec(`
 			UPDATE metadata SET value = ? WHERE key = 'schema_version'
@@ -853,5 +909,67 @@ func (s *StateDB) pruneRecentSessions(maxCount int) error {
 			SELECT id FROM recent_sessions ORDER BY deleted_at DESC LIMIT ?
 		)
 	`, maxCount)
+	return err
+}
+
+// --- Watcher CRUD ---
+
+// SaveWatcher inserts or replaces a watcher row.
+func (s *StateDB) SaveWatcher(w *WatcherRow) error {
+	_, err := s.db.Exec(`
+		INSERT OR REPLACE INTO watchers (id, name, type, config_path, status, conductor, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+	`, w.ID, w.Name, w.Type, w.ConfigPath, w.Status, w.Conductor,
+		w.CreatedAt.Unix(), w.UpdatedAt.Unix())
+	return err
+}
+
+// LoadWatchers returns all watchers ordered by name.
+func (s *StateDB) LoadWatchers() ([]*WatcherRow, error) {
+	rows, err := s.db.Query(`SELECT id, name, type, config_path, status, conductor, created_at, updated_at FROM watchers ORDER BY name`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var result []*WatcherRow
+	for rows.Next() {
+		var w WatcherRow
+		var createdAt, updatedAt int64
+		if err := rows.Scan(&w.ID, &w.Name, &w.Type, &w.ConfigPath, &w.Status, &w.Conductor, &createdAt, &updatedAt); err != nil {
+			return nil, err
+		}
+		w.CreatedAt = time.Unix(createdAt, 0)
+		w.UpdatedAt = time.Unix(updatedAt, 0)
+		result = append(result, &w)
+	}
+	return result, rows.Err()
+}
+
+// SaveWatcherEvent inserts an event with dedup via INSERT OR IGNORE.
+// Returns true if the row was inserted (new event), false if it was a duplicate.
+// Prunes to maxEvents after successful insert.
+func (s *StateDB) SaveWatcherEvent(watcherID, dedupKey, sender, subject, routedTo, sessionID string, maxEvents int) (bool, error) {
+	result, err := s.db.Exec(`
+		INSERT OR IGNORE INTO watcher_events (watcher_id, dedup_key, sender, subject, routed_to, session_id, created_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?)
+	`, watcherID, dedupKey, sender, subject, routedTo, sessionID, time.Now().Unix())
+	if err != nil {
+		return false, err
+	}
+	n, _ := result.RowsAffected()
+	if n > 0 {
+		_ = s.pruneWatcherEvents(watcherID, maxEvents)
+	}
+	return n > 0, nil
+}
+
+// pruneWatcherEvents keeps only the newest maxCount events for a watcher.
+func (s *StateDB) pruneWatcherEvents(watcherID string, maxCount int) error {
+	_, err := s.db.Exec(`
+		DELETE FROM watcher_events WHERE watcher_id = ? AND id NOT IN (
+			SELECT id FROM watcher_events WHERE watcher_id = ?
+			ORDER BY id DESC LIMIT ?
+		)
+	`, watcherID, watcherID, maxCount)
 	return err
 }
