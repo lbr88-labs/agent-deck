@@ -1,15 +1,15 @@
 ---
 gsd_state_version: 1.0
-milestone: v1.5
-milestone_name: milestone
-status: unknown
-stopped_at: Phase 10 plan 10-04 COMPLETE — TEST-E weekly regression alerting (alert-only workflow, issue template, format validator, 7 edge case tests); 3 atomic commits + 1 metadata commit
-last_updated: "2026-04-10T03:07:00.000Z"
+milestone: v1.6
+milestone_name: watcher-framework
+status: defining_requirements
+stopped_at: null
+last_updated: "2026-04-10T12:00:00.000Z"
 progress:
-  total_phases: 7
-  completed_phases: 4
-  total_plans: 22
-  completed_plans: 17
+  total_phases: 0
+  completed_phases: 0
+  total_plans: 0
+  completed_plans: 0
 ---
 
 # Project State
@@ -19,24 +19,26 @@ progress:
 **Project:** Agent Deck
 **Repository:** /home/ashesh-goplani/agent-deck
 **Branch:** main
-**Current version:** v1.4.1
-**Target version:** v1.5.0
+**Current version:** v1.5.0
+**Target version:** v1.6.0
 
 See `/home/ashesh-goplani/agent-deck/.planning/PROJECT.md` for full project context.
-See `/home/ashesh-goplani/agent-deck/.planning/ROADMAP.md` for the full v1.5.0 roadmap.
-See `/home/ashesh-goplani/agent-deck/.planning/REQUIREMENTS.md` for the 43 requirements and their phase mappings.
+See `/home/ashesh-goplani/agent-deck/.planning/ROADMAP.md` for the v1.6.0 roadmap.
+See `/home/ashesh-goplani/agent-deck/.planning/REQUIREMENTS.md` for requirements and phase mappings.
 
-## Milestone: v1.5.0 — Premium Web App
+## Milestone: v1.6.0 — Watcher Framework
 
-**Goal:** Ship a premium-quality v1.5.0 where the web app feels instant and snappy, all 4 remaining P0 bugs + 5 P1 bugs are fixed, first-load wire size drops from 668 KB to <150 KB gzipped, FCP<500ms / LCP<1s / TBT<100ms, automated visual regression tests block merge on >0.1% diff, and mobile is fully functional. The app should represent what agent-deck deserves: premium, polished, production-ready.
+**Goal:** Add event-driven automation to agent-deck. Watchers listen for external events (email, Slack, webhooks, meeting transcripts) and route them to conductor sessions automatically.
 
-**Source spec:** `docs/WEB-APP-V15-SPEC.md`
-**Starting point:** v1.4.1 (emergency patch that fixed 6 regressions shipped in v1.4.0)
+**Source spec:** `docs/superpowers/specs/2026-04-10-watcher-framework-design.md`
+**Starting point:** v1.5.0 (premium web app polish milestone)
 
 ## Current Position
 
-Phase: 10 (automated-testing) — COMPLETE
-Plan: 4 of 4 DONE
+Phase: Not started (defining requirements)
+Plan: —
+Status: Defining requirements
+Last activity: 2026-04-10 — Milestone v1.6.0 started
 
 ## Phase Progress
 
@@ -48,9 +50,9 @@ Plan: 4 of 4 DONE
 | 8 | Performance (Premium Feel) | COMPLETE 2026-04-09 (5/5 plans, PERF-A..K all ✓) | 11 (PERF-A..K) | 5 |
 | 9 | Polish (Premium UX) | COMPLETE 2026-04-09 (4/4 plans, POL-1 ✓ POL-2 ✓ POL-3 ✓ POL-4 ✓ POL-5 ✓ POL-6 ✓ POL-7 ✓) | 7 (POL-1..7 all ✓) | 4 |
 | 10 | Automated Testing | COMPLETE 2026-04-10 (4/4 plans, TEST-A ✓ TEST-B ✓ TEST-C ✓ TEST-D ✓ TEST-E ✓) | 5 (TEST-A..E all ✓) | 4 |
-| 11 | Release v1.5.0 | Not started | 5 (REL-1..5) | 3 |
+| 11 | Release v1.5.0 | Planned (3 plans: 11-01 pre-release verify, 11-02 tag+ship+changelog, 11-03 real-device mobile) | 5 (REL-1..5) | 3 |
 
-**Total active plans across Phases 6-11:** 24
+**Total active plans across Phases 6-11:** 25
 **Total active requirements:** 37
 
 ## Accumulated Context
