@@ -45,7 +45,7 @@ func SendSessionMessageReliable(profile, sessionRef, message string) error {
 
 func agentDeckBinaryPath() string {
 	// In production this should resolve to the installed binary.
-	if p := findAgentDeck(); p != "" {
+	if p := FindAgentDeck(); p != "" {
 		return p
 	}
 
