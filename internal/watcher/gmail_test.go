@@ -624,67 +624,181 @@ func TestGmailAdapter_PersistsHistoryIDThrottled(t *testing.T) {
 	}
 }
 
-// ---------- Test 9: OAuth persistingTokenSource skeleton ----------
+// ---------- Test 9: OAuth persistingTokenSource full exercise (Plan 17-03) ----------
+
+// tokenSourceFunc adapts a function to the oauth2.TokenSource interface for testing.
+type tokenSourceFunc func() (*oauth2.Token, error)
+
+func (f tokenSourceFunc) Token() (*oauth2.Token, error) { return f() }
 
 func TestGmailAdapter_OAuth_PersistsRefreshedToken(t *testing.T) {
-	// Plan 17-02 ships a SKELETON coverage — this test verifies the wrapper
-	// compiles, Token() delegates to the inner source, and the returned token
-	// matches the seeded value. Full "refresh changes the token, wrapper writes
-	// it atomically to 0600 on disk" coverage lands in Plan 17-03.
 	tmpDir := t.TempDir()
 	tokenPath := filepath.Join(tmpDir, "token.json")
 
 	initial := &oauth2.Token{
-		AccessToken: "fake-access-token-initial",
-		TokenType:   "Bearer",
-		Expiry:      time.Now().Add(time.Hour),
+		AccessToken:  "initial-access-token",
+		TokenType:    "Bearer",
+		RefreshToken: "fake-refresh-token",
+		Expiry:       time.Now().Add(time.Hour),
+	}
+	initialJSON, err := json.MarshalIndent(initial, "", "  ")
+	if err != nil {
+		t.Fatalf("marshal initial: %v", err)
+	}
+	if err := os.WriteFile(tokenPath, initialJSON, 0o600); err != nil {
+		t.Fatal(err)
 	}
 
-	// StaticTokenSource never refreshes — ReuseTokenSource caches it forever.
-	// Passing this as the inner source lets us exercise the wrapper's basic
-	// delegation path without plumbing a full oauth2.Config.
-	p := &persistingTokenSource{
-		inner: oauth2.ReuseTokenSource(initial, oauth2.StaticTokenSource(initial)),
+	// Custom TokenSource: first Token() call returns initial, second returns
+	// a refreshed token (simulates oauth2's refresh-on-expiry behavior).
+	var callCount int
+	var callMu sync.Mutex
+	refreshed := &oauth2.Token{
+		AccessToken:  "refreshed-access-token",
+		TokenType:    "Bearer",
+		RefreshToken: "fake-refresh-token",
+		Expiry:       time.Now().Add(2 * time.Hour),
+	}
+	refreshedSource := tokenSourceFunc(func() (*oauth2.Token, error) {
+		callMu.Lock()
+		defer callMu.Unlock()
+		callCount++
+		if callCount == 1 {
+			return initial, nil
+		}
+		return refreshed, nil
+	})
+
+	// Wrap directly (not via newPersistingTokenSource) so we bypass
+	// ReuseTokenSource's caching for this test.
+	pts := &persistingTokenSource{
+		inner: refreshedSource,
 		path:  tokenPath,
 		last:  initial,
 	}
 
-	got, err := p.Token()
+	// First call — returns initial, disk content unchanged (access token matches).
+	tok1, err := pts.Token()
 	if err != nil {
-		t.Fatalf("Token(): %v", err)
+		t.Fatalf("first Token(): %v", err)
 	}
-	if got.AccessToken != "fake-access-token-initial" {
-		t.Errorf("Token.AccessToken = %q, want fake-access-token-initial", got.AccessToken)
+	if tok1.AccessToken != "initial-access-token" {
+		t.Errorf("first Token() AccessToken = %q, want initial-access-token", tok1.AccessToken)
 	}
 
-	// Also verify writeTokenAtomic itself writes with 0600 mode (T-17-05).
-	tok2 := &oauth2.Token{
-		AccessToken: "fake-access-token-refreshed",
-		TokenType:   "Bearer",
-		Expiry:      time.Now().Add(2 * time.Hour),
-	}
-	altPath := filepath.Join(tmpDir, "alt-token.json")
-	if err := writeTokenAtomic(altPath, tok2); err != nil {
-		t.Fatalf("writeTokenAtomic: %v", err)
-	}
-	info, err := os.Stat(altPath)
+	// Second call — returns refreshed, MUST rewrite disk atomically.
+	tok2, err := pts.Token()
 	if err != nil {
-		t.Fatalf("stat: %v", err)
+		t.Fatalf("second Token(): %v", err)
+	}
+	if tok2.AccessToken != "refreshed-access-token" {
+		t.Errorf("second Token() AccessToken = %q, want refreshed-access-token", tok2.AccessToken)
+	}
+
+	// Verify token.json was rewritten.
+	persistedBytes, err := os.ReadFile(tokenPath)
+	if err != nil {
+		t.Fatalf("read token.json: %v", err)
+	}
+	var persistedTok oauth2.Token
+	if err := json.Unmarshal(persistedBytes, &persistedTok); err != nil {
+		t.Fatalf("unmarshal persisted token: %v", err)
+	}
+	if persistedTok.AccessToken != "refreshed-access-token" {
+		t.Errorf("persisted AccessToken = %q, want refreshed-access-token", persistedTok.AccessToken)
+	}
+
+	// Verify file mode is 0600 (T-17-05 / T-17-17 mitigation).
+	info, err := os.Stat(tokenPath)
+	if err != nil {
+		t.Fatalf("stat token.json: %v", err)
 	}
 	if mode := info.Mode().Perm(); mode != 0o600 {
-		t.Errorf("token file mode = %o, want 0600", mode)
+		t.Errorf("token.json mode = %o, want 0600", mode)
 	}
-	// And round-trip the JSON to confirm atomic write produced valid output.
-	data, err := os.ReadFile(altPath)
-	if err != nil {
-		t.Fatalf("readfile: %v", err)
+
+	// Verify no .tmp leaked.
+	if _, err := os.Stat(tokenPath + ".tmp"); err == nil {
+		t.Error("token.json.tmp leaked after successful persist")
 	}
-	var parsed oauth2.Token
-	if err := json.Unmarshal(data, &parsed); err != nil {
-		t.Fatalf("unmarshal: %v", err)
+}
+
+// ---------- Plan 17-03 Task 3: HealthCheck branch tests ----------
+
+// TestGmailAdapter_HealthCheck_InvalidToken verifies HealthCheck surfaces token
+// refresh failures (expired refresh token, revoked grant) instead of silently
+// dropping events. Success criterion 4 from 17-CONTEXT.md.
+func TestGmailAdapter_HealthCheck_InvalidToken(t *testing.T) {
+	a := NewGmailAdapter()
+	a.name = "gmail-test-invalid-token"
+	a.tokenSrc = tokenSourceFunc(func() (*oauth2.Token, error) {
+		return nil, fmt.Errorf("invalid grant: refresh token expired")
+	})
+	// Far-future expiry so the expiry branch does NOT fire — isolate the token branch.
+	a.watchExpiry = time.Now().Add(7 * 24 * time.Hour)
+
+	err := a.HealthCheck()
+	if err == nil {
+		t.Fatal("HealthCheck should return error when token source fails")
 	}
-	if parsed.AccessToken != "fake-access-token-refreshed" {
-		t.Errorf("persisted AccessToken = %q, want fake-access-token-refreshed", parsed.AccessToken)
+	lower := strings.ToLower(err.Error())
+	if !strings.Contains(lower, "invalid grant") && !strings.Contains(lower, "token") {
+		t.Errorf("HealthCheck error should mention token failure, got: %v", err)
+	}
+}
+
+// TestGmailAdapter_HealthCheck_MissingSubscription verifies HealthCheck fails
+// when the Pub/Sub subscription no longer exists (user deleted it, project
+// rotated, etc). Success criterion 4.
+func TestGmailAdapter_HealthCheck_MissingSubscription(t *testing.T) {
+	_, client, _, sub := newFakePubSub(t)
+
+	// Delete the subscription so Exists() returns false.
+	ctx := context.Background()
+	if err := sub.Delete(ctx); err != nil {
+		t.Fatalf("delete subscription: %v", err)
+	}
+
+	a := NewGmailAdapter()
+	a.name = "gmail-test-missing-sub"
+	a.subscr = "projects/test-project/subscriptions/gmail-test-sub"
+	a.pubsubClient = client
+	a.subscription = client.Subscription("gmail-test-sub")
+	a.tokenSrc = tokenSourceFunc(func() (*oauth2.Token, error) {
+		return &oauth2.Token{AccessToken: "fake", Expiry: time.Now().Add(time.Hour)}, nil
+	})
+	a.watchExpiry = time.Now().Add(7 * 24 * time.Hour)
+
+	err := a.HealthCheck()
+	if err == nil {
+		t.Fatal("HealthCheck should return error when subscription missing")
+	}
+	if !strings.Contains(strings.ToLower(err.Error()), "subscription") {
+		t.Errorf("HealthCheck error should mention subscription, got: %v", err)
+	}
+}
+
+// TestGmailAdapter_HealthCheck_ExpiredWatch verifies HealthCheck fails when the
+// in-memory WatchExpiry has lapsed — catches the case where the renewal
+// goroutine has permanently failed and the 7-day watch is dead. Success
+// criterion 4.
+func TestGmailAdapter_HealthCheck_ExpiredWatch(t *testing.T) {
+	a := NewGmailAdapter()
+	a.name = "gmail-test-expired-watch"
+	a.tokenSrc = tokenSourceFunc(func() (*oauth2.Token, error) {
+		return &oauth2.Token{AccessToken: "fake", Expiry: time.Now().Add(time.Hour)}, nil
+	})
+	// Watch expired 1h ago.
+	a.watchExpiry = time.Now().Add(-1 * time.Hour)
+	// Leave pubsubClient/subscription nil so the subscription branch is skipped.
+
+	err := a.HealthCheck()
+	if err == nil {
+		t.Fatal("HealthCheck should return error when watch expiry lapsed")
+	}
+	lower := strings.ToLower(err.Error())
+	if !strings.Contains(lower, "expiry") && !strings.Contains(lower, "lapsed") {
+		t.Errorf("HealthCheck error should mention expiry/lapsed, got: %v", err)
 	}
 }
 
