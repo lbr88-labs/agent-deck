@@ -1,6 +1,8 @@
 package watcher
 
 import (
+	"encoding/json"
+	"os"
 	"path/filepath"
 	"testing"
 	"time"
@@ -390,6 +392,205 @@ func TestWatcherEngine_ThreadReplyNoParent(t *testing.T) {
 		t.Errorf("expected empty ThreadSessionID when parent not found, got %q", events[0].ThreadSessionID)
 	}
 }
+
+// TestEngine_UnroutedFlowEndToEnd is the Wave 3 integration test that proves
+// the full Phase 18 pipeline works end-to-end:
+//
+//   unrouted event → writerLoop → triageReqCh → triageLoop → fakeSpawner →
+//   result.json → reaper.scanOnce → AppendClientEntry → Router.Reload →
+//   next Router.Match returns new route
+//
+// Per 18-RESEARCH.md §Q7 and 18-06-PLAN.md: this is the single most important
+// artifact in Phase 18 — it composes Plans 18-01 through 18-04 into one test.
+func TestEngine_UnroutedFlowEndToEnd(t *testing.T) {
+	defer goleak.VerifyNone(t,
+		goleak.IgnoreTopFunction("database/sql.(*DB).connectionOpener"),
+		goleak.IgnoreTopFunction("database/sql.(*DB).connectionResetter"),
+		goleak.IgnoreAnyFunction("modernc.org"),
+		goleak.IgnoreAnyFunction("poll.runtime_pollWait"),
+		goleak.IgnoreTopFunction("go.opencensus.io/stats/view.(*worker).start"),
+	)
+
+	// newTestEngineWithTriage wires a fakeSpawner + fakeClock + temp dirs.
+	engine, db, spawner, _, triageDir := newTestEngineWithTriage(t, nil)
+	// Ensure engine is always stopped — even on t.Errorf + t.Fatalf paths.
+	t.Cleanup(func() { engine.Stop() })
+
+	// Configure fakeSpawner to write result.json immediately on Spawn,
+	// simulating a high-confidence triage session completing.
+	spawner.resultWriter = func(req TriageRequest) {
+		result := triageResult{
+			RouteTo:       "client-a",
+			Group:         "client-a/inbox",
+			Name:          "Client A",
+			Sender:        req.Event.Sender,
+			Summary:       "new contact identified by triage",
+			Confidence:    "high",
+			ShouldPersist: true,
+		}
+		data, err := json.Marshal(result)
+		if err != nil {
+			return // test will fail via assertion below
+		}
+		if mkErr := os.MkdirAll(req.TriageDir, 0o700); mkErr != nil {
+			return
+		}
+		_ = os.WriteFile(req.ResultPath, data, 0o600)
+	}
+
+	// Register one watcher + one unrouted event.
+	saveTestWatcher(t, db, "w1", "test-watcher", "mock")
+	unroutedSender := "new@clienta.com"
+	adapter := &MockAdapter{
+		events:      []Event{{Source: "mock", Sender: unroutedSender, Subject: "hello from new contact", Timestamp: time.Now()}},
+		listenDelay: 5 * time.Millisecond,
+	}
+	engine.RegisterAdapter("w1", adapter, AdapterConfig{Type: "mock", Name: "test-watcher"}, 60)
+
+	if err := engine.Start(); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+
+	// --- Phase 1: wait for fakeSpawner to be called (writerLoop → triageReqCh → triageLoop → Spawn) ---
+	deadline := time.After(5 * time.Second)
+	for {
+		select {
+		case <-deadline:
+			t.Fatalf("timeout waiting for fakeSpawner.Spawn; call count=%d", spawner.callCount())
+		case <-time.After(20 * time.Millisecond):
+			if spawner.callCount() >= 1 {
+				goto spawned
+			}
+		}
+	}
+spawned:
+
+	// --- Phase 2: wait for result.json to be written, then trigger the reaper ---
+	// fakeSpawner.resultWriter runs in a goroutine; result.json may not exist
+	// immediately after Spawn returns. Poll until it appears (or timeout).
+	spawner.mu.Lock()
+	resultPath := spawner.calls[0].ResultPath
+	spawner.mu.Unlock()
+
+	deadline1b := time.After(3 * time.Second)
+	for {
+		select {
+		case <-deadline1b:
+			t.Fatalf("timeout waiting for result.json to be written at %s", resultPath)
+		case <-time.After(10 * time.Millisecond):
+			if _, statErr := os.Stat(resultPath); statErr == nil {
+				goto resultReady
+			}
+		}
+	}
+resultReady:
+	// Trigger the reaper immediately (bypass the 5s poll ticker).
+	// engine.reaper is accessible from same package (package watcher).
+	engine.reaper.scanOnce()
+
+	// --- Phase 3: assert the full pipeline results ---
+
+	// (a) watcher_events.routed_to updated to "client-a" by the reaper.
+	routedTo := queryWatcherEventRoutedTo(t, db, "w1")
+	if routedTo != "client-a" {
+		t.Errorf("expected routed_to=client-a after reaper, got %q", routedTo)
+	}
+
+	// (b) clients.json on disk contains the new sender entry.
+	clientsData, err := os.ReadFile(engine.cfg.ClientsPath)
+	if err != nil {
+		t.Fatalf("read clients.json: %v", err)
+	}
+	var clientsOnDisk map[string]ClientEntry
+	if err := json.Unmarshal(clientsData, &clientsOnDisk); err != nil {
+		t.Fatalf("parse clients.json: %v", err)
+	}
+	if _, ok := clientsOnDisk[unroutedSender]; !ok {
+		t.Errorf("expected %q in clients.json; got keys: %v", unroutedSender, clientsOnDisk)
+	}
+
+	// (c) Router.Match now returns the new route (hot-reload succeeded).
+	match := engine.cfg.Router.Match(unroutedSender)
+	if match == nil {
+		t.Fatalf("expected Router.Match(%q) to return non-nil after hot-reload", unroutedSender)
+	}
+	if match.Conductor != "client-a" {
+		t.Errorf("expected conductor=client-a, got %q", match.Conductor)
+	}
+
+	// (d) Triage result file renamed to result.processed.json; result.json gone.
+	dirEntries, dirErr := os.ReadDir(triageDir)
+	if dirErr != nil {
+		t.Fatalf("ReadDir triage dir: %v", dirErr)
+	}
+	var hashDirs []string
+	for _, de := range dirEntries {
+		if de.IsDir() {
+			hashDirs = append(hashDirs, de.Name())
+		}
+	}
+	if len(hashDirs) != 1 {
+		t.Errorf("expected exactly 1 hash subdirectory in triage dir, got %d: %v", len(hashDirs), hashDirs)
+	}
+	if len(hashDirs) == 1 {
+		hashDirPath := filepath.Join(triageDir, hashDirs[0])
+		processedPath := filepath.Join(hashDirPath, "result.processed.json")
+		resultPath := filepath.Join(hashDirPath, "result.json")
+		if _, statErr := os.Stat(processedPath); statErr != nil {
+			t.Errorf("expected result.processed.json to exist: %v", statErr)
+		}
+		if _, statErr := os.Stat(resultPath); statErr == nil {
+			t.Error("expected result.json to be gone after reaper rename")
+		}
+	}
+
+	// --- Phase 4: second event from same sender routes directly, no second spawn ---
+	// After the router hot-reload, the same sender is now a known client. Inject a
+	// second event directly into the engine's eventCh (same-package access) and verify:
+	// (1) it routes to "client-a" (not "triage") in the DB, (2) spawner still has
+	// exactly 1 call (no second triage spawn was triggered).
+	saveTestWatcher(t, db, "w2", "test-watcher-2", "mock")
+	tracker2 := NewHealthTracker("test-watcher-2", 60)
+	secondEvent := Event{
+		Source:    "mock",
+		Sender:    unroutedSender,
+		Subject:   "follow-up from now-known sender",
+		Timestamp: time.Now(),
+	}
+	// Inject directly into the engine pipeline (writerLoop reads from eventCh).
+	engine.eventCh <- eventEnvelope{
+		event:     secondEvent,
+		watcherID: "w2",
+		tracker:   tracker2,
+	}
+
+	// Wait for the second event to be persisted and routed to "client-a".
+	deadline2 := time.After(3 * time.Second)
+	for {
+		select {
+		case <-deadline2:
+			t.Fatalf("timeout waiting for second event to be routed directly")
+		case <-time.After(30 * time.Millisecond):
+			var routedTo2 string
+			qErr := db.DB().QueryRow(
+				`SELECT routed_to FROM watcher_events WHERE watcher_id = ? ORDER BY id LIMIT 1`, "w2",
+			).Scan(&routedTo2)
+			if qErr == nil && routedTo2 == "client-a" {
+				goto routedDirectly
+			}
+		}
+	}
+routedDirectly:
+
+	// Spawner must still have exactly 1 call — the second event was routed directly.
+	if spawner.callCount() != 1 {
+		t.Errorf("expected exactly 1 spawn total; second event should route directly; got %d spawns", spawner.callCount())
+	}
+
+	engine.Stop()
+	// goleak.VerifyNone runs via defer.
+}
+
 
 // TestWatcherEngine_StopCancelsAdapters verifies that Stop() calls Teardown()
 // on all registered adapters.
