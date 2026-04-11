@@ -1527,8 +1527,10 @@ func TestMigrate_OldSchema_AddTriageSessionID(t *testing.T) {
 	if found.notNull != 1 {
 		t.Errorf("triage_session_id notnull: want 1, got %d", found.notNull)
 	}
-	if !found.defaultValue.Valid || found.defaultValue.String != "" {
-		t.Errorf("triage_session_id default: want empty string, got %v", found.defaultValue)
+	// PRAGMA table_info returns the SQL default expression, so DEFAULT '' appears as "''"
+	// (the SQL literal with surrounding quotes). Both "" and "''" represent an empty string default.
+	if !found.defaultValue.Valid || (found.defaultValue.String != "" && found.defaultValue.String != "''") {
+		t.Errorf("triage_session_id default: want empty-string default (''), got %v", found.defaultValue)
 	}
 
 	// Insert a row without specifying triage_session_id — DEFAULT must apply.

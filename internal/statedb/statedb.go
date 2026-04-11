@@ -300,17 +300,18 @@ func (s *StateDB) Migrate() error {
 		return fmt.Errorf("statedb: create watchers: %w", err)
 	}
 
-	// watcher_events table (v5)
+	// watcher_events table (v5 + Phase 18: triage_session_id)
 	if _, err := tx.Exec(`
 		CREATE TABLE IF NOT EXISTS watcher_events (
-			id         INTEGER PRIMARY KEY AUTOINCREMENT,
-			watcher_id TEXT NOT NULL REFERENCES watchers(id),
-			dedup_key  TEXT NOT NULL,
-			sender     TEXT NOT NULL DEFAULT '',
-			subject    TEXT NOT NULL DEFAULT '',
-			routed_to  TEXT NOT NULL DEFAULT '',
-			session_id TEXT NOT NULL DEFAULT '',
-			created_at INTEGER NOT NULL,
+			id                INTEGER PRIMARY KEY AUTOINCREMENT,
+			watcher_id        TEXT NOT NULL REFERENCES watchers(id),
+			dedup_key         TEXT NOT NULL,
+			sender            TEXT NOT NULL DEFAULT '',
+			subject           TEXT NOT NULL DEFAULT '',
+			routed_to         TEXT NOT NULL DEFAULT '',
+			session_id        TEXT NOT NULL DEFAULT '',
+			triage_session_id TEXT NOT NULL DEFAULT '',
+			created_at        INTEGER NOT NULL,
 			UNIQUE(watcher_id, dedup_key)
 		)
 	`); err != nil {
@@ -330,6 +331,7 @@ func (s *StateDB) Migrate() error {
 	// See CLAUDE.md "Schema Migration Safety": every new column MUST have a corresponding ALTER TABLE.
 	alterMigrations := []string{
 		"ALTER TABLE instances ADD COLUMN acknowledged INTEGER NOT NULL DEFAULT 0",
+		"ALTER TABLE watcher_events ADD COLUMN triage_session_id TEXT NOT NULL DEFAULT ''",
 	}
 	for _, stmt := range alterMigrations {
 		if _, err := tx.Exec(stmt); err != nil {
