@@ -1349,3 +1349,220 @@ func TestUpdateWatcherStatus(t *testing.T) {
 		t.Error("expected error for nonexistent watcher ID, got nil")
 	}
 }
+
+// createV5SchemaDB creates a database with the v5 schema (Phase 17 / pre-Phase-18 state)
+// that has the watcher_events table WITHOUT the triage_session_id column.
+// This simulates an existing user's state.db that needs to be upgraded via Migrate().
+func createV5SchemaDB(t *testing.T) *StateDB {
+	t.Helper()
+	dbPath := filepath.Join(t.TempDir(), "state.db")
+	rawDB, err := sql.Open("sqlite", dbPath)
+	if err != nil {
+		t.Fatalf("open raw db: %v", err)
+	}
+	for _, pragma := range []string{
+		"PRAGMA journal_mode=WAL",
+		"PRAGMA busy_timeout=5000",
+		"PRAGMA foreign_keys=ON",
+	} {
+		if _, err := rawDB.Exec(pragma); err != nil {
+			t.Fatalf("pragma: %v", err)
+		}
+	}
+	// Full v5 schema: every table/column present in production v1.6.x (Phase 17 final state).
+	// Critically, watcher_events does NOT have the triage_session_id column yet.
+	stmts := []string{
+		`CREATE TABLE metadata (key TEXT PRIMARY KEY, value TEXT NOT NULL)`,
+		`INSERT INTO metadata (key, value) VALUES ('schema_version', '5')`,
+		`CREATE TABLE instances (
+			id              TEXT PRIMARY KEY,
+			title           TEXT NOT NULL,
+			project_path    TEXT NOT NULL,
+			group_path      TEXT NOT NULL DEFAULT 'my-sessions',
+			sort_order      INTEGER NOT NULL DEFAULT 0,
+			command         TEXT NOT NULL DEFAULT '',
+			wrapper         TEXT NOT NULL DEFAULT '',
+			tool            TEXT NOT NULL DEFAULT 'shell',
+			status          TEXT NOT NULL DEFAULT 'error',
+			tmux_session    TEXT NOT NULL DEFAULT '',
+			created_at      INTEGER NOT NULL,
+			last_accessed   INTEGER NOT NULL DEFAULT 0,
+			parent_session_id TEXT NOT NULL DEFAULT '',
+			is_conductor      INTEGER NOT NULL DEFAULT 0,
+			worktree_path     TEXT NOT NULL DEFAULT '',
+			worktree_repo     TEXT NOT NULL DEFAULT '',
+			worktree_branch   TEXT NOT NULL DEFAULT '',
+			tool_data       TEXT NOT NULL DEFAULT '{}',
+			acknowledged    INTEGER NOT NULL DEFAULT 0
+		)`,
+		`CREATE TABLE groups (
+			path         TEXT PRIMARY KEY,
+			name         TEXT NOT NULL,
+			expanded     INTEGER NOT NULL DEFAULT 1,
+			sort_order   INTEGER NOT NULL DEFAULT 0,
+			default_path TEXT NOT NULL DEFAULT ''
+		)`,
+		`CREATE TABLE instance_heartbeats (
+			pid        INTEGER PRIMARY KEY,
+			started    INTEGER NOT NULL,
+			heartbeat  INTEGER NOT NULL,
+			is_primary INTEGER NOT NULL DEFAULT 0
+		)`,
+		`CREATE TABLE recent_sessions (
+			id              TEXT PRIMARY KEY,
+			title           TEXT NOT NULL,
+			project_path    TEXT NOT NULL,
+			group_path      TEXT NOT NULL DEFAULT '',
+			command         TEXT NOT NULL DEFAULT '',
+			wrapper         TEXT NOT NULL DEFAULT '',
+			tool            TEXT NOT NULL DEFAULT '',
+			tool_options    TEXT NOT NULL DEFAULT '{}',
+			sandbox_enabled INTEGER NOT NULL DEFAULT 0,
+			gemini_yolo     INTEGER,
+			deleted_at      INTEGER NOT NULL
+		)`,
+		`CREATE TABLE cost_events (
+			id TEXT PRIMARY KEY,
+			session_id TEXT NOT NULL,
+			timestamp DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+			model TEXT NOT NULL,
+			input_tokens INTEGER NOT NULL DEFAULT 0,
+			output_tokens INTEGER NOT NULL DEFAULT 0,
+			cache_read_tokens INTEGER NOT NULL DEFAULT 0,
+			cache_write_tokens INTEGER NOT NULL DEFAULT 0,
+			cost_microdollars INTEGER NOT NULL DEFAULT 0,
+			budget_stop_triggered INTEGER NOT NULL DEFAULT 0
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_cost_events_session ON cost_events(session_id)`,
+		`CREATE INDEX IF NOT EXISTS idx_cost_events_timestamp ON cost_events(timestamp)`,
+		// watchers table (v5 — present since Phase 13/16)
+		`CREATE TABLE watchers (
+			id          TEXT PRIMARY KEY,
+			name        TEXT UNIQUE NOT NULL,
+			type        TEXT NOT NULL,
+			config_path TEXT NOT NULL,
+			status      TEXT NOT NULL DEFAULT 'stopped',
+			conductor   TEXT NOT NULL DEFAULT '',
+			created_at  INTEGER NOT NULL,
+			updated_at  INTEGER NOT NULL
+		)`,
+		// watcher_events WITHOUT triage_session_id (pre-Phase-18 shape)
+		`CREATE TABLE watcher_events (
+			id         INTEGER PRIMARY KEY AUTOINCREMENT,
+			watcher_id TEXT NOT NULL REFERENCES watchers(id),
+			dedup_key  TEXT NOT NULL,
+			sender     TEXT NOT NULL DEFAULT '',
+			subject    TEXT NOT NULL DEFAULT '',
+			routed_to  TEXT NOT NULL DEFAULT '',
+			session_id TEXT NOT NULL DEFAULT '',
+			created_at INTEGER NOT NULL,
+			UNIQUE(watcher_id, dedup_key)
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_watcher_events_watcher_created ON watcher_events(watcher_id, created_at DESC)`,
+		// Insert one instance row to verify it survives migration
+		`INSERT INTO instances (id, title, project_path, created_at) VALUES ('existing-1', 'Surviving Session', '/tmp/project', 1700000000)`,
+	}
+	for _, stmt := range stmts {
+		if _, err := rawDB.Exec(stmt); err != nil {
+			t.Fatalf("create v5 schema: %v\nstmt: %s", err, stmt)
+		}
+	}
+	rawDB.Close()
+
+	db, err := Open(dbPath)
+	if err != nil {
+		t.Fatalf("Open v5 db: %v", err)
+	}
+	t.Cleanup(func() { db.Close() })
+	return db
+}
+
+// TestMigrate_OldSchema_AddTriageSessionID verifies that upgrading from the v5 schema
+// (Phase 17 state, watcher_events WITHOUT triage_session_id) to Phase 18 schema works.
+// This is the CLAUDE.md-mandated TestMigrate_OldSchema_* regression test for the
+// D-17 schema change: "ALTER TABLE watcher_events ADD COLUMN triage_session_id TEXT NOT NULL DEFAULT ''".
+func TestMigrate_OldSchema_AddTriageSessionID(t *testing.T) {
+	db := createV5SchemaDB(t)
+
+	// Run Migrate() on the old schema — should add triage_session_id.
+	if err := db.Migrate(); err != nil {
+		t.Fatalf("Migrate() on v5 schema failed: %v", err)
+	}
+
+	// Verify triage_session_id column exists via PRAGMA table_info.
+	rows, err := db.DB().Query("PRAGMA table_info(watcher_events)")
+	if err != nil {
+		t.Fatalf("PRAGMA table_info: %v", err)
+	}
+	defer rows.Close()
+
+	type colInfo struct {
+		cid          int
+		name         string
+		colType      string
+		notNull      int
+		defaultValue sql.NullString
+		pk           int
+	}
+	var found *colInfo
+	for rows.Next() {
+		var c colInfo
+		if err := rows.Scan(&c.cid, &c.name, &c.colType, &c.notNull, &c.defaultValue, &c.pk); err != nil {
+			t.Fatalf("scan column info: %v", err)
+		}
+		if c.name == "triage_session_id" {
+			col := c
+			found = &col
+		}
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatalf("iterate column info: %v", err)
+	}
+	if found == nil {
+		t.Fatal("triage_session_id column not found in watcher_events after Migrate()")
+	}
+	if found.colType != "TEXT" {
+		t.Errorf("triage_session_id type: want TEXT, got %q", found.colType)
+	}
+	if found.notNull != 1 {
+		t.Errorf("triage_session_id notnull: want 1, got %d", found.notNull)
+	}
+	if !found.defaultValue.Valid || found.defaultValue.String != "" {
+		t.Errorf("triage_session_id default: want empty string, got %v", found.defaultValue)
+	}
+
+	// Insert a row without specifying triage_session_id — DEFAULT must apply.
+	if _, err := db.DB().Exec(
+		`INSERT INTO watchers (id, name, type, config_path, created_at, updated_at) VALUES ('w-triage','test-triage','webhook','',0,0)`,
+	); err != nil {
+		t.Fatalf("insert test watcher: %v", err)
+	}
+	if _, err := db.DB().Exec(
+		`INSERT INTO watcher_events (watcher_id, dedup_key, created_at) VALUES ('w-triage','k1',1700000001)`,
+	); err != nil {
+		t.Fatalf("insert watcher_event without triage_session_id: %v", err)
+	}
+	var triageID string
+	if err := db.DB().QueryRow(
+		`SELECT triage_session_id FROM watcher_events WHERE watcher_id='w-triage' AND dedup_key='k1'`,
+	).Scan(&triageID); err != nil {
+		t.Fatalf("SELECT triage_session_id: %v", err)
+	}
+	if triageID != "" {
+		t.Errorf("triage_session_id default: want empty string, got %q", triageID)
+	}
+
+	// Verify existing instance data survived the migration.
+	instances, err := db.LoadInstances()
+	if err != nil {
+		t.Fatalf("LoadInstances after migrate: %v", err)
+	}
+	if len(instances) != 1 || instances[0].ID != "existing-1" {
+		t.Errorf("existing instance data not preserved after migration: %+v", instances)
+	}
+
+	// Idempotence: calling Migrate() a second time must not fail.
+	if err := db.Migrate(); err != nil {
+		t.Fatalf("second Migrate() call failed (idempotence): %v", err)
+	}
+}
