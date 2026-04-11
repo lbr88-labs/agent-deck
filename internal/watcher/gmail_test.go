@@ -263,6 +263,11 @@ func TestGmailAdapter_Receive_ProcessesEnvelope(t *testing.T) {
 	a := newGmailAdapterForTest(watcherName, fs.URL(), psClient, sub)
 	// Start with no persisted historyID so the handler falls back to the envelope's.
 	a.watchHistoryID = 0
+	// Prevent the renewalLoop (now real in Plan 17-03) from racing with
+	// envelope processing. Pin expiry far in future, inject never-firing
+	// afterFunc so the goroutine parks on ctx.Done.
+	a.watchExpiry = time.Now().Add(30 * 24 * time.Hour)
+	a.afterFunc = func(time.Duration) <-chan time.Time { return make(chan time.Time) }
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -312,6 +317,11 @@ func TestGmailAdapter_Receive_CallsHistoryList(t *testing.T) {
 
 	a := newGmailAdapterForTest(watcherName, fs.URL(), psClient, sub)
 	a.watchHistoryID = 500 // persisted value — history.list should use this, NOT envelope's 1001
+	// Prevent the renewalLoop (now real in Plan 17-03) from firing and
+	// overwriting watchHistoryID via registerWatch. Pin expiry far in the
+	// future and inject a never-firing afterFunc.
+	a.watchExpiry = time.Now().Add(30 * 24 * time.Hour)
+	a.afterFunc = func(time.Duration) <-chan time.Time { return make(chan time.Time) }
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -370,6 +380,9 @@ func TestGmailAdapter_Receive_StaleHistoryFallback(t *testing.T) {
 
 	a := newGmailAdapterForTest(watcherName, fs.URL(), psClient, sub)
 	a.watchHistoryID = 500 // too-old
+	// Prevent renewalLoop from racing with the fallback logic.
+	a.watchExpiry = time.Now().Add(30 * 24 * time.Hour)
+	a.afterFunc = func(time.Duration) <-chan time.Time { return make(chan time.Time) }
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()

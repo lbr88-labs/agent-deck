@@ -301,12 +301,57 @@ func (a *GmailAdapter) Listen(ctx context.Context, events chan<- Event) error {
 	return nil
 }
 
-// renewalLoop is a STUB in Plan 17-02. It only blocks on ctx.Done so Listen can
-// Wait on its completion without hanging tests. Plan 17-03 replaces this body
-// with the real implementation (renew 1h before expiry, retry every 15m on
-// failure) per RESEARCH.md Pattern 5.
+// renewalLoop re-registers the Gmail users.Watch() 1 hour before its current
+// expiry and retries every 15 minutes on failure. It exits cleanly on ctx.Done
+// at either wait point. Implements RESEARCH.md §Pattern 5.
+//
+// Contract:
+//   - renewAt = watchExpiry - 1h. If watchExpiry is already within 1h of now
+//     (or in the past), wait is clamped to 0 so the loop fires immediately.
+//   - On registerWatch error: store err in lastHealthErr under mu so HealthCheck
+//     surfaces the problem, log via slog, then wait 15 minutes before retrying.
+//   - On registerWatch success: clear lastHealthErr so HealthCheck recovers,
+//     then loop — the next iteration re-reads watchExpiry (updated by
+//     registerWatch to the new ~7 day expiry).
+//   - Every wait point is inside a select with <-ctx.Done() so the goroutine
+//     exits within milliseconds of Listen cancelling its context (Pitfall 3).
+//   - Uses a.afterFunc (defaulting to time.After) so tests can inject a
+//     deterministic channel via the nowFunc/afterFunc test seams.
 func (a *GmailAdapter) renewalLoop(ctx context.Context) {
-	<-ctx.Done()
+	for {
+		a.mu.Lock()
+		renewAt := a.watchExpiry.Add(-1 * time.Hour)
+		a.mu.Unlock()
+
+		now := a.nowFunc()
+		wait := renewAt.Sub(now)
+		if wait < 0 {
+			wait = 0
+		}
+
+		select {
+		case <-ctx.Done():
+			return
+		case <-a.afterFunc(wait):
+		}
+
+		if err := a.registerWatch(ctx); err != nil {
+			slog.Error("gmail: renewal failed", slog.String("err", err.Error()))
+			a.mu.Lock()
+			a.lastHealthErr = err
+			a.mu.Unlock()
+			select {
+			case <-ctx.Done():
+				return
+			case <-a.afterFunc(15 * time.Minute):
+				continue
+			}
+		}
+		// On success, clear lastHealthErr so HealthCheck recovers.
+		a.mu.Lock()
+		a.lastHealthErr = nil
+		a.mu.Unlock()
+	}
 }
 
 // Teardown closes the pubsub client so gRPC connections are released (required
