@@ -151,6 +151,9 @@ func TestWatcherEngine_Stop_NoLeaks(t *testing.T) {
 		goleak.IgnoreTopFunction("database/sql.(*DB).connectionResetter"),
 		goleak.IgnoreAnyFunction("modernc.org"),
 		goleak.IgnoreAnyFunction("poll.runtime_pollWait"),
+		// Plan 17-01: adding the Google client pulls in go.opencensus.io, whose
+		// stats worker is started from an init() and lives for the test binary.
+		goleak.IgnoreTopFunction("go.opencensus.io/stats/view.(*worker).start"),
 	)
 
 	engine, db := newTestEngine(t, nil)

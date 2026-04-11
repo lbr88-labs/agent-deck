@@ -31,6 +31,9 @@ func TestEngine_Integration_AllAdapters(t *testing.T) {
 		goleak.IgnoreTopFunction("database/sql.(*DB).connectionResetter"),
 		goleak.IgnoreAnyFunction("modernc.org"),
 		goleak.IgnoreAnyFunction("poll.runtime_pollWait"),
+		// Plan 17-01: adding the Google client pulls in go.opencensus.io, whose
+		// stats worker is started from an init() and lives for the test binary.
+		goleak.IgnoreTopFunction("go.opencensus.io/stats/view.(*worker).start"),
 	)
 
 	const githubSecret = "integration-test-secret"
@@ -239,6 +242,9 @@ func TestEngine_Integration_DedupAcrossAdapters(t *testing.T) {
 		goleak.IgnoreTopFunction("database/sql.(*DB).connectionResetter"),
 		goleak.IgnoreAnyFunction("modernc.org"),
 		goleak.IgnoreAnyFunction("poll.runtime_pollWait"),
+		// Plan 17-01: adding the Google client pulls in go.opencensus.io, whose
+		// stats worker is started from an init() and lives for the test binary.
+		goleak.IgnoreTopFunction("go.opencensus.io/stats/view.(*worker).start"),
 	)
 
 	// Use two mock adapters with identical events but different sources
