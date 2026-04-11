@@ -349,13 +349,15 @@ func TestImportChannels_EmptyChannels(t *testing.T) {
 	}
 }
 
-// TestWatcherCreatorSkill_Parseable reads docs/skills/watcher-creator/SKILL.md
-// (the repo-browser copy) and verifies YAML frontmatter fields and body content.
+// TestWatcherCreatorSkill_Parseable reads the embedded assets copy of SKILL.md
+// (cmd/agent-deck/assets/skills/watcher-creator/SKILL.md) and verifies YAML
+// frontmatter fields and body content. This is the committed source of truth;
+// the docs/ copy is git-ignored and kept only for local reference.
 // The test uses gopkg.in/yaml.v3 (present in go.mod as an indirect dep).
 func TestWatcherCreatorSkill_Parseable(t *testing.T) {
 	// Path is relative to the cmd/agent-deck package directory; Go tests run from
-	// the package directory, so ../../docs/skills/... resolves to the repo root.
-	skillPath := filepath.Join("..", "..", "docs", "skills", "watcher-creator", "SKILL.md")
+	// the package directory, so assets/skills/... resolves to the committed embed source.
+	skillPath := filepath.Join("assets", "skills", "watcher-creator", "SKILL.md")
 	data, err := os.ReadFile(skillPath)
 	if err != nil {
 		t.Fatalf("read SKILL.md: %v (run Task 1 to create the file)", err)
@@ -410,6 +412,8 @@ func TestWatcherCreatorSkill_Parseable(t *testing.T) {
 
 // TestWatcherCreatorSkill_DocsMatchesAssets byte-compares the docs/ copy of the
 // skill against the embedded assets/ copy to detect drift (T-18-22).
+// docs/ is git-ignored so this test skips when the docs/ copy is absent.
+// Run locally after editing either copy to confirm parity.
 func TestWatcherCreatorSkill_DocsMatchesAssets(t *testing.T) {
 	files := []string{"SKILL.md", "README.md"}
 	for _, f := range files {
@@ -417,6 +421,9 @@ func TestWatcherCreatorSkill_DocsMatchesAssets(t *testing.T) {
 		assetsPath := filepath.Join("assets", "skills", "watcher-creator", f)
 
 		docsData, err := os.ReadFile(docsPath)
+		if os.IsNotExist(err) {
+			t.Skipf("docs/skills/watcher-creator/%s not present (git-ignored); skipping drift check", f)
+		}
 		if err != nil {
 			t.Fatalf("read docs copy of %s: %v", f, err)
 		}
