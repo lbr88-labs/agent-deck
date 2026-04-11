@@ -14,7 +14,7 @@ import (
 	"testing"
 	"time"
 
-	"cloud.google.com/go/pubsub"
+	"cloud.google.com/go/pubsub" //nolint:staticcheck // SA1019: pubsub v1 intentional per Plan 17-02; v2 migration deferred
 	"cloud.google.com/go/pubsub/pstest"
 	"golang.org/x/oauth2"
 	gmail "google.golang.org/api/gmail/v1"

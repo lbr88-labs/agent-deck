@@ -35,7 +35,7 @@ import (
 	"sync"
 	"time"
 
-	"cloud.google.com/go/pubsub"
+	"cloud.google.com/go/pubsub" //nolint:staticcheck // SA1019: pubsub v1 intentional per Plan 17-02; v2 migration deferred
 	"golang.org/x/oauth2"
 	"golang.org/x/oauth2/google"
 	gmail "google.golang.org/api/gmail/v1"
