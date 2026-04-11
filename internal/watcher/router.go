@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"sync"
 
 	"github.com/asheshgoplani/agent-deck/internal/session"
 )
@@ -41,7 +42,14 @@ type RouteResult struct {
 // Router provides config-driven routing of events to conductors.
 // It loads rules from clients.json and matches incoming senders using
 // exact email lookup first, then wildcard domain fallback.
+//
+// Router is safe for concurrent use. Match takes a read lock so multiple
+// callers can proceed in parallel. Reload takes a write lock to atomically
+// replace the internal routing tables (D-12/D-15/D-16).
 type Router struct {
+	// mu guards clients and wildcards for concurrent Reload + Match (D-15).
+	mu sync.RWMutex
+
 	// clients holds exact email -> entry mappings
 	clients map[string]ClientEntry
 
@@ -103,7 +111,12 @@ func LoadFromWatcherDir() (*Router, error) {
 // Match returns the routing result for a given sender address.
 // Exact email match takes priority over wildcard domain match (D-08).
 // Returns nil if the sender does not match any rule (unrouted).
+//
+// Safe to call concurrently with Reload (takes RLock for the duration, D-15).
 func (r *Router) Match(sender string) *RouteResult {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+
 	// 1. Exact match
 	if entry, ok := r.clients[sender]; ok {
 		return &RouteResult{
@@ -130,4 +143,24 @@ func (r *Router) Match(sender string) *RouteResult {
 
 	// Unrouted: triage handled in Phase 18
 	return nil
+}
+
+// Reload atomically replaces the router's routing tables with newClients.
+// Safe to call concurrently with Match. Builds fresh exact and wildcard maps
+// before acquiring the write lock, then swaps both under a single lock (D-12/D-16).
+// A nil input is treated as an empty map (never assigns nil to internal fields, D-15/Pitfall 5).
+func (r *Router) Reload(newClients map[string]ClientEntry) {
+	newExact := make(map[string]ClientEntry)
+	newWild := make(map[string]ClientEntry)
+	for k, v := range newClients {
+		if strings.HasPrefix(k, "*@") {
+			newWild[strings.TrimPrefix(k, "*@")] = v
+		} else {
+			newExact[k] = v
+		}
+	}
+	r.mu.Lock()
+	r.clients = newExact
+	r.wildcards = newWild
+	r.mu.Unlock()
 }

@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
 
 	"github.com/asheshgoplani/agent-deck/internal/watcher"
@@ -75,6 +76,53 @@ func TestRouter_EmptyClientsMap(t *testing.T) {
 	result := r.Match("anyone@example.com")
 	if result != nil {
 		t.Errorf("expected nil for empty client map, got %+v", result)
+	}
+}
+
+// TestRouter_ReloadUnderConcurrentMatch verifies that Router.Reload is safe to call
+// concurrently with Match. 100 goroutines call Match while a parallel goroutine
+// calls Reload 50 times. Must pass under -race, no panic, no nil-map deref.
+func TestRouter_ReloadUnderConcurrentMatch(t *testing.T) {
+	r := watcher.NewRouter(buildClients())
+
+	newClients := map[string]watcher.ClientEntry{
+		"new@example.com": {
+			Conductor: "new-conductor",
+			Group:     "new/inbox",
+			Name:      "New Client",
+		},
+	}
+
+	var wg sync.WaitGroup
+	// 100 goroutines calling Match concurrently.
+	for i := 0; i < 100; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for j := 0; j < 50; j++ {
+				_ = r.Match("anyone@x.com")
+			}
+		}()
+	}
+	// Parallel goroutine calling Reload 50 times.
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		for i := 0; i < 50; i++ {
+			r.Reload(newClients)
+		}
+	}()
+
+	wg.Wait()
+}
+
+// TestRouter_ReloadNil verifies that Reload(nil) is safe and subsequent Match returns nil.
+func TestRouter_ReloadNil(t *testing.T) {
+	r := watcher.NewRouter(nil)
+	r.Reload(nil)
+	result := r.Match("x@y.com")
+	if result != nil {
+		t.Errorf("expected nil after Reload(nil), got %+v", result)
 	}
 }
 
