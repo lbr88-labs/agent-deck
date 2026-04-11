@@ -88,6 +88,107 @@ func TestWatcherMetaLoadBackfillsName(t *testing.T) {
 	}
 }
 
+// TestWatcherMetaRoundTrip_GmailFields verifies WatchExpiry + WatchHistoryID
+// round-trip through Save/Load and that empty values omit from JSON so that
+// legacy Phase 13/14 watchers (webhook, ntfy, github, slack) still parse cleanly.
+func TestWatcherMetaRoundTrip_GmailFields(t *testing.T) {
+	tmpDir := t.TempDir()
+	t.Setenv("HOME", tmpDir)
+
+	expiry := time.Now().Add(7 * 24 * time.Hour).UTC().Format(time.RFC3339)
+	meta := &WatcherMeta{
+		Name:           "gmail-test",
+		Type:           "gmail",
+		CreatedAt:      time.Now().UTC().Format(time.RFC3339),
+		WatchExpiry:    expiry,
+		WatchHistoryID: "1234567890",
+	}
+	if err := SaveWatcherMeta(meta); err != nil {
+		t.Fatalf("SaveWatcherMeta: %v", err)
+	}
+
+	loaded, err := LoadWatcherMeta("gmail-test")
+	if err != nil {
+		t.Fatalf("LoadWatcherMeta: %v", err)
+	}
+	if loaded.WatchExpiry != expiry {
+		t.Errorf("WatchExpiry mismatch: got %q want %q", loaded.WatchExpiry, expiry)
+	}
+	if loaded.WatchHistoryID != "1234567890" {
+		t.Errorf("WatchHistoryID mismatch: got %q want %q", loaded.WatchHistoryID, "1234567890")
+	}
+
+	// Backward compatibility: a WatcherMeta WITHOUT the gmail fields must still
+	// round-trip and the loaded struct must have empty WatchExpiry/WatchHistoryID.
+	legacy := &WatcherMeta{
+		Name:      "legacy",
+		Type:      "ntfy",
+		CreatedAt: time.Now().UTC().Format(time.RFC3339),
+	}
+	if err := SaveWatcherMeta(legacy); err != nil {
+		t.Fatalf("SaveWatcherMeta(legacy): %v", err)
+	}
+	loadedLegacy, err := LoadWatcherMeta("legacy")
+	if err != nil {
+		t.Fatalf("LoadWatcherMeta(legacy): %v", err)
+	}
+	if loadedLegacy.WatchExpiry != "" || loadedLegacy.WatchHistoryID != "" {
+		t.Errorf("legacy WatcherMeta should have empty gmail fields, got expiry=%q history=%q",
+			loadedLegacy.WatchExpiry, loadedLegacy.WatchHistoryID)
+	}
+}
+
+// TestSaveWatcherMeta_AtomicWrite verifies that a successful save leaves
+// exactly meta.json on disk with no .tmp file remnant, and that a stale
+// .tmp file left behind by a previous crashed run is overwritten cleanly.
+func TestSaveWatcherMeta_AtomicWrite(t *testing.T) {
+	tmpDir := t.TempDir()
+	t.Setenv("HOME", tmpDir)
+
+	meta := &WatcherMeta{
+		Name:      "atomic-test",
+		Type:      "gmail",
+		CreatedAt: time.Now().UTC().Format(time.RFC3339),
+	}
+	if err := SaveWatcherMeta(meta); err != nil {
+		t.Fatalf("SaveWatcherMeta: %v", err)
+	}
+
+	dir := filepath.Join(tmpDir, ".agent-deck", "watchers", "atomic-test")
+	finalPath := filepath.Join(dir, "meta.json")
+	tmpPath := finalPath + ".tmp"
+
+	// Final file must exist
+	if _, err := os.Stat(finalPath); err != nil {
+		t.Errorf("final meta.json not found: %v", err)
+	}
+	// Temp file must NOT exist after successful save
+	if _, err := os.Stat(tmpPath); err == nil {
+		t.Errorf("meta.json.tmp leaked after successful save")
+	}
+
+	// Simulate a crash that left a stale .tmp file behind from a previous run.
+	// SaveWatcherMeta should overwrite it cleanly (write to .tmp then rename).
+	if err := os.WriteFile(tmpPath, []byte("garbage"), 0o644); err != nil {
+		t.Fatalf("seed stale tmp: %v", err)
+	}
+	meta.Type = "gmail-updated"
+	if err := SaveWatcherMeta(meta); err != nil {
+		t.Fatalf("SaveWatcherMeta after stale tmp: %v", err)
+	}
+	loaded, err := LoadWatcherMeta("atomic-test")
+	if err != nil {
+		t.Fatalf("LoadWatcherMeta: %v", err)
+	}
+	if loaded.Type != "gmail-updated" {
+		t.Errorf("Type mismatch after recovery: got %q want %q", loaded.Type, "gmail-updated")
+	}
+	// Temp file must NOT exist after this save either
+	if _, err := os.Stat(tmpPath); err == nil {
+		t.Errorf("meta.json.tmp leaked after second save")
+	}
+}
+
 func TestWatcherDirHelpers(t *testing.T) {
 	tmpDir := t.TempDir()
 	t.Setenv("HOME", tmpDir)

@@ -10,9 +10,11 @@ import (
 // WatcherMeta holds metadata for a named watcher instance.
 // Persisted as meta.json in ~/.agent-deck/watchers/<name>/.
 type WatcherMeta struct {
-	Name      string `json:"name"`
-	Type      string `json:"type"`       // adapter type: "webhook", "ntfy", "github", "slack", "gmail"
-	CreatedAt string `json:"created_at"` // RFC3339 timestamp
+	Name           string `json:"name"`
+	Type           string `json:"type"`                       // adapter type: "webhook", "ntfy", "github", "slack", "gmail"
+	CreatedAt      string `json:"created_at"`                 // RFC3339 timestamp
+	WatchExpiry    string `json:"watch_expiry,omitempty"`     // RFC3339 UTC (gmail only) — Gmail watch() expiration
+	WatchHistoryID string `json:"watch_history_id,omitempty"` // uint64 as string (gmail only) — last processed Gmail history ID
 }
 
 // WatcherDir returns the base directory for all watchers (~/.agent-deck/watchers).
@@ -35,6 +37,13 @@ func WatcherNameDir(name string) (string, error) {
 
 // SaveWatcherMeta writes meta.json for a watcher.
 // Creates the watcher directory if it does not exist.
+//
+// Uses a write-temp-rename atomic pattern: data is first written to
+// meta.json.tmp, then renamed into place via os.Rename (POSIX atomic on
+// the same filesystem). A mid-write crash therefore leaves either the
+// old meta.json intact or the new meta.json complete — never a partial
+// write. Any stale .tmp from a previous crash is overwritten on the
+// next Save and removed on rename failure.
 func SaveWatcherMeta(meta *WatcherMeta) error {
 	if meta == nil {
 		return fmt.Errorf("watcher metadata cannot be nil")
@@ -53,9 +62,14 @@ func SaveWatcherMeta(meta *WatcherMeta) error {
 	if err != nil {
 		return fmt.Errorf("failed to marshal watcher meta.json: %w", err)
 	}
-	metaPath := filepath.Join(dir, "meta.json")
-	if err := os.WriteFile(metaPath, data, 0o644); err != nil {
-		return fmt.Errorf("failed to write watcher meta.json: %w", err)
+	finalPath := filepath.Join(dir, "meta.json")
+	tmpPath := finalPath + ".tmp"
+	if err := os.WriteFile(tmpPath, data, 0o644); err != nil {
+		return fmt.Errorf("failed to write watcher meta.json.tmp: %w", err)
+	}
+	if err := os.Rename(tmpPath, finalPath); err != nil {
+		_ = os.Remove(tmpPath)
+		return fmt.Errorf("failed to rename watcher meta.json: %w", err)
 	}
 	return nil
 }
