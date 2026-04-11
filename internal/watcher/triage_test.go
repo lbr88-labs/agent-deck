@@ -116,6 +116,81 @@ func TestTriageLoop_RateLimitSixthQueued_Unit(t *testing.T) {
 	}
 }
 
+// TestTriagePrompt_Rendering verifies BuildPrompt produces a deterministic prompt
+// containing all required fields from 18-RESEARCH.md Q2.
+func TestTriagePrompt_Rendering(t *testing.T) {
+	event := Event{
+		Source:    "mock",
+		Sender:    "alice@example.com",
+		Subject:   "New order",
+		Body:      "Hello world",
+		Timestamp: time.Now(),
+	}
+	clientsList := map[string]ClientEntry{
+		"alice@example.com": {Conductor: "client-a", Group: "client-a/inbox", Name: "Client A"},
+	}
+	resultPath := "/tmp/triage/abc123/result.json"
+
+	rendered, err := BuildPrompt(event, clientsList, resultPath)
+	if err != nil {
+		t.Fatalf("BuildPrompt error: %v", err)
+	}
+
+	// Required fields per 18-RESEARCH.md Q2 template.
+	for _, required := range []string{
+		"alice@example.com", // sender
+		"New order",         // subject
+		"Client A",          // known conductor name
+		resultPath,          // exact result path
+		"OUTPUT PATH:",
+		"OUTPUT SCHEMA",
+		"route_to",
+		"confidence",
+		"should_persist",
+	} {
+		if !containsStr(rendered, required) {
+			t.Errorf("rendered prompt missing %q\nrendered:\n%s", required, rendered)
+		}
+	}
+
+	// Test body truncation at 4000 chars.
+	longBody := make([]byte, 5000)
+	for i := range longBody {
+		longBody[i] = 'x'
+	}
+	event2 := Event{
+		Source:    "mock",
+		Sender:    "bob@example.com",
+		Subject:   "Big email",
+		Body:      string(longBody),
+		Timestamp: time.Now(),
+	}
+	rendered2, err := BuildPrompt(event2, clientsList, resultPath)
+	if err != nil {
+		t.Fatalf("BuildPrompt error on long body: %v", err)
+	}
+	// The body in the rendered prompt must be truncated to at most 4000 runes + ellipsis.
+	if len(rendered2) > len(rendered)+4100 {
+		t.Error("rendered prompt with long body is not truncated appropriately")
+	}
+	if !containsStr(rendered2, "…") {
+		t.Error("truncated body should include ellipsis character")
+	}
+}
+
+func containsStr(s, substr string) bool {
+	return len(s) >= len(substr) && findSubstr(s, substr)
+}
+
+func findSubstr(s, sub string) bool {
+	for i := 0; i <= len(s)-len(sub); i++ {
+		if s[i:i+len(sub)] == sub {
+			return true
+		}
+	}
+	return false
+}
+
 // TestTriageSpawner_BinaryNotFound verifies that AgentDeckLaunchSpawner returns
 // a non-nil error when the binary path does not exist.
 func TestTriageSpawner_BinaryNotFound(t *testing.T) {

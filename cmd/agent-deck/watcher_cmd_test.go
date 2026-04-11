@@ -1,10 +1,14 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
+
+	"gopkg.in/yaml.v3"
 
 	"github.com/asheshgoplani/agent-deck/internal/watcher"
 )
@@ -342,6 +346,179 @@ func TestImportChannels_EmptyChannels(t *testing.T) {
 	clientsPath := filepath.Join(outputDir, "clients.json")
 	if _, err := os.Stat(clientsPath); os.IsNotExist(err) {
 		t.Error("expected clients.json to exist even with empty channels")
+	}
+}
+
+// TestWatcherCreatorSkill_Parseable reads docs/skills/watcher-creator/SKILL.md
+// (the repo-browser copy) and verifies YAML frontmatter fields and body content.
+// The test uses gopkg.in/yaml.v3 (present in go.mod as an indirect dep).
+func TestWatcherCreatorSkill_Parseable(t *testing.T) {
+	// Path is relative to the cmd/agent-deck package directory; Go tests run from
+	// the package directory, so ../../docs/skills/... resolves to the repo root.
+	skillPath := filepath.Join("..", "..", "docs", "skills", "watcher-creator", "SKILL.md")
+	data, err := os.ReadFile(skillPath)
+	if err != nil {
+		t.Fatalf("read SKILL.md: %v (run Task 1 to create the file)", err)
+	}
+
+	content := string(data)
+
+	// Split on the second "---" delimiter to extract frontmatter.
+	// The format is: ---\n<yaml>\n---\n<body>
+	if !strings.HasPrefix(content, "---") {
+		t.Fatal("SKILL.md does not start with '---' frontmatter delimiter")
+	}
+	// Find second ---
+	rest := content[3:] // skip the opening ---
+	idx := strings.Index(rest, "---")
+	if idx < 0 {
+		t.Fatal("SKILL.md missing closing frontmatter delimiter '---'")
+	}
+	yamlSection := strings.TrimSpace(rest[:idx])
+	body := rest[idx+3:]
+
+	// Parse YAML frontmatter.
+	var fm map[string]any
+	if err := yaml.Unmarshal([]byte(yamlSection), &fm); err != nil {
+		t.Fatalf("parse frontmatter YAML: %v", err)
+	}
+
+	// Assert required fields.
+	name, ok := fm["name"].(string)
+	if !ok || name == "" {
+		t.Fatalf("frontmatter missing 'name' field; got %v", fm["name"])
+	}
+	if name != "watcher-creator" {
+		t.Errorf("frontmatter name = %q, want %q", name, "watcher-creator")
+	}
+
+	desc, ok := fm["description"].(string)
+	if !ok || desc == "" {
+		t.Fatal("frontmatter missing non-empty 'description' field")
+	}
+	if !strings.Contains(strings.ToLower(desc), "watcher") {
+		t.Errorf("frontmatter description %q does not mention 'watcher'", desc)
+	}
+
+	// Assert body covers all 5 adapter types and the create command.
+	for _, required := range []string{"webhook", "ntfy", "github", "slack", "gmail", "agent-deck watcher create"} {
+		if !strings.Contains(body, required) {
+			t.Errorf("SKILL.md body missing required string %q", required)
+		}
+	}
+}
+
+// TestWatcherCreatorSkill_DocsMatchesAssets byte-compares the docs/ copy of the
+// skill against the embedded assets/ copy to detect drift (T-18-22).
+func TestWatcherCreatorSkill_DocsMatchesAssets(t *testing.T) {
+	files := []string{"SKILL.md", "README.md"}
+	for _, f := range files {
+		docsPath := filepath.Join("..", "..", "docs", "skills", "watcher-creator", f)
+		assetsPath := filepath.Join("assets", "skills", "watcher-creator", f)
+
+		docsData, err := os.ReadFile(docsPath)
+		if err != nil {
+			t.Fatalf("read docs copy of %s: %v", f, err)
+		}
+		assetsData, err := os.ReadFile(assetsPath)
+		if err != nil {
+			t.Fatalf("read assets copy of %s: %v", f, err)
+		}
+		if !bytes.Equal(docsData, assetsData) {
+			t.Errorf("docs/skills/watcher-creator/%s differs from cmd/agent-deck/assets/skills/watcher-creator/%s — update both files to stay in sync", f, f)
+		}
+	}
+}
+
+// TestWatcherInstallSkill verifies that handleWatcherInstallSkill copies both
+// SKILL.md and README.md to $HOME/.agent-deck/skills/pool/watcher-creator/.
+func TestWatcherInstallSkill(t *testing.T) {
+	tmp := t.TempDir()
+	t.Setenv("HOME", tmp)
+
+	if err := handleWatcherInstallSkill("default", []string{"watcher-creator"}); err != nil {
+		t.Fatalf("handleWatcherInstallSkill: %v", err)
+	}
+
+	poolDir := filepath.Join(tmp, ".agent-deck", "skills", "pool", "watcher-creator")
+
+	// Both files should exist in pool dir.
+	for _, f := range []string{"SKILL.md", "README.md"} {
+		dest := filepath.Join(poolDir, f)
+		if _, err := os.Stat(dest); err != nil {
+			t.Errorf("expected %s to exist after install-skill: %v", dest, err)
+			continue
+		}
+		// Content must match the embedded (assets/) source.
+		srcPath := filepath.Join("assets", "skills", "watcher-creator", f)
+		srcData, err := os.ReadFile(srcPath)
+		if err != nil {
+			t.Fatalf("read assets source %s: %v", srcPath, err)
+		}
+		destData, err := os.ReadFile(dest)
+		if err != nil {
+			t.Fatalf("read installed %s: %v", dest, err)
+		}
+		if !bytes.Equal(srcData, destData) {
+			t.Errorf("installed %s content does not match source", f)
+		}
+	}
+}
+
+// TestWatcherInstallSkill_DirMode verifies that install-skill creates the pool
+// directory hierarchy with mode 0o700 (T-18-21).
+func TestWatcherInstallSkill_DirMode(t *testing.T) {
+	tmp := t.TempDir()
+	t.Setenv("HOME", tmp)
+
+	if err := handleWatcherInstallSkill("default", []string{"watcher-creator"}); err != nil {
+		t.Fatalf("handleWatcherInstallSkill: %v", err)
+	}
+
+	dirs := []string{
+		filepath.Join(tmp, ".agent-deck", "skills"),
+		filepath.Join(tmp, ".agent-deck", "skills", "pool"),
+		filepath.Join(tmp, ".agent-deck", "skills", "pool", "watcher-creator"),
+	}
+	for _, d := range dirs {
+		info, err := os.Stat(d)
+		if err != nil {
+			t.Fatalf("stat %s: %v", d, err)
+		}
+		mode := info.Mode().Perm()
+		if mode != 0o700 {
+			t.Errorf("dir %s has mode %04o, want 0700", d, mode)
+		}
+	}
+
+	// Installed files should be readable (0o644).
+	poolDir := filepath.Join(tmp, ".agent-deck", "skills", "pool", "watcher-creator")
+	for _, f := range []string{"SKILL.md", "README.md"} {
+		info, err := os.Stat(filepath.Join(poolDir, f))
+		if err != nil {
+			t.Fatalf("stat %s: %v", f, err)
+		}
+		mode := info.Mode().Perm()
+		if mode != 0o644 {
+			t.Errorf("file %s has mode %04o, want 0644", f, mode)
+		}
+	}
+}
+
+// TestWatcherInstallSkill_RejectsUnknownSkill verifies that only "watcher-creator"
+// is accepted (path traversal prevention, T-18-20).
+func TestWatcherInstallSkill_RejectsUnknownSkill(t *testing.T) {
+	tmp := t.TempDir()
+	t.Setenv("HOME", tmp)
+
+	err := handleWatcherInstallSkill("default", []string{"../etc/passwd"})
+	if err == nil {
+		t.Fatal("expected error for unknown/traversal skill name, got nil")
+	}
+
+	err = handleWatcherInstallSkill("default", []string{"unknown-skill"})
+	if err == nil {
+		t.Fatal("expected error for unknown skill name, got nil")
 	}
 }
 

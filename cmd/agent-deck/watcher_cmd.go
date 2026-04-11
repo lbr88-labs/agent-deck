@@ -49,6 +49,11 @@ func handleWatcher(profile string, args []string) {
 		handleWatcherTest(profile, args[1:])
 	case "routes":
 		handleWatcherRoutes(profile, args[1:])
+	case "install-skill":
+		if err := handleWatcherInstallSkill(profile, args[1:]); err != nil {
+			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+			os.Exit(1)
+		}
 	case "help", "--help", "-h":
 		printWatcherHelp()
 	default:
@@ -807,4 +812,5 @@ func printWatcherHelp() {
 	fmt.Println("  test <name>                   Route a synthetic event to verify routing config")
 	fmt.Println("  routes [--json]               Show all routing rules from clients.json")
 	fmt.Println("  import <path>                 Migrate bash issue-watcher channels.json to Go watcher config")
+	fmt.Println("  install-skill <skill-name>    Install a skill to ~/.agent-deck/skills/pool/ (e.g. watcher-creator)")
 }
