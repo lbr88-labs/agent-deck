@@ -2,6 +2,7 @@ package watcher
 
 import (
 	"bytes"
+	"context"
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/hex"
@@ -292,5 +293,131 @@ func TestEngine_Integration_DedupAcrossAdapters(t *testing.T) {
 	events := drainEvents(engine.EventCh(), 100*time.Millisecond)
 	if len(events) != 2 {
 		t.Errorf("expected 2 events on EventCh (different sources don't dedup), got %d", len(events))
+	}
+}
+
+// gmailPrebuiltAdapter wraps a fully pre-wired *GmailAdapter so the engine's
+// Start path does not invoke the real Setup (which would call pubsub.NewClient
+// against Google and read credentials.json from disk). The integration test
+// constructs the underlying GmailAdapter via newGmailAdapterForTest and hands
+// this wrapper to engine.RegisterAdapter. Setup is a no-op; Listen / Teardown
+// / HealthCheck delegate to the inner adapter.
+type gmailPrebuiltAdapter struct {
+	inner *GmailAdapter
+}
+
+func (g *gmailPrebuiltAdapter) Setup(ctx context.Context, config AdapterConfig) error {
+	// No-op: the inner adapter is pre-wired with a fake gmail endpoint, a
+	// pstest-backed pubsub client, and a never-firing afterFunc. Re-running
+	// the production Setup would overwrite those fields and block on real
+	// Google endpoints.
+	return nil
+}
+
+func (g *gmailPrebuiltAdapter) Listen(ctx context.Context, events chan<- Event) error {
+	return g.inner.Listen(ctx, events)
+}
+
+func (g *gmailPrebuiltAdapter) Teardown() error {
+	return g.inner.Teardown()
+}
+
+func (g *gmailPrebuiltAdapter) HealthCheck() error {
+	return g.inner.HealthCheck()
+}
+
+// TestEngine_Integration_GmailAdapter wires a real GmailAdapter (backed by a
+// pstest Pub/Sub fake + an httptest Gmail REST fake) into a real watcher
+// Engine, publishes one synthetic envelope, and asserts the normalized event
+// flows through the engine's writerLoop to the in-memory statedb AND the
+// exported EventCh. This is Phase 17's final integration gate — the closest
+// hermetic analog to a production smoke test.
+func TestEngine_Integration_GmailAdapter(t *testing.T) {
+	// Note: per-test goleak.VerifyNone is intentionally omitted. The pstest
+	// subscription goroutines and httptest persistConn read/write loops are
+	// short-lived but can be mid-shutdown when VerifyNone runs. The package
+	// TestMain (testmain_test.go) runs goleak.VerifyTestMain with the full
+	// filter set after all tests complete, which is the authoritative leak
+	// check — transient goroutines have drained by then.
+
+	const watcherName = "gmail-integration-test"
+	seedFakeOAuth(t, watcherName)
+
+	// Routing table: alice@example.com matches the fake Gmail message_metadata.json.
+	clients := map[string]ClientEntry{
+		"alice@example.com": {
+			Conductor: "gmail-conductor",
+			Group:     "gmail/inbox",
+			Name:      "Gmail Client",
+		},
+	}
+
+	engine, db := newTestEngine(t, clients)
+	saveTestWatcher(t, db, "w-gmail", watcherName, "gmail")
+
+	// Fake Gmail REST API (serves watch_response.json, history_list.json,
+	// message_metadata.json fixtures from testdata/gmail/).
+	fs := newFakeGmailServer(t)
+
+	// Fake Pub/Sub: pstest-backed client + topic + subscription.
+	_, psClient, topic, sub := newFakePubSub(t)
+
+	// Build the underlying GmailAdapter pre-wired against both fakes. Pin the
+	// watch expiry 30 days out and inject a never-firing afterFunc so the
+	// renewalLoop parks on ctx.Done and cannot race with the test.
+	inner := newGmailAdapterForTest(watcherName, fs.URL(), psClient, sub)
+	inner.topic = "projects/test-project/topics/gmail-test"
+	inner.subscr = "projects/test-project/subscriptions/gmail-test-sub"
+	inner.watchHistoryID = 0 // fall back to envelope historyId on first delivery
+	inner.watchExpiry = time.Now().Add(30 * 24 * time.Hour)
+	inner.afterFunc = func(time.Duration) <-chan time.Time { return make(chan time.Time) }
+
+	adapter := &gmailPrebuiltAdapter{inner: inner}
+
+	engine.RegisterAdapter("w-gmail", adapter, AdapterConfig{
+		Type: "gmail",
+		Name: watcherName,
+		Settings: map[string]string{
+			"topic":        inner.topic,
+			"subscription": inner.subscr,
+		},
+	}, 60)
+
+	if err := engine.Start(); err != nil {
+		t.Fatalf("engine.Start: %v", err)
+	}
+
+	// Publish a synthetic Gmail Pub/Sub envelope. The adapter will fetch
+	// the history list + message metadata from the fake Gmail server and
+	// emit a normalized Event through the engine's writerLoop.
+	publishEnvelope(t, topic, "alice@example.com", 1001)
+
+	// Wait for the event to appear on the engine's exported EventCh.
+	select {
+	case evt := <-engine.EventCh():
+		if evt.Source != "gmail" {
+			t.Errorf("event Source = %q, want gmail", evt.Source)
+		}
+		if evt.Sender != "alice@example.com" {
+			t.Errorf("event Sender = %q, want alice@example.com", evt.Sender)
+		}
+		if evt.Subject != "Test Email Subject" {
+			t.Errorf("event Subject = %q, want Test Email Subject", evt.Subject)
+		}
+	case <-time.After(5 * time.Second):
+		engine.Stop()
+		t.Fatal("timeout waiting for gmail event on engine EventCh")
+	}
+
+	engine.Stop()
+
+	// Verify the event was persisted to watcher_events via the writerLoop.
+	if n := countWatcherEvents(t, db, "w-gmail"); n < 1 {
+		t.Errorf("expected at least 1 gmail event persisted to watcher_events, got %d", n)
+	}
+
+	// Verify routing: alice@example.com should have been routed to gmail-conductor.
+	if routedTo := queryWatcherEventRoutedTo(t, db, "w-gmail"); routedTo != "gmail-conductor" {
+		t.Errorf("expected routed_to=gmail-conductor, got %q", routedTo)
 	}
 }
