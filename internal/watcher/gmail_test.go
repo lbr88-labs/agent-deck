@@ -688,3 +688,357 @@ func TestGmailAdapter_OAuth_PersistsRefreshedToken(t *testing.T) {
 	}
 }
 
+// ---------- Plan 17-03 Task 2: Renewal tests ----------
+
+// TestGmailAdapter_Setup_RenewsWhenWithin2Hours verifies the D-11 startup
+// threshold: when meta.json has a WatchExpiry within 2 hours of now, Setup
+// re-registers the watch. Exercises the extracted maybeRenewOnStartup helper
+// directly since the full Setup path requires real OAuth + pubsub wiring.
+func TestGmailAdapter_Setup_RenewsWhenWithin2Hours(t *testing.T) {
+	watcherName := "gmail-test-renew-within-2h"
+	seedFakeOAuth(t, watcherName)
+
+	// Pre-seed meta.json with an expiry 90 minutes in the future — inside the 2h threshold.
+	originalExpiry := time.Now().Add(90 * time.Minute).UTC().Format(time.RFC3339)
+	seedMeta := &session.WatcherMeta{
+		Name:           watcherName,
+		Type:           "gmail",
+		CreatedAt:      time.Now().UTC().Format(time.RFC3339),
+		WatchExpiry:    originalExpiry,
+		WatchHistoryID: "500",
+	}
+	if err := session.SaveWatcherMeta(seedMeta); err != nil {
+		t.Fatalf("seed meta: %v", err)
+	}
+
+	fs := newFakeGmailServer(t)
+	_, psClient, _, sub := newFakePubSub(t)
+
+	a := newGmailAdapterForTest(watcherName, fs.URL(), psClient, sub)
+	// Mirror the subset of Setup that produces the state maybeRenewOnStartup consumes:
+	// load persisted WatchExpiry into memory.
+	parsed, err := time.Parse(time.RFC3339, originalExpiry)
+	if err != nil {
+		t.Fatalf("parse seed expiry: %v", err)
+	}
+	a.watchExpiry = parsed
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	if err := a.maybeRenewOnStartup(ctx); err != nil {
+		t.Fatalf("maybeRenewOnStartup: %v", err)
+	}
+
+	if got := fs.WatchCalls(); got != 1 {
+		t.Errorf("expected exactly 1 users.Watch call (within 2h threshold), got %d", got)
+	}
+
+	meta, err := session.LoadWatcherMeta(watcherName)
+	if err != nil {
+		t.Fatalf("LoadWatcherMeta: %v", err)
+	}
+	// watch_response.json expiration = 4102444800000 ms = 2100-01-01 UTC — should differ from the seed.
+	want := time.UnixMilli(4102444800000).UTC().Format(time.RFC3339)
+	if meta.WatchExpiry != want {
+		t.Errorf("WatchExpiry after renew = %q, want %q", meta.WatchExpiry, want)
+	}
+	if meta.WatchExpiry == originalExpiry {
+		t.Error("WatchExpiry was not updated by renewal")
+	}
+}
+
+// TestGmailAdapter_Setup_NoRenewWhenFresh verifies that when meta.json has a
+// WatchExpiry more than 2 hours in the future, Setup does NOT re-register the
+// watch (quota-efficient: only renew when necessary).
+func TestGmailAdapter_Setup_NoRenewWhenFresh(t *testing.T) {
+	watcherName := "gmail-test-no-renew-fresh"
+	seedFakeOAuth(t, watcherName)
+
+	// 3h in the future — well past the 2h threshold.
+	freshExpiry := time.Now().Add(3 * time.Hour).UTC().Format(time.RFC3339)
+	seedMeta := &session.WatcherMeta{
+		Name:           watcherName,
+		Type:           "gmail",
+		CreatedAt:      time.Now().UTC().Format(time.RFC3339),
+		WatchExpiry:    freshExpiry,
+		WatchHistoryID: "500",
+	}
+	if err := session.SaveWatcherMeta(seedMeta); err != nil {
+		t.Fatalf("seed meta: %v", err)
+	}
+
+	fs := newFakeGmailServer(t)
+	_, psClient, _, sub := newFakePubSub(t)
+
+	a := newGmailAdapterForTest(watcherName, fs.URL(), psClient, sub)
+	parsed, err := time.Parse(time.RFC3339, freshExpiry)
+	if err != nil {
+		t.Fatalf("parse seed expiry: %v", err)
+	}
+	a.watchExpiry = parsed
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	if err := a.maybeRenewOnStartup(ctx); err != nil {
+		t.Fatalf("maybeRenewOnStartup: %v", err)
+	}
+
+	if got := fs.WatchCalls(); got != 0 {
+		t.Errorf("expected 0 users.Watch calls (>2h threshold), got %d", got)
+	}
+
+	meta, err := session.LoadWatcherMeta(watcherName)
+	if err != nil {
+		t.Fatalf("LoadWatcherMeta: %v", err)
+	}
+	if meta.WatchExpiry != freshExpiry {
+		t.Errorf("WatchExpiry changed: got %q, want %q (should be untouched)", meta.WatchExpiry, freshExpiry)
+	}
+}
+
+// TestGmailAdapter_RenewalLoop_FiresOnceBeforeExpiry verifies that renewalLoop
+// calls registerWatch at watchExpiry-1h, using the injectable afterFunc to
+// trigger the wait deterministically.
+func TestGmailAdapter_RenewalLoop_FiresOnceBeforeExpiry(t *testing.T) {
+	watcherName := "gmail-test-renew-fires"
+	seedFakeOAuth(t, watcherName)
+
+	fs := newFakeGmailServer(t)
+	_, psClient, _, sub := newFakePubSub(t)
+
+	a := newGmailAdapterForTest(watcherName, fs.URL(), psClient, sub)
+	a.topic = "projects/test-project/topics/gmail-test"
+	a.subscr = "projects/test-project/subscriptions/gmail-test-sub"
+
+	fakeNow := time.Now()
+	fakeAfterCh := make(chan time.Time, 4)
+	a.nowFunc = func() time.Time { return fakeNow }
+	a.afterFunc = func(d time.Duration) <-chan time.Time { return fakeAfterCh }
+
+	// watchExpiry 1h in the future → renewAt == fakeNow → wait == 0, loop
+	// immediately enters the select and consumes the next channel value.
+	a.watchExpiry = fakeNow.Add(1 * time.Hour)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan struct{})
+	go func() {
+		a.renewalLoop(ctx)
+		close(done)
+	}()
+
+	// Trigger the first wait select.
+	fakeAfterCh <- fakeNow
+
+	// Poll for registerWatch to execute.
+	deadline := time.Now().Add(2 * time.Second)
+	for fs.WatchCalls() < 1 {
+		if time.Now().After(deadline) {
+			cancel()
+			<-done
+			t.Fatalf("registerWatch never called; watchCalls=%d", fs.WatchCalls())
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+
+	// After success, loop re-reads watchExpiry (now ~2100) and recomputes wait.
+	// We cancel to unblock the next select on ctx.Done.
+	cancel()
+	select {
+	case <-done:
+	case <-time.After(1 * time.Second):
+		t.Fatal("renewalLoop did not exit on ctx cancel")
+	}
+
+	if got := fs.WatchCalls(); got != 1 {
+		t.Errorf("expected watchCalls==1 after single fire, got %d", got)
+	}
+
+	// lastHealthErr should be cleared on success.
+	a.mu.Lock()
+	lhe := a.lastHealthErr
+	a.mu.Unlock()
+	if lhe != nil {
+		t.Errorf("lastHealthErr after successful renewal = %v, want nil", lhe)
+	}
+}
+
+// TestGmailAdapter_RenewalLoop_ExitsOnCtxCancel verifies that a renewalLoop
+// blocked in the first wait select exits within 200ms of ctx cancellation.
+// Never signals afterFunc — the goroutine must take the ctx.Done branch.
+func TestGmailAdapter_RenewalLoop_ExitsOnCtxCancel(t *testing.T) {
+	a := NewGmailAdapter()
+	a.name = "gmail-test-renew-ctx"
+	// Never-firing afterFunc so the goroutine parks on the select.
+	a.afterFunc = func(d time.Duration) <-chan time.Time {
+		return make(chan time.Time) // never delivers
+	}
+	a.watchExpiry = time.Now().Add(7 * 24 * time.Hour)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() {
+		a.renewalLoop(ctx)
+		close(done)
+	}()
+
+	// Immediate cancel — goroutine should exit quickly via ctx.Done branch.
+	cancel()
+	select {
+	case <-done:
+		// success
+	case <-time.After(200 * time.Millisecond):
+		t.Fatal("renewalLoop did not exit within 200ms of ctx cancel")
+	}
+}
+
+// TestGmailAdapter_RenewalLoop_RetryOnFailure verifies that when registerWatch
+// fails, renewalLoop stores the error in lastHealthErr, waits 15 minutes (via
+// the injectable afterFunc), retries, and clears lastHealthErr on the second
+// successful call.
+func TestGmailAdapter_RenewalLoop_RetryOnFailure(t *testing.T) {
+	watcherName := "gmail-test-renew-retry"
+	seedFakeOAuth(t, watcherName)
+
+	// Custom Gmail server: first /watch call returns 500, second returns the fixture.
+	var mu sync.Mutex
+	var watchCalls int
+	tsGmail := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case strings.HasSuffix(r.URL.Path, "/watch"):
+			mu.Lock()
+			watchCalls++
+			n := watchCalls
+			mu.Unlock()
+			if n == 1 {
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusInternalServerError)
+				_, _ = w.Write([]byte(`{"error":{"code":500,"message":"fake failure"}}`))
+				return
+			}
+			data, err := os.ReadFile("testdata/gmail/watch_response.json")
+			if err != nil {
+				http.Error(w, err.Error(), 500)
+				return
+			}
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write(data)
+		case strings.HasSuffix(r.URL.Path, "/stop"):
+			w.WriteHeader(http.StatusNoContent)
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer tsGmail.Close()
+
+	_, psClient, _, sub := newFakePubSub(t)
+
+	a := newGmailAdapterForTest(watcherName, tsGmail.URL, psClient, sub)
+	a.topic = "projects/test-project/topics/gmail-test"
+
+	fakeNow := time.Now()
+	fakeAfterCh := make(chan time.Time, 4)
+	a.nowFunc = func() time.Time { return fakeNow }
+	a.afterFunc = func(d time.Duration) <-chan time.Time { return fakeAfterCh }
+
+	// watchExpiry 1h in future → first wait is 0, fires immediately.
+	a.watchExpiry = fakeNow.Add(1 * time.Hour)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan struct{})
+	go func() {
+		a.renewalLoop(ctx)
+		close(done)
+	}()
+
+	// Trigger first wait → registerWatch fails with 500.
+	fakeAfterCh <- fakeNow
+
+	// Poll until the first /watch call failed and lastHealthErr is set.
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		mu.Lock()
+		got := watchCalls
+		mu.Unlock()
+		if got >= 1 {
+			break
+		}
+		if time.Now().After(deadline) {
+			cancel()
+			<-done
+			t.Fatalf("first /watch call never made")
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+
+	// Give the loop a moment to record lastHealthErr and enter the retry select.
+	deadline = time.Now().Add(2 * time.Second)
+	for {
+		a.mu.Lock()
+		lhe := a.lastHealthErr
+		a.mu.Unlock()
+		if lhe != nil {
+			break
+		}
+		if time.Now().After(deadline) {
+			cancel()
+			<-done
+			t.Fatalf("lastHealthErr never set after registerWatch failure")
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+
+	// Trigger second wait (the 15-min retry) → loop continues into iter 2.
+	// The retry branch takes `continue`, which re-enters the top of the for
+	// loop and computes a fresh wait. Since registerWatch failed, watchExpiry
+	// is unchanged (fakeNow+1h) and wait is still 0 → the loop immediately
+	// enters another first-wait select. We send twice to cover both: the
+	// 15-min retry select AND the iter-2 first-wait select.
+	fakeAfterCh <- fakeNow
+	fakeAfterCh <- fakeNow
+
+	// Poll for the second /watch call.
+	deadline = time.Now().Add(2 * time.Second)
+	for {
+		mu.Lock()
+		got := watchCalls
+		mu.Unlock()
+		if got >= 2 {
+			break
+		}
+		if time.Now().After(deadline) {
+			cancel()
+			<-done
+			t.Fatalf("second /watch (retry) never made; watchCalls=%d", got)
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+
+	// After successful retry, lastHealthErr should clear. Poll briefly.
+	deadline = time.Now().Add(2 * time.Second)
+	for {
+		a.mu.Lock()
+		lhe := a.lastHealthErr
+		a.mu.Unlock()
+		if lhe == nil {
+			break
+		}
+		if time.Now().After(deadline) {
+			cancel()
+			<-done
+			t.Fatalf("lastHealthErr not cleared after successful retry: %v", lhe)
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+
+	cancel()
+	select {
+	case <-done:
+	case <-time.After(1 * time.Second):
+		t.Fatal("renewalLoop did not exit on ctx cancel")
+	}
+}
+

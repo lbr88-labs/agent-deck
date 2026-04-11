@@ -216,15 +216,24 @@ func (a *GmailAdapter) Setup(ctx context.Context, config AdapterConfig) error {
 	}
 
 	// D-11 threshold check: register a fresh watch when missing or within 2 hours.
+	if err := a.maybeRenewOnStartup(ctx); err != nil {
+		return fmt.Errorf("gmail: initial users.Watch failed: %w", err)
+	}
+
+	return nil
+}
+
+// maybeRenewOnStartup implements the D-11 startup threshold check: call
+// registerWatch if the in-memory watchExpiry is zero (no previous watch) or
+// within 2 hours of now. Extracted from Setup so unit tests can exercise the
+// threshold without standing up the full OAuth + pubsub.Client wiring.
+func (a *GmailAdapter) maybeRenewOnStartup(ctx context.Context) error {
 	a.mu.Lock()
 	expiry := a.watchExpiry
 	a.mu.Unlock()
 	if expiry.IsZero() || expiry.Sub(a.nowFunc()) < 2*time.Hour {
-		if err := a.registerWatch(ctx); err != nil {
-			return fmt.Errorf("gmail: initial users.Watch failed: %w", err)
-		}
+		return a.registerWatch(ctx)
 	}
-
 	return nil
 }
 
