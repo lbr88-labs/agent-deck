@@ -3,6 +3,8 @@ package watcher
 import (
 	"context"
 	"log/slog"
+	"os"
+	"path/filepath"
 	"sync"
 	"time"
 
@@ -27,6 +29,26 @@ type EngineConfig struct {
 
 	// Logger is the structured logger. Defaults to logging.ForComponent(logging.CompWatcher).
 	Logger *slog.Logger
+
+	// TriageSpawner launches triage sessions for unrouted events (INTEL-01, D-25).
+	// Defaults to AgentDeckLaunchSpawner when nil.
+	TriageSpawner TriageSpawner
+
+	// Clock abstracts time for the rate limiter and reaper (D-26).
+	// Defaults to realClock{} when nil.
+	Clock Clock
+
+	// TriageDir is the directory where triage session results are written.
+	// Defaults to $HOME/.agent-deck/triage/ when empty.
+	TriageDir string
+
+	// ClientsPath is the path to clients.json for triage hot-reload.
+	// Defaults to $HOME/.agent-deck/watchers/clients.json when empty.
+	ClientsPath string
+
+	// Profile is the agent-deck profile flag passed to spawned triage sessions.
+	// Defaults to AGENTDECK_PROFILE env var, then "default".
+	Profile string
 }
 
 // eventEnvelope wraps an Event with metadata for the single-writer goroutine.
@@ -66,6 +88,24 @@ type Engine struct {
 	// healthCh is the exported channel for health state updates (D-20).
 	healthCh chan HealthState
 
+	// triageReqCh receives unrouted events from writerLoop for triage spawning (D-05).
+	// Cap TriageReqChCap (16). writerLoop does a non-blocking send.
+	triageReqCh chan TriageRequest
+
+	// triageQueue holds rate-limited requests waiting for window eviction (D-10).
+	// Cap TriageQueueCap (16).
+	triageQueue chan TriageRequest
+
+	// rateLim is the rolling-window rate limiter for triage spawning (D-10a).
+	// Only accessed from triageLoop (no lock needed).
+	rateLim *rateLimiter
+
+	// clock abstracts time for deterministic tests (D-26).
+	clock Clock
+
+	// reaper processes triage result files (D-08). Set by Start().
+	reaper *triageReaper
+
 	ctx    context.Context
 	cancel context.CancelFunc
 	wg     sync.WaitGroup
@@ -80,6 +120,30 @@ func NewEngine(cfg EngineConfig) *Engine {
 		logger = logging.ForComponent(logging.CompWatcher)
 	}
 
+	// Apply defaults for triage configuration.
+	if cfg.Clock == nil {
+		cfg.Clock = realClock{}
+	}
+	if cfg.TriageDir == "" {
+		if home, err := os.UserHomeDir(); err == nil {
+			cfg.TriageDir = filepath.Join(home, ".agent-deck", "triage")
+		}
+	}
+	if cfg.ClientsPath == "" {
+		if home, err := os.UserHomeDir(); err == nil {
+			cfg.ClientsPath = filepath.Join(home, ".agent-deck", "watchers", "clients.json")
+		}
+	}
+	if cfg.Profile == "" {
+		cfg.Profile = os.Getenv("AGENTDECK_PROFILE")
+		if cfg.Profile == "" {
+			cfg.Profile = "default"
+		}
+	}
+	if cfg.TriageSpawner == nil {
+		cfg.TriageSpawner = AgentDeckLaunchSpawner{} // BinaryPath resolved lazily at spawn time
+	}
+
 	ctx, cancel := context.WithCancel(context.Background())
 
 	return &Engine{
@@ -88,6 +152,10 @@ func NewEngine(cfg EngineConfig) *Engine {
 		eventCh:       make(chan eventEnvelope, 64),
 		routedEventCh: make(chan Event, 64),
 		healthCh:      make(chan HealthState, 16),
+		triageReqCh:   make(chan TriageRequest, TriageReqChCap),
+		triageQueue:   make(chan TriageRequest, TriageQueueCap),
+		rateLim:       &rateLimiter{},
+		clock:         cfg.Clock,
 		ctx:           ctx,
 		cancel:        cancel,
 		log:           logger,
@@ -139,6 +207,20 @@ func (e *Engine) Start() error {
 		e.wg.Add(1)
 		go e.healthLoop()
 	}
+
+	// Triage goroutines: create reaper BEFORE launching triageLoop so spawnTriage
+	// can safely reference e.reaper without a data race (D-05/D-08).
+	e.reaper = newTriageReaper(
+		e.ctx, &e.wg, e.clock,
+		e.cfg.TriageDir, e.cfg.ClientsPath,
+		e.cfg.Router, e.cfg.DB, e.log,
+	)
+
+	e.wg.Add(1)
+	go e.triageLoop()
+
+	e.wg.Add(1)
+	go e.reaper.loop()
 
 	return nil
 }
@@ -232,6 +314,14 @@ func (e *Engine) writerLoop() {
 				// D-08: if sid is empty, fall through to normal routing (routedTo from Router.Match)
 			}
 
+			// Unrouted branch: if event has no router match and no thread parent,
+			// it goes to triage. Mark routedTo = "triage" for persistence (D-05, T-18-12).
+			isTriage := routedTo == "" && env.event.ParentDedupKey == "" && e.triageReqCh != nil
+
+			if isTriage {
+				routedTo = "triage"
+			}
+
 			// Persist with dedup via INSERT OR IGNORE (D-10, D-23).
 			inserted, err := e.cfg.DB.SaveWatcherEvent(
 				env.watcherID,
@@ -262,6 +352,36 @@ func (e *Engine) writerLoop() {
 					env.event.ThreadSessionID = threadSessionID
 				}
 
+				// If this event is headed to triage, push to triageReqCh (D-05).
+				if isTriage {
+					triageSubDir := filepath.Join(e.cfg.TriageDir, env.event.DedupKey())
+					req := TriageRequest{
+						Event:      env.event,
+						WatcherID:  env.watcherID,
+						Profile:    e.cfg.Profile,
+						Tracker:    env.tracker,
+						TriageDir:  triageSubDir,
+						ResultPath: filepath.Join(triageSubDir, "result.json"),
+						SpawnedAt:  e.clock.Now(),
+					}
+					select {
+					case e.triageReqCh <- req:
+					default:
+						// triageReqCh full: update routed_to to triage-req-dropped (T-18-12).
+						if dbErr := e.cfg.DB.UpdateWatcherEventRoutedTo(
+							env.watcherID, env.event.DedupKey(), "triage-req-dropped", "",
+						); dbErr != nil {
+							e.log.Warn("triage_req_dropped_update_failed",
+								slog.String("watcher_id", env.watcherID),
+								slog.String("error", dbErr.Error()),
+							)
+						}
+						e.log.Warn("triage_req_channel_full",
+							slog.String("sender", env.event.Sender),
+						)
+					}
+				}
+
 				// Non-blocking send to routedEventCh for TUI consumption.
 				select {
 				case e.routedEventCh <- env.event:
@@ -275,6 +395,103 @@ func (e *Engine) writerLoop() {
 		case <-e.ctx.Done():
 			return
 		}
+	}
+}
+
+// triageLoop consumes triageReqCh and manages spawning with rate limiting (INTEL-03, D-10).
+func (e *Engine) triageLoop() {
+	defer e.wg.Done()
+
+	// evictTicker drives periodic queue draining when the rate-limit window opens.
+	evictTicker := e.clock.NewTicker(1 * time.Second)
+	defer evictTicker.Stop()
+
+	for {
+		select {
+		case req := <-e.triageReqCh:
+			e.handleTriageRequest(req)
+
+		case <-evictTicker.C:
+			e.PumpTriageQueue()
+
+		case <-e.ctx.Done():
+			return
+		}
+	}
+}
+
+// handleTriageRequest applies rate limiting and either spawns or queues the request.
+func (e *Engine) handleTriageRequest(req TriageRequest) {
+	if e.rateLim.tryAcquire(e.clock.Now()) {
+		e.spawnTriage(req)
+		return
+	}
+
+	// Rate limited: try to queue (D-10).
+	select {
+	case e.triageQueue <- req:
+		e.log.Info("triage_queued",
+			slog.String("sender", req.Event.Sender),
+			slog.Int("queue_len", len(e.triageQueue)),
+		)
+	default:
+		// Queue full (17th+ event): drop and mark in DB (D-10).
+		if err := e.cfg.DB.UpdateWatcherEventRoutedTo(
+			req.WatcherID, req.Event.DedupKey(), "triage-dropped", "",
+		); err != nil {
+			e.log.Warn("triage_dropped_update_failed",
+				slog.String("sender", req.Event.Sender),
+				slog.String("error", err.Error()),
+			)
+		}
+		e.log.Warn("triage_queue_full_dropped",
+			slog.String("sender", req.Event.Sender),
+		)
+	}
+}
+
+// PumpTriageQueue attempts to drain the triage queue by re-trying queued requests
+// through the rate limiter. Called by the eviction ticker and by tests.
+func (e *Engine) PumpTriageQueue() {
+	for {
+		select {
+		case req := <-e.triageQueue:
+			if e.rateLim.tryAcquire(e.clock.Now()) {
+				e.spawnTriage(req)
+			} else {
+				// Still rate-limited: put it back and stop draining.
+				select {
+				case e.triageQueue <- req:
+				default:
+				}
+				return
+			}
+		default:
+			return
+		}
+	}
+}
+
+// spawnTriage invokes the spawner and registers birth with the reaper.
+func (e *Engine) spawnTriage(req TriageRequest) {
+	sessionID, err := e.cfg.TriageSpawner.Spawn(e.ctx, req)
+	if err != nil {
+		e.log.Error("triage_spawn_failed",
+			slog.String("sender", req.Event.Sender),
+			slog.String("error", err.Error()),
+		)
+		if req.Tracker != nil {
+			req.Tracker.RecordError()
+		}
+		return
+	}
+	e.log.Info("triage_spawned",
+		slog.String("sender", req.Event.Sender),
+		slog.String("session_id", sessionID),
+	)
+	// Register birth with reaper so it can track the timeout.
+	if e.reaper != nil {
+		e.reaper.registerBirth(req.Event.DedupKey(), req.WatcherID)
 	}
 }
 
@@ -333,7 +550,7 @@ func (e *Engine) Stop() {
 		}
 	}
 
-	// Wait for all goroutines (adapters + writer + health) to exit.
+	// Wait for all goroutines (adapters + writer + health + triage) to exit.
 	e.wg.Wait()
 }
 

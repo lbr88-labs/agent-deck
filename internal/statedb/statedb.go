@@ -1081,6 +1081,21 @@ func (s *StateDB) LoadWatcherEvents(watcherID string, limit int) ([]WatcherEvent
 	return result, rows.Err()
 }
 
+// LookupWatcherIDByDedupKey returns the watcher_id for the first watcher_events
+// row with the given dedup_key. Returns an error if no row is found.
+// Used by the triageReaper to correlate a result.json back to its originating event (D-08).
+func (s *StateDB) LookupWatcherIDByDedupKey(dedupKey string) (string, error) {
+	var id string
+	err := s.db.QueryRow(
+		`SELECT watcher_id FROM watcher_events WHERE dedup_key = ? LIMIT 1`,
+		dedupKey,
+	).Scan(&id)
+	if err != nil {
+		return "", fmt.Errorf("statedb: lookup watcher_id by dedup_key %q: %w", dedupKey, err)
+	}
+	return id, nil
+}
+
 // UpdateWatcherStatus sets the status field on a watcher row.
 // Returns an error if no watcher with the given ID exists.
 func (s *StateDB) UpdateWatcherStatus(watcherID string, status string) error {

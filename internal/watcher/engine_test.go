@@ -27,6 +27,7 @@ func newTestDB(t *testing.T) *statedb.StateDB {
 
 // newTestEngine creates an Engine with a fresh DB and the given client routing rules.
 // HealthCheckInterval is 0 to disable the health loop in tests.
+// Uses a fakeSpawner to avoid spawning real agent-deck subprocesses (goroutine-leak-safe).
 func newTestEngine(t *testing.T, clients map[string]ClientEntry) (*Engine, *statedb.StateDB) {
 	t.Helper()
 	db := newTestDB(t)
@@ -36,6 +37,11 @@ func newTestEngine(t *testing.T, clients map[string]ClientEntry) (*Engine, *stat
 		Router:              router,
 		MaxEventsPerWatcher: 500,
 		HealthCheckInterval: 0,
+		// Use fakeSpawner so tests never exec real agent-deck subprocesses.
+		// This prevents os/exec.watchCtx goroutine leaks across tests.
+		TriageSpawner: &fakeSpawner{},
+		TriageDir:     t.TempDir(),
+		ClientsPath:   filepath.Join(t.TempDir(), "clients.json"),
 	}
 	engine := NewEngine(cfg)
 	return engine, db
@@ -144,7 +150,8 @@ func TestWatcherEngine_Dedup(t *testing.T) {
 }
 
 // TestWatcherEngine_Stop_NoLeaks verifies that starting an engine with 3 adapters
-// and stopping it leaves no goroutine leaks (D-22).
+// (plus triage goroutines from Phase 18) and stopping it leaves no goroutine leaks.
+// Uses a fakeSpawner to avoid real subprocess goroutine leaks (D-22, T-18-16).
 func TestWatcherEngine_Stop_NoLeaks(t *testing.T) {
 	defer goleak.VerifyNone(t,
 		goleak.IgnoreTopFunction("database/sql.(*DB).connectionOpener"),
@@ -156,7 +163,8 @@ func TestWatcherEngine_Stop_NoLeaks(t *testing.T) {
 		goleak.IgnoreTopFunction("go.opencensus.io/stats/view.(*worker).start"),
 	)
 
-	engine, db := newTestEngine(t, nil)
+	// Use fakeSpawner + fakeClient so triage goroutines start and stop cleanly (Task 5).
+	engine, db, _, _, _ := newTestEngineWithTriage(t, nil)
 
 	for i := 0; i < 3; i++ {
 		wID := "w" + string(rune('1'+i))
@@ -171,6 +179,15 @@ func TestWatcherEngine_Stop_NoLeaks(t *testing.T) {
 		}
 		engine.RegisterAdapter(wID, adapter, AdapterConfig{Type: "mock", Name: name}, 60)
 	}
+
+	// Add one unrouted event to exercise triage goroutines (Task 5).
+	saveTestWatcher(t, db, "w4", "watcher-unrouted", "mock")
+	engine.RegisterAdapter("w4", &MockAdapter{
+		events: []Event{
+			{Source: "mock", Sender: "unrouted@nomatch.com", Subject: "unrouted", Timestamp: time.Now()},
+		},
+		listenDelay: 5 * time.Millisecond,
+	}, AdapterConfig{Type: "mock", Name: "watcher-unrouted"}, 60)
 
 	if err := engine.Start(); err != nil {
 		t.Fatalf("Start: %v", err)
@@ -247,8 +264,9 @@ func TestWatcherEngine_UnknownSenderRouting(t *testing.T) {
 	engine.Stop()
 
 	routedTo := queryWatcherEventRoutedTo(t, db, "w1")
-	if routedTo != "" {
-		t.Errorf("expected empty routed_to for unknown sender, got %q", routedTo)
+	// After Phase 18: unrouted events are sent to triage, so routed_to = "triage".
+	if routedTo != "triage" {
+		t.Errorf("expected routed_to=triage for unknown sender (Phase 18), got %q", routedTo)
 	}
 }
 

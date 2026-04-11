@@ -248,8 +248,9 @@ func TestEngine_Integration_DedupAcrossAdapters(t *testing.T) {
 		goleak.IgnoreTopFunction("go.opencensus.io/stats/view.(*worker).start"),
 	)
 
-	// Use two mock adapters with identical events but different sources
-	engine, db := newTestEngine(t, nil)
+	// Use two mock adapters with identical events but different sources.
+	// newTestEngineWithTriage ensures a fakeSpawner is used (no real exec goroutines).
+	engine, db, _, _, _ := newTestEngineWithTriage(t, nil)
 	saveTestWatcher(t, db, "w1", "watcher-1", "mock-a")
 	saveTestWatcher(t, db, "w2", "watcher-2", "mock-b")
 
