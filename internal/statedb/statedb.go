@@ -1008,6 +1008,24 @@ func (s *StateDB) UpdateWatcherEventSessionID(watcherID, dedupKey, sessionID str
 	return nil
 }
 
+// UpdateWatcherEventRoutedTo updates the routed_to and triage_session_id columns
+// for the row matching (watcher_id, dedup_key). Returns a wrapped error if no row matches
+// (0 rows affected), allowing the caller to distinguish "update OK" from "event not found".
+func (s *StateDB) UpdateWatcherEventRoutedTo(watcherID, dedupKey, routedTo, triageSessionID string) error {
+	res, err := s.db.Exec(
+		`UPDATE watcher_events SET routed_to = ?, triage_session_id = ? WHERE watcher_id = ? AND dedup_key = ?`,
+		routedTo, triageSessionID, watcherID, dedupKey,
+	)
+	if err != nil {
+		return fmt.Errorf("statedb: update routed_to: %w", err)
+	}
+	n, _ := res.RowsAffected()
+	if n == 0 {
+		return fmt.Errorf("statedb: update routed_to: no watcher_events row for watcher_id=%s dedup_key=%s", watcherID, dedupKey)
+	}
+	return nil
+}
+
 // pruneWatcherEvents keeps only the newest maxCount events for a watcher.
 func (s *StateDB) pruneWatcherEvents(watcherID string, maxCount int) error {
 	_, err := s.db.Exec(`

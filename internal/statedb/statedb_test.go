@@ -1477,6 +1477,57 @@ func createV5SchemaDB(t *testing.T) *StateDB {
 	return db
 }
 
+// TestUpdateWatcherEventRoutedTo verifies UpdateWatcherEventRoutedTo updates routed_to
+// and triage_session_id for the row matching (watcher_id, dedup_key), and returns a
+// non-nil error when no matching row exists.
+func TestUpdateWatcherEventRoutedTo(t *testing.T) {
+	db := newTestDB(t)
+
+	// Set up parent watcher row (required by FK constraint).
+	if err := db.SaveWatcher(&WatcherRow{
+		ID: "w1", Name: "triage-test-watcher", Type: "webhook",
+		CreatedAt: time.Now(), UpdatedAt: time.Now(),
+	}); err != nil {
+		t.Fatalf("SaveWatcher: %v", err)
+	}
+
+	// Insert an event with empty routed_to via SaveWatcherEvent.
+	dedupKey := "dedup-abc-123"
+	inserted, err := db.SaveWatcherEvent("w1", dedupKey, "sender@example.com", "Test Subject", "", "", 500)
+	if err != nil {
+		t.Fatalf("SaveWatcherEvent: %v", err)
+	}
+	if !inserted {
+		t.Fatal("expected inserted=true for new event")
+	}
+
+	// Update routing decision.
+	if err := db.UpdateWatcherEventRoutedTo("w1", dedupKey, "client-a", "triage-abc"); err != nil {
+		t.Fatalf("UpdateWatcherEventRoutedTo: %v", err)
+	}
+
+	// Read back and assert both columns were updated.
+	var routedTo, triageSessionID string
+	if err := db.DB().QueryRow(
+		`SELECT routed_to, triage_session_id FROM watcher_events WHERE watcher_id='w1' AND dedup_key=?`,
+		dedupKey,
+	).Scan(&routedTo, &triageSessionID); err != nil {
+		t.Fatalf("SELECT after update: %v", err)
+	}
+	if routedTo != "client-a" {
+		t.Errorf("routed_to: want %q, got %q", "client-a", routedTo)
+	}
+	if triageSessionID != "triage-abc" {
+		t.Errorf("triage_session_id: want %q, got %q", "triage-abc", triageSessionID)
+	}
+
+	// Error on unknown (watcher_id, dedup_key) pair.
+	err = db.UpdateWatcherEventRoutedTo("w1", "nonexistent-key", "client-b", "triage-xyz")
+	if err == nil {
+		t.Error("expected non-nil error for missing (watcher_id, dedup_key), got nil")
+	}
+}
+
 // TestMigrate_OldSchema_AddTriageSessionID verifies that upgrading from the v5 schema
 // (Phase 17 state, watcher_events WITHOUT triage_session_id) to Phase 18 schema works.
 // This is the CLAUDE.md-mandated TestMigrate_OldSchema_* regression test for the
