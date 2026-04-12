@@ -160,6 +160,7 @@ func (d *TransitionDaemon) syncProfile(profile string) time.Duration {
 	}
 
 	prev := d.lastStatus[profile]
+	notifyEnabled := GetNotificationsSettings().GetTransitionEventsEnabled()
 	for id, to := range statuses {
 		from := normalizeStatusString(prev[id])
 		if !ShouldNotifyTransition(from, to) {
@@ -167,6 +168,9 @@ func (d *TransitionDaemon) syncProfile(profile string) time.Duration {
 		}
 		inst := byID[id]
 		if inst == nil {
+			continue
+		}
+		if !notifyEnabled || inst.NoTransitionNotify {
 			continue
 		}
 		event := TransitionNotificationEvent{
@@ -311,9 +315,13 @@ func (d *TransitionDaemon) emitHookTransitionCandidates(
 	if len(candidates) == 0 {
 		return
 	}
+	notifyEnabled := GetNotificationsSettings().GetTransitionEventsEnabled()
 	for id, candidate := range candidates {
 		inst := byID[id]
 		if inst == nil {
+			continue
+		}
+		if !notifyEnabled || inst.NoTransitionNotify {
 			continue
 		}
 
