@@ -743,6 +743,7 @@ func handleSessionShow(profile string, args []string) {
 		"group":               inst.GroupPath,
 		"parent_session_id":   inst.ParentSessionID,
 		"parent_project_path": inst.ParentProjectPath,
+		"no_transition_notify": inst.NoTransitionNotify,
 		"tool":                inst.Tool,
 		"created_at":          inst.CreatedAt.Format(time.RFC3339),
 	}
@@ -821,6 +822,9 @@ func handleSessionShow(profile string, args []string) {
 		}
 	}
 
+	if inst.NoTransitionNotify {
+		sb.WriteString("Notify:  transition events suppressed\n")
+	}
 	sb.WriteString(fmt.Sprintf("Created: %s\n", inst.CreatedAt.Format("2006-01-02 15:04:05")))
 
 	if !inst.LastAccessedAt.IsZero() {
