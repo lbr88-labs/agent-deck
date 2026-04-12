@@ -1401,3 +1401,39 @@ func TestOverlayDropdown_OutOfBounds(t *testing.T) {
 		t.Errorf("line 0 should be unchanged, got %q", lines[0])
 	}
 }
+
+// TestNewDialog_NameInput_AcceptsUnderscore verifies that typing '_' into the
+// name input reaches the textinput buffer (regression test for BUG-02).
+func TestNewDialog_NameInput_AcceptsUnderscore(t *testing.T) {
+	d := NewNewDialog()
+	d.Show()
+
+	underscoreKey := tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'_'}}
+	updated, _ := d.Update(underscoreKey)
+
+	if updated.nameInput.Value() != "_" {
+		t.Errorf("nameInput.Value() = %q after typing '_', want %q", updated.nameInput.Value(), "_")
+	}
+}
+
+// TestNewDialog_PathInput_AcceptsUnderscore verifies that typing '_' into the
+// path input reaches the textinput buffer (regression test for BUG-02).
+// Focus targets: focusName(0), focusMultiRepo(1), focusPath(2), ...
+// Two Tabs are required to reach focusPath from focusName.
+func TestNewDialog_PathInput_AcceptsUnderscore(t *testing.T) {
+	d := NewNewDialog()
+	d.Show()
+
+	// Tab twice to reach the path input field (focusName -> focusMultiRepo -> focusPath).
+	d = sendSpecialKey(d, tea.KeyTab)
+	d = sendSpecialKey(d, tea.KeyTab)
+
+	// Type '_' — the soft-select logic clears any pre-populated value and
+	// focuses the textinput before letting the rune reach it.
+	underscoreKey := tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'_'}}
+	updated, _ := d.Update(underscoreKey)
+
+	if !strings.Contains(updated.pathInput.Value(), "_") {
+		t.Errorf("pathInput.Value() = %q after typing '_', want value to contain '_'", updated.pathInput.Value())
+	}
+}

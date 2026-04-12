@@ -80,6 +80,11 @@ func TestParseCSIu(t *testing.T) {
 			input:     "\x1b[32u",
 			wantRunes: nil, // KeySpace type expected, not runes
 		},
+		{
+			name:      "Shift+underscore codepoint 95",
+			input:     "\x1b[95;2u",
+			wantRunes: []rune{'_'},
+		},
 	}
 
 	for _, tt := range tests {
@@ -562,5 +567,20 @@ func TestParseModifyOtherKeysAllShiftLetters(t *testing.T) {
 		if len(result.Runes) != 1 || result.Runes[0] != want {
 			t.Errorf("ParseModifyOtherKeys(%q) = %v, want [%c]", input, result.Runes, want)
 		}
+	}
+}
+
+// TestCSIuReader_Underscore verifies that the CSIuReader translates the CSI u
+// encoding for underscore (codepoint 95 with shift modifier) to a literal '_'
+// byte (regression test for BUG-02).
+func TestCSIuReader_Underscore(t *testing.T) {
+	input := "\x1b[95;2u"
+	r := NewCSIuReader(bytes.NewReader([]byte(input)))
+	out, err := io.ReadAll(r)
+	if err != nil {
+		t.Fatalf("ReadAll error: %v", err)
+	}
+	if string(out) != "_" {
+		t.Errorf("CSIuReader translated %q to %q, want %q", input, string(out), "_")
 	}
 }
