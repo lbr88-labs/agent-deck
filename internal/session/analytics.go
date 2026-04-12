@@ -86,9 +86,9 @@ var modelContextWindowPrefixes = []struct {
 	{"claude-3-5", 200000},
 	{"claude-3-opus", 200000},
 	// MiniMax models
-	{"MiniMax-M2.7", 1000000},       // 1M context
+	{"MiniMax-M2.7", 1000000},          // 1M context
 	{"MiniMax-M2.5-highspeed", 204000}, // 204K context (must precede M2.5)
-	{"MiniMax-M2.5", 204000},        // 204K context
+	{"MiniMax-M2.5", 204000},           // 204K context
 }
 
 // contextWindowForModel returns the context window size for a model ID.

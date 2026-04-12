@@ -10,7 +10,8 @@
 // `agent-deck web` subcommand uses.
 //
 // Usage:
-//   agent-deck-test-server -listen 127.0.0.1:18420 -profile _test
+//
+//	agent-deck-test-server -listen 127.0.0.1:18420 -profile _test
 //
 // Profile defaults to AGENTDECK_PROFILE env var if set, else "_test".
 package main

@@ -37,6 +37,11 @@ Merge policy: 3-5 PRs per batch with `make ci` + macOS TUI smoke test between ba
 - [ ] **Phase 11: Release v1.5.0** — Tag, visual verification, macOS smoke test, changelog, real-device mobile verification
 - [x] **Phase 12: DB Schema and Config Foundation** — Watchers + watcher_events tables, WatcherSettings config, WatcherMeta filesystem persistence (COMPLETE 2026-04-10; 2/2 plans)
 - [x] **Phase 13: Watcher Engine Core** — WatcherAdapter interface, Event struct, config-driven router, event dedup engine, single-writer goroutine, health tracker (completed 2026-04-10)
+- [x] **Phase 14: Simple Adapters** — Webhook HTTP POST receiver, ntfy SSE subscriber, GitHub HMAC webhook verifier (depends on Phase 13) (completed 2026-04-10)
+- [ ] **Phase 15: Slack Adapter and Import** — Slack adapter via ntfy.sh bridge, thread reply routing, watcher import CLI
+- [x] **Phase 16: Watcher CLI and TUI Integration** — CLI commands (create, start/stop, list, status, test, routes) + TUI watcher panel (W key) (completed 2026-04-11)
+- [x] **Phase 17: Gmail Adapter** — OAuth2 token refresh, Pub/Sub watch registration, 7-day watch renewal goroutine (depends on Phase 14) (completed 2026-04-11)
+- [ ] **Phase 18: Intelligence (Triage and Self-Improving Routing)** — Triage session spawner for unknown senders, confirmed decisions auto-update clients.json, watcher-creator skill (depends on Phase 16)
 
 ---
 
@@ -53,8 +58,11 @@ Merge policy: 3-5 PRs per batch with `make ci` + macOS TUI smoke test between ba
 | 11 | Release v1.5.0 | 5 | 3 | No (sequential release gate) | — |
 | 12 | DB Schema and Config Foundation | 6 | 2 | Partial (plan 1 serial; plan 2 after plan 1) | Phase 13 |
 | 13 | Watcher Engine Core | 7 | 2 | Partial (Wave 1 types/router/health, Wave 2 engine) | Phases 14, 15, 16 |
+| 14 | Simple Adapters | 3 | 2 | Partial (Wave 1 webhook+ntfy parallel; Wave 2 integration test) | Phase 15 |
+| 15 | Slack Adapter and Import | 2 | 2 | Yes (Wave 1: both plans parallel, zero file overlap) | Phase 16 |
+| 16 | Watcher CLI and TUI Integration | 10 | 3 | Partial (Wave 1: plans 01+02 parallel; Wave 2: plan 03 after both) | — |
 
-**Total requirements mapped:** 43 / 43 (100%)
+**Total requirements mapped:** 45 / 45 (100%)
 **Total plans across active phases:** ~25 (Phase 5 excluded; plan counts refined in plan-phase stage)
 
 ---
@@ -307,6 +315,53 @@ Plans:
 
 ---
 
+### Phase 14: Simple Adapters (Webhook + ntfy + GitHub)
+
+**Goal:** Implement the first three adapters that validate the WatcherAdapter interface against real protocols. Webhook receives HTTP POST, ntfy subscribes via SSE, GitHub verifies HMAC signatures. All three are "no-OAuth" adapters chosen to prove the engine pipeline end-to-end before tackling OAuth-based adapters (Slack in Phase 15, Gmail in Phase 17).
+**Depends on:** Phase 13 (engine core, adapter interface, router, event loop)
+**Requirements:** ADAPT-01, ADAPT-02, ADAPT-03
+
+**Success Criteria (what must be TRUE):**
+1. Webhook adapter starts an HTTP listener on configurable port, normalizes POST body to Event struct, responds 202 Accepted immediately, routes through engine event loop
+2. ntfy adapter subscribes to a topic via SSE stream using bufio.Scanner, normalizes notifications to Event, auto-reconnects on disconnect with backoff
+3. GitHub adapter receives webhook POST, verifies X-Hub-Signature-256 HMAC-SHA256 against shared secret, rejects invalid signatures with 401, normalizes payload (issues, PRs, pushes) to Event
+4. All three adapters implement WatcherAdapter interface (Setup/Listen/Teardown/HealthCheck) and pass goleak goroutine leak tests
+5. Engine integration test: synthetic events flow through adapter → engine event loop → dedup → router → session spawn stub (no real Claude session, just verify routing decision)
+
+**Canonical refs:** `internal/watcher/adapter.go` (WatcherAdapter interface from Phase 13), `internal/watcher/engine.go` (engine event loop), `internal/watcher/router.go` (clients.json routing), `docs/superpowers/specs/2026-04-10-watcher-framework-design.md` §Adapter Interface + §Built-in Adapters
+
+---
+
+### Phase 15: Slack Adapter and Import Migration
+
+**Goal:** Implement the Slack adapter that routes via the existing ntfy.sh bridge (Cloudflare Worker unchanged) with thread reply routing (session_id lookup by parent dedup_key), plus a `watcher import` CLI command to migrate existing bash issue-watcher configurations (channels.json) to Go watcher format (watcher.toml + clients.json entries).
+**Depends on:** Phase 14 (adapter interface validated, engine pipeline proven end-to-end)
+**Requirements:** ADAPT-04, CLI-07
+
+**Success Criteria (what must be TRUE):**
+1. Slack adapter subscribes to ntfy.sh topic via NDJSON stream, parses Cloudflare Worker v2 payloads, normalizes to Event with deterministic `slack-{CHANNEL}-{TS}` dedup key
+2. Thread reply routing works: reply with `thread_ts` looks up parent dedup key in watcher_events, finds parent's session_id, routes to existing session instead of spawning new one
+3. Thread reply fallback: if parent event not found or session_id empty, reply routes as new event via clients.json
+4. Engine writerLoop extended: session_id updated in watcher_events after session launch (no longer always empty)
+5. New statedb method `LookupWatcherEventSessionByDedupKey` queries watcher_events by dedup_key
+6. `agent-deck watcher import <path>` reads channels.json, generates watcher.toml per channel + clients.json entries with `slack:{CHANNEL_ID}` sender keys
+7. All Slack adapter tests pass including goleak goroutine leak test and thread reply end-to-end test
+
+**Canonical refs:** `internal/watcher/adapter.go` (Event struct, CustomDedupKey extension), `internal/watcher/engine.go` (writerLoop session_id extension), `internal/watcher/ntfy.go` (NDJSON streaming pattern), `internal/watcher/router.go` (clients.json routing), `internal/statedb/statedb.go` (SaveWatcherEvent, new lookup method), `docs/superpowers/specs/2026-04-10-watcher-framework-design.md` §Built-in Adapters + §CLI Commands
+
+**Research flag:** Production-validated in bash scripts. Skip research-phase.
+
+**Plans:** 2/2 plans complete
+
+Plans:
+- [x] 15-01-PLAN.md -- Slack adapter + Event CustomDedupKey + engine thread reply routing + statedb lookup methods
+- [x] 15-02-PLAN.md -- Watcher import CLI command (channels.json -> watcher.toml + clients.json)
+
+**Wave structure:**
+- **Wave 1 (parallel, zero file overlap):** 15-01 (internal/watcher/*.go + internal/statedb/statedb.go), 15-02 (cmd/agent-deck/watcher_cmd.go + cmd/agent-deck/main.go)
+
+---
+
 ## Progress Table
 
 | Phase | Plans Complete | Status | Completed |
@@ -320,6 +375,9 @@ Plans:
 | 11. Release v1.5.0 | 0/3 | Not started | — |
 | 12. DB Schema and Config | 2/2 | COMPLETE | 2026-04-10 |
 | 13. Watcher Engine Core | 0/2 | Planned | — |
+| 14. Simple Adapters | 2/2 | COMPLETE | 2026-04-10 |
+| 15. Slack Adapter and Import | 0/2 | Planned | — |
+| 16. Watcher CLI and TUI | 0/3 | Planned | — |
 
 ---
 
@@ -379,6 +437,78 @@ Everything else is deletion (`addon-canvas.js`) or hand-roll (virtualization, sk
 - **Visual regression gate** — CI blocks merge when diff >0.1%
 - **Lighthouse gate** — CI blocks merge on byte budget regression (FCP/LCP/TBT as warnings initially)
 
+### Phase 16: Watcher CLI and TUI Integration
+
+**Goal:** Implement all watcher CLI commands (create, start/stop, list, status, test, routes) and TUI panel (W key toggle, watcher list, event detail, health alerts). This phase connects the engine and adapters from Phases 12-15 to the user-facing CLI and TUI layers.
+**Depends on:** Phase 15 (Slack adapter, import command, engine thread routing)
+**Requirements:** CLI-01, CLI-02, CLI-03, CLI-04, CLI-05, CLI-06, TUI-01, TUI-02, TUI-03, TUI-04
+
+**Success Criteria (what must be TRUE):**
+1. `agent-deck watcher create <type>` registers watcher in statedb + creates filesystem directory with meta.json
+2. `agent-deck watcher start/stop` manages watcher lifecycle (starts adapter goroutine or cancels context)
+3. `agent-deck watcher list` shows all watchers with name, type, status, event rate, health
+4. `agent-deck watcher status <name>` shows detailed info including recent events and config
+5. `agent-deck watcher test <name>` sends synthetic event through full pipeline, reports routing decision
+6. `agent-deck watcher routes` displays all clients.json routing rules with sender patterns and conductors
+7. TUI watcher panel toggled with W key showing name, type, status indicator, event rate per hour
+8. Selecting a watcher in TUI shows recent events, routing decisions, and quick actions (start/stop/test/edit/logs)
+9. Health alerts sent via conductor notification bridge when watcher enters warning/error state
+10. W key binding audited against all existing single-key bindings in home.go, no conflicts, help overlay updated
+
+**Canonical refs:** `cmd/agent-deck/watcher_cmd.go` (existing import subcommand), `internal/watcher/` (engine, adapters, router from Phases 12-15), `internal/statedb/statedb.go` (watchers table, watcher_events table), `internal/ui/home.go` (TUI keyboard handling, panel rendering), `docs/superpowers/specs/2026-04-10-watcher-framework-design.md` §CLI Commands + §TUI Integration
+
+**Plans:** 3/3 plans complete
+
+Plans:
+- [x] 16-01-PLAN.md -- statedb methods (LoadWatcherByName, LoadWatcherEvents, UpdateWatcherStatus) + 6 CLI handlers (create, start/stop, list, status, test, routes) (Wave 1)
+- [x] 16-02-PLAN.md -- WatcherPanel overlay (list + detail views) + w keybinding + help overlay update (Wave 1, parallel with 16-01)
+- [x] 16-03-PLAN.md -- Engine lifecycle in TUI (Init/Shutdown), event/health channel listeners, panel data wiring, health alert dispatch to conductor sessions (Wave 2; depends on 16-01 + 16-02)
+
+**Wave structure:**
+- **Wave 1 (parallel, zero file overlap):** 16-01 (statedb + watcher_cmd.go), 16-02 (watcher_panel.go + hotkeys.go + help.go)
+- **Wave 2 (after Wave 1):** 16-03 (home.go: engine lifecycle + panel wiring + health alerts)
 ---
 
-*Roadmap created: 2026-04-08 from REQUIREMENTS.md + research/SUMMARY.md. Replaces archived v1.4.0 roadmap at `.planning/archive/v1.4.0/ROADMAP.md`.*
+### Phase 17: Gmail Adapter
+
+**Goal:** Gmail emails are received via Pub/Sub push, routed to the correct conductor, and the 7-day watch token renews automatically without user intervention.
+**Depends on:** Phase 14 (adapter interface)
+**Requirements:** ADAPT-05, ADAPT-06
+
+**Success Criteria:**
+1. A Gmail adapter with valid OAuth credentials starts, registers a Pub/Sub watch, and begins receiving events without manual token management
+2. A token expiring within 2 hours of startup is renewed before Setup() returns
+3. A mock watch_expiry set to 1 hour in the future triggers the renewal goroutine; meta.json updated
+4. A Gmail adapter with an invalid token reports HealthCheck error rather than silently dropping events
+
+**Plans:** 4/4 plans complete
+
+Plans:
+- [x] 17-01-PLAN.md — Wave 0 spike + dependencies + WatcherMeta extension with atomic writes + goleak filter discovery (Wave 1)
+- [x] 17-02-PLAN.md — Core GmailAdapter (struct, Setup, Listen/Receive, Teardown, normalization, label filter, processHistory, registerWatch, persistingTokenSource skeleton) + 10 Wave 2 unit tests (Wave 2, depends on 17-01)
+- [x] 17-03-PLAN.md — renewalLoop full body + 2h Setup threshold tests + full OAuth refresh/persist test + 3 HealthCheck branch tests (Wave 3, depends on 17-02)
+- [x] 17-04-PLAN.md — TestEngine_Integration_GmailAdapter full-pipeline integration test + spike file cleanup + make ci gate (Wave 4, depends on 17-02 + 17-03)
+
+**Wave structure:**
+- **Wave 1:** 17-01 (foundation: deps + meta + goleak, no dependencies)
+- **Wave 2:** 17-02 (core adapter, depends on 17-01)
+- **Wave 3:** 17-03 (renewal + OAuth + HealthCheck, depends on 17-02 because they share gmail.go)
+- **Wave 4:** 17-04 (integration test, depends on 17-02 + 17-03)
+
+---
+
+### Phase 18: Intelligence (Triage and Self-Improving Routing)
+
+**Goal:** Unknown senders are handled automatically via triage sessions, confirmed routing decisions persist to clients.json without manual editing, and conversational watcher setup is available via the skill.
+**Depends on:** Phase 16 (CLI/TUI)
+**Requirements:** INTEL-01, INTEL-02, INTEL-03, INTEL-04
+
+**Success Criteria:**
+1. An event from an unknown sender spawns a triage session in the triage/ group that outputs ROUTE_TO, SUMMARY, and CONFIDENCE
+2. Confirming a triage decision atomically appends to clients.json via write-temp-rename
+3. More than 5 triage sessions in one hour are rate-limited (6th queued, not spawned)
+4. Reading the watcher-creator skill and describing a new watcher produces valid watcher.toml and clients.json entries
+
+---
+
+*Roadmap updated: 2026-04-11 — Phases 17-18 re-added after executor overwrite. Original roadmap created 2026-04-08.*

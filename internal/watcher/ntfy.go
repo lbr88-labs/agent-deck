@@ -34,7 +34,7 @@ type NtfyAdapter struct {
 type ntfyMessage struct {
 	ID      string   `json:"id"`
 	Time    int64    `json:"time"`
-	Event   string   `json:"event"`   // "open", "keepalive", "message"
+	Event   string   `json:"event"` // "open", "keepalive", "message"
 	Topic   string   `json:"topic"`
 	Message string   `json:"message"`
 	Title   string   `json:"title"`

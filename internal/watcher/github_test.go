@@ -669,7 +669,7 @@ func TestGitHub_Listen_StopNoLeaks(t *testing.T) {
 	if err != nil {
 		t.Fatalf("POST: %v", err)
 	}
-	io.Copy(io.Discard, resp.Body)
+	_, _ = io.Copy(io.Discard, resp.Body)
 	resp.Body.Close()
 
 	// Drain event

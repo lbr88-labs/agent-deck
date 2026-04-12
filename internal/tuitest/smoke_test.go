@@ -179,7 +179,7 @@ func TestSmoke_TUIRenders(t *testing.T) {
 	// Capture screenshot if freeze is available
 	if _, err := exec.LookPath("freeze"); err == nil {
 		screenshotDir := filepath.Join(t.TempDir(), "screenshots")
-		os.MkdirAll(screenshotDir, 0755)
+		_ = os.MkdirAll(screenshotDir, 0755)
 		captureScreenshot(t, session, "01_main_screen", screenshotDir)
 	}
 }
@@ -221,7 +221,7 @@ func TestSmoke_NewSessionDialog(t *testing.T) {
 	// Capture screenshot if freeze is available
 	if _, err := exec.LookPath("freeze"); err == nil {
 		screenshotDir := filepath.Join(t.TempDir(), "screenshots")
-		os.MkdirAll(screenshotDir, 0755)
+		_ = os.MkdirAll(screenshotDir, 0755)
 		captureScreenshot(t, session, "02_new_session_dialog", screenshotDir)
 	}
 }

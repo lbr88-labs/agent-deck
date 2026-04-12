@@ -75,8 +75,8 @@ func TestMiniMaxPricing(t *testing.T) {
 	p := NewPricer(PricerConfig{})
 
 	tests := []struct {
-		model string
-		input int64
+		model  string
+		input  int64
 		output int64
 	}{
 		{"MiniMax-M2.7", 700_000, 2_800_000},

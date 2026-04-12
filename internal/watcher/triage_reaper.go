@@ -20,7 +20,7 @@ type triageResult struct {
 	Name          string `json:"name"`
 	Sender        string `json:"sender"`
 	Summary       string `json:"summary"`
-	Confidence    string `json:"confidence"`    // "high" | "medium" | "low"
+	Confidence    string `json:"confidence"` // "high" | "medium" | "low"
 	ShouldPersist bool   `json:"should_persist"`
 }
 

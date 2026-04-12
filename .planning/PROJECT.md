@@ -62,9 +62,9 @@ Reliable session management for AI coding agents: users can create, monitor, and
 
 Detailed requirements defined in `.planning/REQUIREMENTS.md`.
 
-- [ ] Watcher subsystem with pluggable adapter interface
-- [ ] Config-driven routing via `clients.json` with wildcard domain matching
-- [ ] Watcher engine with event dedup, health tracking, and silence detection
+- [x] Watcher subsystem with pluggable adapter interface — Validated in Phase 13: WatcherAdapter interface (Setup/Listen/Teardown/HealthCheck), AdapterConfig, Event struct with DedupKey
+- [x] Config-driven routing via `clients.json` with wildcard domain matching — Validated in Phase 13: Router.Match() with exact-over-wildcard priority, LoadClientsJSON, LoadFromWatcherDir
+- [x] Watcher engine with event dedup, health tracking, and silence detection — Validated in Phase 13: Engine with single-writer goroutine, eventEnvelope pattern, INSERT OR IGNORE dedup, HealthTracker with rolling rate and silence detection
 - [ ] CLI: `agent-deck watcher create/start/stop/list/status/test/routes`
 - [ ] TUI watcher panel with status indicators, event rates, and quick actions
 - [ ] Triage sessions for unknown senders

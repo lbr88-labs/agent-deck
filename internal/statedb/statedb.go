@@ -369,10 +369,8 @@ func (s *StateDB) Migrate() error {
 				return fmt.Errorf("statedb: migrate v4 backfill is_conductor: %w", err)
 			}
 		}
-		if oldVer < 5 {
-			// Watcher tables are new (CREATE TABLE IF NOT EXISTS handles creation).
-			// No column backfill needed for v5.
-		}
+		// v5: Watcher tables are new (CREATE TABLE IF NOT EXISTS handles creation).
+		// No column backfill needed for v5.
 		if _, err := tx.Exec(`
 			UPDATE metadata SET value = ? WHERE key = 'schema_version'
 		`, schemaVersion); err != nil {

@@ -1531,7 +1531,7 @@ func TestUpdateWatcherEventRoutedTo(t *testing.T) {
 // TestMigrate_OldSchema_AddTriageSessionID verifies that upgrading from the v5 schema
 // (Phase 17 state, watcher_events WITHOUT triage_session_id) to Phase 18 schema works.
 // This is the CLAUDE.md-mandated TestMigrate_OldSchema_* regression test for the
-// D-17 schema change: "ALTER TABLE watcher_events ADD COLUMN triage_session_id TEXT NOT NULL DEFAULT ''".
+// D-17 schema change: "ALTER TABLE watcher_events ADD COLUMN triage_session_id TEXT NOT NULL DEFAULT ”".
 func TestMigrate_OldSchema_AddTriageSessionID(t *testing.T) {
 	db := createV5SchemaDB(t)
 

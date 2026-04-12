@@ -308,11 +308,11 @@ func handleWatcherList(profile string, args []string) {
 	}
 
 	type watcherListEntry struct {
-		Name         string  `json:"name"`
-		Type         string  `json:"type"`
-		Status       string  `json:"status"`
+		Name          string  `json:"name"`
+		Type          string  `json:"type"`
+		Status        string  `json:"status"`
 		EventsPerHour float64 `json:"events_per_hour"`
-		Health       string  `json:"health"`
+		Health        string  `json:"health"`
 	}
 
 	cutoff := time.Now().Add(-time.Hour)

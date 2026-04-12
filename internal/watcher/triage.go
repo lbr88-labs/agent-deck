@@ -27,12 +27,12 @@ func (realClock) NewTicker(d time.Duration) *time.Ticker { return time.NewTicker
 
 // Triage rate-limiting and queue constants (INTEL-03, D-10/10a/10b).
 const (
-	TriageMaxPerHour  = 5
-	TriageWindow      = 60 * time.Minute
-	TriageQueueCap    = 16
-	TriageReqChCap    = 16
-	TriageReaperPoll  = 5 * time.Second
-	TriageTimeout     = 10 * time.Minute
+	TriageMaxPerHour = 5
+	TriageWindow     = 60 * time.Minute
+	TriageQueueCap   = 16
+	TriageReqChCap   = 16
+	TriageReaperPoll = 5 * time.Second
+	TriageTimeout    = 10 * time.Minute
 )
 
 // TriageRequest is the work item the writerLoop hands to triageLoop.

@@ -36,6 +36,7 @@ import (
 //     reader, goAway handlers) which all live until transport shutdown.
 //
 //   - database/sql.(*DB).connectionOpener
+//
 //   - database/sql.(*DB).connectionResetter
 //     Connection-pool workers for statedb-backed watcher tests.
 //

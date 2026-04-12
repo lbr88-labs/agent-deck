@@ -3,14 +3,14 @@ gsd_state_version: 1.0
 milestone: v1.5.0
 milestone_name: "**Goal:** Ship v1.5.0 with all gates green — clean build, Go 1.24.0 verified, visual verification pass, macOS smoke test, real-device mobile test, comprehensive changelog. Locked by CLAUDE.md release rules."
 status: executing
-stopped_at: "Phase 13 plan 13-01 COMPLETE (3/3 tasks: WatcherAdapter, Router, HealthTracker); plan 13-02 pending"
-last_updated: "2026-04-10T13:27:59.071Z"
-last_activity: 2026-04-10
+stopped_at: Phase 18 VERIFIED COMPLETE — all 4 INTEL requirements delivered, 30 tests green, clean build with Go 1.24.0. 3 manual verifications pending (real Claude triage, skill UX, real state.db migration).
+last_updated: "2026-04-11T17:45:57.870Z"
+last_activity: 2026-04-11
 progress:
-  total_phases: 9
-  completed_phases: 2
-  total_plans: 4
-  completed_plans: 4
+  total_phases: 14
+  completed_phases: 7
+  total_plans: 21
+  completed_plans: 21
   percent: 100
 ---
 
@@ -37,10 +37,10 @@ See `/home/ashesh-goplani/agent-deck/.planning/REQUIREMENTS.md` for requirements
 
 ## Current Position
 
-Phase: 13
-Plan: Not started
-Status: Executing Phase 13
-Last activity: 2026-04-10
+Phase: 18 (Intelligence (Triage and Self-Improving Routing)) — EXECUTING
+Plan: 2 of 6
+Status: Ready to execute
+Last activity: 2026-04-11
 
 ## Phase Progress
 
@@ -58,6 +58,10 @@ Last activity: 2026-04-10
 **Total active requirements:** 37
 
 ## Accumulated Context
+
+### Roadmap Evolution
+
+- Phase 16 added (2026-04-10): Watcher CLI and TUI Integration (CLI-01..06 + TUI-01..04)
 
 ### v1.5.0 Milestone Init (2026-04-08)
 
@@ -270,7 +274,7 @@ Phase 7 is COMPLETE. 10 commits live on local main, NOT pushed (per HARD RULES �
 
 ## Last session
 
-- **Stopped at:** Phase 13 plan 13-01 COMPLETE (3/3 tasks: WatcherAdapter, Router, HealthTracker); plan 13-02 pending
+- **Stopped at:** Phase 18 VERIFIED COMPLETE — all 4 INTEL requirements delivered, 30 tests green, clean build with Go 1.24.0. 3 manual verifications pending (real Claude triage, skill UX, real state.db migration).
 - **Timestamp:** 2026-04-09T17:42:25Z
 - **Duration:** ~20 min (tmux-hosted test server avoided 09-02's `script -qfc` debug detour)
 - **Commits:** 03b191f (test(09-01) failing specs + pw-p9-plan1 config), 7f91b26 (feat(09-01) POL-1 skeleton loader), 44d38e2 (fix(09-01) POL-2 GroupRow fade + POL-4 density)
@@ -294,3 +298,4 @@ Phase 7 is COMPLETE. 10 commits live on local main, NOT pushed (per HARD RULES �
 | 09 | 01 | ~20 min | 3 | 4 (+ 4 created) | 2026-04-09 |
 | Phase 10-automated-testing P02 | 5 | 4 tasks | 5 files |
 | Phase 10-automated-testing P03 | 17min | 7 tasks | 7 files |
+| Phase 18 P04 | 35 | 5 tasks | 7 files |

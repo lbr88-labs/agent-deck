@@ -776,11 +776,11 @@ func TestUnmarshalOpenCodeOptions_WrongTool(t *testing.T) {
 
 func TestStripResumeFields(t *testing.T) {
 	tests := []struct {
-		name           string
-		input          json.RawMessage
-		wantSessionID  string
-		wantMode       string
-		wantSkipPerms  bool
+		name            string
+		input           json.RawMessage
+		wantSessionID   string
+		wantMode        string
+		wantSkipPerms   bool
 		wantPassthrough bool // true = expect input returned unchanged
 	}{
 		{

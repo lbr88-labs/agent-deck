@@ -35,7 +35,7 @@ Requirements for the watcher framework milestone. Each maps to exactly one phase
 - [ ] **ADAPT-01**: Webhook adapter receives HTTP POST on configurable port, normalizes to Event, responds 202 immediately
 - [ ] **ADAPT-02**: ntfy adapter subscribes to topic via SSE stream (bufio.Scanner), auto-reconnects on disconnect
 - [ ] **ADAPT-03**: GitHub adapter verifies X-Hub-Signature-256 HMAC-SHA256, rejects invalid signatures with 401
-- [ ] **ADAPT-04**: Slack adapter routes via ntfy bridge with thread reply routing (session_id lookup by parent dedup_key)
+- [x] **ADAPT-04**: Slack adapter routes via ntfy bridge with thread reply routing (session_id lookup by parent dedup_key)
 - [ ] **ADAPT-05**: Gmail adapter handles OAuth2 token refresh via ReuseTokenSource, Pub/Sub watch registration via users.Watch()
 - [ ] **ADAPT-06**: Gmail watch_expiry persisted in meta.json, renewal scheduled 1hr before expiry, immediate renewal on startup if within 2hr
 
@@ -47,7 +47,7 @@ Requirements for the watcher framework milestone. Each maps to exactly one phase
 - [ ] **CLI-04**: `agent-deck watcher status <name>` shows detailed info including recent events and config
 - [ ] **CLI-05**: `agent-deck watcher test <name>` sends synthetic event through full pipeline, reports routing decision
 - [ ] **CLI-06**: `agent-deck watcher routes` displays all clients.json routing rules with sender patterns and conductors
-- [ ] **CLI-07**: `agent-deck watcher import <path>` migrates existing bash issue-watcher to Go watcher (reads channels.json, generates watcher.toml + clients.json entries)
+- [x] **CLI-07**: `agent-deck watcher import <path>` migrates existing bash issue-watcher to Go watcher (reads channels.json, generates watcher.toml + clients.json entries)
 
 ### TUI
 
@@ -58,9 +58,9 @@ Requirements for the watcher framework milestone. Each maps to exactly one phase
 
 ### Intelligence
 
-- [ ] **INTEL-01**: Triage session spawned (via agent-deck launch) for unknown senders, classifies with structured output: ROUTE_TO, SUMMARY, CONFIDENCE
+- [x] **INTEL-01**: Triage session spawned (via agent-deck launch) for unknown senders, classifies with structured output: ROUTE_TO, SUMMARY, CONFIDENCE
 - [ ] **INTEL-02**: Confirmed triage decisions auto-added to clients.json via atomic write-temp-rename (self-improving routing)
-- [ ] **INTEL-03**: Triage rate limited to max 5 sessions per hour to prevent subscription usage spikes
+- [x] **INTEL-03**: Triage rate limited to max 5 sessions per hour to prevent subscription usage spikes
 - [ ] **INTEL-04**: Watcher-creator skill in agent-deck pool enables conversational watcher setup (creates watcher.toml + clients.json entries + conductor if needed)
 
 ## v2 Requirements
@@ -122,7 +122,7 @@ Which phases cover which requirements. Updated during roadmap creation.
 | ADAPT-01 | Phase 14 | Pending |
 | ADAPT-02 | Phase 14 | Pending |
 | ADAPT-03 | Phase 14 | Pending |
-| ADAPT-04 | Phase 15 | Pending |
+| ADAPT-04 | Phase 15 | Complete |
 | ADAPT-05 | Phase 17 | Pending |
 | ADAPT-06 | Phase 17 | Pending |
 | CLI-01 | Phase 16 | Pending |
@@ -131,14 +131,14 @@ Which phases cover which requirements. Updated during roadmap creation.
 | CLI-04 | Phase 16 | Pending |
 | CLI-05 | Phase 16 | Pending |
 | CLI-06 | Phase 16 | Pending |
-| CLI-07 | Phase 15 | Pending |
+| CLI-07 | Phase 15 | Complete |
 | TUI-01 | Phase 16 | Pending |
 | TUI-02 | Phase 16 | Pending |
 | TUI-03 | Phase 16 | Pending |
 | TUI-04 | Phase 16 | Pending |
-| INTEL-01 | Phase 18 | Pending |
+| INTEL-01 | Phase 18 | Complete |
 | INTEL-02 | Phase 18 | Pending |
-| INTEL-03 | Phase 18 | Pending |
+| INTEL-03 | Phase 18 | Complete |
 | INTEL-04 | Phase 18 | Pending |
 
 **Coverage:**

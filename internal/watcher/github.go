@@ -284,10 +284,7 @@ func normalizePushEvent(body []byte) Event {
 	var p ghPushPayload
 	_ = json.Unmarshal(body, &p)
 
-	shortRef := p.Ref
-	if strings.HasPrefix(shortRef, "refs/heads/") {
-		shortRef = strings.TrimPrefix(shortRef, "refs/heads/")
-	}
+	shortRef := strings.TrimPrefix(p.Ref, "refs/heads/")
 
 	commitBody := "no commits"
 	if len(p.Commits) > 0 {

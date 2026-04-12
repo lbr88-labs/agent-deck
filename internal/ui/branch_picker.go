@@ -14,13 +14,6 @@ import (
 
 var loadBranchCandidates = branchCandidatesForPath
 
-// branchPickerResultMsg is kept for compatibility with existing dialog message handling.
-type branchPickerResultMsg struct {
-	branch   string
-	canceled bool
-	err      error
-}
-
 // BranchPickerDialog is an in-TUI branch picker with inline filtering.
 type BranchPickerDialog struct {
 	visible     bool

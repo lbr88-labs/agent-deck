@@ -58,16 +58,6 @@ type CreatingSession struct {
 	StartTime time.Time
 }
 
-// isCreatingPlaceholder returns true if the currently selected flat item is a
-// worktree-creation placeholder (not a real session). Actions like attach,
-// delete, fork, and restart must be suppressed for these items.
-func (h *Home) isCreatingPlaceholder() bool {
-	if h.cursor < 0 || h.cursor >= len(h.flatItems) {
-		return false
-	}
-	return h.flatItems[h.cursor].CreatingID != ""
-}
-
 // Structured loggers for UI components
 var (
 	uiLog     = logging.ForComponent(logging.CompUI)
@@ -6255,12 +6245,12 @@ func (h *Home) refreshWatcherPanel() {
 			healthStatus = "healthy"
 		}
 		items[i] = WatcherDisplayItem{
-			ID:            w.ID,
-			Name:          w.Name,
-			Type:          w.Type,
-			Status:        w.Status,
-			HealthStatus:  healthStatus,
-			Conductor:     w.Conductor,
+			ID:           w.ID,
+			Name:         w.Name,
+			Type:         w.Type,
+			Status:       w.Status,
+			HealthStatus: healthStatus,
+			Conductor:    w.Conductor,
 		}
 
 		// Count events in the last hour to compute events-per-hour rate.

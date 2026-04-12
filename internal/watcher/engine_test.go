@@ -396,9 +396,9 @@ func TestWatcherEngine_ThreadReplyNoParent(t *testing.T) {
 // TestEngine_UnroutedFlowEndToEnd is the Wave 3 integration test that proves
 // the full Phase 18 pipeline works end-to-end:
 //
-//   unrouted event → writerLoop → triageReqCh → triageLoop → fakeSpawner →
-//   result.json → reaper.scanOnce → AppendClientEntry → Router.Reload →
-//   next Router.Match returns new route
+//	unrouted event → writerLoop → triageReqCh → triageLoop → fakeSpawner →
+//	result.json → reaper.scanOnce → AppendClientEntry → Router.Reload →
+//	next Router.Match returns new route
 //
 // Per 18-RESEARCH.md §Q7 and 18-06-PLAN.md: this is the single most important
 // artifact in Phase 18 — it composes Plans 18-01 through 18-04 into one test.
@@ -590,7 +590,6 @@ routedDirectly:
 	engine.Stop()
 	// goleak.VerifyNone runs via defer.
 }
-
 
 // TestWatcherEngine_StopCancelsAdapters verifies that Stop() calls Teardown()
 // on all registered adapters.

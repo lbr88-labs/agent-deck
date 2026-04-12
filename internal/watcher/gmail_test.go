@@ -1155,4 +1155,3 @@ func TestGmailAdapter_RenewalLoop_RetryOnFailure(t *testing.T) {
 		t.Fatal("renewalLoop did not exit on ctx cancel")
 	}
 }
-
