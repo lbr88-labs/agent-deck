@@ -42,8 +42,9 @@ type InstanceData struct {
 	GroupPath       string    `json:"group_path"`
 	Order           int       `json:"order"`
 	ParentSessionID string    `json:"parent_session_id,omitempty"` // Links to parent session (sub-session support)
-	IsConductor     bool      `json:"is_conductor,omitempty"`      // True if this session is a conductor orchestrator
-	Command         string    `json:"command"`
+	IsConductor        bool      `json:"is_conductor,omitempty"`        // True if this session is a conductor orchestrator
+	NoTransitionNotify bool      `json:"no_transition_notify,omitempty"` // Suppress transition event dispatch
+	Command            string    `json:"command"`
 	Wrapper         string    `json:"wrapper,omitempty"`
 	Tool            string    `json:"tool"`
 	Status          Status    `json:"status"`
@@ -342,9 +343,10 @@ func (s *Storage) SaveWithGroups(instances []*Instance, groupTree *GroupTree) er
 			TmuxSession:     tmuxName,
 			CreatedAt:       inst.CreatedAt,
 			LastAccessed:    inst.LastAccessedAt,
-			ParentSessionID: inst.ParentSessionID,
-			IsConductor:     inst.IsConductor,
-			WorktreePath:    inst.WorktreePath,
+			ParentSessionID:    inst.ParentSessionID,
+			IsConductor:        inst.IsConductor,
+			NoTransitionNotify: inst.NoTransitionNotify,
+			WorktreePath:       inst.WorktreePath,
 			WorktreeRepo:    inst.WorktreeRepoRoot,
 			WorktreeBranch:  inst.WorktreeBranch,
 			ToolData:        toolData,
@@ -485,6 +487,7 @@ func (s *Storage) LoadLite() ([]*InstanceData, []*GroupData, error) {
 			Order:              r.Order,
 			ParentSessionID:    r.ParentSessionID,
 			IsConductor:        r.IsConductor,
+			NoTransitionNotify: r.NoTransitionNotify,
 			Command:            r.Command,
 			Wrapper:            r.Wrapper,
 			Tool:               r.Tool,
@@ -588,6 +591,7 @@ func (s *Storage) LoadWithGroups() ([]*Instance, []*GroupData, error) {
 			Order:              r.Order,
 			ParentSessionID:    r.ParentSessionID,
 			IsConductor:        r.IsConductor,
+			NoTransitionNotify: r.NoTransitionNotify,
 			Command:            r.Command,
 			Wrapper:            r.Wrapper,
 			Tool:               r.Tool,
@@ -821,6 +825,7 @@ func (s *Storage) convertToInstances(data *StorageData) ([]*Instance, []*GroupDa
 			Order:              instData.Order,
 			ParentSessionID:    instData.ParentSessionID,
 			IsConductor:        instData.IsConductor,
+			NoTransitionNotify: instData.NoTransitionNotify,
 			Command:            instData.Command,
 			Wrapper:            instData.Wrapper,
 			Tool:               instData.Tool,

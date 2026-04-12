@@ -904,7 +904,7 @@ func TestMigrate_OldSchema_SchemaVersionUpdated(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetMeta after migrate: %v", err)
 	}
-	expected := fmt.Sprintf("%d", SchemaVersion) // current SchemaVersion
+	expected := fmt.Sprintf("%d", SchemaVersion)
 	if postVersion != expected {
 		t.Errorf("expected schema_version=%s after migrate, got %q", expected, postVersion)
 	}
@@ -1069,10 +1069,10 @@ func TestMigrate_OldSchema_WatcherTablesUpgrade(t *testing.T) {
 		t.Errorf("expected 1 event row after duplicate insert, got %d", count)
 	}
 
-	// Verify schema version bumped to 5
+	// Verify schema version bumped to current
 	ver, _ := db.GetMeta("schema_version")
-	if ver != "5" {
-		t.Errorf("expected schema_version=5, got %q", ver)
+	if ver != fmt.Sprintf("%d", SchemaVersion) {
+		t.Errorf("expected schema_version=%d, got %q", SchemaVersion, ver)
 	}
 
 	// Verify existing instance data survived
