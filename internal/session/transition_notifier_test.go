@@ -1,6 +1,8 @@
 package session
 
 import (
+	"encoding/json"
+	"strings"
 	"testing"
 	"time"
 )
@@ -190,5 +192,42 @@ func TestIsCodexTerminalHookEvent(t *testing.T) {
 	}
 	if isCodexTerminalHookEvent("thread.started") {
 		t.Fatal("thread.started should not be terminal")
+	}
+}
+
+func TestInstanceNoTransitionNotifyJSONRoundTrip(t *testing.T) {
+	inst := &Instance{
+		ID:                 "test-1",
+		Title:              "test",
+		NoTransitionNotify: true,
+	}
+
+	data, err := json.Marshal(inst)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+
+	// Verify field is present in JSON
+	if !strings.Contains(string(data), `"no_transition_notify":true`) {
+		t.Fatalf("expected no_transition_notify in JSON, got: %s", data)
+	}
+
+	// Verify omitempty: false value should be omitted
+	inst2 := &Instance{ID: "test-2", Title: "test2"}
+	data2, err := json.Marshal(inst2)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	if strings.Contains(string(data2), "no_transition_notify") {
+		t.Fatalf("no_transition_notify should be omitted when false, got: %s", data2)
+	}
+
+	// Round-trip
+	var decoded Instance
+	if err := json.Unmarshal(data, &decoded); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if !decoded.NoTransitionNotify {
+		t.Fatal("NoTransitionNotify should be true after round-trip")
 	}
 }
