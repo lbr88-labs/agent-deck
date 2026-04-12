@@ -79,7 +79,7 @@ type Instance struct {
 	ParentSessionID   string `json:"parent_session_id,omitempty"`   // Links to parent session (makes this a sub-session)
 	ParentProjectPath string `json:"parent_project_path,omitempty"` // Parent's project path (for --add-dir access)
 	IsConductor       bool   `json:"is_conductor,omitempty"`        // True if this session is a conductor orchestrator
-	NoTransitionNotify bool `json:"no_transition_notify,omitempty"` // Suppress transition event dispatch for this session
+	NoTransitionNotify bool   `json:"no_transition_notify,omitempty"` // Suppress transition event dispatch for this session
 
 	// Git worktree support
 	WorktreePath     string `json:"worktree_path,omitempty"`      // Path to worktree (if session is in worktree)
