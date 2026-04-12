@@ -121,11 +121,11 @@ func isSocketAlive(socketPath string) bool {
 // (e.g., LD_PRELOAD to load arbitrary shared libraries). These are rejected when
 // passed via MCP config to prevent malicious .mcp.json files from hijacking processes.
 var dangerousEnvVars = map[string]bool{
-	"LD_PRELOAD":      true,
-	"LD_LIBRARY_PATH": true,
-	"DYLD_INSERT_LIBRARIES":    true,
-	"DYLD_LIBRARY_PATH":        true,
-	"DYLD_FRAMEWORK_PATH":      true,
+	"LD_PRELOAD":                 true,
+	"LD_LIBRARY_PATH":            true,
+	"DYLD_INSERT_LIBRARIES":      true,
+	"DYLD_LIBRARY_PATH":          true,
+	"DYLD_FRAMEWORK_PATH":        true,
 	"DYLD_FALLBACK_LIBRARY_PATH": true,
 }
 

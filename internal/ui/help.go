@@ -150,6 +150,7 @@ func (h *HelpOverlay) View() string {
 		notesKey = ""
 	}
 	worktreeKey := h.key(hotkeyWorktreeFinish, "W")
+	watcherPanelKey := h.key(hotkeyWatcherPanel, "w")
 	groupKey := h.key(hotkeyCreateGroup, "g")
 	undoKey := h.key(hotkeyUndoDelete, "Ctrl+Z")
 
@@ -201,6 +202,12 @@ func (h *HelpOverlay) View() string {
 				{worktreeKey, "Finish worktree (merge + cleanup)"},
 				{"n → w", "Create session in worktree"},
 				{"F → w", "Fork session into worktree"},
+			},
+		},
+		{
+			title: "WATCHERS",
+			items: [][2]string{
+				{watcherPanelKey, "Watcher panel"},
 			},
 		},
 		{

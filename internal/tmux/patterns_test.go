@@ -1,9 +1,9 @@
 package tmux
 
 import (
+	"fmt"
 	"strings"
 	"testing"
-	"fmt"
 )
 
 func TestDefaultRawPatterns_Claude(t *testing.T) {

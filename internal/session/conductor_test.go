@@ -1092,7 +1092,7 @@ func TestGenerateSystemdBridgeService_IncludesAgentDeckDir(t *testing.T) {
 	if strings.Contains(unit, "__PATH__") {
 		t.Error("unit still contains __PATH__ placeholder")
 	}
-	agentDeck := findAgentDeck()
+	agentDeck := FindAgentDeck()
 	if agentDeck == "" {
 		t.Skip("agent-deck not found in PATH, skipping directory check")
 	}
@@ -1109,7 +1109,7 @@ func TestGenerateSystemdHeartbeatService_IncludesAgentDeckDir(t *testing.T) {
 	if strings.Contains(unit, "__PATH__") {
 		t.Error("unit still contains __PATH__ placeholder")
 	}
-	agentDeck := findAgentDeck()
+	agentDeck := FindAgentDeck()
 	if agentDeck == "" {
 		t.Skip("agent-deck not found in PATH, skipping directory check")
 	}
@@ -1129,7 +1129,7 @@ func TestGenerateHeartbeatPlist_IncludesAgentDeckDir(t *testing.T) {
 	if strings.Contains(plist, "__PATH__") {
 		t.Error("plist still contains __PATH__ placeholder")
 	}
-	agentDeck := findAgentDeck()
+	agentDeck := FindAgentDeck()
 	if agentDeck == "" {
 		t.Skip("agent-deck not found in PATH, skipping directory check")
 	}
@@ -1152,7 +1152,7 @@ func TestGenerateLaunchdPlist_IncludesAgentDeckDir(t *testing.T) {
 		t.Error("plist still contains __PATH__ placeholder")
 	}
 	// The plist PATH should include the directory of the agent-deck binary
-	agentDeck := findAgentDeck()
+	agentDeck := FindAgentDeck()
 	if agentDeck == "" {
 		t.Skip("agent-deck not found in PATH, skipping directory check")
 	}

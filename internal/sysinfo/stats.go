@@ -55,7 +55,7 @@ type GPUStat struct {
 
 // NetworkStat represents network throughput calculated from counter deltas.
 type NetworkStat struct {
-	Available bool
+	Available     bool
 	RxBytesPerSec float64
 	TxBytesPerSec float64
 }

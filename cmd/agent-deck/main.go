@@ -253,6 +253,9 @@ func main() {
 		case "conductor":
 			handleConductor(profile, args[1:])
 			return
+		case "watcher":
+			handleWatcher(profile, args[1:])
+			return
 		case "openclaw", "oc":
 			handleOpenClaw(profile, args[1:])
 			return
@@ -455,7 +458,7 @@ func main() {
 
 	// Extract --group / -g flag here (TUI-only path; subcommands consume their own -g)
 	var groupScope string
-	groupScope, args = extractGroupFlag(args)
+	groupScope, _ = extractGroupFlag(args)
 
 	// Start TUI with the specified profile
 	homeModel := ui.NewHomeWithProfileAndMode(profile)

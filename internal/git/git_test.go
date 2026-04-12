@@ -61,7 +61,6 @@ func createBranch(t *testing.T, dir, branchName string) {
 	}
 }
 
-
 func runGit(t *testing.T, dir string, args ...string) string {
 	t.Helper()
 	cmd := exec.Command("git", args...)

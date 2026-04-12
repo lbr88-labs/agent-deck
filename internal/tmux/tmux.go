@@ -790,7 +790,7 @@ func sanitizeSystemdUnitComponent(raw string) string {
 }
 
 // bashCWrap returns the given command wrapped in `bash -c '…'` with
-// single quotes safely escaped via the POSIX `'\''` pattern. The result
+// single quotes safely escaped via the POSIX `'\”` pattern. The result
 // is a single shell word that can be passed to any `sh -c` invocation
 // (e.g. tmux's default shell-command delivery) and will always be
 // executed under bash, giving consistent semantics regardless of the

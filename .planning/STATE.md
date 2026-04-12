@@ -1,15 +1,17 @@
 ---
 gsd_state_version: 1.0
-milestone: v1.5
-milestone_name: milestone
-status: unknown
-stopped_at: Phase 10 plan 10-04 COMPLETE — TEST-E weekly regression alerting (alert-only workflow, issue template, format validator, 7 edge case tests); 3 atomic commits + 1 metadata commit
-last_updated: "2026-04-10T03:07:00.000Z"
+milestone: v1.5.0
+milestone_name: "**Goal:** Ship v1.5.0 with all gates green — clean build, Go 1.24.0 verified, visual verification pass, macOS smoke test, real-device mobile test, comprehensive changelog. Locked by CLAUDE.md release rules."
+status: executing
+stopped_at: Phase 18 VERIFIED COMPLETE — all 4 INTEL requirements delivered, 30 tests green, clean build with Go 1.24.0. 3 manual verifications pending (real Claude triage, skill UX, real state.db migration).
+last_updated: "2026-04-11T17:45:57.870Z"
+last_activity: 2026-04-11
 progress:
-  total_phases: 7
-  completed_phases: 4
-  total_plans: 22
-  completed_plans: 17
+  total_phases: 14
+  completed_phases: 7
+  total_plans: 21
+  completed_plans: 21
+  percent: 100
 ---
 
 # Project State
@@ -19,24 +21,26 @@ progress:
 **Project:** Agent Deck
 **Repository:** /home/ashesh-goplani/agent-deck
 **Branch:** main
-**Current version:** v1.4.1
-**Target version:** v1.5.0
+**Current version:** v1.5.0
+**Target version:** v1.6.0
 
 See `/home/ashesh-goplani/agent-deck/.planning/PROJECT.md` for full project context.
-See `/home/ashesh-goplani/agent-deck/.planning/ROADMAP.md` for the full v1.5.0 roadmap.
-See `/home/ashesh-goplani/agent-deck/.planning/REQUIREMENTS.md` for the 43 requirements and their phase mappings.
+See `/home/ashesh-goplani/agent-deck/.planning/ROADMAP.md` for the v1.6.0 roadmap.
+See `/home/ashesh-goplani/agent-deck/.planning/REQUIREMENTS.md` for requirements and phase mappings.
 
-## Milestone: v1.5.0 — Premium Web App
+## Milestone: v1.6.0 — Watcher Framework
 
-**Goal:** Ship a premium-quality v1.5.0 where the web app feels instant and snappy, all 4 remaining P0 bugs + 5 P1 bugs are fixed, first-load wire size drops from 668 KB to <150 KB gzipped, FCP<500ms / LCP<1s / TBT<100ms, automated visual regression tests block merge on >0.1% diff, and mobile is fully functional. The app should represent what agent-deck deserves: premium, polished, production-ready.
+**Goal:** Add event-driven automation to agent-deck. Watchers listen for external events (email, Slack, webhooks, meeting transcripts) and route them to conductor sessions automatically.
 
-**Source spec:** `docs/WEB-APP-V15-SPEC.md`
-**Starting point:** v1.4.1 (emergency patch that fixed 6 regressions shipped in v1.4.0)
+**Source spec:** `docs/superpowers/specs/2026-04-10-watcher-framework-design.md`
+**Starting point:** v1.5.0 (premium web app polish milestone)
 
 ## Current Position
 
-Phase: 10 (automated-testing) — COMPLETE
-Plan: 4 of 4 DONE
+Phase: 18 (Intelligence (Triage and Self-Improving Routing)) — EXECUTING
+Plan: 2 of 6
+Status: Ready to execute
+Last activity: 2026-04-11
 
 ## Phase Progress
 
@@ -48,12 +52,16 @@ Plan: 4 of 4 DONE
 | 8 | Performance (Premium Feel) | COMPLETE 2026-04-09 (5/5 plans, PERF-A..K all ✓) | 11 (PERF-A..K) | 5 |
 | 9 | Polish (Premium UX) | COMPLETE 2026-04-09 (4/4 plans, POL-1 ✓ POL-2 ✓ POL-3 ✓ POL-4 ✓ POL-5 ✓ POL-6 ✓ POL-7 ✓) | 7 (POL-1..7 all ✓) | 4 |
 | 10 | Automated Testing | COMPLETE 2026-04-10 (4/4 plans, TEST-A ✓ TEST-B ✓ TEST-C ✓ TEST-D ✓ TEST-E ✓) | 5 (TEST-A..E all ✓) | 4 |
-| 11 | Release v1.5.0 | Not started | 5 (REL-1..5) | 3 |
+| 11 | Release v1.5.0 | Planned (3 plans: 11-01 pre-release verify, 11-02 tag+ship+changelog, 11-03 real-device mobile) | 5 (REL-1..5) | 3 |
 
-**Total active plans across Phases 6-11:** 24
+**Total active plans across Phases 6-11:** 25
 **Total active requirements:** 37
 
 ## Accumulated Context
+
+### Roadmap Evolution
+
+- Phase 16 added (2026-04-10): Watcher CLI and TUI Integration (CLI-01..06 + TUI-01..04)
 
 ### v1.5.0 Milestone Init (2026-04-08)
 
@@ -266,7 +274,7 @@ Phase 7 is COMPLETE. 10 commits live on local main, NOT pushed (per HARD RULES �
 
 ## Last session
 
-- **Stopped at:** Phase 10 plan 10-03 COMPLETE — TEST-C (session lifecycle + group CRUD E2E, 9 tests) and TEST-D (mobile E2E at 3 viewports, 20 pass + 1 skip); 6 atomic commits; combined pw-p10-e2e.config.mjs covers all 30 runs
+- **Stopped at:** Phase 18 VERIFIED COMPLETE — all 4 INTEL requirements delivered, 30 tests green, clean build with Go 1.24.0. 3 manual verifications pending (real Claude triage, skill UX, real state.db migration).
 - **Timestamp:** 2026-04-09T17:42:25Z
 - **Duration:** ~20 min (tmux-hosted test server avoided 09-02's `script -qfc` debug detour)
 - **Commits:** 03b191f (test(09-01) failing specs + pw-p9-plan1 config), 7f91b26 (feat(09-01) POL-1 skeleton loader), 44d38e2 (fix(09-01) POL-2 GroupRow fade + POL-4 density)
@@ -290,3 +298,4 @@ Phase 7 is COMPLETE. 10 commits live on local main, NOT pushed (per HARD RULES �
 | 09 | 01 | ~20 min | 3 | 4 (+ 4 created) | 2026-04-09 |
 | Phase 10-automated-testing P02 | 5 | 4 tasks | 5 files |
 | Phase 10-automated-testing P03 | 17min | 7 tasks | 7 files |
+| Phase 18 P04 | 35 | 5 tasks | 7 files |

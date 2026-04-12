@@ -88,9 +88,9 @@ func TestSystemStatsSettings_RefreshClamping(t *testing.T) {
 		input int
 		want  int
 	}{
-		{0, 5},   // below min -> default
-		{1, 5},   // below min -> default
-		{2, 2},   // at min
+		{0, 5},     // below min -> default
+		{1, 5},     // below min -> default
+		{2, 2},     // at min
 		{300, 300}, // at max
 		{301, 300}, // above max -> capped
 	}
