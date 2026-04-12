@@ -158,6 +158,20 @@ func TestAgentConfigMounts_AllTools(t *testing.T) {
 	}
 }
 
+func TestAgentConfigMounts_OpenCodePathsMounted(t *testing.T) {
+	t.Parallel()
+
+	mounts := AgentConfigMounts()
+	seen := map[string]bool{}
+	for _, m := range mounts {
+		seen[m.hostRel] = true
+	}
+
+	require.True(t, seen[".local/share/opencode"])
+	require.True(t, seen[".local/state/opencode"])
+	require.True(t, seen[".config/opencode"])
+}
+
 func TestIsManagedContainer(t *testing.T) {
 	t.Parallel()
 
