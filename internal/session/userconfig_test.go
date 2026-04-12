@@ -1653,3 +1653,56 @@ detach_key = ""
 		})
 	}
 }
+
+func TestUserConfig_TransitionEventsDefault(t *testing.T) {
+	tmpDir := t.TempDir()
+	configContent := `
+[notifications]
+enabled = true
+`
+	configPath := filepath.Join(tmpDir, "config.toml")
+	if err := os.WriteFile(configPath, []byte(configContent), 0600); err != nil {
+		t.Fatalf("Failed to write config file: %v", err)
+	}
+
+	var config UserConfig
+	if _, err := toml.DecodeFile(configPath, &config); err != nil {
+		t.Fatalf("Failed to decode: %v", err)
+	}
+
+	// When not set, TransitionEvents should be nil (defaults to true via getter)
+	if config.Notifications.TransitionEvents != nil {
+		t.Errorf("TransitionEvents should be nil when not set, got %v", *config.Notifications.TransitionEvents)
+	}
+	if !config.Notifications.GetTransitionEventsEnabled() {
+		t.Error("GetTransitionEventsEnabled() should return true when nil")
+	}
+}
+
+func TestUserConfig_TransitionEventsExplicitFalse(t *testing.T) {
+	tmpDir := t.TempDir()
+	configContent := `
+[notifications]
+enabled = true
+transition_events = false
+`
+	configPath := filepath.Join(tmpDir, "config.toml")
+	if err := os.WriteFile(configPath, []byte(configContent), 0600); err != nil {
+		t.Fatalf("Failed to write config file: %v", err)
+	}
+
+	var config UserConfig
+	if _, err := toml.DecodeFile(configPath, &config); err != nil {
+		t.Fatalf("Failed to decode: %v", err)
+	}
+
+	if config.Notifications.TransitionEvents == nil {
+		t.Fatal("TransitionEvents should not be nil when explicitly set")
+	}
+	if *config.Notifications.TransitionEvents != false {
+		t.Error("TransitionEvents should be false when explicitly set to false")
+	}
+	if config.Notifications.GetTransitionEventsEnabled() {
+		t.Error("GetTransitionEventsEnabled() should return false when explicitly false")
+	}
+}

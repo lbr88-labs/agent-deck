@@ -438,6 +438,21 @@ type NotificationsConfig struct {
 	// Minimal shows a compact icon+count summary instead of session names: ● 2 │ ◐ 3 │ ○ 1
 	// When true, key bindings (Ctrl+b 1-6) are disabled. ShowAll is ignored. (default: false)
 	Minimal bool `toml:"minimal"`
+
+	// TransitionEvents controls whether the transition daemon sends tmux messages
+	// to parent sessions when a child transitions (e.g., running → waiting).
+	// Default: true (nil = true). Set to false to suppress dispatch globally.
+	// Per-session override: Instance.NoTransitionNotify
+	TransitionEvents *bool `toml:"transition_events"`
+}
+
+// GetTransitionEventsEnabled returns whether transition event dispatch is enabled.
+// Defaults to true when unset (nil).
+func (n NotificationsConfig) GetTransitionEventsEnabled() bool {
+	if n.TransitionEvents == nil {
+		return true
+	}
+	return *n.TransitionEvents
 }
 
 // InstanceSettings configures multiple agent-deck instance behavior
