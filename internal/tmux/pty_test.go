@@ -3,8 +3,10 @@
 package tmux
 
 import (
+	"bytes"
 	"context"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -218,4 +220,123 @@ func TestControlSeqTimeout_PassesRegularInput(t *testing.T) {
 			)
 		})
 	}
+}
+
+// TestCleanupAttach_EmitsScrollbackClear verifies that when Attach() detaches
+// via the detach key (Ctrl+Q), the cleanup code emits \033[3J to clear the
+// host terminal's scrollback buffer before returning to the TUI.
+func TestCleanupAttach_EmitsScrollbackClear(t *testing.T) {
+	skipIfNoTmuxServer(t)
+	if !term.IsTerminal(int(os.Stdin.Fd())) {
+		t.Skip("stdin is not a terminal (CI/pipe environment); skipping PTY attach test")
+	}
+
+	name := SessionPrefix + "ptytest-scrollback-" + fmt.Sprintf("%d", time.Now().UnixNano()%100000)
+	require.NoError(t,
+		exec.Command("tmux", "new-session", "-d", "-s", name, "bash").Run(),
+		"failed to create test session %s", name,
+	)
+	t.Cleanup(func() { _ = exec.Command("tmux", "kill-session", "-t", name).Run() })
+
+	// Redirect os.Stdout to capture cleanupAttach() output
+	r, w, err := os.Pipe()
+	require.NoError(t, err)
+	oldStdout := os.Stdout
+	os.Stdout = w
+
+	sess := &Session{Name: name}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	attachDone := make(chan error, 1)
+	go func() { attachDone <- sess.Attach(ctx, 0x11) }()
+
+	// Wait for attach to initialize, then send detach key (Ctrl+Q)
+	time.Sleep(300 * time.Millisecond)
+	require.NoError(t,
+		exec.Command("tmux", "send-keys", "-t", name, "C-q", "").Run(),
+		"failed to send detach key",
+	)
+
+	// Wait for Attach() to fully return (cleanupAttach has executed)
+	select {
+	case attachErr := <-attachDone:
+		// Restore stdout AFTER Attach() returns (prevents write-to-closed-pipe race)
+		os.Stdout = oldStdout
+		w.Close()
+		require.NoError(t, attachErr, "Attach returned error after detach")
+	case <-time.After(4 * time.Second):
+		cancel()
+		// Restore stdout before Fatal to avoid lost output
+		os.Stdout = oldStdout
+		w.Close()
+		t.Fatal("Attach did not return after detach key was sent")
+	}
+
+	var buf bytes.Buffer
+	_, _ = io.Copy(&buf, r)
+
+	captured := buf.String()
+	require.Contains(t, captured, "\033[3J",
+		"cleanupAttach() must emit \\033[3J to clear host terminal scrollback on detach")
+}
+
+// TestCleanupAttach_ScrollbackClearBeforeStyleReset verifies that \033[3J is
+// emitted BEFORE the terminalStyleReset sequence in cleanupAttach(), ensuring
+// the scrollback clear happens before the TUI attempts to redraw (D-04).
+func TestCleanupAttach_ScrollbackClearBeforeStyleReset(t *testing.T) {
+	skipIfNoTmuxServer(t)
+	if !term.IsTerminal(int(os.Stdin.Fd())) {
+		t.Skip("stdin is not a terminal (CI/pipe environment); skipping PTY attach test")
+	}
+
+	name := SessionPrefix + "ptytest-scrollorder-" + fmt.Sprintf("%d", time.Now().UnixNano()%100000)
+	require.NoError(t,
+		exec.Command("tmux", "new-session", "-d", "-s", name, "bash").Run(),
+		"failed to create test session %s", name,
+	)
+	t.Cleanup(func() { _ = exec.Command("tmux", "kill-session", "-t", name).Run() })
+
+	r, w, err := os.Pipe()
+	require.NoError(t, err)
+	oldStdout := os.Stdout
+	os.Stdout = w
+
+	sess := &Session{Name: name}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	attachDone := make(chan error, 1)
+	go func() { attachDone <- sess.Attach(ctx, 0x11) }()
+
+	time.Sleep(300 * time.Millisecond)
+	require.NoError(t,
+		exec.Command("tmux", "send-keys", "-t", name, "C-q", "").Run(),
+	)
+
+	select {
+	case attachErr := <-attachDone:
+		os.Stdout = oldStdout
+		w.Close()
+		require.NoError(t, attachErr)
+	case <-time.After(4 * time.Second):
+		cancel()
+		os.Stdout = oldStdout
+		w.Close()
+		t.Fatal("Attach did not return after detach key")
+	}
+
+	var buf bytes.Buffer
+	_, _ = io.Copy(&buf, r)
+
+	captured := buf.String()
+	scrollIdx := bytes.Index(buf.Bytes(), []byte("\033[3J"))
+	styleIdx := bytes.Index(buf.Bytes(), []byte("\x1b]8;;"))
+
+	require.NotEqual(t, -1, scrollIdx,
+		"\\033[3J not found in cleanupAttach output")
+	require.NotEqual(t, -1, styleIdx,
+		"terminalStyleReset not found in cleanupAttach output")
+	require.Less(t, scrollIdx, styleIdx,
+		"\\033[3J (scrollback clear) must appear BEFORE terminalStyleReset (per D-04); captured: %q", captured)
 }
