@@ -47,6 +47,8 @@ func handleSession(profile string, args []string) {
 		handleSessionSetParent(profile, args[1:])
 	case "unset-parent":
 		handleSessionUnsetParent(profile, args[1:])
+	case "set-transition-notify":
+		handleSessionSetTransitionNotify(profile, args[1:])
 	case "set":
 		handleSessionSet(profile, args[1:])
 	case "move", "mv":
@@ -88,6 +90,7 @@ func printSessionHelp() {
 	fmt.Println("  search <query>          Search message content across Claude sessions")
 	fmt.Println("  set-parent <id> <parent>  Link session as sub-session of parent")
 	fmt.Println("  unset-parent <id>       Remove sub-session link")
+	fmt.Println("  set-transition-notify <id> <on|off>  Enable/disable transition notifications")
 	fmt.Println()
 	fmt.Println("Global Options:")
 	fmt.Println("  -p, --profile <name>   Use specific profile")
@@ -104,6 +107,8 @@ func printSessionHelp() {
 	fmt.Println("  agent-deck session show my-project --json")
 	fmt.Println("  agent-deck session set-parent sub-task main-project  # Make sub-task a sub-session")
 	fmt.Println("  agent-deck session unset-parent sub-task             # Remove sub-session link")
+	fmt.Println("  agent-deck session set-transition-notify worker off    # Suppress notifications")
+	fmt.Println("  agent-deck session set-transition-notify worker on     # Re-enable notifications")
 	fmt.Println("  agent-deck session output my-project                 # Get last response from session")
 	fmt.Println("  agent-deck session output my-project --json          # Get response as JSON")
 	fmt.Println()
@@ -1417,6 +1422,87 @@ func handleSessionUnsetParent(profile string, args []string) {
 			"former_parent": parentTitle,
 		},
 	)
+}
+
+// handleSessionSetTransitionNotify enables or disables transition notifications for a session
+func handleSessionSetTransitionNotify(profile string, args []string) {
+	fs := flag.NewFlagSet("session set-transition-notify", flag.ExitOnError)
+	jsonOutput := fs.Bool("json", false, "Output as JSON")
+	quiet := fs.Bool("quiet", false, "Minimal output")
+	quietShort := fs.Bool("q", false, "Minimal output (short)")
+
+	fs.Usage = func() {
+		fmt.Println("Usage: agent-deck session set-transition-notify <session> <on|off>")
+		fmt.Println()
+		fmt.Println("Enable or disable transition event notifications for a session.")
+		fmt.Println("When off, the transition daemon will not send tmux messages to the")
+		fmt.Println("parent session when this session changes status (e.g., running → waiting).")
+		fmt.Println("This does not affect the parent link itself.")
+		fmt.Println()
+		fmt.Println("Options:")
+		fs.PrintDefaults()
+		fmt.Println()
+		fmt.Println("Examples:")
+		fmt.Println("  agent-deck session set-transition-notify worker off")
+		fmt.Println("  agent-deck session set-transition-notify worker on")
+	}
+
+	if err := fs.Parse(normalizeArgs(fs, args)); err != nil {
+		os.Exit(1)
+	}
+
+	if fs.NArg() < 2 {
+		fs.Usage()
+		os.Exit(1)
+	}
+
+	sessionID := fs.Arg(0)
+	value := strings.ToLower(strings.TrimSpace(fs.Arg(1)))
+	quietMode := *quiet || *quietShort
+	out := NewCLIOutput(*jsonOutput, quietMode)
+
+	var suppress bool
+	switch value {
+	case "on":
+		suppress = false
+	case "off":
+		suppress = true
+	default:
+		out.Error(fmt.Sprintf("invalid value %q: must be 'on' or 'off'", value), ErrCodeInvalidOperation)
+		os.Exit(1)
+	}
+
+	storage, instances, groupsData, err := loadSessionData(profile)
+	if err != nil {
+		out.Error(err.Error(), ErrCodeNotFound)
+		os.Exit(1)
+	}
+
+	inst, errMsg, errCode := ResolveSession(sessionID, instances)
+	if inst == nil {
+		out.Error(errMsg, errCode)
+		os.Exit(2)
+		return
+	}
+
+	inst.NoTransitionNotify = suppress
+
+	groupTree := session.NewGroupTreeWithGroups(instances, groupsData)
+	if err := storage.SaveWithGroups(instances, groupTree); err != nil {
+		out.Error(fmt.Sprintf("failed to save: %v", err), ErrCodeInvalidOperation)
+		os.Exit(1)
+	}
+
+	stateStr := "on"
+	if suppress {
+		stateStr = "off"
+	}
+	out.Success(fmt.Sprintf("Transition notifications for '%s': %s", inst.Title, stateStr), map[string]interface{}{
+		"success":              true,
+		"session_id":           inst.ID,
+		"session_title":        inst.Title,
+		"no_transition_notify": suppress,
+	})
 }
 
 // handleSessionSend sends a message to a running session
