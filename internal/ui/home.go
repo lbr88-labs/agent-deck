@@ -4282,15 +4282,6 @@ func (h *Home) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return h, nil
 
 	case tea.KeyMsg:
-		// Temporary key diagnostic — writes directly to /tmp/agentdeck-keys.log
-		if f, err := os.OpenFile("/tmp/agentdeck-keys.log", os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644); err == nil {
-			fmt.Fprintf(f, "key raw=%q type=%d runes=%q jump=%v wizard=%v settings=%v help=%v search=%v newdlg=%v costdash=%v notes=%v skill=%v\n",
-				msg.String(), msg.Type, string(msg.Runes),
-				h.jumpMode, h.setupWizard.IsVisible(), h.settingsPanel.IsVisible(),
-				h.helpOverlay.IsVisible(), h.search.IsVisible(), h.newDialog.IsVisible(),
-				h.showCostDashboard, h.notesEditing, h.skillDialog.IsVisible())
-			f.Close()
-		}
 		// Track user activity for adaptive status updates
 		h.lastUserInputTime = time.Now()
 
