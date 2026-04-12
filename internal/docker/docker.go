@@ -150,7 +150,9 @@ func (c *Container) Create(ctx context.Context, cfg *ContainerConfig) (string, e
 		"--pids-limit=4096",
 		// Read-only root filesystem — writable paths are explicitly mounted as tmpfs below.
 		"--read-only",
-		"--tmpfs", "/tmp:rw,noexec,nosuid,size=256m",
+		// Keep /tmp executable: OpenCode/OpenTUI loads a native render library
+		// from /tmp via dlopen, which fails when /tmp is mounted noexec.
+		"--tmpfs", "/tmp:rw,nosuid,size=256m",
 		"--tmpfs", "/var/tmp:rw,noexec,nosuid,size=128m",
 		// Node.js and npm require writable cache/config directories.
 		"--tmpfs", "/root/.npm:rw,nosuid,size=256m",
