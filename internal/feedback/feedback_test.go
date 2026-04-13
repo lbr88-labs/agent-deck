@@ -1,6 +1,7 @@
 package feedback_test
 
 import (
+	"fmt"
 	"os"
 	"testing"
 
@@ -165,4 +166,80 @@ func TestRatingEmoji(t *testing.T) {
 	require.Equal(t, "🙂", feedback.RatingEmoji(3))
 	require.Equal(t, "😀", feedback.RatingEmoji(4))
 	require.Equal(t, "🤩", feedback.RatingEmoji(5))
+}
+
+// fakeExitError simulates exec.ExitError with a configurable exit code.
+type fakeExitError struct{ code int }
+
+func (e *fakeExitError) Error() string { return fmt.Sprintf("exit status %d", e.code) }
+func (e *fakeExitError) ExitCode() int { return e.code }
+
+// TEST-10: TestSend_GhAuthFailure verifies non-headless fallback copies to clipboard AND opens browser
+func TestSend_GhAuthFailure(t *testing.T) {
+	tmpDir := t.TempDir()
+	originalHome := os.Getenv("HOME")
+	os.Setenv("HOME", tmpDir)
+	defer os.Setenv("HOME", originalHome)
+
+	clipboardCalled := false
+	clipboardText := ""
+	browserCalled := false
+
+	s := feedback.NewSender()
+	// ghCmd returns exit code 4 (auth failure)
+	s.GhCmd = func(args ...string) error {
+		return &fakeExitError{code: 4}
+	}
+	// ClipboardCmd records the body it receives
+	s.ClipboardCmd = func(text string) error {
+		clipboardCalled = true
+		clipboardText = text
+		return nil
+	}
+	// BrowserCmd records whether it was called
+	s.BrowserCmd = func(url string) error {
+		browserCalled = true
+		return nil
+	}
+	// Not headless — both clipboard and browser should fire
+	s.IsHeadlessFunc = func() bool { return false }
+
+	err := s.Send("1.5.1", 4, "darwin", "arm64", "test comment")
+	require.NoError(t, err)
+	require.True(t, clipboardCalled, "clipboard must be called with formatted body before opening browser")
+	require.True(t, browserCalled, "browser fallback should open the Discussion URL after clipboard copy")
+	require.Contains(t, clipboardText, "v1.5.1", "clipboard body must contain the version")
+	require.NotContains(t, clipboardText, "github.com", "clipboard must contain the comment body, not a URL")
+}
+
+// TEST-11: TestSend_Headless verifies headless mode copies to clipboard only (no browser)
+func TestSend_Headless(t *testing.T) {
+	tmpDir := t.TempDir()
+	originalHome := os.Getenv("HOME")
+	os.Setenv("HOME", tmpDir)
+	defer os.Setenv("HOME", originalHome)
+
+	clipboardCalled := false
+	browserCalled := false
+
+	s := feedback.NewSender()
+	// ghCmd returns exit code 4 (auth failure)
+	s.GhCmd = func(args ...string) error {
+		return &fakeExitError{code: 4}
+	}
+	// Force headless — only clipboard should fire, browser must NOT
+	s.IsHeadlessFunc = func() bool { return true }
+	s.ClipboardCmd = func(text string) error {
+		clipboardCalled = true
+		return nil
+	}
+	s.BrowserCmd = func(url string) error {
+		browserCalled = true
+		return nil
+	}
+
+	err := s.Send("1.5.1", 4, "darwin", "arm64", "")
+	require.NoError(t, err)
+	require.True(t, clipboardCalled, "clipboard must be called in headless mode")
+	require.False(t, browserCalled, "browser must NOT be called in headless mode")
 }
