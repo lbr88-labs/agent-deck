@@ -157,6 +157,17 @@ func (p Platform) String() string {
 	}
 }
 
+// IsHeadless returns true when no graphical display is available.
+// Checks DISPLAY (X11), WAYLAND_DISPLAY, and SSH_TTY. Returns true
+// only when ALL three are empty. Not cached — env vars may change
+// within a session (e.g. when SSH_TTY is set by an inner shell).
+// Used by the feedback package to choose between browser and clipboard fallback.
+func IsHeadless() bool {
+	return os.Getenv("DISPLAY") == "" &&
+		os.Getenv("WAYLAND_DISPLAY") == "" &&
+		os.Getenv("SSH_TTY") == ""
+}
+
 // CheckFsnotifySupport checks if a path's filesystem supports fsnotify events reliably.
 // Returns a warning message if on a problematic filesystem (9p, nfs, cifs, sshfs),
 // or an empty string if fsnotify should work normally.
