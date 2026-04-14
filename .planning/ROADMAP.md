@@ -58,7 +58,14 @@ The work is organized TDD-first: **Phase 1** lands all eight `TestPersistence_*`
   6. On startup, `~/.agent-deck/logs/*.log` contains exactly one of: `tmux cgroup isolation: enabled (systemd-run detected)`, `tmux cgroup isolation: disabled (systemd-run not available)`, or `tmux cgroup isolation: disabled (config override)` — verified by `grep 'tmux cgroup isolation' ~/.agent-deck/logs/*.log`.
   7. If `systemd-run` is present but invocation fails (e.g. no user manager), the spawn falls back to direct tmux and logs a warning — session creation is never blocked.
 
-**Plans**: TBD
+**Plans:** 5 plans
+
+Plans:
+- [ ] 02-01-PLAN.md — Detection helper isSystemdUserScopeAvailable() with sync.Once cache + unit test (PERSIST-01, PERSIST-02)
+- [ ] 02-02-PLAN.md — Migrate LaunchInUserScope to *bool, rewrite GetLaunchInUserScope, add ExplicitOptOut pin (TEST-03 GREEN; PERSIST-01..03)
+- [ ] 02-03-PLAN.md — Emit OBS-01 startup log line + wire into bootstrap (OBS-01)
+- [ ] 02-04-PLAN.md — Graceful systemd-run failure fallback in internal/tmux/tmux.go (TEST-01 GREEN; PERSIST-04..06)
+- [ ] 02-05-PLAN.md — Update example-config comments + final full-suite confirmation + Phase 2 sign-off (PERSIST-01..03)
 
 ### Phase 3: Resume-on-start and error-recovery (REQ-2 fix)
 
