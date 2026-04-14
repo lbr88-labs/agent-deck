@@ -4,10 +4,12 @@ import (
 	"bytes"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 
 	"github.com/BurntSushi/toml"
 
@@ -909,6 +911,52 @@ func (t TmuxSettings) GetInjectStatusLine() bool {
 // under the user's systemd manager, defaulting to false.
 func (t TmuxSettings) GetLaunchInUserScope() bool {
 	return t.LaunchInUserScope
+}
+
+// systemdUserScopeAvailable caches the result of probing whether
+// `systemd-run --user --version` succeeds on this host. Populated exactly
+// once per process via systemdUserScopeOnce. Tests can reset both vars via
+// resetSystemdDetectionCacheForTest.
+//
+// systemdUserScopeProbeCount counts how many times the probe body has run;
+// it is incremented inside the sync.Once.Do callback. Tests assert it equals
+// 1 after consecutive calls (cache hit) and 2 after a reset+call cycle.
+var (
+	systemdUserScopeOnce       sync.Once
+	systemdUserScopeAvailable  bool
+	systemdUserScopeProbeCount int64
+)
+
+// isSystemdUserScopeAvailable returns true iff exec.LookPath("systemd-run")
+// succeeds AND `systemd-run --user --version` exits zero. The result is
+// cached for the lifetime of the process. The probe must mirror
+// requireSystemdRun in internal/session/session_persistence_test.go so the
+// production-code default and the test gate agree on what "Linux+systemd
+// available" means. Side effects: none — no stdout/stderr writes, no panic
+// on missing/broken systemd-run, errors are swallowed and treated as false.
+func isSystemdUserScopeAvailable() bool {
+	systemdUserScopeOnce.Do(func() {
+		atomic.AddInt64(&systemdUserScopeProbeCount, 1)
+		if _, err := exec.LookPath("systemd-run"); err != nil {
+			systemdUserScopeAvailable = false
+			return
+		}
+		if err := exec.Command("systemd-run", "--user", "--version").Run(); err != nil {
+			systemdUserScopeAvailable = false
+			return
+		}
+		systemdUserScopeAvailable = true
+	})
+	return systemdUserScopeAvailable
+}
+
+// resetSystemdDetectionCacheForTest discards the cached detection result
+// so the next call to isSystemdUserScopeAvailable re-probes the host. Used
+// only by tests in package session. Not safe for concurrent use with
+// callers of isSystemdUserScopeAvailable.
+func resetSystemdDetectionCacheForTest() {
+	systemdUserScopeOnce = sync.Once{}
+	systemdUserScopeAvailable = false
 }
 
 // DockerSettings defines Docker sandbox configuration.
