@@ -1584,6 +1584,97 @@ func TestInstance_CanFork_OpenCode(t *testing.T) {
 	}
 }
 
+func TestInstance_CanRestartFresh(t *testing.T) {
+	tests := []struct {
+		name string
+		inst *Instance
+		want bool
+	}{
+		{
+			name: "claude with session ID",
+			inst: &Instance{Tool: "claude", ClaudeSessionID: "claude-session-1"},
+			want: true,
+		},
+		{
+			name: "claude without session ID",
+			inst: &Instance{Tool: "claude"},
+			want: false,
+		},
+		{
+			name: "gemini with session ID",
+			inst: &Instance{Tool: "gemini", GeminiSessionID: "gemini-session-1"},
+			want: true,
+		},
+		{
+			name: "opencode with session ID",
+			inst: &Instance{Tool: "opencode", OpenCodeSessionID: "ses_123"},
+			want: true,
+		},
+		{
+			name: "codex with session ID",
+			inst: &Instance{Tool: "codex", CodexSessionID: "codex-session-1"},
+			want: true,
+		},
+		{
+			name: "shell never offers fresh restart",
+			inst: &Instance{Tool: "shell"},
+			want: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := tt.inst.CanRestartFresh(); got != tt.want {
+				t.Fatalf("CanRestartFresh() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestInstance_ClearSessionBindingForFreshStart(t *testing.T) {
+	inst := &Instance{
+		Tool:               "opencode",
+		ClaudeSessionID:    "claude-session-1",
+		GeminiSessionID:    "gemini-session-1",
+		OpenCodeSessionID:  "ses_123",
+		CodexSessionID:     "codex-session-1",
+		OpenCodeStartedAt:  123,
+		CodexStartedAt:     456,
+		OpenCodeDetectedAt: time.Now(),
+		CodexDetectedAt:    time.Now(),
+	}
+
+	inst.clearSessionBindingForFreshStart()
+
+	if inst.OpenCodeSessionID != "" {
+		t.Fatalf("OpenCodeSessionID = %q, want empty", inst.OpenCodeSessionID)
+	}
+	if inst.OpenCodeStartedAt != 0 {
+		t.Fatalf("OpenCodeStartedAt = %d, want 0", inst.OpenCodeStartedAt)
+	}
+	if !inst.OpenCodeDetectedAt.IsZero() {
+		t.Fatal("OpenCodeDetectedAt should be cleared")
+	}
+	if inst.ClaudeSessionID != "claude-session-1" {
+		t.Fatalf("ClaudeSessionID should be untouched for opencode, got %q", inst.ClaudeSessionID)
+	}
+	if inst.GeminiSessionID != "gemini-session-1" {
+		t.Fatalf("GeminiSessionID should be untouched for opencode, got %q", inst.GeminiSessionID)
+	}
+	if inst.CodexSessionID != "codex-session-1" {
+		t.Fatalf("CodexSessionID should be untouched for opencode, got %q", inst.CodexSessionID)
+	}
+
+	claude := &Instance{Tool: "claude", ClaudeSessionID: "claude-session-2", ClaudeDetectedAt: time.Now()}
+	claude.clearSessionBindingForFreshStart()
+	if claude.ClaudeSessionID != "" {
+		t.Fatalf("ClaudeSessionID = %q, want empty", claude.ClaudeSessionID)
+	}
+	if !claude.ClaudeDetectedAt.IsZero() {
+		t.Fatal("ClaudeDetectedAt should be cleared")
+	}
+}
+
 func TestInstance_ForkOpenCode(t *testing.T) {
 	inst := NewInstanceWithTool("test", "/tmp/test", "opencode")
 
