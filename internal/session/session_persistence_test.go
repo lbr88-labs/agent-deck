@@ -128,3 +128,58 @@ func isolatedHomeDir(t *testing.T) string {
 	t.Cleanup(func() { ClearUserConfigCache() })
 	return home
 }
+
+// TestPersistence_LinuxDefaultIsUserScope pins REQ-1: on a Linux host where
+// systemd-run is available and no config.toml overrides it, the default
+// MUST be launch_in_user_scope=true. Phase 2 will flip the default; this
+// test is RED against current v1.5.1 (userconfig.go pins the default at
+// false, userconfig_test.go:~1102 still asserts that pinning).
+//
+// Skip semantics: on hosts without systemd-run, requireSystemdRun skips
+// with "no systemd-run available: <err>" so macOS CI passes cleanly.
+func TestPersistence_LinuxDefaultIsUserScope(t *testing.T) {
+	requireSystemdRun(t)
+	home := isolatedHomeDir(t)
+	// Write an empty config so GetTmuxSettings() exercises the default
+	// branch (no [tmux] section, no launch_in_user_scope override).
+	cfg := filepath.Join(home, ".agent-deck", "config.toml")
+	if err := os.WriteFile(cfg, []byte(""), 0o644); err != nil {
+		t.Fatalf("write empty config: %v", err)
+	}
+	ClearUserConfigCache()
+
+	settings := GetTmuxSettings()
+	if !settings.GetLaunchInUserScope() {
+		t.Fatalf("TEST-03 RED: GetLaunchInUserScope() returned false on a Linux+systemd host with no config; expected true. Phase 2 must flip the default. systemd-run present, no config override.")
+	}
+}
+
+// TestPersistence_MacOSDefaultIsDirect pins REQ-1: on a host WITHOUT
+// systemd-run (macOS, BSD, minimal Linux), the default MUST remain false
+// and no error is logged. The test name says "MacOS" but its assertion
+// body runs on any host where systemd-run is absent.
+//
+// Linux+systemd behavior (documented implementer choice, 2026-04-14):
+// this test SKIPS on hosts where systemd-run is available. TEST-03
+// covers the Linux+systemd default. TEST-04's assertion body only runs
+// on hosts where systemd-run is absent. Rationale: GetTmuxSettings() in
+// Phase 2 will detect systemd-run at call time; asserting
+// "false on Linux+systemd" here would lock in the v1.5.1 bug and
+// collide with TEST-03 after Phase 2.
+func TestPersistence_MacOSDefaultIsDirect(t *testing.T) {
+	if _, err := exec.LookPath("systemd-run"); err == nil {
+		t.Skipf("systemd-run available; TEST-04 only asserts non-systemd behavior — see TEST-03 for Linux+systemd default")
+		return
+	}
+	home := isolatedHomeDir(t)
+	cfg := filepath.Join(home, ".agent-deck", "config.toml")
+	if err := os.WriteFile(cfg, []byte(""), 0o644); err != nil {
+		t.Fatalf("write empty config: %v", err)
+	}
+	ClearUserConfigCache()
+
+	settings := GetTmuxSettings()
+	if settings.GetLaunchInUserScope() {
+		t.Fatalf("TEST-04: on a host without systemd-run, GetLaunchInUserScope() must return false, got true")
+	}
+}
