@@ -80,49 +80,55 @@ All eight tests live in `internal/session/session_persistence_test.go`. Each is 
 
 ## Traceability
 
-Populated during roadmap creation. Every v1 requirement must map to exactly one phase.
+Every v1 requirement maps to exactly one phase. Mapping reflects WHERE the requirement is FIRST introduced or committed; tests authored in Phase 1 are re-validated as they turn green during Phases 2–3.
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| PERSIST-01 | TBD | Pending |
-| PERSIST-02 | TBD | Pending |
-| PERSIST-03 | TBD | Pending |
-| PERSIST-04 | TBD | Pending |
-| PERSIST-05 | TBD | Pending |
-| PERSIST-06 | TBD | Pending |
-| PERSIST-07 | TBD | Pending |
-| PERSIST-08 | TBD | Pending |
-| PERSIST-09 | TBD | Pending |
-| PERSIST-10 | TBD | Pending |
-| TEST-01 | TBD | Pending |
-| TEST-02 | TBD | Pending |
-| TEST-03 | TBD | Pending |
-| TEST-04 | TBD | Pending |
-| TEST-05 | TBD | Pending |
-| TEST-06 | TBD | Pending |
-| TEST-07 | TBD | Pending |
-| TEST-08 | TBD | Pending |
-| DOC-01 | TBD | Pending |
-| DOC-02 | TBD | Pending |
-| DOC-03 | TBD | Pending |
-| DOC-04 | TBD | Pending |
-| DOC-05 | TBD | Pending |
-| SCRIPT-01 | TBD | Pending |
-| SCRIPT-02 | TBD | Pending |
-| SCRIPT-03 | TBD | Pending |
-| SCRIPT-04 | TBD | Pending |
-| SCRIPT-05 | TBD | Pending |
-| SCRIPT-06 | TBD | Pending |
-| SCRIPT-07 | TBD | Pending |
-| OBS-01 | TBD | Pending |
-| OBS-02 | TBD | Pending |
-| OBS-03 | TBD | Pending |
+| PERSIST-01 | Phase 2 | Pending |
+| PERSIST-02 | Phase 2 | Pending |
+| PERSIST-03 | Phase 2 | Pending |
+| PERSIST-04 | Phase 2 | Pending |
+| PERSIST-05 | Phase 2 | Pending |
+| PERSIST-06 | Phase 2 | Pending |
+| PERSIST-07 | Phase 3 | Pending |
+| PERSIST-08 | Phase 3 | Pending |
+| PERSIST-09 | Phase 3 | Pending |
+| PERSIST-10 | Phase 3 | Pending |
+| TEST-01 | Phase 1 | Pending |
+| TEST-02 | Phase 1 | Pending |
+| TEST-03 | Phase 1 | Pending |
+| TEST-04 | Phase 1 | Pending |
+| TEST-05 | Phase 1 | Pending |
+| TEST-06 | Phase 1 | Pending |
+| TEST-07 | Phase 1 | Pending |
+| TEST-08 | Phase 1 | Pending |
+| DOC-01 | Phase 4 | Pending |
+| DOC-02 | Phase 4 | Pending |
+| DOC-03 | Phase 4 | Pending |
+| DOC-04 | Phase 4 | Pending |
+| DOC-05 | Phase 4 | Pending |
+| SCRIPT-01 | Phase 4 | Pending |
+| SCRIPT-02 | Phase 4 | Pending |
+| SCRIPT-03 | Phase 4 | Pending |
+| SCRIPT-04 | Phase 4 | Pending |
+| SCRIPT-05 | Phase 4 | Pending |
+| SCRIPT-06 | Phase 4 | Pending |
+| SCRIPT-07 | Phase 4 | Pending |
+| OBS-01 | Phase 2 | Pending |
+| OBS-02 | Phase 3 | Pending |
+| OBS-03 | Phase 3 | Pending |
 
 **Coverage:**
 - v1 requirements: 33 total
-- Mapped to phases: 0 (populated by roadmapper)
-- Unmapped: 33 (to be resolved)
+- Mapped to phases: 33 (100%)
+- Unmapped: 0
+
+**Per-phase distribution:**
+- Phase 1 (Persistence test scaffolding RED): 8 requirements (TEST-01..TEST-08)
+- Phase 2 (Cgroup isolation default — REQ-1 fix): 7 requirements (PERSIST-01..PERSIST-06, OBS-01)
+- Phase 3 (Resume-on-start and error-recovery — REQ-2 fix): 6 requirements (PERSIST-07..PERSIST-10, OBS-02, OBS-03)
+- Phase 4 (Verification harness, docs, and CI wiring): 12 requirements (DOC-01..DOC-05, SCRIPT-01..SCRIPT-07)
 
 ---
 *Requirements defined: 2026-04-14*
-*Last updated: 2026-04-14 after initial definition from SESSION-PERSISTENCE-SPEC.md*
+*Last updated: 2026-04-14 — traceability populated by roadmapper, 33/33 mapped*
