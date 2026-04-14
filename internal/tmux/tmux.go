@@ -35,6 +35,13 @@ var (
 	perfLog    = logging.ForComponent(logging.CompPerf)
 )
 
+// execCommand is a swappable seam that defaults to exec.Command. Tests
+// override it to inject failure into specific launcher names without
+// mutating host PATH or systemd state. Production callers always read
+// the default. See TestStartCommandSpec_FallsBackToDirect in
+// tmux_fallback_test.go for the contract.
+var execCommand = exec.Command
+
 type tmuxThemeStyle struct {
 	windowStyle       string
 	windowActiveStyle string
@@ -836,6 +843,28 @@ func (s *Session) startCommandSpec(workDir, command string) (string, []string) {
 	return "systemd-run", scopeArgs
 }
 
+// stripSystemdRunPrefix removes the leading systemd-run --user --scope wrap
+// from args produced by startCommandSpec when LaunchInUserScope is true,
+// returning the bare tmux args. Returns args unchanged if the shape doesn't
+// match — defensive against future startCommandSpec changes.
+//
+// Expected shape (matches startCommandSpec above):
+//
+//	[0]   "--user"
+//	[1]   "--scope"
+//	[2]   "--quiet"
+//	[3]   "--collect"
+//	[4]   "--unit"
+//	[5]   "<unit name>"
+//	[6]   "tmux"
+//	[7..] tmux args
+func stripSystemdRunPrefix(args []string) []string {
+	if len(args) >= 7 && args[6] == "tmux" {
+		return args[7:]
+	}
+	return args
+}
+
 // invalidateCache clears the CapturePane cache.
 // MUST be called after any action that might change terminal content.
 func (s *Session) invalidateCache() {
@@ -1347,7 +1376,7 @@ func (s *Session) Start(command string) error {
 	// process. This avoids the slow shell-wait-sendkeys path (~2s pane ready poll).
 	// Commands containing bash-specific syntax are wrapped for fish compatibility.
 	launcher, args := s.startCommandSpec(workDir, command)
-	cmd := exec.Command(launcher, args...)
+	cmd := execCommand(launcher, args...)
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		if launcher == "tmux" {
@@ -1360,14 +1389,32 @@ func (s *Session) Start(command string) error {
 				statusLog.Warn("tmux_start_retry_after_socket_recovery",
 					slog.String("session", s.Name),
 				)
-				output, err = exec.Command(launcher, args...).CombinedOutput()
+				output, err = execCommand(launcher, args...).CombinedOutput()
 			}
 		}
 	}
-	if err != nil {
-		if launcher == "systemd-run" {
-			return fmt.Errorf("failed to create tmux session via systemd user scope: %w (output: %s)", err, string(output))
+	if err != nil && launcher == "systemd-run" {
+		// systemd-run detection said yes but invocation failed (e.g. dbus
+		// down, lingering disabled, broken user manager). Log a structured
+		// warning and retry ONCE with the direct tmux launcher so session
+		// creation is never blocked. If the direct retry also fails, wrap
+		// both diagnostics in the returned error so operators can see why
+		// isolation was attempted and how the fallback broke.
+		statusLog.Warn("tmux_systemd_run_fallback",
+			slog.String("session", s.Name),
+			slog.String("error", err.Error()),
+			slog.String("output", string(output)))
+		directArgs := stripSystemdRunPrefix(args)
+		retryOutput, retryErr := execCommand("tmux", directArgs...).CombinedOutput()
+		if retryErr == nil {
+			output = retryOutput
+			err = nil
+		} else {
+			return fmt.Errorf("failed to create tmux session: systemd-run path: %w (output: %s); direct retry: %v (output: %s)",
+				err, string(output), retryErr, string(retryOutput))
 		}
+	}
+	if err != nil {
 		return fmt.Errorf("failed to create tmux session: %w (output: %s)", err, string(output))
 	}
 
