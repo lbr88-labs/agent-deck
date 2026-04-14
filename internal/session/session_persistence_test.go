@@ -45,9 +45,11 @@
 package session
 
 import (
+	"bytes"
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
+	"log/slog"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -1063,6 +1065,132 @@ func TestPersistence_SessionIDFallbackWhenJSONLMissing(t *testing.T) {
 	// value — Start() must NOT have overwritten it with a freshly minted UUID.
 	if inst.ClaudeSessionID != storedID {
 		t.Fatalf("SessionIDFallback RED: Start() overwrote ClaudeSessionID. want %q got %q. This is the 2026-04-14 divergence root cause: instance.go:566-567 mints a fresh UUID and clobbers the stored ID, so Claude and agent-deck track different UUIDs thereafter.", storedID, inst.ClaudeSessionID)
+	}
+}
+
+// captureSessionLog swaps the package-level sessionLog handle with a JSON-
+// backed bytes.Buffer logger for the duration of the test. Mirrors the
+// captureCgroupIsolationLog helper at userconfig_log_test.go:17-24 (Phase 2
+// OBS-01 pattern). Because sessionLog is a package-level var shared across
+// instance.go, callers must ensure tests using this helper do not run in
+// parallel with one another — the helper restores the original handler on
+// t.Cleanup, so sequential test-by-test usage is safe.
+func captureSessionLog(t *testing.T) *bytes.Buffer {
+	t.Helper()
+	buf := &bytes.Buffer{}
+	original := sessionLog
+	sessionLog = slog.New(slog.NewJSONHandler(buf, nil))
+	t.Cleanup(func() { sessionLog = original })
+	return buf
+}
+
+// resumeLogLines parses the capture buffer and returns all records whose
+// message has prefix "resume: ". Each returned map is the full decoded JSON
+// record so callers can assert on both msg and attrs.
+func resumeLogLines(t *testing.T, buf *bytes.Buffer) []map[string]any {
+	t.Helper()
+	var out []map[string]any
+	for _, line := range strings.Split(strings.TrimSpace(buf.String()), "\n") {
+		if line == "" {
+			continue
+		}
+		var rec map[string]any
+		if err := json.Unmarshal([]byte(line), &rec); err != nil {
+			t.Fatalf("decode log line %q: %v", line, err)
+		}
+		if m, ok := rec["msg"].(string); ok && strings.HasPrefix(m, "resume: ") {
+			out = append(out, rec)
+		}
+	}
+	return out
+}
+
+// TestPersistence_ResumeLogEmitted_ConversationDataPresent pins OBS-02
+// branch #1: when JSONL evidence exists for the stored ClaudeSessionID,
+// buildClaudeResumeCommand emits exactly one Info record
+// "resume: id=<id> reason=conversation_data_present".
+func TestPersistence_ResumeLogEmitted_ConversationDataPresent(t *testing.T) {
+	home := isolatedHomeDir(t)
+	inst := newClaudeInstanceForDispatch(t, home)
+	writeSyntheticJSONLTranscript(t, home, inst)
+	buf := captureSessionLog(t)
+
+	_ = inst.buildClaudeResumeCommand()
+
+	lines := resumeLogLines(t, buf)
+	if len(lines) != 1 {
+		t.Fatalf("OBS-02: want exactly 1 'resume: ' log record, got %d. Buffer: %q", len(lines), buf.String())
+	}
+	msg := lines[0]["msg"].(string)
+	wantPrefix := "resume: id=" + inst.ClaudeSessionID + " reason=conversation_data_present"
+	if !strings.Contains(msg, wantPrefix) {
+		t.Fatalf("OBS-02 message contract: want substring %q, got msg %q", wantPrefix, msg)
+	}
+	if got, _ := lines[0]["reason"].(string); got != "conversation_data_present" {
+		t.Fatalf("OBS-02 reason attr: want %q, got %q", "conversation_data_present", got)
+	}
+	if got, _ := lines[0]["claude_session_id"].(string); got != inst.ClaudeSessionID {
+		t.Fatalf("OBS-02 claude_session_id attr: want %q, got %q", inst.ClaudeSessionID, got)
+	}
+	if got, _ := lines[0]["path"].(string); got != inst.ProjectPath {
+		t.Fatalf("OBS-02 path attr: want %q, got %q", inst.ProjectPath, got)
+	}
+	if got, _ := lines[0]["instance_id"].(string); got != inst.ID {
+		t.Fatalf("OBS-02 instance_id attr: want %q, got %q", inst.ID, got)
+	}
+}
+
+// TestPersistence_ResumeLogEmitted_SessionIDFlagNoJSONL pins OBS-02 branch #2:
+// when no JSONL evidence exists but ClaudeSessionID is populated,
+// buildClaudeResumeCommand emits exactly one Info record
+// "resume: id=<id> reason=session_id_flag_no_jsonl".
+func TestPersistence_ResumeLogEmitted_SessionIDFlagNoJSONL(t *testing.T) {
+	home := isolatedHomeDir(t)
+	inst := newClaudeInstanceForDispatch(t, home)
+	// Do NOT write JSONL — absence is the point.
+	buf := captureSessionLog(t)
+
+	_ = inst.buildClaudeResumeCommand()
+
+	lines := resumeLogLines(t, buf)
+	if len(lines) != 1 {
+		t.Fatalf("OBS-02 (no-jsonl): want exactly 1 'resume: ' record, got %d. Buffer: %q", len(lines), buf.String())
+	}
+	msg := lines[0]["msg"].(string)
+	wantPrefix := "resume: id=" + inst.ClaudeSessionID + " reason=session_id_flag_no_jsonl"
+	if !strings.Contains(msg, wantPrefix) {
+		t.Fatalf("OBS-02 (no-jsonl) message: want substring %q, got %q", wantPrefix, msg)
+	}
+	if got, _ := lines[0]["reason"].(string); got != "session_id_flag_no_jsonl" {
+		t.Fatalf("OBS-02 (no-jsonl) reason: want %q, got %q", "session_id_flag_no_jsonl", got)
+	}
+}
+
+// TestPersistence_ResumeLogEmitted_FreshSession pins OBS-02 branch #3:
+// Start() on an Instance with EMPTY ClaudeSessionID emits exactly one Info
+// record "resume: none reason=fresh_session".
+func TestPersistence_ResumeLogEmitted_FreshSession(t *testing.T) {
+	requireTmux(t)
+	home := isolatedHomeDir(t)
+	setupStubClaudeOnPATH(t, home)
+	inst := newClaudeInstanceForDispatch(t, home)
+	inst.ClaudeSessionID = "" // force the fresh-session branch in Start()
+	buf := captureSessionLog(t)
+
+	if err := inst.Start(); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+
+	lines := resumeLogLines(t, buf)
+	if len(lines) != 1 {
+		t.Fatalf("OBS-02 (fresh): want exactly 1 'resume: ' record, got %d. Buffer: %q", len(lines), buf.String())
+	}
+	msg := lines[0]["msg"].(string)
+	if !strings.Contains(msg, "resume: none reason=fresh_session") {
+		t.Fatalf("OBS-02 (fresh) message: want substring %q, got %q", "resume: none reason=fresh_session", msg)
+	}
+	if got, _ := lines[0]["reason"].(string); got != "fresh_session" {
+		t.Fatalf("OBS-02 (fresh) reason: want %q, got %q", "fresh_session", got)
 	}
 }
 
