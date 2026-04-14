@@ -87,11 +87,11 @@ Plans:
 **Plans:** 5 plans
 
 Plans:
-- [ ] 03-01-PLAN.md — Regression guard TestPersistence_ClaudeSessionIDPreservedThroughStopError (PERSIST-08)
-- [ ] 03-02-PLAN.md — RED test TestPersistence_SessionIDFallbackWhenJSONLMissing (PERSIST-07, PERSIST-09)
-- [ ] 03-03-PLAN.md — Route Start/StartWithMessage through buildClaudeResumeCommand (PERSIST-07..09; TEST-05..08 GREEN)
-- [ ] 03-04-PLAN.md — Emit OBS-02 resume log line + three log-capture tests (OBS-02, OBS-03)
-- [ ] 03-05-PLAN.md — PERSIST-10 subsection in docs/session-id-lifecycle.md + Phase 3 sign-off in STATE.md (PERSIST-10)
+- [x] 03-01-PLAN.md — Regression guard TestPersistence_ClaudeSessionIDPreservedThroughStopError (PERSIST-08)
+- [x] 03-02-PLAN.md — RED test TestPersistence_SessionIDFallbackWhenJSONLMissing (PERSIST-07, PERSIST-09)
+- [x] 03-03-PLAN.md — Route Start/StartWithMessage through buildClaudeResumeCommand (PERSIST-07..09; TEST-05..08 GREEN)
+- [x] 03-04-PLAN.md — Emit OBS-02 resume log line + three log-capture tests (OBS-02, OBS-03)
+- [x] 03-05-PLAN.md — PERSIST-10 subsection in docs/session-id-lifecycle.md + Phase 3 sign-off in STATE.md (PERSIST-10)
 
 ### Phase 4: Verification harness, docs, and CI wiring
 
