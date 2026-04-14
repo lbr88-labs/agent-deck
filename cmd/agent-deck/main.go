@@ -293,6 +293,9 @@ func main() {
 		case "notify-daemon":
 			handleNotifyDaemon(args[1:])
 			return
+		case "feedback":
+			handleFeedback(args[1:])
+			return
 		case "debug-dump":
 			handleDebugDump()
 			return
