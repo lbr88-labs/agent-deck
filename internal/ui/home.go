@@ -204,6 +204,7 @@ type Home struct {
 	worktreeFinishDialog *WorktreeFinishDialog // For finishing worktree sessions (merge + cleanup)
 	feedbackDialog       *FeedbackDialog       // For in-app feedback popup (Phase 2)
 	feedbackState        *feedback.State       // Loaded at first show, avoids repeated disk I/O
+	feedbackSender       *feedback.Sender      // Sender constructed once in NewHome (Phase 3, per D-05)
 	watcherPanel         *WatcherPanel         // For showing watcher status and events
 	watcherEngine        *watcher.Engine       // nil until Init (D-07: lifecycle tied to TUI startup)
 
@@ -704,6 +705,7 @@ func NewHomeWithProfileAndMode(profile string) *Home {
 		sessionPickerDialog:  NewSessionPickerDialog(),
 		worktreeFinishDialog: NewWorktreeFinishDialog(),
 		feedbackDialog:       NewFeedbackDialog(),
+		feedbackSender:       feedback.NewSender(),
 		watcherPanel:         NewWatcherPanel(),
 		cursor:               0,
 		initialLoading:       true, // Show splash until sessions load
@@ -3133,7 +3135,7 @@ func (h *Home) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				feedback.RecordShown(fbState)
 				_ = feedback.SaveState(fbState)
 				h.feedbackState = fbState
-				h.feedbackDialog.Show(Version, fbState, feedback.NewSender())
+				h.feedbackDialog.Show(Version, fbState, h.feedbackSender)
 				h.feedbackDialog.SetSize(h.width, h.height)
 			}
 		}
@@ -5937,6 +5939,32 @@ func (h *Home) handleMainKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 
 		return h, cmd
+
+	case "ctrl+e":
+		// Open feedback dialog on demand (per D-11: bypasses ShouldShow -- user-initiated)
+		if h.feedbackDialog != nil {
+			st := h.feedbackState
+			if st == nil {
+				// Lazy-load state: h.feedbackState may be nil if the user already rated
+				// this version (auto-popup path skips loading state in that case).
+				// If load fails, create a safe default so Show() receives a non-nil pointer.
+				loaded, err := feedback.LoadState()
+				if err == nil {
+					h.feedbackState = loaded
+					st = loaded
+				} else {
+					uiLog.Warn("feedback: failed to load state for on-demand shortcut", "err", err)
+					h.feedbackState = &feedback.State{FeedbackEnabled: true, MaxShows: 3}
+					st = h.feedbackState
+				}
+			}
+			if h.feedbackSender == nil {
+				h.feedbackSender = feedback.NewSender()
+			}
+			h.feedbackDialog.Show(Version, st, h.feedbackSender)
+			h.feedbackDialog.SetSize(h.width, h.height)
+		}
+		return h, nil
 
 	case "1", "2", "3", "4", "5", "6", "7", "8", "9":
 		// Quick jump to Nth root group (1-indexed)
