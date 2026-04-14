@@ -2,7 +2,6 @@ package feedback_test
 
 import (
 	"fmt"
-	"os"
 	"testing"
 
 	"github.com/asheshgoplani/agent-deck/internal/feedback"
@@ -12,9 +11,7 @@ import (
 // TEST-01: ShouldShow returns true when this is a new version
 func TestShouldShow_NewVersion(t *testing.T) {
 	tmpDir := t.TempDir()
-	originalHome := os.Getenv("HOME")
-	os.Setenv("HOME", tmpDir)
-	defer os.Setenv("HOME", originalHome)
+	t.Setenv("HOME", tmpDir)
 
 	st := &feedback.State{
 		LastRatedVersion: "1.0.0",
@@ -32,9 +29,7 @@ func TestShouldShow_NewVersion(t *testing.T) {
 // TEST-02: ShouldShow returns false when already rated this version
 func TestShouldShow_AlreadyRated(t *testing.T) {
 	tmpDir := t.TempDir()
-	originalHome := os.Getenv("HOME")
-	os.Setenv("HOME", tmpDir)
-	defer os.Setenv("HOME", originalHome)
+	t.Setenv("HOME", tmpDir)
 
 	st := &feedback.State{
 		LastRatedVersion: "1.5.1",
@@ -52,9 +47,7 @@ func TestShouldShow_AlreadyRated(t *testing.T) {
 // TEST-03: ShouldShow returns false when user opted out
 func TestShouldShow_OptedOut(t *testing.T) {
 	tmpDir := t.TempDir()
-	originalHome := os.Getenv("HOME")
-	os.Setenv("HOME", tmpDir)
-	defer os.Setenv("HOME", originalHome)
+	t.Setenv("HOME", tmpDir)
 
 	st := &feedback.State{
 		LastRatedVersion: "1.0.0",
@@ -72,9 +65,7 @@ func TestShouldShow_OptedOut(t *testing.T) {
 // TEST-04: ShouldShow returns false when shown_count >= max_shows
 func TestShouldShow_MaxShows(t *testing.T) {
 	tmpDir := t.TempDir()
-	originalHome := os.Getenv("HOME")
-	os.Setenv("HOME", tmpDir)
-	defer os.Setenv("HOME", originalHome)
+	t.Setenv("HOME", tmpDir)
 
 	st := &feedback.State{
 		LastRatedVersion: "1.0.0",
@@ -92,9 +83,7 @@ func TestShouldShow_MaxShows(t *testing.T) {
 // TEST-05: RecordRating sets last_rated_version and resets shown_count
 func TestRecordRating_Valid(t *testing.T) {
 	tmpDir := t.TempDir()
-	originalHome := os.Getenv("HOME")
-	os.Setenv("HOME", tmpDir)
-	defer os.Setenv("HOME", originalHome)
+	t.Setenv("HOME", tmpDir)
 
 	st := &feedback.State{
 		LastRatedVersion: "1.0.0",
@@ -114,9 +103,7 @@ func TestRecordRating_Valid(t *testing.T) {
 // TEST-06: RecordOptOut sets feedback_enabled to false (persisted)
 func TestRecordOptOut(t *testing.T) {
 	tmpDir := t.TempDir()
-	originalHome := os.Getenv("HOME")
-	os.Setenv("HOME", tmpDir)
-	defer os.Setenv("HOME", originalHome)
+	t.Setenv("HOME", tmpDir)
 
 	st := &feedback.State{
 		LastRatedVersion: "1.0.0",
@@ -135,9 +122,7 @@ func TestRecordOptOut(t *testing.T) {
 // TEST-07: RecordShown increments shown_count (persisted)
 func TestRecordShown(t *testing.T) {
 	tmpDir := t.TempDir()
-	originalHome := os.Getenv("HOME")
-	os.Setenv("HOME", tmpDir)
-	defer os.Setenv("HOME", originalHome)
+	t.Setenv("HOME", tmpDir)
 
 	st := &feedback.State{
 		LastRatedVersion: "1.0.0",
@@ -177,9 +162,7 @@ func (e *fakeExitError) ExitCode() int { return e.code }
 // TEST-10: TestSend_GhAuthFailure verifies non-headless fallback copies to clipboard AND opens browser
 func TestSend_GhAuthFailure(t *testing.T) {
 	tmpDir := t.TempDir()
-	originalHome := os.Getenv("HOME")
-	os.Setenv("HOME", tmpDir)
-	defer os.Setenv("HOME", originalHome)
+	t.Setenv("HOME", tmpDir)
 
 	clipboardCalled := false
 	clipboardText := ""
@@ -215,9 +198,7 @@ func TestSend_GhAuthFailure(t *testing.T) {
 // TEST-11: TestSend_Headless verifies headless mode copies to clipboard only (no browser)
 func TestSend_Headless(t *testing.T) {
 	tmpDir := t.TempDir()
-	originalHome := os.Getenv("HOME")
-	os.Setenv("HOME", tmpDir)
-	defer os.Setenv("HOME", originalHome)
+	t.Setenv("HOME", tmpDir)
 
 	clipboardCalled := false
 	browserCalled := false
