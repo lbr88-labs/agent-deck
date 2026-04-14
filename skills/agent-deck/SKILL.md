@@ -66,6 +66,7 @@ agent-deck session output "Project"
 | `agent-deck add --worktree <branch>` | Create session in git worktree |
 | `agent-deck worktree list` | List worktrees with sessions |
 | `agent-deck worktree cleanup` | Find orphaned worktrees/sessions |
+| `agent-deck feedback` | Submit feedback (opens rating prompt + optional comment) |
 
 **Status:** `●` running | `◐` waiting | `○` idle | `✕` error
 
@@ -198,6 +199,7 @@ agent-deck remove "Codex Review" && agent-deck remove "Gemini Arch"
 |-----|--------|
 | `?` | Help overlay |
 | `Ctrl+Q` | Detach (keep tmux running) |
+| `Ctrl+E` | Open feedback dialog |
 | `q` | Quit |
 
 ## MCP Management
