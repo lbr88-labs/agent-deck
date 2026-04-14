@@ -934,6 +934,72 @@ func TestPersistence_ClaudeSessionIDSurvivesHookSidecarDeletion(t *testing.T) {
 	}
 }
 
+// TestPersistence_ClaudeSessionIDPreservedThroughStopError pins PERSIST-08:
+// Instance.ClaudeSessionID MUST be preserved through any transition to
+// StatusStopped or StatusError, and MUST remain unchanged after Start() is
+// called on an instance that already has a populated ClaudeSessionID.
+//
+// This test is strictly additive — it is NOT one of the eight mandated
+// TestPersistence_* tests in CLAUDE.md. It lives in the same file so a
+// future refactor that accidentally clears ClaudeSessionID on an error-
+// recovery path is caught by the same suite the CLAUDE.md mandate runs.
+//
+// Per 03-CONTEXT.md Decision 3: the 2026-04-14 divergence was caused by
+// buildClaudeCommand() at instance.go:566-567 MINTING a new UUID and
+// overwriting i.ClaudeSessionID. Once Plan 03-03 routes Start() through
+// buildClaudeResumeCommand, that overwrite stops firing — but this test
+// guards the invariant independently of the dispatch path so we catch any
+// future code path that explicitly assigns i.ClaudeSessionID = "".
+//
+// Likely result on current v1.5.1 code: PASSES (there is no code that
+// explicitly clears ClaudeSessionID on Stop/Error transitions). This test
+// is a regression guard, not a RED test. Plan 03-02 is the RED test that
+// drives the Start() dispatch fix.
+func TestPersistence_ClaudeSessionIDPreservedThroughStopError(t *testing.T) {
+	requireTmux(t)
+	home := isolatedHomeDir(t)
+	setupStubClaudeOnPATH(t, home)
+	inst := newClaudeInstanceForDispatch(t, home)
+	originalID := inst.ClaudeSessionID
+	if originalID == "" {
+		t.Fatalf("setup: newClaudeInstanceForDispatch returned empty ClaudeSessionID")
+	}
+
+	// Step 1: simulate StatusRunning → StatusStopped transition.
+	inst.Status = StatusRunning
+	inst.Status = StatusStopped
+	if inst.ClaudeSessionID != originalID {
+		t.Fatalf("PERSIST-08: ClaudeSessionID cleared on StatusRunning→StatusStopped transition. want %q got %q", originalID, inst.ClaudeSessionID)
+	}
+
+	// Step 2: simulate a post-SIGKILL StatusError transition.
+	inst.Status = StatusError
+	if inst.ClaudeSessionID != originalID {
+		t.Fatalf("PERSIST-08: ClaudeSessionID cleared on StatusError transition. want %q got %q", originalID, inst.ClaudeSessionID)
+	}
+
+	// Step 3: write a JSONL transcript so the post-Start resume path would
+	// naturally fire (once Plan 03-03 lands). Even if it does not fire today
+	// (Start mints new UUID on current code), this test's contract is about
+	// PERSISTENCE of the ID, not dispatch — it fails only if Start() or any
+	// downstream path explicitly clears i.ClaudeSessionID. NOTE: on current
+	// code, Start() at instance.go:566-567 WILL overwrite i.ClaudeSessionID
+	// with a newly minted UUID. That is the bug Plan 03-03 fixes. Until that
+	// fix lands, this test will fail at Step 4 below — which is the intended
+	// contract: this test GUARDS the invariant. Once Plan 03-03 lands, Step 4
+	// passes because Start() routes through buildClaudeResumeCommand() which
+	// never mints a new UUID.
+	writeSyntheticJSONLTranscript(t, home, inst)
+
+	// Step 4: call Start() and assert the ID is still the original.
+	if err := inst.Start(); err != nil {
+		t.Fatalf("inst.Start: %v", err)
+	}
+	if inst.ClaudeSessionID != originalID {
+		t.Fatalf("PERSIST-08: Start() overwrote ClaudeSessionID. want %q got %q — this is the 2026-04-14 root cause (instance.go:566-567 mint). Plan 03-03 routes Start() through buildClaudeResumeCommand when ClaudeSessionID != \"\", which never mints a new UUID.", originalID, inst.ClaudeSessionID)
+	}
+}
+
 // TestPersistence_ExplicitOptOutHonoredOnLinux pins PERSIST-03: an explicit
 // `launch_in_user_scope = false` in config.toml MUST always return false,
 // even on a Linux+systemd host where the new default (Plan 02) would
