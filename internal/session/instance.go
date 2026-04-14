@@ -1880,7 +1880,15 @@ func (i *Instance) Start() error {
 	var command string
 	switch {
 	case IsClaudeCompatible(i.Tool):
-		command = i.buildClaudeCommand(i.Command)
+		// REQ-2 dispatch: if a Claude session id is already bound to this
+		// instance, resume it rather than minting a fresh UUID via
+		// buildClaudeCommand (instance.go:566-567). Mirrors Restart()'s
+		// respawn-pane branch at instance.go:3788. See CONTEXT Decision 1.
+		if i.ClaudeSessionID != "" {
+			command = i.buildClaudeResumeCommand()
+		} else {
+			command = i.buildClaudeCommand(i.Command)
+		}
 	case i.Tool == "gemini":
 		command = i.buildGeminiCommand(i.Command)
 	case i.Tool == "opencode":
@@ -1999,7 +2007,18 @@ func (i *Instance) StartWithMessage(message string) error {
 	var command string
 	switch {
 	case IsClaudeCompatible(i.Tool):
-		command = i.buildClaudeCommand(i.Command)
+		// REQ-2 dispatch: resume over mint when a session id is bound. The
+		// initial message passed into StartWithMessage is delivered via the
+		// existing post-start PTY send path later in this function (see
+		// sendMessageWhenReady below) — not embedded in the command string —
+		// so buildClaudeResumeCommand (which does not accept a message
+		// argument) is a drop-in replacement here, matching the Start()
+		// dispatch at instance.go:1881. See CONTEXT Decision 1 + Decision 11.
+		if i.ClaudeSessionID != "" {
+			command = i.buildClaudeResumeCommand()
+		} else {
+			command = i.buildClaudeCommand(i.Command)
+		}
 	case i.Tool == "gemini":
 		command = i.buildGeminiCommand(i.Command)
 	case i.Tool == "opencode":
