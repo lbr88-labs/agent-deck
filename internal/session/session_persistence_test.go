@@ -47,6 +47,7 @@ package session
 import (
 	"crypto/rand"
 	"encoding/hex"
+	"encoding/json"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -521,4 +522,174 @@ func TestPersistence_TmuxDiesWithoutUserScope(t *testing.T) {
 		"Pid cgroup after kill: %q. "+
 		"The opt-out path must remain vulnerable so any future 'fix' that silently masks opt-outs is caught. Expected death.",
 		pid, finalCg)
+}
+
+// ----------------------------------------------------------------------------
+// Wave 3 (Plan 03): resume-dispatch helpers + TEST-05, TEST-06, TEST-07, TEST-08
+// ----------------------------------------------------------------------------
+//
+// These tests exercise the REAL Claude dispatch paths (`(*Instance).Start()`
+// and `(*Instance).Restart()`) by placing a stub `claude` binary on PATH and
+// capturing the argv it receives when the dispatch spawns it inside a real
+// tmux session. The contract under test is REQ-2: every path that starts a
+// Claude session on an Instance with a non-empty `ClaudeSessionID` and an
+// existing JSONL transcript MUST produce `claude --resume <id>`; a fresh
+// session (no transcript) MUST produce `claude --session-id <id>`.
+//
+// Per CLAUDE.md no-mocking rule: tmux and shell spawn are real binaries; only
+// the `claude` binary itself is a stub (explicitly carved out in CONTEXT.md
+// because these tests assert on the spawned command line, not Claude's
+// behavior).
+
+// readCapturedClaudeArgv polls the stub claude argv log until it is non-empty
+// (stub has been spawned and wrote its argv), then returns the argv lines.
+// Fatals if timeout elapses with empty log (dispatch never spawned claude).
+func readCapturedClaudeArgv(t *testing.T, logPath string, timeout time.Duration) []string {
+	t.Helper()
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		data, err := os.ReadFile(logPath)
+		if err == nil && len(data) > 0 {
+			var argv []string
+			for _, line := range strings.Split(string(data), "\n") {
+				line = strings.TrimSpace(line)
+				if line != "" {
+					argv = append(argv, line)
+				}
+			}
+			if len(argv) > 0 {
+				return argv
+			}
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	t.Fatalf("readCapturedClaudeArgv: no argv captured in %s at %s — stub claude was never spawned; check PATH prepending and tmux session creation", timeout, logPath)
+	return nil // unreachable
+}
+
+// newClaudeInstanceForDispatch constructs an *Instance wired for Claude
+// dispatch testing. It:
+//   - creates a real project directory under the isolated HOME,
+//   - calls NewInstanceWithTool so inst.tmuxSession is initialized,
+//   - overrides inst.ID with a deterministic-per-test hex suffix so the
+//     hook-sidecar path is predictable (TEST-07 sanity assertion),
+//   - generates a uuid-shaped inst.ClaudeSessionID from 16 random bytes,
+//   - sets inst.Command = "claude" so buildClaudeCommandWithMessage takes
+//     the `baseCommand == "claude"` branch,
+//   - registers t.Cleanup to kill the tmux session via the safe (Name-
+//     scoped) (*tmux.Session).Kill() path.
+func newClaudeInstanceForDispatch(t *testing.T, home string) *Instance {
+	t.Helper()
+	var idb [4]byte
+	if _, err := rand.Read(idb[:]); err != nil {
+		t.Fatalf("newClaudeInstanceForDispatch: rand.Read(idb): %v", err)
+	}
+	var sidb [16]byte
+	if _, err := rand.Read(sidb[:]); err != nil {
+		t.Fatalf("newClaudeInstanceForDispatch: rand.Read(sidb): %v", err)
+	}
+	sidHex := hex.EncodeToString(sidb[:])
+	sid := sidHex[0:8] + "-" + sidHex[8:12] + "-" + sidHex[12:16] + "-" + sidHex[16:20] + "-" + sidHex[20:32]
+
+	projectPath := filepath.Join(home, "project")
+	if err := os.MkdirAll(projectPath, 0o755); err != nil {
+		t.Fatalf("newClaudeInstanceForDispatch: mkdir project: %v", err)
+	}
+	title := "persist-test-" + hex.EncodeToString(idb[:])
+	inst := NewInstanceWithTool(title, projectPath, "claude")
+	// Override auto-generated ID so the sidecar path is deterministic for
+	// TEST-07 and log messages reference a recognizable test ID. Note: the
+	// tmux session Name was set by NewInstanceWithTool from the title — it
+	// remains unique via the "persist-test-<hex>" suffix regardless of ID.
+	inst.ID = "test-" + hex.EncodeToString(idb[:])
+	inst.ClaudeSessionID = sid
+	inst.Command = "claude"
+
+	t.Cleanup(func() {
+		// inst.tmuxSession.Kill() targets the unique session Name — SAFE;
+		// does NOT call bare `tmux kill-server`.
+		if inst.tmuxSession != nil {
+			_ = inst.tmuxSession.Kill()
+		}
+	})
+	return inst
+}
+
+// setupStubClaudeOnPATH drops the writeStubClaudeBinary helper's stub script
+// at <home>/bin/claude, sets AGENTDECK_TEST_ARGV_LOG so the stub logs argv to
+// a known file, and prepends <home>/bin to PATH so `claude` resolves to the
+// stub when tmux spawns the command. Returns the argv log path.
+func setupStubClaudeOnPATH(t *testing.T, home string) string {
+	t.Helper()
+	binDir := filepath.Join(home, "bin")
+	if err := os.MkdirAll(binDir, 0o755); err != nil {
+		t.Fatalf("setupStubClaudeOnPATH: mkdir binDir: %v", err)
+	}
+	writeStubClaudeBinary(t, binDir)
+	argvLog := filepath.Join(home, "claude-argv.log")
+	t.Setenv("AGENTDECK_TEST_ARGV_LOG", argvLog)
+	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	return argvLog
+}
+
+// writeSyntheticJSONLTranscript writes a 2-line synthetic Claude JSONL
+// transcript at ~/.claude/projects/<ConvertToClaudeDirName(ProjectPath)>/<ClaudeSessionID>.jsonl
+// under the isolated HOME. Each line embeds a literal "sessionId" field so
+// sessionHasConversationData() returns true (it greps for `"sessionId"`).
+// Returns the full transcript path. Registers t.Cleanup to remove it.
+func writeSyntheticJSONLTranscript(t *testing.T, home string, inst *Instance) string {
+	t.Helper()
+	projectDirName := ConvertToClaudeDirName(inst.ProjectPath)
+	dir := filepath.Join(home, ".claude", "projects", projectDirName)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatalf("writeSyntheticJSONLTranscript: mkdir projects: %v", err)
+	}
+	path := filepath.Join(dir, inst.ClaudeSessionID+".jsonl")
+	// sessionHasConversationData scans for the literal substring `"sessionId"`.
+	// Embedding it in each line guarantees a real-conversation signal.
+	lines := []map[string]interface{}{
+		{"sessionId": inst.ClaudeSessionID, "role": "user", "content": "hello"},
+		{"sessionId": inst.ClaudeSessionID, "role": "assistant", "content": "hi back"},
+	}
+	var buf []byte
+	for _, ln := range lines {
+		b, err := json.Marshal(ln)
+		if err != nil {
+			t.Fatalf("writeSyntheticJSONLTranscript: marshal jsonl: %v", err)
+		}
+		buf = append(buf, b...)
+		buf = append(buf, '\n')
+	}
+	if err := os.WriteFile(path, buf, 0o644); err != nil {
+		t.Fatalf("writeSyntheticJSONLTranscript: write jsonl: %v", err)
+	}
+	t.Cleanup(func() { _ = os.Remove(path) })
+	return path
+}
+
+// TestPersistence_FreshSessionUsesSessionIDNotResume pins REQ-2 fresh-session
+// contract: buildClaudeResumeCommand() on an Instance with no JSONL transcript
+// MUST produce "claude --session-id <id>", NOT "claude --resume <id>". Passing
+// --resume for a non-existent conversation id causes claude to exit with
+// "No conversation found".
+//
+// Per CONTEXT.md FAIL-or-PASS qualifier: current v1.5.1 code at
+// internal/session/instance.go:4150 routes this correctly via
+// sessionHasConversationData() — so this test PASSES today as a regression
+// guard. The unambiguous failure message below protects against future
+// regressions that would flip the branch. This test does NOT exercise the
+// Start() dispatch path (TEST-06 does); it guards the helper contract only.
+func TestPersistence_FreshSessionUsesSessionIDNotResume(t *testing.T) {
+	home := isolatedHomeDir(t)
+	inst := newClaudeInstanceForDispatch(t, home)
+	// NO JSONL transcript — fresh session.
+
+	cmdLine := inst.buildClaudeResumeCommand()
+
+	if !strings.Contains(cmdLine, "--session-id "+inst.ClaudeSessionID) {
+		t.Fatalf("TEST-08: buildClaudeResumeCommand() with NO JSONL transcript MUST use '--session-id %s'. This prevents 'No conversation found' errors on first start. Got: %q", inst.ClaudeSessionID, cmdLine)
+	}
+	if strings.Contains(cmdLine, "--resume") {
+		t.Fatalf("TEST-08: buildClaudeResumeCommand() must NOT use --resume for a fresh session (no JSONL transcript exists at ~/.claude/projects/<hash>/<id>.jsonl). Got: %q", cmdLine)
+	}
 }
