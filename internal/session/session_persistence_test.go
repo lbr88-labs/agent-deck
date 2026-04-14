@@ -1000,6 +1000,72 @@ func TestPersistence_ClaudeSessionIDPreservedThroughStopError(t *testing.T) {
 	}
 }
 
+// TestPersistence_SessionIDFallbackWhenJSONLMissing pins CONTEXT Decision 5:
+// when Instance.ClaudeSessionID is populated but NO JSONL transcript exists
+// under ~/.claude/projects/<hash>/, inst.Start() MUST produce
+// "claude --session-id <stored-id>" — NEVER "--resume" and NEVER a newly
+// minted UUID.
+//
+// This is the regression test for the 2026-04-14 conductor-host divergence:
+// stored ClaudeSessionID = f1e103df-... but Claude was writing to a DIFFERENT
+// UUID (b9403638-...) that had never been captured. Root cause: current
+// Start() at instance.go:1883 routes through buildClaudeCommand, which at
+// line 566-567 unconditionally mints a fresh UUID and overwrites
+// i.ClaudeSessionID. The fix (Plan 03-03) routes Start() through
+// buildClaudeResumeCommand when ClaudeSessionID != "". That helper produces
+// --session-id <stored-id> (no mint) when the JSONL is absent — see
+// instance.go:4175-4177.
+//
+// Expected on CURRENT v1.5.1 code: RED (FAIL). Start() mints a NEW UUID and
+// captured argv contains that new UUID, not the stored "deadbeef-..." one.
+// After Plan 03-03: GREEN.
+func TestPersistence_SessionIDFallbackWhenJSONLMissing(t *testing.T) {
+	requireTmux(t)
+	home := isolatedHomeDir(t)
+	argvLog := setupStubClaudeOnPATH(t, home)
+	inst := newClaudeInstanceForDispatch(t, home)
+
+	// Pin a recognizable stored ID so the assertion messages are unambiguous.
+	// The value is a valid-shaped uuid so any downstream parser tolerates it.
+	storedID := "deadbeef-fake-uuid-0000-000000000001"
+	inst.ClaudeSessionID = storedID
+
+	// Explicitly DO NOT call writeSyntheticJSONLTranscript — the absence of
+	// the JSONL is the entire point of this test. Verify no JSONL exists for
+	// this stored ID under the isolated HOME.
+	projectDirName := ConvertToClaudeDirName(inst.ProjectPath)
+	jsonlPath := filepath.Join(home, ".claude", "projects", projectDirName, storedID+".jsonl")
+	if _, err := os.Stat(jsonlPath); !os.IsNotExist(err) {
+		t.Fatalf("setup: JSONL already exists at %s (want ENOENT): err=%v", jsonlPath, err)
+	}
+
+	if err := inst.Start(); err != nil {
+		t.Fatalf("inst.Start: %v", err)
+	}
+
+	argv := readCapturedClaudeArgv(t, argvLog, 3*time.Second)
+	joined := strings.Join(argv, " ")
+
+	// Assertion A: argv must contain the stored ID exactly.
+	if !strings.Contains(joined, storedID) {
+		t.Fatalf("SessionIDFallback RED: captured argv does not contain stored ClaudeSessionID %q — the stored ID was discarded / overwritten. Root cause: instance.go:566-567 mints a fresh UUID. Argv: %v", storedID, argv)
+	}
+
+	// Assertion B: argv must contain --session-id (the no-JSONL fallback), NOT --resume.
+	if !strings.Contains(joined, "--session-id "+storedID) {
+		t.Fatalf("SessionIDFallback RED: captured argv does not contain '--session-id %s'. With no JSONL present, buildClaudeResumeCommand must produce --session-id, not --resume. Argv: %v", storedID, argv)
+	}
+	if strings.Contains(joined, "--resume") {
+		t.Fatalf("SessionIDFallback RED: captured argv contains --resume despite no JSONL transcript. This would cause claude 'No conversation found' errors on startup. Argv: %v", argv)
+	}
+
+	// Assertion C: inst.ClaudeSessionID must still equal the original stored
+	// value — Start() must NOT have overwritten it with a freshly minted UUID.
+	if inst.ClaudeSessionID != storedID {
+		t.Fatalf("SessionIDFallback RED: Start() overwrote ClaudeSessionID. want %q got %q. This is the 2026-04-14 divergence root cause: instance.go:566-567 mints a fresh UUID and clobbers the stored ID, so Claude and agent-deck track different UUIDs thereafter.", storedID, inst.ClaudeSessionID)
+	}
+}
+
 // TestPersistence_ExplicitOptOutHonoredOnLinux pins PERSIST-03: an explicit
 // `launch_in_user_scope = false` in config.toml MUST always return false,
 // even on a Linux+systemd host where the new default (Plan 02) would
