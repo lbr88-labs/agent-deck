@@ -1110,6 +1110,14 @@ func resumeLogLines(t *testing.T, buf *bytes.Buffer) []map[string]any {
 // buildClaudeResumeCommand emits exactly one Info record
 // "resume: id=<id> reason=conversation_data_present".
 func TestPersistence_ResumeLogEmitted_ConversationDataPresent(t *testing.T) {
+	// [Rule 3 — Blocking fix] Mirror setupStubClaudeOnPATH's CLAUDE_CONFIG_DIR
+	// unset: GetClaudeConfigDir() (instance.go:4848) short-circuits to the env
+	// var when set, which on this executor points at the real user ~/.claude
+	// instead of the isolated HOME. Without this unset, sessionHasConversationData
+	// reads from the wrong dir and returns false, flipping the reason to
+	// session_id_flag_no_jsonl (observed in Task 2 first run). See Plan 03-03
+	// SUMMARY's identical deviation note at session_persistence_test.go:681.
+	t.Setenv("CLAUDE_CONFIG_DIR", "")
 	home := isolatedHomeDir(t)
 	inst := newClaudeInstanceForDispatch(t, home)
 	writeSyntheticJSONLTranscript(t, home, inst)

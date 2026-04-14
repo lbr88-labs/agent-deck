@@ -1884,9 +1884,19 @@ func (i *Instance) Start() error {
 		// instance, resume it rather than minting a fresh UUID via
 		// buildClaudeCommand (instance.go:566-567). Mirrors Restart()'s
 		// respawn-pane branch at instance.go:3788. See CONTEXT Decision 1.
+		//
+		// OBS-02 emission: buildClaudeResumeCommand emits its own "resume: "
+		// Info line (conversation_data_present / session_id_flag_no_jsonl).
+		// The fresh-session line is emitted here so every Claude start
+		// produces exactly one "resume: " record in the session log. See
+		// CONTEXT Decision 2.
 		if i.ClaudeSessionID != "" {
 			command = i.buildClaudeResumeCommand()
 		} else {
+			sessionLog.Info("resume: none reason=fresh_session",
+				slog.String("instance_id", i.ID),
+				slog.String("path", i.ProjectPath),
+				slog.String("reason", "fresh_session"))
 			command = i.buildClaudeCommand(i.Command)
 		}
 	case i.Tool == "gemini":
@@ -2014,9 +2024,18 @@ func (i *Instance) StartWithMessage(message string) error {
 		// so buildClaudeResumeCommand (which does not accept a message
 		// argument) is a drop-in replacement here, matching the Start()
 		// dispatch at instance.go:1881. See CONTEXT Decision 1 + Decision 11.
+		//
+		// OBS-02 emission: buildClaudeResumeCommand emits the resume line
+		// itself; the fresh-session line is emitted here so StartWithMessage
+		// produces exactly one "resume: " record per call (matching Start()).
+		// See CONTEXT Decision 2.
 		if i.ClaudeSessionID != "" {
 			command = i.buildClaudeResumeCommand()
 		} else {
+			sessionLog.Info("resume: none reason=fresh_session",
+				slog.String("instance_id", i.ID),
+				slog.String("path", i.ProjectPath),
+				slog.String("reason", "fresh_session"))
 			command = i.buildClaudeCommand(i.Command)
 		}
 	case i.Tool == "gemini":
@@ -4173,6 +4192,24 @@ func (i *Instance) buildClaudeResumeCommand() string {
 		slog.String("path", i.ProjectPath),
 		slog.Bool("use_resume", useResume),
 	)
+
+	// OBS-02: per-call grep-stable Info record. One emission per
+	// buildClaudeResumeCommand call — NOT sync.Once'd. See CONTEXT Decision 2.
+	// Every Start / StartWithMessage / Restart dispatch that routes through
+	// this helper produces exactly one "resume: id=<id> reason=<why>" line.
+	if useResume {
+		sessionLog.Info("resume: id="+i.ClaudeSessionID+" reason=conversation_data_present",
+			slog.String("instance_id", i.ID),
+			slog.String("claude_session_id", i.ClaudeSessionID),
+			slog.String("path", i.ProjectPath),
+			slog.String("reason", "conversation_data_present"))
+	} else {
+		sessionLog.Info("resume: id="+i.ClaudeSessionID+" reason=session_id_flag_no_jsonl",
+			slog.String("instance_id", i.ID),
+			slog.String("claude_session_id", i.ClaudeSessionID),
+			slog.String("path", i.ProjectPath),
+			slog.String("reason", "session_id_flag_no_jsonl"))
+	}
 
 	// Build permission flag (--dangerously-skip-permissions wins over --permission-mode auto wins over --allow-...)
 	dangerousFlag := ""
