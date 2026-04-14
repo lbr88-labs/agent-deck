@@ -1098,9 +1098,15 @@ func TestGetTmuxSettings_LaunchInUserScope_Default(t *testing.T) {
 	}
 	ClearUserConfigCache()
 
+	// Phase 2 / Plan 02: LaunchInUserScope migrated from bool to *bool.
+	// "Field absent" must decode to nil so GetLaunchInUserScope() can fall
+	// back to isSystemdUserScopeAvailable(). The host-aware default value
+	// itself is covered by TestPersistence_LinuxDefaultIsUserScope (TEST-03)
+	// and TestPersistence_MacOSDefaultIsDirect (TEST-04); this test only
+	// pins the decoder contract.
 	settings := GetTmuxSettings()
-	if settings.GetLaunchInUserScope() {
-		t.Error("GetLaunchInUserScope should default to false when not set")
+	if settings.LaunchInUserScope != nil {
+		t.Errorf("LaunchInUserScope should be nil when not set in config; got non-nil pointing to %v", *settings.LaunchInUserScope)
 	}
 }
 

@@ -933,3 +933,125 @@ func TestPersistence_ClaudeSessionIDSurvivesHookSidecarDeletion(t *testing.T) {
 		t.Fatalf("TEST-07 RED: after deleting hook sidecar at %s, inst.Start() must still spawn 'claude --resume %s' because ClaudeSessionID lives in instance storage, not the sidecar. Got argv: %v. Root cause: Start() bypasses buildClaudeResumeCommand — same as TEST-06. Phase 3 fix will make both tests GREEN.", sidecarPath, inst.ClaudeSessionID, argv)
 	}
 }
+
+// TestPersistence_ExplicitOptOutHonoredOnLinux pins PERSIST-03: an explicit
+// `launch_in_user_scope = false` in config.toml MUST always return false,
+// even on a Linux+systemd host where the new default (Plan 02) would
+// otherwise return true. This closes the gap that TEST-02 alone does not
+// cover — TEST-02 spawns tmux directly with the field, never exercising
+// the config-load path.
+//
+// Skip semantics: requireSystemdRun skips cleanly on non-systemd hosts
+// with "no systemd-run available:" in the message.
+//
+// Four-arm structure:
+//   - Arm 1: empty config → default fires → MUST be true on Linux+systemd.
+//   - Arm 2: explicit false → MUST stay false even though default would be true.
+//   - Arm 3: explicit true → MUST be true everywhere.
+//   - Arm 4: direct *bool pointer-state assertions (W2 checker fix). Locks
+//     the decoder contract at the field level so a future refactor cannot
+//     silently erase the nil-vs-zero distinction.
+//
+// RED note: against current code (LaunchInUserScope is a plain bool), arm 1
+// fails AND arm 4 fails to compile (settings.LaunchInUserScope != nil is a
+// type error). After Plan 02 Task 2 flips the default and migrates the
+// field to *bool, this test goes GREEN across all four arms.
+func TestPersistence_ExplicitOptOutHonoredOnLinux(t *testing.T) {
+	requireSystemdRun(t)
+
+	// Arm 1: empty config → default fires → MUST be true on Linux+systemd.
+	// This is the same assertion as TEST-03 but co-located so a regression
+	// is caught here too.
+	t.Run("empty_config_defaults_true", func(t *testing.T) {
+		home := isolatedHomeDir(t)
+		cfg := filepath.Join(home, ".agent-deck", "config.toml")
+		if err := os.WriteFile(cfg, []byte(""), 0o644); err != nil {
+			t.Fatalf("write empty config: %v", err)
+		}
+		ClearUserConfigCache()
+		resetSystemdDetectionCacheForTest()
+		if got := GetTmuxSettings().GetLaunchInUserScope(); !got {
+			t.Fatalf("EXPLICIT-OPT-OUT-RED arm1: empty config on Linux+systemd returned false, want true (default flip not in)")
+		}
+	})
+
+	// Arm 2: explicit false → MUST stay false even though default would be true.
+	t.Run("explicit_false_overrides_default", func(t *testing.T) {
+		home := isolatedHomeDir(t)
+		cfg := filepath.Join(home, ".agent-deck", "config.toml")
+		body := "[tmux]\nlaunch_in_user_scope = false\n"
+		if err := os.WriteFile(cfg, []byte(body), 0o644); err != nil {
+			t.Fatalf("write config.toml: %v", err)
+		}
+		ClearUserConfigCache()
+		resetSystemdDetectionCacheForTest()
+		if got := GetTmuxSettings().GetLaunchInUserScope(); got {
+			t.Fatalf("EXPLICIT-OPT-OUT-RED arm2: GetLaunchInUserScope()=true with explicit false override; PERSIST-03 violated")
+		}
+	})
+
+	// Arm 3: explicit true → MUST be true everywhere (sanity for the symmetry).
+	t.Run("explicit_true_overrides", func(t *testing.T) {
+		home := isolatedHomeDir(t)
+		cfg := filepath.Join(home, ".agent-deck", "config.toml")
+		body := "[tmux]\nlaunch_in_user_scope = true\n"
+		if err := os.WriteFile(cfg, []byte(body), 0o644); err != nil {
+			t.Fatalf("write config.toml: %v", err)
+		}
+		ClearUserConfigCache()
+		resetSystemdDetectionCacheForTest()
+		if got := GetTmuxSettings().GetLaunchInUserScope(); !got {
+			t.Fatalf("EXPLICIT-OPT-OUT-RED arm3: explicit true override returned false")
+		}
+	})
+
+	// Arm 4: direct *bool pointer-state assertions. Locks the decoder
+	// contract at the field level so a future refactor cannot silently
+	// erase the nil-vs-zero distinction. This is the W2 fix from the
+	// checker review — three sub-assertions (4a/4b/4c) prove the decoder
+	// honors nil/false/true at the field level, not just via the getter.
+	t.Run("pointer_state_locked", func(t *testing.T) {
+		// 4a: empty config → field absent → pointer MUST be nil.
+		home := isolatedHomeDir(t)
+		cfg := filepath.Join(home, ".agent-deck", "config.toml")
+		if err := os.WriteFile(cfg, []byte(""), 0o644); err != nil {
+			t.Fatalf("write empty config: %v", err)
+		}
+		ClearUserConfigCache()
+		resetSystemdDetectionCacheForTest()
+		settings := GetTmuxSettings()
+		if settings.LaunchInUserScope != nil {
+			t.Fatalf("EXPLICIT-OPT-OUT-RED arm4a: expected nil pointer for absent field, got non-nil pointing to %v", *settings.LaunchInUserScope)
+		}
+
+		// 4b: explicit false → pointer MUST be non-nil pointing to false.
+		home = isolatedHomeDir(t)
+		cfg = filepath.Join(home, ".agent-deck", "config.toml")
+		if err := os.WriteFile(cfg, []byte("[tmux]\nlaunch_in_user_scope = false\n"), 0o644); err != nil {
+			t.Fatalf("write explicit-false config: %v", err)
+		}
+		ClearUserConfigCache()
+		settings = GetTmuxSettings()
+		if settings.LaunchInUserScope == nil {
+			t.Fatalf("EXPLICIT-OPT-OUT-RED arm4b: expected non-nil pointer for explicit false, got nil")
+		}
+		if *settings.LaunchInUserScope != false {
+			t.Fatalf("EXPLICIT-OPT-OUT-RED arm4b: expected *false, got *%v", *settings.LaunchInUserScope)
+		}
+
+		// 4c: explicit true → pointer MUST be non-nil pointing to true.
+		home = isolatedHomeDir(t)
+		cfg = filepath.Join(home, ".agent-deck", "config.toml")
+		if err := os.WriteFile(cfg, []byte("[tmux]\nlaunch_in_user_scope = true\n"), 0o644); err != nil {
+			t.Fatalf("write explicit-true config: %v", err)
+		}
+		ClearUserConfigCache()
+		settings = GetTmuxSettings()
+		if settings.LaunchInUserScope == nil {
+			t.Fatalf("EXPLICIT-OPT-OUT-RED arm4c: expected non-nil pointer for explicit true, got nil")
+		}
+		if *settings.LaunchInUserScope != true {
+			t.Fatalf("EXPLICIT-OPT-OUT-RED arm4c: expected *true, got *%v", *settings.LaunchInUserScope)
+		}
+	})
+}

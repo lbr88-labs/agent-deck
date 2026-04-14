@@ -877,8 +877,14 @@ type TmuxSettings struct {
 	// LaunchInUserScope starts new tmux servers via `systemd-run --user --scope`
 	// so the tmux server lives under the user's systemd manager instead of the
 	// current login session scope. This keeps tmux alive when an SSH session
-	// scope is torn down. Default: false.
-	LaunchInUserScope bool `toml:"launch_in_user_scope"`
+	// scope is torn down.
+	//
+	// Default (when nil / field absent): true on Linux hosts where
+	// `systemd-run --user --version` succeeds, false otherwise. Explicit
+	// `launch_in_user_scope = true` or `launch_in_user_scope = false` in
+	// config.toml is always honored. Pointer type is required to distinguish
+	// "field absent" from "explicit false".
+	LaunchInUserScope *bool `toml:"launch_in_user_scope"`
 
 	// WindowStyleOverride sets the tmux window-style (and window-active-style) for
 	// all sessions, overriding the theme default. Use "default" to let your terminal
@@ -908,9 +914,15 @@ func (t TmuxSettings) GetInjectStatusLine() bool {
 }
 
 // GetLaunchInUserScope returns whether new tmux servers should be launched
-// under the user's systemd manager, defaulting to false.
+// under the user's systemd manager. If LaunchInUserScope is non-nil
+// (explicit override in config.toml), its value is returned. Otherwise the
+// default is determined by isSystemdUserScopeAvailable(): true on
+// Linux+systemd hosts, false elsewhere. PERSIST-01..PERSIST-03.
 func (t TmuxSettings) GetLaunchInUserScope() bool {
-	return t.LaunchInUserScope
+	if t.LaunchInUserScope != nil {
+		return *t.LaunchInUserScope
+	}
+	return isSystemdUserScopeAvailable()
 }
 
 // systemdUserScopeAvailable caches the result of probing whether
