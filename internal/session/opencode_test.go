@@ -40,6 +40,8 @@ func TestOpenCodeSessionMatching(t *testing.T) {
 		name        string
 		projectPath string
 		currentID   string
+		startedAt   int64
+		activityAt  int64
 		wantID      string
 		wantMatch   bool
 	}{
@@ -70,6 +72,35 @@ func TestOpenCodeSessionMatching(t *testing.T) {
 			wantMatch:   true,
 		},
 		{
+			name:        "Fresh startup ignores older same-project sessions until a new one appears",
+			projectPath: "/Users/ashesh/claude-deck",
+			startedAt:   1768982300000,
+			wantID:      "",
+			wantMatch:   false,
+		},
+		{
+			name:        "Fresh startup binds session created during current launch",
+			projectPath: "/Users/ashesh/claude-deck",
+			startedAt:   1768982199000,
+			wantID:      "ses_NEW001",
+			wantMatch:   true,
+		},
+		{
+			name:        "Recent local activity allows rebinding to newer sibling session",
+			projectPath: "/Users/ashesh/claude-deck",
+			currentID:   "ses_OLD001",
+			activityAt:  1768982199000,
+			wantID:      "ses_NEW001",
+			wantMatch:   true,
+		},
+		{
+			name:        "Stale local activity keeps existing session binding",
+			projectPath: "/Users/ashesh/claude-deck",
+			currentID:   "ses_OLD001",
+			wantID:      "ses_OLD001",
+			wantMatch:   true,
+		},
+		{
 			name:        "No match for unknown directory",
 			projectPath: "/Users/ashesh/nonexistent",
 			wantID:      "",
@@ -87,7 +118,7 @@ func TestOpenCodeSessionMatching(t *testing.T) {
 			}
 
 			// Apply the matching logic (same as queryOpenCodeSession but testable)
-			gotID := findBestOpenCodeSession(sessions, tt.projectPath, tt.currentID)
+			gotID := findBestOpenCodeSession(sessions, tt.projectPath, tt.currentID, tt.startedAt, tt.activityAt)
 
 			if tt.wantMatch {
 				if gotID != tt.wantID {
