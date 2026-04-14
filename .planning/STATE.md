@@ -3,15 +3,15 @@ gsd_state_version: 1.0
 milestone: v1.5.2
 milestone_name: milestone
 status: executing
-stopped_at: "ROADMAP.md, STATE.md, REQUIREMENTS.md traceability committed. Next step: `/gsd-plan-phase 1`."
-last_updated: "2026-04-14T12:49:50.520Z"
-last_activity: 2026-04-14 -- Phase 3 planning complete
+stopped_at: "Phase 03 fully landed. Next step: /gsd-plan-phase 4"
+last_updated: "2026-04-14T13:26:20Z"
+last_activity: 2026-04-14 -- Phase 03 complete — REQ-2 GREEN, OBS-02 landed, lifecycle doc updated
 progress:
   total_phases: 4
-  completed_phases: 2
+  completed_phases: 3
   total_plans: 13
-  completed_plans: 8
-  percent: 62
+  completed_plans: 13
+  percent: 100
 ---
 
 # Project State
@@ -21,16 +21,16 @@ progress:
 See: .planning/PROJECT.md (updated 2026-04-14)
 
 **Core value:** After v1.5.2, SSH logout on Linux+systemd must not kill any agent-deck tmux server, and restarting any dead session must resume the prior Claude conversation — both permanently test-gated.
-**Current focus:** Phase 02 — cgroup-isolation-default-req-1-fix
+**Current focus:** Phase 04 — verification-harness-docs-and-ci-wiring (not started; Phase 03 complete 2026-04-14)
 
 ## Current Position
 
-Phase: 02 (cgroup-isolation-default-req-1-fix) — EXECUTING
-Plan: 1 of 5
-Status: Ready to execute
-Last activity: 2026-04-14 -- Phase 3 planning complete
+Phase: 04 (verification-harness-docs-and-ci-wiring) — NOT STARTED
+Plan: 0 of TBD
+Status: Phase 03 complete — ready to plan Phase 04
+Last activity: 2026-04-14 -- Phase 03 complete — REQ-2 GREEN, OBS-02 landed, lifecycle doc updated
 
-Progress: [░░░░░░░░░░] 0%
+Progress: [██████████] 100%
 
 ## Performance Metrics
 
@@ -44,9 +44,9 @@ Progress: [░░░░░░░░░░] 0%
 
 | Phase | Plans | Total | Avg/Plan |
 |-------|-------|-------|----------|
-| 1. Persistence test scaffolding (RED) | 0/TBD | 0m | — |
-| 2. Cgroup isolation default (REQ-1 fix) | 0/TBD | 0m | — |
-| 3. Resume-on-start and error-recovery (REQ-2 fix) | 0/TBD | 0m | — |
+| 1. Persistence test scaffolding (RED) | 2/2 | — | — |
+| 2. Cgroup isolation default (REQ-1 fix) | 6/6 | — | — |
+| 3. Resume-on-start and error-recovery (REQ-2 fix) | 5/5 | — | — |
 | 4. Verification harness, docs, and CI wiring | 0/TBD | 0m | — |
 
 **Recent Trend:**
@@ -68,6 +68,7 @@ Recent decisions affecting current work:
 - Gate every PR on the eight `TestPersistence_*` tests + `scripts/verify-session-persistence.sh` via the CLAUDE.md mandate — third recurrence of the same incident class, per-PR hard gate is the only prevention.
 - Do not migrate the 33 error / 39 stopped sessions on the conductor host — separate manual operator task.
 - Do not resume the legacy v15 roadmap in `.planning.legacy-v15/` — out of scope per PROJECT.md.
+- Phase 03: routed Start() and StartWithMessage() through buildClaudeResumeCommand when ClaudeSessionID != "" — closed the 2026-04-14 f1e103df/b9403638 divergence. OBS-02 per-call audit line landed. docs/session-id-lifecycle.md gained a Start / Restart Dispatch subsection (PERSIST-10).
 
 ### Pending Todos
 
@@ -79,6 +80,6 @@ None yet. Spec is authoritative; requirements are atomic and testable; CLAUDE.md
 
 ## Session Continuity
 
-Last session: 2026-04-14 — roadmap creation
-Stopped at: ROADMAP.md, STATE.md, REQUIREMENTS.md traceability committed. Next step: `/gsd-plan-phase 1`.
+Last session: 2026-04-14 — Phase 03 execution complete
+Stopped at: Phase 03 fully landed. Next step: /gsd-plan-phase 4
 Resume file: None
