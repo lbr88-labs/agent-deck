@@ -4,14 +4,14 @@ milestone: v1.5.2
 milestone_name: milestone
 status: executing
 stopped_at: "ROADMAP.md, STATE.md, REQUIREMENTS.md traceability committed. Next step: `/gsd-plan-phase 1`."
-last_updated: "2026-04-14T10:55:13.966Z"
-last_activity: 2026-04-14 -- Phase 2 planning complete
+last_updated: "2026-04-14T12:49:50.520Z"
+last_activity: 2026-04-14 -- Phase 3 planning complete
 progress:
   total_phases: 4
-  completed_phases: 1
-  total_plans: 8
-  completed_plans: 3
-  percent: 38
+  completed_phases: 2
+  total_plans: 13
+  completed_plans: 8
+  percent: 62
 ---
 
 # Project State
@@ -21,14 +21,14 @@ progress:
 See: .planning/PROJECT.md (updated 2026-04-14)
 
 **Core value:** After v1.5.2, SSH logout on Linux+systemd must not kill any agent-deck tmux server, and restarting any dead session must resume the prior Claude conversation — both permanently test-gated.
-**Current focus:** Phase 1 — Persistence test scaffolding (RED)
+**Current focus:** Phase 02 — cgroup-isolation-default-req-1-fix
 
 ## Current Position
 
-Phase: 1 of 4 (Persistence test scaffolding (RED))
-Plan: 0 of TBD in current phase
+Phase: 02 (cgroup-isolation-default-req-1-fix) — EXECUTING
+Plan: 1 of 5
 Status: Ready to execute
-Last activity: 2026-04-14 -- Phase 2 planning complete
+Last activity: 2026-04-14 -- Phase 3 planning complete
 
 Progress: [░░░░░░░░░░] 0%
 
