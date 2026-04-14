@@ -5,8 +5,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-
-	"github.com/asheshgoplani/agent-deck/internal/session"
 )
 
 // State holds the persisted feedback preferences for a user.
@@ -26,9 +24,20 @@ func defaultState() *State {
 	}
 }
 
+// agentDeckDir returns the base agent-deck directory (~/.agent-deck).
+// Inlined here to avoid importing internal/session, which is a heavyweight
+// package and would create a circular import risk if session ever imports feedback.
+func agentDeckDir() (string, error) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", fmt.Errorf("feedback: get home dir: %w", err)
+	}
+	return filepath.Join(home, ".agent-deck"), nil
+}
+
 // statePath returns the absolute path to the feedback state file.
 func statePath() (string, error) {
-	dir, err := session.GetAgentDeckDir()
+	dir, err := agentDeckDir()
 	if err != nil {
 		return "", err
 	}
@@ -63,7 +72,7 @@ func LoadState() (*State, error) {
 // SaveState atomically writes the state to ~/.agent-deck/feedback-state.json.
 // Uses tmp+rename to prevent partial writes (T-01-01).
 func SaveState(s *State) error {
-	dir, err := session.GetAgentDeckDir()
+	dir, err := agentDeckDir()
 	if err != nil {
 		return fmt.Errorf("feedback: get agent-deck dir: %w", err)
 	}
