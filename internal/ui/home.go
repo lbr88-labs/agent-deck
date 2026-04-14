@@ -306,8 +306,9 @@ type Home struct {
 	// Watcher warning (shown if fsnotify may not work, e.g., on 9p/NFS)
 	watcherWarning string
 
-	// Update notification (async check on startup)
-	updateInfo *update.UpdateInfo
+	// Update notification (async check on startup, periodic re-check)
+	updateInfo      *update.UpdateInfo
+	lastUpdateCheck time.Time
 
 	// Launching animation state (for newly created sessions)
 	launchingSessions  map[string]time.Time        // sessionID -> creation time
@@ -3645,7 +3646,13 @@ func (h *Home) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return h, nil
 
 	case updateCheckMsg:
-		h.updateInfo = msg.info
+		h.lastUpdateCheck = time.Now()
+		if msg.info != nil && !msg.info.Available {
+			// Update is no longer available (e.g., user updated via terminal) — dismiss banner
+			h.updateInfo = nil
+		} else {
+			h.updateInfo = msg.info
+		}
 		return h, nil
 
 	case remoteSessionsFetchedMsg:
@@ -4232,6 +4239,14 @@ func (h *Home) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				logSettings := session.GetLogSettings()
 				tmux.RunLogMaintenance(logSettings.MaxSizeMB, logSettings.MaxLines, logSettings.RemoveOrphans)
 			}()
+		}
+
+		// Periodic update re-check every 5 minutes to dismiss stale banner
+		// after the user updates agent-deck via terminal while TUI is running
+		const updateRecheckInterval = 5 * time.Minute
+		if h.updateInfo != nil && h.updateInfo.Available && time.Since(h.lastUpdateCheck) >= updateRecheckInterval {
+			h.lastUpdateCheck = time.Now()
+			return h, tea.Batch(h.tick(), h.checkForUpdate())
 		}
 
 		// Clean up expired animation entries (launching, resuming, MCP loading, forking)

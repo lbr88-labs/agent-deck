@@ -66,8 +66,8 @@ func TestCreateGroup(t *testing.T) {
 	if group.Name != "My Project" {
 		t.Errorf("Expected name 'My Project', got '%s'", group.Name)
 	}
-	if group.Path != "my-project" {
-		t.Errorf("Expected path 'my-project', got '%s'", group.Path)
+	if group.Path != "My-Project" {
+		t.Errorf("Expected path 'My-Project', got '%s'", group.Path)
 	}
 	if !group.Expanded {
 		t.Error("New group should be expanded by default")
@@ -87,7 +87,7 @@ func TestCreateSubgroup(t *testing.T) {
 	}
 
 	// Create subgroup
-	child := tree.CreateSubgroup("parent", "Child")
+	child := tree.CreateSubgroup("Parent", "Child")
 	if child == nil {
 		t.Fatal("CreateSubgroup returned nil")
 	}
@@ -95,8 +95,8 @@ func TestCreateSubgroup(t *testing.T) {
 	if child.Name != "Child" {
 		t.Errorf("Expected name 'Child', got '%s'", child.Name)
 	}
-	if child.Path != "parent/child" {
-		t.Errorf("Expected path 'parent/child', got '%s'", child.Path)
+	if child.Path != "Parent/Child" {
+		t.Errorf("Expected path 'Parent/Child', got '%s'", child.Path)
 	}
 	if tree.GroupCount() != 2 {
 		t.Errorf("Expected 2 groups, got %d", tree.GroupCount())
@@ -108,19 +108,19 @@ func TestCreateNestedSubgroups(t *testing.T) {
 
 	// Create hierarchy: grandparent -> parent -> child
 	tree.CreateGroup("Grandparent")
-	tree.CreateSubgroup("grandparent", "Parent")
-	tree.CreateSubgroup("grandparent/parent", "Child")
+	tree.CreateSubgroup("Grandparent", "Parent")
+	tree.CreateSubgroup("Grandparent/Parent", "Child")
 
 	if tree.GroupCount() != 3 {
 		t.Errorf("Expected 3 groups, got %d", tree.GroupCount())
 	}
 
-	child := tree.Groups["grandparent/parent/child"]
+	child := tree.Groups["Grandparent/Parent/Child"]
 	if child == nil {
 		t.Fatal("Nested child group not found")
 	}
-	if child.Path != "grandparent/parent/child" {
-		t.Errorf("Expected path 'grandparent/parent/child', got '%s'", child.Path)
+	if child.Path != "Grandparent/Parent/Child" {
+		t.Errorf("Expected path 'Grandparent/Parent/Child', got '%s'", child.Path)
 	}
 }
 
@@ -188,15 +188,15 @@ func TestFlattenWithNestedGroupsCollapsed(t *testing.T) {
 
 	// Create hierarchy
 	tree.CreateGroup("Parent")
-	tree.CreateSubgroup("parent", "Child")
+	tree.CreateSubgroup("Parent", "Child")
 
 	// Add sessions
-	tree.Groups["parent"].Sessions = []*Instance{{ID: "1", GroupPath: "parent"}}
-	tree.Groups["parent/child"].Sessions = []*Instance{{ID: "2", GroupPath: "parent/child"}}
+	tree.Groups["Parent"].Sessions = []*Instance{{ID: "1", GroupPath: "Parent"}}
+	tree.Groups["Parent/Child"].Sessions = []*Instance{{ID: "2", GroupPath: "Parent/Child"}}
 
 	// Expand all first
-	tree.ExpandGroup("parent")
-	tree.ExpandGroup("parent/child")
+	tree.ExpandGroup("Parent")
+	tree.ExpandGroup("Parent/Child")
 
 	items := tree.Flatten()
 	// parent(group) + session + child(group) + session = 4
@@ -205,7 +205,7 @@ func TestFlattenWithNestedGroupsCollapsed(t *testing.T) {
 	}
 
 	// Collapse parent - should hide child group and all sessions
-	tree.CollapseGroup("parent")
+	tree.CollapseGroup("Parent")
 	items = tree.Flatten()
 
 	// Only parent group visible
@@ -224,13 +224,13 @@ func TestSubgroupSortingWithUnrelatedRoots(t *testing.T) {
 	// Create root groups with names that alphabetically interleave
 	// "My Sessions" (M) < "agent-deck" (a) in ASCII (uppercase < lowercase)
 	// But "agent-deck/github-issues" would sort before "my-sessions" by full path
-	tree.CreateGroup("My Sessions") // path: my-sessions
+	tree.CreateGroup("My Sessions") // path: My-Sessions
 	tree.CreateGroup("agent-deck")  // path: agent-deck
 	tree.CreateGroup("ard")         // path: ard
 	tree.CreateSubgroup("agent-deck", "github-issues")
 
 	// Expand all so subgroups are visible
-	tree.ExpandGroup("my-sessions")
+	tree.ExpandGroup("My-Sessions")
 	tree.ExpandGroup("agent-deck")
 	tree.ExpandGroup("ard")
 
@@ -248,7 +248,7 @@ func TestSubgroupSortingWithUnrelatedRoots(t *testing.T) {
 	// Verify: github-issues must come immediately after agent-deck, not before my-sessions
 	agentDeckPos := positions["agent-deck"]
 	githubIssuesPos := positions["agent-deck/github-issues"]
-	mySessionsPos := positions["my-sessions"]
+	mySessionsPos := positions["My-Sessions"]
 	ardPos := positions["ard"]
 
 	// agent-deck/github-issues should come right after agent-deck
@@ -275,19 +275,19 @@ func TestToggleGroup(t *testing.T) {
 	tree.CreateGroup("Test")
 
 	// Initially expanded
-	if !tree.Groups["test"].Expanded {
+	if !tree.Groups["Test"].Expanded {
 		t.Error("Group should be expanded initially")
 	}
 
 	// Toggle to collapse
-	tree.ToggleGroup("test")
-	if tree.Groups["test"].Expanded {
+	tree.ToggleGroup("Test")
+	if tree.Groups["Test"].Expanded {
 		t.Error("Group should be collapsed after toggle")
 	}
 
 	// Toggle to expand
-	tree.ToggleGroup("test")
-	if !tree.Groups["test"].Expanded {
+	tree.ToggleGroup("Test")
+	if !tree.Groups["Test"].Expanded {
 		t.Error("Group should be expanded after second toggle")
 	}
 }
@@ -360,7 +360,7 @@ func TestRenameGroup(t *testing.T) {
 	}
 
 	// New group should exist
-	newGroup := tree.Groups["new-name"]
+	newGroup := tree.Groups["New-Name"]
 	if newGroup == nil {
 		t.Fatal("New group not found")
 	}
@@ -370,7 +370,7 @@ func TestRenameGroup(t *testing.T) {
 	}
 
 	// Session should be updated
-	if instances[0].GroupPath != "new-name" {
+	if instances[0].GroupPath != "New-Name" {
 		t.Errorf("Session GroupPath not updated, got '%s'", instances[0].GroupPath)
 	}
 }
@@ -380,104 +380,104 @@ func TestRenameGroupWithSubgroups(t *testing.T) {
 
 	// Create hierarchy
 	tree.CreateGroup("Parent")
-	tree.CreateSubgroup("parent", "Child")
-	tree.CreateSubgroup("parent/child", "Grandchild")
+	tree.CreateSubgroup("Parent", "Child")
+	tree.CreateSubgroup("Parent/Child", "Grandchild")
 
 	// Add sessions to each
-	tree.Groups["parent"].Sessions = []*Instance{{ID: "1", GroupPath: "parent"}}
-	tree.Groups["parent/child"].Sessions = []*Instance{{ID: "2", GroupPath: "parent/child"}}
-	tree.Groups["parent/child/grandchild"].Sessions = []*Instance{{ID: "3", GroupPath: "parent/child/grandchild"}}
+	tree.Groups["Parent"].Sessions = []*Instance{{ID: "1", GroupPath: "Parent"}}
+	tree.Groups["Parent/Child"].Sessions = []*Instance{{ID: "2", GroupPath: "Parent/Child"}}
+	tree.Groups["Parent/Child/Grandchild"].Sessions = []*Instance{{ID: "3", GroupPath: "Parent/Child/Grandchild"}}
 
 	// Rename parent
-	tree.RenameGroup("parent", "NewParent")
+	tree.RenameGroup("Parent", "NewParent")
 
 	// Verify old paths don't exist
-	if tree.Groups["parent"] != nil {
+	if tree.Groups["Parent"] != nil {
 		t.Error("Old parent path should not exist")
 	}
-	if tree.Groups["parent/child"] != nil {
+	if tree.Groups["Parent/Child"] != nil {
 		t.Error("Old child path should not exist")
 	}
-	if tree.Groups["parent/child/grandchild"] != nil {
+	if tree.Groups["Parent/Child/Grandchild"] != nil {
 		t.Error("Old grandchild path should not exist")
 	}
 
 	// Verify new paths exist
-	if tree.Groups["newparent"] == nil {
+	if tree.Groups["NewParent"] == nil {
 		t.Error("New parent path should exist")
 	}
-	if tree.Groups["newparent/child"] == nil {
+	if tree.Groups["NewParent/Child"] == nil {
 		t.Error("New child path should exist")
 	}
-	if tree.Groups["newparent/child/grandchild"] == nil {
+	if tree.Groups["NewParent/Child/Grandchild"] == nil {
 		t.Error("New grandchild path should exist")
 	}
 
 	// Verify session GroupPaths updated
-	if tree.Groups["newparent"].Sessions[0].GroupPath != "newparent" {
+	if tree.Groups["NewParent"].Sessions[0].GroupPath != "NewParent" {
 		t.Error("Parent session GroupPath not updated")
 	}
-	if tree.Groups["newparent/child"].Sessions[0].GroupPath != "newparent/child" {
+	if tree.Groups["NewParent/Child"].Sessions[0].GroupPath != "NewParent/Child" {
 		t.Error("Child session GroupPath not updated")
 	}
-	if tree.Groups["newparent/child/grandchild"].Sessions[0].GroupPath != "newparent/child/grandchild" {
+	if tree.Groups["NewParent/Child/Grandchild"].Sessions[0].GroupPath != "NewParent/Child/Grandchild" {
 		t.Error("Grandchild session GroupPath not updated")
 	}
 }
 
 // TestRenameSubgroup verifies that renaming a subgroup keeps it under its parent.
-// This was a bug where renaming "parent/child" to "NewChild" would result in path "newchild"
-// instead of "parent/newchild", effectively moving the group to root level.
+// This was a bug where renaming "parent/child" to "NewChild" would result in path "NewChild"
+// instead of "parent/NewChild", effectively moving the group to root level.
 func TestRenameSubgroup(t *testing.T) {
 	tree := NewGroupTree([]*Instance{})
 
 	// Create hierarchy: project-a -> task-b
 	tree.CreateGroup("Project A")
-	tree.CreateSubgroup("project-a", "Task B")
+	tree.CreateSubgroup("Project-A", "Task B")
 
 	// Add a session to the subgroup
-	session := &Instance{ID: "1", Title: "my-session", GroupPath: "project-a/task-b"}
-	tree.Groups["project-a/task-b"].Sessions = []*Instance{session}
+	session := &Instance{ID: "1", Title: "my-session", GroupPath: "Project-A/Task-B"}
+	tree.Groups["Project-A/Task-B"].Sessions = []*Instance{session}
 
 	// Verify initial structure
-	if tree.Groups["project-a/task-b"] == nil {
-		t.Fatal("Subgroup project-a/task-b should exist")
+	if tree.Groups["Project-A/Task-B"] == nil {
+		t.Fatal("Subgroup Project-A/Task-B should exist")
 	}
 
 	// Rename the subgroup from "Task B" to "Task C"
-	tree.RenameGroup("project-a/task-b", "Task C")
+	tree.RenameGroup("Project-A/Task-B", "Task C")
 
 	// OLD path should NOT exist
-	if tree.Groups["project-a/task-b"] != nil {
-		t.Error("Old path project-a/task-b should not exist after rename")
+	if tree.Groups["Project-A/Task-B"] != nil {
+		t.Error("Old path Project-A/Task-B should not exist after rename")
 	}
 
-	// NEW path should be "project-a/task-c" (preserved parent), NOT "task-c" (root level)
-	if tree.Groups["task-c"] != nil {
-		t.Error("Bug: Renamed subgroup should NOT be at root level (task-c)")
+	// NEW path should be "Project-A/Task-C" (preserved parent), NOT "Task-C" (root level)
+	if tree.Groups["Task-C"] != nil {
+		t.Error("Bug: Renamed subgroup should NOT be at root level (Task-C)")
 	}
-	renamedGroup := tree.Groups["project-a/task-c"]
+	renamedGroup := tree.Groups["Project-A/Task-C"]
 	if renamedGroup == nil {
-		t.Fatal("Renamed subgroup should be at project-a/task-c")
+		t.Fatal("Renamed subgroup should be at Project-A/Task-C")
 	}
 
 	// Verify the group properties
 	if renamedGroup.Name != "Task C" {
 		t.Errorf("Expected name 'Task C', got '%s'", renamedGroup.Name)
 	}
-	if renamedGroup.Path != "project-a/task-c" {
-		t.Errorf("Expected path 'project-a/task-c', got '%s'", renamedGroup.Path)
+	if renamedGroup.Path != "Project-A/Task-C" {
+		t.Errorf("Expected path 'Project-A/Task-C', got '%s'", renamedGroup.Path)
 	}
 
 	// Verify session GroupPath was updated
-	if session.GroupPath != "project-a/task-c" {
-		t.Errorf("Session GroupPath should be 'project-a/task-c', got '%s'", session.GroupPath)
+	if session.GroupPath != "Project-A/Task-C" {
+		t.Errorf("Session GroupPath should be 'Project-A/Task-C', got '%s'", session.GroupPath)
 	}
 
 	// Verify parent group still exists and is unaffected
-	parentGroup := tree.Groups["project-a"]
+	parentGroup := tree.Groups["Project-A"]
 	if parentGroup == nil {
-		t.Fatal("Parent group project-a should still exist")
+		t.Fatal("Parent group Project-A should still exist")
 	}
 	if parentGroup.Name != "Project A" {
 		t.Errorf("Parent name should be 'Project A', got '%s'", parentGroup.Name)
@@ -515,23 +515,23 @@ func TestDeleteGroupWithSubgroups(t *testing.T) {
 
 	// Create hierarchy
 	tree.CreateGroup("Parent")
-	tree.CreateSubgroup("parent", "Child")
+	tree.CreateSubgroup("Parent", "Child")
 
 	// Note: DeleteGroup creates the default group if it doesn't exist
 	// when it moves sessions there
 
 	// Add sessions
-	tree.Groups["parent"].Sessions = []*Instance{{ID: "1", GroupPath: "parent"}}
-	tree.Groups["parent/child"].Sessions = []*Instance{{ID: "2", GroupPath: "parent/child"}}
+	tree.Groups["Parent"].Sessions = []*Instance{{ID: "1", GroupPath: "Parent"}}
+	tree.Groups["Parent/Child"].Sessions = []*Instance{{ID: "2", GroupPath: "Parent/Child"}}
 
 	// Delete parent - should cascade to child
-	movedSessions := tree.DeleteGroup("parent")
+	movedSessions := tree.DeleteGroup("Parent")
 
 	// Both groups should be removed
-	if tree.Groups["parent"] != nil {
+	if tree.Groups["Parent"] != nil {
 		t.Error("Parent group should be deleted")
 	}
-	if tree.Groups["parent/child"] != nil {
+	if tree.Groups["Parent/Child"] != nil {
 		t.Error("Child group should be deleted")
 	}
 
@@ -659,19 +659,19 @@ func TestSetDefaultPathForGroup(t *testing.T) {
 	tree := NewGroupTree([]*Instance{})
 	tree.CreateGroup("Projects")
 
-	if ok := tree.SetDefaultPathForGroup("projects", "/tmp/project-root"); !ok {
+	if ok := tree.SetDefaultPathForGroup("Projects", "/tmp/project-root"); !ok {
 		t.Fatal("SetDefaultPathForGroup should return true for existing group")
 	}
 
-	if got := tree.DefaultPathForGroup("projects"); got != "/tmp/project-root" {
+	if got := tree.DefaultPathForGroup("Projects"); got != "/tmp/project-root" {
 		t.Fatalf("Expected explicit default path '/tmp/project-root', got %q", got)
 	}
 
-	if ok := tree.SetDefaultPathForGroup("projects", ""); !ok {
+	if ok := tree.SetDefaultPathForGroup("Projects", ""); !ok {
 		t.Fatal("SetDefaultPathForGroup should allow clearing")
 	}
 
-	if got := tree.DefaultPathForGroup("projects"); got != "" {
+	if got := tree.DefaultPathForGroup("Projects"); got != "" {
 		t.Fatalf("Expected empty default path after clear, got %q", got)
 	}
 }
@@ -742,21 +742,21 @@ func TestMoveGroupUpDownSiblings(t *testing.T) {
 	tree.CreateGroup("Beta")
 	tree.CreateGroup("Gamma")
 
-	// Initial order: alpha, beta, gamma
-	if tree.GroupList[0].Path != "alpha" {
-		t.Errorf("Expected alpha first, got %s", tree.GroupList[0].Path)
+	// Initial order: Alpha, Beta, Gamma
+	if tree.GroupList[0].Path != "Alpha" {
+		t.Errorf("Expected Alpha first, got %s", tree.GroupList[0].Path)
 	}
 
-	// Move beta up - should swap with alpha
-	tree.MoveGroupUp("beta")
-	if tree.GroupList[0].Path != "beta" {
-		t.Errorf("Expected beta first after move up, got %s", tree.GroupList[0].Path)
+	// Move Beta up - should swap with Alpha
+	tree.MoveGroupUp("Beta")
+	if tree.GroupList[0].Path != "Beta" {
+		t.Errorf("Expected Beta first after move up, got %s", tree.GroupList[0].Path)
 	}
 
-	// Move beta down - should swap with alpha
-	tree.MoveGroupDown("beta")
-	if tree.GroupList[1].Path != "beta" {
-		t.Errorf("Expected beta second after move down, got %s", tree.GroupList[1].Path)
+	// Move Beta down - should swap with Alpha
+	tree.MoveGroupDown("Beta")
+	if tree.GroupList[1].Path != "Beta" {
+		t.Errorf("Expected Beta second after move down, got %s", tree.GroupList[1].Path)
 	}
 }
 
@@ -765,7 +765,7 @@ func TestMoveGroupNotAcrossLevels(t *testing.T) {
 
 	// Create parent and child
 	tree.CreateGroup("Parent")
-	tree.CreateSubgroup("parent", "Child")
+	tree.CreateSubgroup("Parent", "Child")
 
 	// Try to move child up - should not swap with parent (different levels)
 	initialOrder := make([]string, len(tree.GroupList))
@@ -773,7 +773,7 @@ func TestMoveGroupNotAcrossLevels(t *testing.T) {
 		initialOrder[i] = g.Path
 	}
 
-	tree.MoveGroupUp("parent/child")
+	tree.MoveGroupUp("Parent/Child")
 
 	// Order should be unchanged (can't move child above parent)
 	for i, g := range tree.GroupList {
@@ -830,7 +830,7 @@ func TestGetGroupNames(t *testing.T) {
 func TestGetGroupPaths(t *testing.T) {
 	tree := NewGroupTree([]*Instance{})
 	tree.CreateGroup("Alpha")
-	tree.CreateSubgroup("alpha", "Child")
+	tree.CreateSubgroup("Alpha", "Child")
 
 	paths := tree.GetGroupPaths()
 
@@ -842,16 +842,16 @@ func TestGetGroupPaths(t *testing.T) {
 	foundAlpha := false
 	foundChild := false
 	for _, p := range paths {
-		if p == "alpha" {
+		if p == "Alpha" {
 			foundAlpha = true
 		}
-		if p == "alpha/child" {
+		if p == "Alpha/Child" {
 			foundChild = true
 		}
 	}
 
 	if !foundAlpha || !foundChild {
-		t.Error("Expected both alpha and alpha/child paths")
+		t.Error("Expected both Alpha and Alpha/Child paths")
 	}
 }
 
@@ -1380,20 +1380,20 @@ func TestSubgroupAppearsAfterParent(t *testing.T) {
 	tree.CreateGroup("Gamma")
 
 	// Create subgroup under Beta
-	child := tree.CreateSubgroup("beta", "Child")
+	child := tree.CreateSubgroup("Beta", "Child")
 
 	// Verify path is correct
-	if child.Path != "beta/child" {
-		t.Errorf("Expected path 'beta/child', got '%s'", child.Path)
+	if child.Path != "Beta/Child" {
+		t.Errorf("Expected path 'Beta/Child', got '%s'", child.Path)
 	}
 
 	// Verify parent-child relationship in GroupList ordering
 	var betaIdx, childIdx int = -1, -1
 	for i, g := range tree.GroupList {
-		if g.Path == "beta" {
+		if g.Path == "Beta" {
 			betaIdx = i
 		}
-		if g.Path == "beta/child" {
+		if g.Path == "Beta/Child" {
 			childIdx = i
 		}
 	}
@@ -1412,21 +1412,21 @@ func TestSortingTransitivity(t *testing.T) {
 	tree := NewGroupTree([]*Instance{})
 
 	// Create "My Sessions" first (Order=0), then "Beta" (Order=1)
-	// Alphabetically: "beta" < "my-sessions", but by Order: my-sessions < beta
+	// Alphabetically: "Beta" < "My-Sessions", but by Order: My-Sessions < Beta
 	tree.CreateGroup("My Sessions")
 	tree.CreateGroup("Beta")
-	tree.CreateSubgroup("beta", "Tasks")
-	tree.CreateSubgroup("beta/tasks", "Urgent")
+	tree.CreateSubgroup("Beta", "Tasks")
+	tree.CreateSubgroup("Beta/Tasks", "Urgent")
 
-	// Verify beta comes before its descendants
+	// Verify Beta comes before its descendants
 	var betaIdx, tasksIdx, urgentIdx int = -1, -1, -1
 	for i, g := range tree.GroupList {
 		switch g.Path {
-		case "beta":
+		case "Beta":
 			betaIdx = i
-		case "beta/tasks":
+		case "Beta/Tasks":
 			tasksIdx = i
-		case "beta/tasks/urgent":
+		case "Beta/Tasks/Urgent":
 			urgentIdx = i
 		}
 	}
@@ -1450,16 +1450,16 @@ func TestBranchOrderingByOrder(t *testing.T) {
 	tree.CreateGroup("Alpha") // Created second, Order=1
 
 	// Create subgroups
-	tree.CreateSubgroup("zebra", "Child")
-	tree.CreateSubgroup("alpha", "Child")
+	tree.CreateSubgroup("Zebra", "Child")
+	tree.CreateSubgroup("Alpha", "Child")
 
 	// Zebra branch should come before Alpha branch (by Order, not alphabetically)
 	var zebraIdx, alphaIdx int = -1, -1
 	for i, g := range tree.GroupList {
-		if g.Path == "zebra" {
+		if g.Path == "Zebra" {
 			zebraIdx = i
 		}
-		if g.Path == "alpha" {
+		if g.Path == "Alpha" {
 			alphaIdx = i
 		}
 	}
