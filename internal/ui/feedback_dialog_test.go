@@ -145,3 +145,40 @@ func TestFeedbackDialog_ViewNonEmpty(t *testing.T) {
 		t.Error("expected non-empty View() when visible, got empty string")
 	}
 }
+
+// TestFeedbackDialog_OnDemandShortcut verifies that Show() makes the dialog visible regardless
+// of opt-out state or prior rating -- i.e. on-demand bypasses ShouldShow() entirely.
+// This mirrors what the ctrl+e handler does: call Show() unconditionally.
+func TestFeedbackDialog_OnDemandShortcut(t *testing.T) {
+	sender := feedback.NewSender()
+
+	// Case 1: LastRatedVersion matches current version (auto-popup would block this).
+	d1 := NewFeedbackDialog()
+	st1 := &feedback.State{
+		FeedbackEnabled:  true,
+		LastRatedVersion: "1.5.1", // already rated this version
+		MaxShows:         3,
+		ShownCount:       1,
+	}
+	d1.Show("1.5.1", st1, sender)
+	if !d1.IsVisible() {
+		t.Error("case 1: expected dialog to be visible after on-demand Show() even though LastRatedVersion matches, but IsVisible() returned false")
+	}
+
+	// Case 2: FeedbackEnabled=false (auto-popup would block this).
+	d2 := NewFeedbackDialog()
+	d2.Show("1.5.1", &feedback.State{FeedbackEnabled: true, MaxShows: 3}, sender)
+	d2.Hide()
+	if d2.IsVisible() {
+		t.Fatal("expected dialog hidden after Hide(), but IsVisible() returned true")
+	}
+
+	st2 := &feedback.State{
+		FeedbackEnabled: false, // user opted out -- auto-popup would skip entirely
+		MaxShows:        3,
+	}
+	d2.Show("1.5.1", st2, sender)
+	if !d2.IsVisible() {
+		t.Error("case 2: expected dialog to be visible after on-demand Show() even with FeedbackEnabled=false, but IsVisible() returned false")
+	}
+}
