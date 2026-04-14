@@ -51,13 +51,33 @@ func TestLogCgroupIsolationDecision_WiredIntoBootstrap(t *testing.T) {
 			t.Fatalf("go build: %v\noutput: %s", err, out)
 		}
 
-		cmd := exec.Command(binPath)
-		cmd.Env = append(os.Environ(),
+		// Strip TMUX* and AGENTDECK_* env from the parent process so the
+		// nested-session guard in main.go (isNestedSession → GetCurrentSessionID)
+		// does not early-exit when the test runs under an outer
+		// agent-deck-managed tmux session. Without this filter, the binary
+		// prints "Cannot launch the agent-deck TUI inside an agent-deck
+		// session" on stderr and never reaches logging.Init.
+		var env []string
+		for _, kv := range os.Environ() {
+			if strings.HasPrefix(kv, "TMUX") {
+				continue
+			}
+			if strings.HasPrefix(kv, "AGENTDECK_") {
+				continue
+			}
+			if strings.HasPrefix(kv, "HOME=") {
+				continue
+			}
+			env = append(env, kv)
+		}
+		env = append(env,
 			"HOME="+tmpHome,
 			"AGENTDECK_DEBUG=1",
 			"AGENTDECK_PROFILE=test-obs01",
 			"TERM=dumb",
 		)
+		cmd := exec.Command(binPath)
+		cmd.Env = env
 		// TUI blocks on stdin — detach with its own pgroup and SIGTERM the
 		// whole group after a short window so lumberjack has time to flush.
 		cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}

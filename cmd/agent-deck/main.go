@@ -437,6 +437,12 @@ func main() {
 		logging.Init(logCfg)
 		defer logging.Shutdown()
 
+		// OBS-01: emit the cgroup-isolation decision exactly once on TUI
+		// startup. The line lands in ~/.agent-deck/debug.log via the
+		// dynamicHandler + lumberjack pipeline that logging.Init wires up.
+		// See internal/session/userconfig.go LogCgroupIsolationDecision.
+		session.LogCgroupIsolationDecision()
+
 		if debugMode {
 			logging.ForComponent(logging.CompUI).Info("instance_started",
 				slog.Int("pid", os.Getpid()))
