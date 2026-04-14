@@ -58,6 +58,7 @@ const (
 	codexHookWaitingFastPathWindow = 2 * time.Minute
 	codexBootstrapScanInterval     = 2 * time.Second
 	codexRotationScanInterval      = 30 * time.Second
+	opencodeRotationScanInterval   = 15 * time.Second
 	// codexProbeScanInterval rate-limits process-file probing to avoid
 	// repeated /proc and lsof scans on every status tick.
 	codexProbeScanInterval    = 2 * time.Second
@@ -108,6 +109,7 @@ type Instance struct {
 	OpenCodeSessionID  string    `json:"opencode_session_id,omitempty"`
 	OpenCodeDetectedAt time.Time `json:"opencode_detected_at,omitempty"`
 	OpenCodeStartedAt  int64     `json:"-"` // Unix millis when we started OpenCode (for session matching, not persisted)
+	lastOpenCodeScanAt time.Time // Rate-limits expensive `opencode session list` scans
 
 	// Codex CLI integration
 	CodexSessionID   string    `json:"codex_session_id,omitempty"`
@@ -927,9 +929,55 @@ func (i *Instance) setOpenCodeSession(sessionID string) {
 	}
 }
 
-// queryOpenCodeSession queries OpenCode CLI for session matching our project directory
-// OpenCode automatically resumes the most recent session for a directory, so we
-// simply find the most recently updated session matching our project path.
+type openCodeSessionMetadata struct {
+	ID        string `json:"id"`
+	Directory string `json:"directory"`
+	Path      string `json:"path"`
+	Created   int64  `json:"created"`
+	Updated   int64  `json:"updated"`
+}
+
+// findBestOpenCodeSession keeps an existing binding if that session still exists
+// for the project. Otherwise it falls back to the most recently updated match.
+func findBestOpenCodeSession(sessions []openCodeSessionMetadata, projectPath, currentID string) string {
+	normalizedProjectPath := normalizePath(projectPath)
+
+	var bestMatch string
+	var bestMatchTime int64
+
+	for _, sess := range sessions {
+		sessDir := sess.Directory
+		if sessDir == "" {
+			sessDir = sess.Path
+		}
+
+		if sessDir == "" || normalizePath(sessDir) != normalizedProjectPath {
+			continue
+		}
+
+		// Multiple OpenCode tabs can share a project path. A newer sibling session
+		// is not enough evidence to steal this instance's existing binding.
+		if currentID != "" && sess.ID == currentID {
+			return currentID
+		}
+
+		updatedAt := sess.Updated
+		if updatedAt == 0 {
+			updatedAt = sess.Created
+		}
+
+		if bestMatch == "" || updatedAt > bestMatchTime {
+			bestMatch = sess.ID
+			bestMatchTime = updatedAt
+		}
+	}
+
+	return bestMatch
+}
+
+// queryOpenCodeSession queries OpenCode CLI for sessions matching our project
+// directory. Unbound instances adopt the most recently updated session, while
+// already-bound instances keep their current ID as long as it still exists.
 func (i *Instance) queryOpenCodeSession() string {
 	// Run: opencode session list --format json
 	cmd := exec.Command("opencode", "session", "list", "--format", "json")
@@ -947,13 +995,7 @@ func (i *Instance) queryOpenCodeSession() string {
 
 	// Parse JSON response
 	// Expected format: array of session objects with id, directory, created, updated fields
-	var sessions []struct {
-		ID        string `json:"id"`
-		Directory string `json:"directory"`
-		Path      string `json:"path"`    // Some versions use path instead of directory
-		Created   int64  `json:"created"` // Unix timestamp (milliseconds)
-		Updated   int64  `json:"updated"` // Unix timestamp (milliseconds) - when last active
-	}
+	var sessions []openCodeSessionMetadata
 
 	if err := json.Unmarshal(output, &sessions); err != nil {
 		sessionLog.Debug("opencode_parse_failed", slog.String("error", err.Error()))
@@ -962,58 +1004,12 @@ func (i *Instance) queryOpenCodeSession() string {
 
 	sessionLog.Debug("opencode_parsed_sessions", slog.Int("count", len(sessions)))
 
-	// Find the most recently updated session matching our project path
-	// OpenCode auto-resumes the most recent session when you run `opencode` in a directory,
-	// so we track that same session (no startTime check needed)
-	projectPath := i.ProjectPath
-
-	var bestMatch string
-	var bestMatchTime int64
-
-	for _, sess := range sessions {
-		// Check directory match (normalize paths)
-		sessDir := sess.Directory
-		if sessDir == "" {
-			sessDir = sess.Path
-		}
-
-		normalizedSessDir := normalizePath(sessDir)
-		normalizedProjectPath := normalizePath(projectPath)
-
-		sessionLog.Debug(
-			"opencode_session_compare",
-			slog.String("session_id", sess.ID),
-			slog.String("sess_dir", sessDir),
-			slog.String("project_path", projectPath),
-			slog.Int64("created", sess.Created),
-			slog.Int64("updated", sess.Updated),
-		)
-
-		// Normalize both paths for comparison
-		if sessDir == "" || normalizedSessDir != normalizedProjectPath {
-			sessionLog.Debug("opencode_session_dir_mismatch", slog.String("session_id", sess.ID))
-			continue
-		}
-
-		// Pick the most recently updated session for this directory
-		updatedAt := sess.Updated
-		if updatedAt == 0 {
-			updatedAt = sess.Created // Fallback to created if updated not available
-		}
-
-		sessionLog.Debug(
-			"opencode_session_dir_match",
-			slog.String("session_id", sess.ID),
-			slog.Int64("updated", updatedAt),
-		)
-
-		if bestMatch == "" || updatedAt > bestMatchTime {
-			bestMatch = sess.ID
-			bestMatchTime = updatedAt
-		}
-	}
-
-	sessionLog.Debug("opencode_best_match", slog.String("session_id", bestMatch), slog.Int64("updated", bestMatchTime))
+	bestMatch := findBestOpenCodeSession(sessions, i.ProjectPath, i.OpenCodeSessionID)
+	sessionLog.Debug(
+		"opencode_best_match",
+		slog.String("session_id", bestMatch),
+		slog.String("current_id", i.OpenCodeSessionID),
+	)
 	return bestMatch
 }
 
@@ -2505,6 +2501,11 @@ func (i *Instance) UpdateStatus() error {
 				exclude := i.collectOtherCodexSessionIDs()
 				i.UpdateCodexSession(exclude)
 			}
+
+			// Update OpenCode session tracking (non-blocking, best-effort)
+			if i.Tool == "opencode" {
+				i.UpdateOpenCodeSession()
+			}
 		}
 	}
 
@@ -2767,6 +2768,49 @@ func (i *Instance) UpdateGeminiSession(excludeIDs map[string]bool) {
 	i.syncGeminiSessionFromDisk()
 	i.updateGeminiAnalytics()
 	i.updateGeminiLatestPrompt()
+}
+
+// UpdateOpenCodeSession refreshes the OpenCode session ID from OpenCode CLI
+// state without stealing a different tab's session from the same project.
+func (i *Instance) UpdateOpenCodeSession() {
+	i.updateOpenCodeSession(false)
+}
+
+func (i *Instance) updateOpenCodeSession(force bool) {
+	if i.Tool != "opencode" {
+		return
+	}
+
+	now := time.Now()
+	if !force && !i.lastOpenCodeScanAt.IsZero() && now.Sub(i.lastOpenCodeScanAt) < opencodeRotationScanInterval {
+		return
+	}
+	i.lastOpenCodeScanAt = now
+
+	candidate := i.queryOpenCodeSession()
+	i.applyOpenCodeSessionCandidate(candidate)
+}
+
+func (i *Instance) applyOpenCodeSessionCandidate(candidate string) bool {
+	if candidate == "" {
+		return false
+	}
+
+	if candidate == i.OpenCodeSessionID {
+		if i.OpenCodeDetectedAt.IsZero() {
+			i.OpenCodeDetectedAt = time.Now()
+		}
+		return false
+	}
+
+	sessionLog.Debug(
+		"opencode_session_rebind",
+		slog.String("old_id", i.OpenCodeSessionID),
+		slog.String("new_id", candidate),
+	)
+
+	i.setOpenCodeSession(candidate)
+	return true
 }
 
 // syncGeminiSessionFromTmux reads session ID and YOLO mode from tmux environment (authoritative source).
@@ -3805,6 +3849,9 @@ func (i *Instance) Restart() error {
 
 	// If OpenCode session AND tmux session exists, use respawn-pane
 	if i.Tool == "opencode" && i.tmuxSession != nil && i.tmuxSession.Exists() {
+		// Refresh from OpenCode state before deciding the resume target.
+		i.updateOpenCodeSession(true)
+
 		// Try to get session ID from tmux environment if not already set
 		// (async detection stores it there but Instance might not have been saved)
 		if i.OpenCodeSessionID == "" {
@@ -4994,18 +5041,22 @@ func (i *Instance) prepareCommand(cmd string) (string, string, error) {
 }
 
 // terminalEnvVars are always passed through to containers for proper UI/theming.
-var terminalEnvVars = []string{"TERM", "COLORTERM", "FORCE_COLOR", "NO_COLOR"}
+var terminalEnvVars = []string{"TERM", "COLORTERM", "FORCE_COLOR", "NO_COLOR", "COLORFGBG"}
 
 // collectDockerEnvVars returns host environment variables to forward to containers.
 // Each call reads fresh values from the host environment via os.LookupEnv so that
 // changes between session starts (e.g. updated TERM) are picked up immediately.
-// Terminal-related variables (TERM, COLORTERM, FORCE_COLOR, NO_COLOR) are always
+// Terminal-related variables (TERM, COLORTERM, FORCE_COLOR, NO_COLOR, COLORFGBG) are always
 // included when set. Additional names from DockerSettings.Environment are appended.
 func collectDockerEnvVars(names []string) map[string]string {
 	env := make(map[string]string, len(terminalEnvVars)+len(names))
 	for _, name := range terminalEnvVars {
 		if val, ok := os.LookupEnv(name); ok {
 			env[name] = val
+			continue
+		}
+		if name == "COLORFGBG" {
+			env[name] = ThemeColorFGBG()
 		}
 	}
 	for _, name := range names {
@@ -5089,7 +5140,47 @@ func ensureContainerRunning(
 		}
 	}
 
+	// Migration guard: older containers were created with root-owned tmpfs mounts
+	// for /root/.npm and /root/.cache. With --user uid:gid this causes plugin
+	// bootstrap failures (EACCES mkdir '/root/.npm/_cacache'). Recreate the
+	// container once if those paths are not writable.
+	cacheWritable := sandboxCacheDirsWritable(ctx, ctr)
+	tmpExecutable := sandboxTmpExecutable(ctx, ctr)
+	if !cacheWritable || !tmpExecutable {
+		sessionLog.Warn(
+			"sandbox_recreating_for_runtime_compat",
+			slog.Bool("cache_writable", cacheWritable),
+			slog.Bool("tmp_executable", tmpExecutable),
+		)
+		if rmErr := ctr.Remove(ctx, true); rmErr != nil {
+			return fmt.Errorf("removing incompatible sandbox container: %w", rmErr)
+		}
+		cfg := buildSandboxConfig(inst, userCfg, homeDir, bindMounts, homeMounts)
+		if _, createErr := ctr.Create(ctx, cfg); createErr != nil {
+			return fmt.Errorf("recreating sandbox container: %w", createErr)
+		}
+		if startErr := ctr.Start(ctx); startErr != nil {
+			return fmt.Errorf("starting recreated sandbox container: %w", startErr)
+		}
+	}
+
 	return nil
+}
+
+func sandboxCacheDirsWritable(ctx context.Context, ctr *docker.Container) bool {
+	return sandboxExecProbe(ctx, ctr, "test -w /root/.npm && test -w /root/.cache")
+}
+
+func sandboxTmpExecutable(ctx context.Context, ctr *docker.Container) bool {
+	probe := `f=/tmp/.agent_deck_exec_probe.sh; printf '#!/bin/sh\nexit 0\n' > "$f" && chmod +x "$f" && "$f" >/dev/null 2>&1 && rm -f "$f"`
+	return sandboxExecProbe(ctx, ctr, probe)
+}
+
+func sandboxExecProbe(ctx context.Context, ctr *docker.Container, script string) bool {
+	prefix := ctr.ExecPrefixNonInteractive()
+	args := append(prefix[1:], "bash", "-lc", script)
+	_, err := exec.CommandContext(ctx, prefix[0], args...).CombinedOutput()
+	return err == nil
 }
 
 // buildSandboxConfig assembles the ContainerConfig from session and user settings.

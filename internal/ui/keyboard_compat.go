@@ -21,6 +21,7 @@ package ui
 import (
 	"bytes"
 	"io"
+	"os"
 
 	tea "github.com/charmbracelet/bubbletea"
 )
@@ -250,14 +251,40 @@ type csiuReader struct {
 	err    error  // pending source error to return after draining buffers
 }
 
+// csiuFileReader wraps a *os.File and overrides Read with CSI u translation.
+// It preserves the *os.File interface (including Fd()) so that Bubble Tea can
+// still call terminal.MakeRaw on stdin to enter raw mode.
+//
+// This is required because tea.WithInput(plainIoReader) loses the *os.File
+// type assertion, which Bubble Tea needs to set the terminal to raw mode.
+// Without raw mode, arrow keys and other escape sequences appear as visible
+// text instead of being interpreted.
+type csiuFileReader struct {
+	*os.File
+	inner *csiuReader
+}
+
+// Read implements io.Reader using the CSI u translation layer.
+func (r *csiuFileReader) Read(p []byte) (int, error) {
+	return r.inner.Read(p)
+}
+
 // NewCSIuReader returns a reader that wraps r and translates any CSI u
 // sequences to their legacy equivalents. This is a belt-and-suspenders
 // fallback for terminals that do not honor DisableKittyKeyboard.
+//
+// If r is a *os.File, the returned reader also implements the *os.File
+// interface (preserving Fd() for terminal raw-mode setup by Bubble Tea).
+// If r is any other io.Reader, a plain io.Reader is returned.
 func NewCSIuReader(r io.Reader) io.Reader {
-	return &csiuReader{
+	inner := &csiuReader{
 		src:   r,
 		inBuf: make([]byte, 0, 256),
 	}
+	if f, ok := r.(*os.File); ok {
+		return &csiuFileReader{File: f, inner: inner}
+	}
+	return inner
 }
 
 // Read implements io.Reader. It reads from the underlying source, translates

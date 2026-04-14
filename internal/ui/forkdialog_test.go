@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/asheshgoplani/agent-deck/internal/session"
+	tea "github.com/charmbracelet/bubbletea"
 )
 
 func TestNewForkDialog(t *testing.T) {
@@ -204,5 +205,22 @@ func TestForkDialog_Show_ClearsError(t *testing.T) {
 
 	if d.validationErr != "" {
 		t.Error("Show() should clear validationErr")
+	}
+}
+
+// TestForkDialog_NameInput_AcceptsUnderscore verifies that typing '_' into the
+// name input reaches the textinput buffer (regression test for BUG-02).
+func TestForkDialog_NameInput_AcceptsUnderscore(t *testing.T) {
+	d := NewForkDialog()
+	d.Show("Original Session", "/path/to/project", "group/path", nil, "")
+
+	// focusIndex defaults to 0 (name input) after Show; ensure name input is focused.
+	d.nameInput.SetValue("")
+
+	underscoreKey := tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'_'}}
+	updated, _ := d.Update(underscoreKey)
+
+	if updated.nameInput.Value() != "_" {
+		t.Errorf("nameInput.Value() = %q after typing '_', want %q", updated.nameInput.Value(), "_")
 	}
 }

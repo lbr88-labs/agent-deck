@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.5.1] - 2026-04-13
+
+Patch release fixing 7 bugs reported by users and merging 3 community PRs.
+
+### Fixed
+- Clear host terminal scrollback on session detach. ([#419](https://github.com/asheshgoplani/agent-deck/issues/419))
+- Web terminal resize now uses pty.Setsize + tmux resize-window for correct dimensions. ([#568](https://github.com/asheshgoplani/agent-deck/pull/568))
+- Narrow controlSeqTimeout to ESC-only and ignore SIGINT during attach, fixing Ctrl+C forwarding. ([#571](https://github.com/asheshgoplani/agent-deck/pull/571))
+- Allow underscore character in TUI dialog text inputs. ([#573](https://github.com/asheshgoplani/agent-deck/pull/573))
+- Allow Esc to dismiss setup wizard on welcome step. ([#564](https://github.com/asheshgoplani/agent-deck/issues/564), [#566](https://github.com/asheshgoplani/agent-deck/pull/566))
+- Initialize branchAutoSet when worktree default_enabled is true. ([#561](https://github.com/asheshgoplani/agent-deck/issues/561), [#562](https://github.com/asheshgoplani/agent-deck/pull/562))
+- Harden sandbox runtime probes and respawn bash wrapping. ([#575](https://github.com/asheshgoplani/agent-deck/pull/575))
+- Preserve existing OpenCode session binding on restart. ([#576](https://github.com/asheshgoplani/agent-deck/pull/576))
+
+### Added
+- Arrow-key navigation for confirm dialogs. ([#557](https://github.com/asheshgoplani/agent-deck/pull/557))
+
 ## [1.5.0] - 2026-04-10
 
 v1.5.0 is the Premium Web App milestone. The web interface gets P0/P1 bug fixes, performance optimization (first-load wire size from 668 KB to under 150 KB gzipped), UX polish, and automated visual regression testing.

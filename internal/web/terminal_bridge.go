@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"strconv"
 	"strings"
 	"sync"
 	"syscall"
@@ -136,12 +137,33 @@ func (b *tmuxPTYBridge) Resize(cols, rows int) error {
 		return fmt.Errorf("invalid dimensions: cols=%d rows=%d", cols, rows)
 	}
 
-	// Do NOT call pty.Setsize here. Resizing the local PTY sends SIGWINCH to
-	// the tmux attach process, which causes the tmux server to recalculate the
-	// window size. Even with "ignore-size" on the attach client, this can race
-	// with the TUI client's dimensions. The web terminal should adapt to the
-	// size provided by the tmux session, not the other way around.
-	return nil
+	var firstErr error
+
+	// Step 1: Resize the local PTY master (per D-02: pty.Setsize first).
+	// This sends SIGWINCH to the tmux attach process. With ignore-size on the
+	// attach client, the tmux server will not auto-resize from this signal,
+	// but the PTY master's own TIOCGWINSZ is updated so xterm.js cell layout
+	// calculations are correct.
+	if err := pty.Setsize(b.ptmx, &pty.Winsize{
+		Rows: uint16(rows),
+		Cols: uint16(cols),
+	}); err != nil {
+		firstErr = fmt.Errorf("resize pty: %w", err)
+	}
+
+	// Step 2: Tell the tmux server the new window dimensions (per D-01).
+	// Required because ignore-size prevents the server from adopting the
+	// attach client's PTY size automatically.
+	args := []string{
+		"resize-window", "-t", b.tmuxSession,
+		"-x", strconv.Itoa(cols),
+		"-y", strconv.Itoa(rows),
+	}
+	if output, err := tmuxCommand(args...).CombinedOutput(); err != nil && firstErr == nil {
+		firstErr = fmt.Errorf("tmux resize-window: %w (output: %s)", err, strings.TrimSpace(string(output)))
+	}
+
+	return firstErr
 }
 
 func (b *tmuxPTYBridge) Close() {

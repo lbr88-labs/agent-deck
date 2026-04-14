@@ -1045,6 +1045,69 @@ func TestNewDialog_ShowInGroup_ResetsBranchAutoSet(t *testing.T) {
 	}
 }
 
+func TestNewDialog_ShowInGroup_DefaultWorktree_SetsBranchAutoSet(t *testing.T) {
+	tempDir := t.TempDir()
+	originalHome := os.Getenv("HOME")
+	os.Setenv("HOME", tempDir)
+	defer os.Setenv("HOME", originalHome)
+	session.ClearUserConfigCache()
+	defer session.ClearUserConfigCache()
+
+	agentDeckDir := filepath.Join(tempDir, ".agent-deck")
+	if err := os.MkdirAll(agentDeckDir, 0700); err != nil {
+		t.Fatalf("MkdirAll: %v", err)
+	}
+	if err := session.SaveUserConfig(&session.UserConfig{
+		Worktree: session.WorktreeSettings{DefaultEnabled: true},
+	}); err != nil {
+		t.Fatalf("SaveUserConfig: %v", err)
+	}
+	session.ClearUserConfigCache()
+
+	d := NewNewDialog()
+	d.ShowInGroup("projects", "Projects", "", nil, "")
+
+	if !d.worktreeEnabled {
+		t.Fatal("worktreeEnabled should be true from config default")
+	}
+	if !d.branchAutoSet {
+		t.Error("branchAutoSet should be true when worktree is enabled by config default")
+	}
+}
+
+func TestNewDialog_ShowInGroup_DefaultWorktree_AutoPopulatesBranchFromName(t *testing.T) {
+	tempDir := t.TempDir()
+	originalHome := os.Getenv("HOME")
+	os.Setenv("HOME", tempDir)
+	defer os.Setenv("HOME", originalHome)
+	session.ClearUserConfigCache()
+	defer session.ClearUserConfigCache()
+
+	agentDeckDir := filepath.Join(tempDir, ".agent-deck")
+	if err := os.MkdirAll(agentDeckDir, 0700); err != nil {
+		t.Fatalf("MkdirAll: %v", err)
+	}
+	if err := session.SaveUserConfig(&session.UserConfig{
+		Worktree: session.WorktreeSettings{DefaultEnabled: true},
+	}); err != nil {
+		t.Fatalf("SaveUserConfig: %v", err)
+	}
+	session.ClearUserConfigCache()
+
+	d := NewNewDialog()
+	d.ShowInGroup("projects", "Projects", "", nil, "")
+	d.nameInput.SetValue("amber-falcon")
+
+	// Simulate the name-change handler: it calls autoBranchFromName() only when branchAutoSet is true.
+	if d.worktreeEnabled && d.branchAutoSet {
+		d.autoBranchFromName()
+	}
+
+	if got := d.branchInput.Value(); got != "feature/amber-falcon" {
+		t.Errorf("branch = %q, want %q; branch should auto-populate when worktree is default-enabled", got, "feature/amber-falcon")
+	}
+}
+
 // ===== Soft-Select Tests =====
 
 func TestNewDialog_SoftSelect_InitialState(t *testing.T) {
@@ -1399,5 +1462,41 @@ func TestOverlayDropdown_OutOfBounds(t *testing.T) {
 	}
 	if lines[0] != "a" {
 		t.Errorf("line 0 should be unchanged, got %q", lines[0])
+	}
+}
+
+// TestNewDialog_NameInput_AcceptsUnderscore verifies that typing '_' into the
+// name input reaches the textinput buffer (regression test for BUG-02).
+func TestNewDialog_NameInput_AcceptsUnderscore(t *testing.T) {
+	d := NewNewDialog()
+	d.Show()
+
+	underscoreKey := tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'_'}}
+	updated, _ := d.Update(underscoreKey)
+
+	if updated.nameInput.Value() != "_" {
+		t.Errorf("nameInput.Value() = %q after typing '_', want %q", updated.nameInput.Value(), "_")
+	}
+}
+
+// TestNewDialog_PathInput_AcceptsUnderscore verifies that typing '_' into the
+// path input reaches the textinput buffer (regression test for BUG-02).
+// Focus targets: focusName(0), focusMultiRepo(1), focusPath(2), ...
+// Two Tabs are required to reach focusPath from focusName.
+func TestNewDialog_PathInput_AcceptsUnderscore(t *testing.T) {
+	d := NewNewDialog()
+	d.Show()
+
+	// Tab twice to reach the path input field (focusName -> focusMultiRepo -> focusPath).
+	d = sendSpecialKey(d, tea.KeyTab)
+	d = sendSpecialKey(d, tea.KeyTab)
+
+	// Type '_' — the soft-select logic clears any pre-populated value and
+	// focuses the textinput before letting the rune reach it.
+	underscoreKey := tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'_'}}
+	updated, _ := d.Update(underscoreKey)
+
+	if !strings.Contains(updated.pathInput.Value(), "_") {
+		t.Errorf("pathInput.Value() = %q after typing '_', want value to contain '_'", updated.pathInput.Value())
 	}
 }

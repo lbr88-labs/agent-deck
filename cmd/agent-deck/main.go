@@ -32,7 +32,7 @@ import (
 	"github.com/asheshgoplani/agent-deck/internal/web"
 )
 
-var Version = "1.5.0" // overridden at build time via -ldflags "-X main.Version=..."
+var Version = "1.5.1" // overridden at build time via -ldflags "-X main.Version=..."
 
 // Table column widths for list command output
 const (
@@ -604,9 +604,16 @@ func main() {
 	// Disable the Kitty keyboard protocol before starting the TUI.
 	// Wayland terminals (Ghostty, Foot, Alacritty) send keys using CSI u
 	// encoding by default; Bubble Tea v1.3.10 does not parse those sequences,
-	// so uppercase shortcuts and uppercase text input are silently dropped.
-	// Pushing keyboard mode 0 (legacy) restores standard key reporting.
-	// Terminals that don't support the protocol ignore this sequence safely.
+	// so uppercase shortcuts and uppercase text input (including '_') are
+	// silently dropped. Pushing keyboard mode 0 (legacy) restores standard
+	// key reporting. Terminals that don't support the protocol ignore this
+	// sequence safely.
+	//
+	// As a belt-and-suspenders fallback, we also wrap os.Stdin with
+	// NewCSIuReader, which translates any remaining CSI u sequences (including
+	// Shift+hyphen → '_', codepoint 95) to their legacy byte equivalents
+	// before Bubble Tea sees them. This handles terminals that send CSI u
+	// sequences even after the disable request (e.g. tmux with extended-keys).
 	ui.DisableKittyKeyboard(os.Stdout)
 	defer ui.RestoreKittyKeyboard(os.Stdout)
 
@@ -614,6 +621,7 @@ func main() {
 		homeModel,
 		tea.WithAltScreen(),
 		tea.WithMouseCellMotion(),
+		tea.WithInput(ui.NewCSIuReader(os.Stdin)),
 	)
 
 	// Start maintenance worker (background goroutine, respects config toggle)

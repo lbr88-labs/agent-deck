@@ -86,9 +86,17 @@ func (s *Session) Attach(ctx context.Context, detachByte ...byte) error {
 	// Start tmux attach command with PTY
 	cmd := exec.CommandContext(ctx, "tmux", "attach-session", "-t", s.Name)
 
+	// Temporarily ignore SIGINT for the duration of the attach session.
+	// The global SIGINT handler in main.go calls os.Exit(0); suppressing
+	// delivery during attach prevents the race window between tea.Exec
+	// restoring the terminal and Attach() calling term.MakeRaw().
+	// SIGINT is restored in cleanupAttach() via signal.Reset(syscall.SIGINT).
+	signal.Ignore(syscall.SIGINT)
+
 	// Start command with PTY
 	ptmx, err := pty.Start(cmd)
 	if err != nil {
+		signal.Reset(syscall.SIGINT)
 		return fmt.Errorf("failed to start pty: %w", err)
 	}
 	defer ptmx.Close()
@@ -152,6 +160,7 @@ func (s *Session) Attach(ctx context.Context, detachByte ...byte) error {
 	startTime := time.Now()
 	const controlSeqTimeout = 50 * time.Millisecond
 	const terminalStyleReset = "\x1b]8;;\x1b\\\x1b[0m\x1b[24m\x1b[39m\x1b[49m"
+	const clearScrollback = "\033[3J"
 	outputDone := make(chan struct{})
 
 	// Goroutine 1: Copy PTY output to stdout
@@ -189,9 +198,11 @@ func (s *Session) Attach(ctx context.Context, detachByte ...byte) error {
 				return
 			}
 
-			// Discard initial terminal control sequences (within first 50ms)
-			// These are things like terminal capability queries
-			if time.Since(startTime) < controlSeqTimeout {
+			// Discard initial terminal ESC sequences (within first 50ms).
+			// These are things like terminal capability queries sent on attach.
+			// Only drop bytes starting with ESC (0x1b). Non-ESC bytes
+			// (including Ctrl+C / 0x03, Ctrl+Z / 0x1a) are forwarded immediately.
+			if time.Since(startTime) < controlSeqTimeout && n > 0 && buf[0] == 0x1b {
 				continue
 			}
 
@@ -238,12 +249,20 @@ func (s *Session) Attach(ctx context.Context, detachByte ...byte) error {
 	// This avoids terminal style leakage (for example underline/hyperlink state)
 	// from the attached client into the Agent Deck UI.
 	cleanupAttach := func() {
+		// Restore SIGINT handling before returning to TUI.
+		// This must be the first operation so that SIGINT can terminate the
+		// process if needed after the attach session ends.
+		signal.Reset(syscall.SIGINT)
 		cancel()
 		_ = ptmx.Close()
 		select {
 		case <-outputDone:
 		case <-time.After(20 * time.Millisecond):
 		}
+		// Clear host terminal scrollback before returning to TUI.
+		// The on-attach clear at the top of Attach() covers the "next attach" direction;
+		// this covers the "on detach" direction for belt-and-suspenders coverage (#419).
+		_, _ = os.Stdout.WriteString(clearScrollback)
 		// Reset OSC-8 hyperlink state + SGR attributes before Bubble Tea redraws.
 		_, _ = os.Stdout.WriteString(terminalStyleReset)
 	}
