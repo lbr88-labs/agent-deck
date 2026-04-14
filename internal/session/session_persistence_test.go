@@ -188,14 +188,39 @@ func TestPersistence_MacOSDefaultIsDirect(t *testing.T) {
 	}
 }
 
-// pidAlive returns true if a process with the given pid currently exists.
-// It uses signal 0, which checks for process existence without sending a
-// real signal. Returns false for non-positive pids.
+// pidAlive returns true if a process with the given pid exists AND is not
+// a zombie. syscall.Kill(pid, 0) returns nil for zombies, but for our
+// "did tmux die?" assertions we treat a zombie as dead — the daemon has
+// exited and is merely awaiting reap by its parent. We consult
+// /proc/<pid>/status State: field; state "Z" (zombie) or "X" (dead,
+// exiting) counts as dead. Non-positive pids and missing /proc entries
+// are also dead.
 func pidAlive(pid int) bool {
 	if pid <= 0 {
 		return false
 	}
-	return syscall.Kill(pid, syscall.Signal(0)) == nil
+	if syscall.Kill(pid, syscall.Signal(0)) != nil {
+		return false
+	}
+	data, rerr := os.ReadFile("/proc/" + strconv.Itoa(pid) + "/status")
+	if rerr != nil {
+		// /proc entry gone between the Kill(0) check and now — process has
+		// been reaped. Treat as dead.
+		return false
+	}
+	for _, line := range strings.Split(string(data), "\n") {
+		if strings.HasPrefix(line, "State:") {
+			fields := strings.Fields(line)
+			if len(fields) >= 2 {
+				switch fields[1] {
+				case "Z", "X":
+					return false
+				}
+			}
+			break
+		}
+	}
+	return true
 }
 
 // randomHex8 returns 8 hex chars (4 random bytes) for use in unique unit /
@@ -345,4 +370,155 @@ func TestPersistence_TmuxSurvivesLoginSessionRemoval(t *testing.T) {
 	if !pidAlive(pid) {
 		t.Fatalf("TEST-01 RED: tmux server pid %d died after fake-login scope teardown; expected to survive because the server was launched under its own agentdeck-tmux-<name>.scope. The 2026-04-14 incident is recurring.", pid)
 	}
+}
+
+// startTmuxInsideFakeLogin launches a tmux server as a grandchild of a
+// throwaway fake-login-<hex> user scope — mirroring the production
+// LaunchInUserScope=false path where tmux inherits the user's SSH
+// login-session cgroup. Used by TEST-02 to confirm that WITHOUT
+// cgroup isolation, a scope teardown does kill the tmux server.
+//
+// Returns (fakeName, tmuxServerPID). Registers cleanup that stops the
+// scope and kills the private tmux socket (-L <serverName>).
+//
+// Safety: tmux socket name and scope name both use per-test random
+// suffixes. kill-server is confined to the -L <serverName> socket.
+func startTmuxInsideFakeLogin(t *testing.T, serverName string) (string, int) {
+	t.Helper()
+	fakeName := "fake-login-" + randomHex8(t)
+	// Start tmux as a grandchild of the fake-login scope. The outer
+	// `sleep 300` keeps the scope alive until the test body tears it down.
+	shellCmd := "tmux -L " + serverName + " new-session -d -s persist bash -c 'exec sleep 300'; exec sleep 300"
+	cmd := exec.Command("systemd-run", "--user", "--scope", "--quiet",
+		"--collect", "--unit="+fakeName,
+		"bash", "-c", shellCmd)
+	if err := cmd.Start(); err != nil {
+		t.Fatalf("startTmuxInsideFakeLogin: systemd-run start: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = exec.Command("systemctl", "--user", "stop", fakeName+".scope").Run()
+		// -L <serverName> confines kill-server to this test's private socket.
+		_ = exec.Command("tmux", "-L", serverName, "kill-server").Run()
+	})
+	// Poll up to 3s for the tmux server process to appear. pgrep with
+	// the unique -L <serverName> argument ensures we only ever match
+	// the server we just started.
+	deadline := time.Now().Add(3 * time.Second)
+	var pid int
+	for time.Now().Before(deadline) {
+		out, err := exec.Command("pgrep", "-f", "tmux -L "+serverName+" ").Output()
+		if err == nil {
+			for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+				line = strings.TrimSpace(line)
+				if line == "" {
+					continue
+				}
+				p, perr := strconv.Atoi(line)
+				if perr == nil && p > 0 {
+					pid = p
+					break
+				}
+			}
+			if pid > 0 {
+				break
+			}
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	if pid == 0 {
+		t.Fatalf("startTmuxInsideFakeLogin: could not locate tmux server PID for -L %s within 3s", serverName)
+	}
+	return fakeName, pid
+}
+
+// pidCgroup returns the contents of /proc/<pid>/cgroup (unified hierarchy
+// v2 line). Empty string on any error.
+func pidCgroup(pid int) string {
+	data, err := os.ReadFile("/proc/" + strconv.Itoa(pid) + "/cgroup")
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(data))
+}
+
+// TestPersistence_TmuxDiesWithoutUserScope is the INVERSE PIN. It asserts
+// that when tmux is spawned WITHOUT the systemd-run --user --scope wrap
+// (i.e., launch_in_user_scope=false — the current v1.5.1 default and also
+// the explicit opt-out path after Phase 2), a login-session scope teardown
+// DOES kill the tmux server. This replicates the 2026-04-14 incident root
+// cause and must stay green for the entire milestone. Any future "fix"
+// that silently masks opt-outs will break this test.
+//
+// Skip semantics:
+//   - requireSystemdRun skips cleanly on macOS / non-systemd hosts with
+//     "no systemd-run available:" in the message.
+//   - If this process is already running inside a transient scope (e.g., a
+//     tmux-spawn-*.scope used by agent-deck itself, or a nested
+//     systemd-run --scope call), systemd places the child scope's tracked
+//     processes in the PARENT scope's cgroup rather than the new unit's
+//     cgroup. In that edge case the scope-teardown simulation is a no-op
+//     and the test skips with a diagnostic so CI (running from a normal
+//     login shell) still exercises the assertion.
+func TestPersistence_TmuxDiesWithoutUserScope(t *testing.T) {
+	requireSystemdRun(t)
+	_ = isolatedHomeDir(t)
+	serverName := uniqueTmuxServerName(t)
+
+	fakeName, pid := startTmuxInsideFakeLogin(t, serverName)
+	if !pidAlive(pid) {
+		t.Fatalf("setup failure: tmux server pid %d not alive immediately after spawn", pid)
+	}
+
+	// Diagnostic: record the actual cgroup placement so failures surface the
+	// systemd nesting edge case loudly.
+	t.Logf("tmux pid=%d cgroup=%q", pid, pidCgroup(pid))
+
+	// Nested-scope edge case: if tmux did not actually land inside the
+	// fake-login scope's cgroup, the scope teardown cannot kill it and the
+	// assertion below would be testing nothing. Skip cleanly so CI running
+	// from a normal login shell (where tmux DOES land in the scope cgroup)
+	// still exercises the real assertion.
+	cg := pidCgroup(pid)
+	if !strings.Contains(cg, fakeName+".scope") {
+		t.Skipf("TEST-02 skipped: tmux pid %d did not land in %s.scope cgroup (got %q) — this process is likely already inside a transient scope, which reparents child scopes. Run from a login shell or the verify-session-persistence.sh harness.", pid, fakeName, cg)
+	}
+
+	// Simulate the 2026-04-14 incident: systemd-logind forcibly terminates
+	// an SSH login-session scope when the user logs out. That is NOT a
+	// polite `systemctl stop` — scopes by default release their cgroup
+	// without actively killing members, and `systemctl kill` on an
+	// already-transitioning scope can race with concurrent tmux forks.
+	// The only atomic, race-free primitive is cgroup v2's `cgroup.kill`,
+	// which SIGKILLs every task in the cgroup (and any concurrently
+	// forking descendants) in one kernel operation. This matches the
+	// effective behavior logind applies to a session scope on logout.
+	scopeCg, scopeErr := exec.Command("systemctl", "--user", "show",
+		"-p", "ControlGroup", "--value", fakeName+".scope").Output()
+	scopeCgPath := strings.TrimSpace(string(scopeCg))
+	if scopeErr != nil || scopeCgPath == "" {
+		t.Fatalf("could not resolve ControlGroup for %s: err=%v out=%q", fakeName, scopeErr, scopeCgPath)
+	}
+	killFile := "/sys/fs/cgroup" + scopeCgPath + "/cgroup.kill"
+	if err := os.WriteFile(killFile, []byte("1"), 0o644); err != nil {
+		t.Fatalf("write cgroup.kill %s: %v", killFile, err)
+	}
+
+	// Poll up to 3s for the pid to die. cgroup.kill delivers SIGKILL to
+	// all tasks atomically; reap is near-instant but scheduler latency can
+	// add tens of milliseconds.
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		if !pidAlive(pid) {
+			return // PASS — tmux died with the scope as expected.
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+
+	// Final diagnostic before failing: report the pid's cgroup state so a
+	// nested-scope or SIGKILL-not-delivered regression is easy to diagnose.
+	finalCg := pidCgroup(pid)
+	t.Fatalf("TEST-02 INVERSE PIN: tmux server pid %d survived cgroup.kill SIGKILL teardown WITHOUT launch_in_user_scope after 3s. "+
+		"Pid cgroup after kill: %q. "+
+		"The opt-out path must remain vulnerable so any future 'fix' that silently masks opt-outs is caught. Expected death.",
+		pid, finalCg)
 }
