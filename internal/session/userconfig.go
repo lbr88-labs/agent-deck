@@ -1946,9 +1946,11 @@ auto_cleanup = true
 # Default: true (agent-deck injects its own status bar with session info)
 # inject_status_line = false
 # launch_in_user_scope starts new tmux servers with systemd-run --user --scope
-# so they are not tied to the current login session scope (useful for SSH/tmux).
-# Default: false
-# launch_in_user_scope = true
+# so they survive when the current login session is torn down (e.g. SSH logout).
+# Default: true on Linux+systemd hosts where 'systemd-run --user --version'
+#          succeeds, false on macOS / BSD / Linux without a user manager.
+# An explicit setting here is ALWAYS honored.
+# launch_in_user_scope = false
 # window_style_override sets the tmux window-style for all sessions, overriding
 # the theme default. Use "default" to let your terminal's background show through.
 # window_style_override = "default"
