@@ -23,11 +23,6 @@ const DiscussionNodeID = "D_PLACEHOLDER"
 // and relies on the user pasting from clipboard into the Discussion form.
 const DiscussionURL = "https://github.com/asheshgoplani/agent-deck/discussions"
 
-// exitCoder is implemented by exec.ExitError and by the fakeExitError test helper.
-type exitCoder interface {
-	ExitCode() int
-}
-
 // Sender holds the three-tier send mechanism for feedback submissions.
 // All four function fields are injectable for testing.
 type Sender struct {
@@ -102,13 +97,7 @@ func (s *Sender) Send(version string, rating int, goos, goarch, comment string) 
 
 	// gh failed (auth error, not installed, network error, etc.)
 	// Fall through to clipboard + optional browser fallback.
-	// Note: exit code 4 means auth failure; other codes are other errors.
-	// All gh failures use the same fallback path.
-	_ = func() {
-		if ec, ok := err.(exitCoder); ok && ec.ExitCode() == 4 {
-			// auth failure — could log here in the future
-		}
-	}
+	// All gh failures use the same fallback path regardless of exit code.
 
 	if !s.IsHeadlessFunc() {
 		// Non-headless: copy formatted comment body to clipboard, then open Discussion URL.
