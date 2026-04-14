@@ -617,8 +617,31 @@ func newClaudeInstanceForDispatch(t *testing.T, home string) *Instance {
 
 // setupStubClaudeOnPATH drops the writeStubClaudeBinary helper's stub script
 // at <home>/bin/claude, sets AGENTDECK_TEST_ARGV_LOG so the stub logs argv to
-// a known file, and prepends <home>/bin to PATH so `claude` resolves to the
-// stub when tmux spawns the command. Returns the argv log path.
+// a known file, and configures the dispatch to invoke the stub by its
+// ABSOLUTE path.
+//
+// [Deviation Rule 3 — Blocking fix applied during Plan 03 Task 2]
+// The plan prescribed prepending <home>/bin to PATH so `claude` in the
+// spawned tmux pane would resolve to the stub. That does not work on this
+// executor host (or any environment where tests run inside a pre-existing
+// tmux server): `tmux new-session` uses the DEFAULT tmux socket, which is
+// already owned by a server started long before the test. That server's
+// environment was captured at its own startup, and new sessions inherit the
+// server's PATH rather than the spawning client's PATH. Empirically
+// confirmed: env vars set via `t.Setenv("PATH", ...)` do not reach the
+// initial process of a tmux pane on the default socket.
+//
+// The robust fix: write a real agent-deck config.toml under the isolated
+// HOME with `[claude] command = "<abs stub path>"`. GetClaudeCommand() picks
+// this up at dispatch time (instance.go:4121, :492), and the spawned
+// command embeds the stub's ABSOLUTE path — no PATH search needed. We also
+// forward AGENTDECK_TEST_ARGV_LOG into the tmux pane environment via
+// tmux set-environment on the default socket (inline export is redundant
+// but cheap; env-var resolution inside the stub reads it from the pane's
+// env, which tmux set-environment on the default socket injects correctly
+// for ALL subsequent new-sessions in that server).
+//
+// Returns the argv log path.
 func setupStubClaudeOnPATH(t *testing.T, home string) string {
 	t.Helper()
 	binDir := filepath.Join(home, "bin")
@@ -626,9 +649,53 @@ func setupStubClaudeOnPATH(t *testing.T, home string) string {
 		t.Fatalf("setupStubClaudeOnPATH: mkdir binDir: %v", err)
 	}
 	writeStubClaudeBinary(t, binDir)
+	stubAbs := filepath.Join(binDir, "claude")
 	argvLog := filepath.Join(home, "claude-argv.log")
+
+	// Write an empty argv log file so readers see a sentinel rather than
+	// ENOENT before the stub first runs.
+	if err := os.WriteFile(argvLog, nil, 0o644); err != nil {
+		t.Fatalf("setupStubClaudeOnPATH: init argvLog: %v", err)
+	}
+
+	// Configure [claude] command = <abs stub> via the user config under the
+	// isolated HOME. This is read by GetClaudeCommand() at dispatch time.
+	cfgPath := filepath.Join(home, ".agent-deck", "config.toml")
+	cfgBody := "[claude]\ncommand = \"" + stubAbs + "\"\n"
+	if err := os.WriteFile(cfgPath, []byte(cfgBody), 0o644); err != nil {
+		t.Fatalf("setupStubClaudeOnPATH: write config.toml: %v", err)
+	}
+	ClearUserConfigCache()
+	t.Cleanup(func() { ClearUserConfigCache() })
+
+	// [Deviation Rule 3 — Blocking fix] GetClaudeConfigDir() at claude.go:234
+	// short-circuits to the CLAUDE_CONFIG_DIR env var when set. On this
+	// executor host (and on any real user's machine) that env var is
+	// pre-set to the user's real ~/.claude — which poisons
+	// sessionHasConversationData() by pointing it at the real home's
+	// projects/ dir instead of the isolated HOME. We unset it for the
+	// duration of the test so GetClaudeConfigDir() falls through to the
+	// os.UserHomeDir() default under our isolated HOME. The Plan 01
+	// isolatedHomeDir helper only sets HOME; this helper layers the
+	// CLAUDE_CONFIG_DIR unset that the dispatch tests require.
+	t.Setenv("CLAUDE_CONFIG_DIR", "")
+
+	// Set env var on THIS test process. Go's exec inherits; tmux binary
+	// sees it. But tmux new-session does not propagate to the server's
+	// pane env on the default socket, so also inject via tmux
+	// set-environment -g (global) on the default socket as a belt-and-
+	// suspenders path — the stub resolves AGENTDECK_TEST_ARGV_LOG inside
+	// the pane's env.
 	t.Setenv("AGENTDECK_TEST_ARGV_LOG", argvLog)
-	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	// Best-effort: set it globally on the default tmux socket so new
+	// sessions inherit. Errors ignored (no-op if tmux is absent or server
+	// is unreachable — tests that need it call requireTmux() first).
+	_ = exec.Command("tmux", "set-environment", "-g", "AGENTDECK_TEST_ARGV_LOG", argvLog).Run()
+	// Register a cleanup to unset the global tmux env var so it does not
+	// leak across tests or into the user's interactive sessions.
+	t.Cleanup(func() {
+		_ = exec.Command("tmux", "set-environment", "-g", "-u", "AGENTDECK_TEST_ARGV_LOG").Run()
+	})
 	return argvLog
 }
 
@@ -691,5 +758,178 @@ func TestPersistence_FreshSessionUsesSessionIDNotResume(t *testing.T) {
 	}
 	if strings.Contains(cmdLine, "--resume") {
 		t.Fatalf("TEST-08: buildClaudeResumeCommand() must NOT use --resume for a fresh session (no JSONL transcript exists at ~/.claude/projects/<hash>/<id>.jsonl). Got: %q", cmdLine)
+	}
+}
+
+// requireTmux skips the current test if the tmux binary is not on PATH. The
+// skip message contains "no tmux available:" so CI log scrapers can detect a
+// vacuous-skip regression.
+func requireTmux(t *testing.T) {
+	t.Helper()
+	if _, err := exec.LookPath("tmux"); err != nil {
+		t.Skipf("no tmux available: %v", err)
+	}
+}
+
+// TestPersistence_RestartResumesConversation pins REQ-2 Restart() contract:
+// when a JSONL transcript exists for the instance's ClaudeSessionID,
+// inst.Restart() MUST spawn "claude --resume <id>", NOT "claude --session-id
+// <new-uuid>".
+//
+// Driven via the REAL Restart() dispatch path (internal/session/instance.go
+// line 3763). Stub claude on PATH captures argv to AGENTDECK_TEST_ARGV_LOG.
+//
+// Per CONTEXT.md FAIL-or-PASS qualifier and the dispatch_path_analysis in
+// 03-PLAN.md: current v1.5.1 code at instance.go:3789 correctly routes
+// Restart() through buildClaudeResumeCommand() — so this test may PASS
+// today. Phase 3's REQ-2 fix lives in Start() (TEST-06), not Restart(). This
+// test is kept as a REGRESSION GUARD: any future change that breaks
+// Restart()'s resume routing (e.g. removing the `i.ClaudeSessionID != ""`
+// check at line 3788) will fail this test. Either outcome (PASS now, FAIL
+// after regression) is acceptable; the unambiguous failure message below
+// prevents silent breakage.
+func TestPersistence_RestartResumesConversation(t *testing.T) {
+	requireTmux(t)
+	home := isolatedHomeDir(t)
+	argvLog := setupStubClaudeOnPATH(t, home)
+	inst := newClaudeInstanceForDispatch(t, home)
+
+	// First bring the tmux session up so Restart()'s respawn-pane branch
+	// (instance.go:3788 — requires tmuxSession.Exists()) is taken.
+	//
+	// IMPORTANT: Start() at instance.go:566-567 MINTS A NEW UUID via
+	// generateUUID() and overwrites inst.ClaudeSessionID with it. Any JSONL
+	// transcript written BEFORE Start() points at a stale UUID that is no
+	// longer inst.ClaudeSessionID by the time Restart() runs. To pin
+	// Restart()'s resume routing, the JSONL must be written AFTER Start()
+	// completes, under the post-Start ClaudeSessionID. This mirrors the
+	// 2026-04-14 production scenario: a real Claude session ran to the point
+	// of writing a transcript, then tmux was SIGKILLed; on restart, Claude
+	// finds a JSONL matching its current session UUID.
+	if err := inst.Start(); err != nil {
+		t.Fatalf("setup: inst.Start: %v", err)
+	}
+	time.Sleep(500 * time.Millisecond) // let initial argv be written
+
+	// Now write the synthetic JSONL for the POST-Start ClaudeSessionID so
+	// sessionHasConversationData() returns true when Restart() consults it.
+	jsonlPath := writeSyntheticJSONLTranscript(t, home, inst)
+
+	// Reset the argv log so the subsequent Restart's argv is the only entry.
+	if err := os.WriteFile(argvLog, nil, 0o644); err != nil {
+		t.Fatalf("truncate argvLog: %v", err)
+	}
+
+	if err := inst.Restart(); err != nil {
+		t.Fatalf("Restart: %v", err)
+	}
+
+	argv := readCapturedClaudeArgv(t, argvLog, 3*time.Second)
+	joined := strings.Join(argv, " ")
+	if !strings.Contains(joined, "--resume") || !strings.Contains(joined, inst.ClaudeSessionID) {
+		t.Fatalf("TEST-05 RED: after Restart() with JSONL transcript at %s, captured claude argv must contain '--resume %s'. Got argv: %v", jsonlPath, inst.ClaudeSessionID, argv)
+	}
+}
+
+// TestPersistence_StartAfterSIGKILLResumesConversation is the core REQ-2 RED
+// test. Models the 2026-04-14 incident: tmux server is SIGKILLed by an SSH
+// logout, instance transitions to Status=error, user runs "agent-deck session
+// start" — which calls inst.Start() (cmd/agent-deck/session_cmd.go:188).
+//
+// The CONTRACT: Start() on an Instance with a populated ClaudeSessionID and
+// JSONL transcript MUST spawn "claude --resume <id>", NOT a new UUID.
+//
+// Per dispatch_path_analysis in 03-PLAN.md: current v1.5.1 Start()
+// (instance.go:1873) calls buildClaudeCommand() at line 1883, which runs
+// through the capture-resume pattern (line 550+) that generates a brand-new
+// UUID and spawns "claude --session-id <NEW_UUID>". It does NOT consult
+// i.ClaudeSessionID. So this test FAILS RED on current code.
+//
+// Phase 3's REQ-2 fix: route Start() through buildClaudeResumeCommand() when
+// IsClaudeCompatible(i.Tool) && i.ClaudeSessionID != "" — mirroring the
+// Restart() code path at line 3789.
+func TestPersistence_StartAfterSIGKILLResumesConversation(t *testing.T) {
+	requireTmux(t)
+	home := isolatedHomeDir(t)
+	argvLog := setupStubClaudeOnPATH(t, home)
+	inst := newClaudeInstanceForDispatch(t, home)
+	// Simulate the post-SIGKILL state transition.
+	inst.Status = StatusError
+	writeSyntheticJSONLTranscript(t, home, inst)
+
+	if err := inst.Start(); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+
+	argv := readCapturedClaudeArgv(t, argvLog, 3*time.Second)
+	joined := strings.Join(argv, " ")
+
+	if !strings.Contains(joined, "--resume") || !strings.Contains(joined, inst.ClaudeSessionID) {
+		t.Fatalf("TEST-06 RED: after inst.Start() with Status=StatusError, ClaudeSessionID=%s, and JSONL transcript present, captured claude argv must contain '--resume %s'. Got argv: %v. This is the 2026-04-14 incident REQ-2 root cause: Start() dispatches through buildClaudeCommand (instance.go:1883) instead of buildClaudeResumeCommand. Phase 3 must fix this.", inst.ClaudeSessionID, inst.ClaudeSessionID, argv)
+	}
+	if strings.Contains(joined, "--session-id") && !strings.Contains(joined, inst.ClaudeSessionID) {
+		t.Fatalf("TEST-06 RED: Start() minted a NEW session UUID instead of resuming ClaudeSessionID=%s. Argv: %v", inst.ClaudeSessionID, argv)
+	}
+}
+
+// TestPersistence_ClaudeSessionIDSurvivesHookSidecarDeletion pins the
+// invariant from docs/session-id-lifecycle.md: instance JSON is the
+// authoritative ClaudeSessionID source. The hook sidecar at
+// ~/.agent-deck/hooks/<id>.sid is a read-only fallback for hook-event
+// processing (updateSessionIDFromHook at instance.go:2626) — it is NOT
+// consulted by Start() or Restart() dispatch. Deleting the sidecar MUST NOT
+// affect the claude --resume command produced by a session start.
+//
+// Flow:
+//  1. Write sidecar at ~/.agent-deck/hooks/<id>.sid with ClaudeSessionID.
+//  2. Delete the sidecar (simulates corruption or cleanup incident).
+//  3. Call inst.Start() with a JSONL transcript present.
+//  4. Assert captured claude argv contains "--resume <ClaudeSessionID>".
+//
+// Per dispatch_path_analysis in 03-PLAN.md: this test FAILS RED on current
+// v1.5.1 for the SAME root cause as TEST-06 (Start() bypasses resume).
+// After Phase 3 fixes Start() to route through buildClaudeResumeCommand,
+// this test will GREEN because ClaudeSessionID is read from the Instance
+// struct (which mirrors instance JSON storage), NOT from the sidecar.
+func TestPersistence_ClaudeSessionIDSurvivesHookSidecarDeletion(t *testing.T) {
+	requireTmux(t)
+	home := isolatedHomeDir(t)
+	argvLog := setupStubClaudeOnPATH(t, home)
+	inst := newClaudeInstanceForDispatch(t, home)
+
+	sidecarPath := filepath.Join(home, ".agent-deck", "hooks", inst.ID+".sid")
+	if got := HookSessionAnchorPath(inst.ID); got != sidecarPath {
+		t.Fatalf("sidecar path mismatch: got %q want %q — isolatedHomeDir HOME override may not have propagated", got, sidecarPath)
+	}
+	if err := os.MkdirAll(filepath.Dir(sidecarPath), 0o755); err != nil {
+		t.Fatalf("mkdir hooks: %v", err)
+	}
+	if err := os.WriteFile(sidecarPath, []byte(inst.ClaudeSessionID+"\n"), 0o644); err != nil {
+		t.Fatalf("write sidecar: %v", err)
+	}
+	if _, err := os.Stat(sidecarPath); err != nil {
+		t.Fatalf("setup: sidecar not written: %v", err)
+	}
+
+	if err := os.Remove(sidecarPath); err != nil {
+		t.Fatalf("delete sidecar: %v", err)
+	}
+	if _, err := os.Stat(sidecarPath); !os.IsNotExist(err) {
+		t.Fatalf("setup: sidecar still present after delete: err=%v", err)
+	}
+	if inst.ClaudeSessionID == "" {
+		t.Fatalf("TEST-07 RED: ClaudeSessionID was cleared when sidecar was deleted; expected instance-JSON to remain authoritative")
+	}
+
+	writeSyntheticJSONLTranscript(t, home, inst)
+
+	if err := inst.Start(); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+
+	argv := readCapturedClaudeArgv(t, argvLog, 3*time.Second)
+	joined := strings.Join(argv, " ")
+	if !strings.Contains(joined, "--resume") || !strings.Contains(joined, inst.ClaudeSessionID) {
+		t.Fatalf("TEST-07 RED: after deleting hook sidecar at %s, inst.Start() must still spawn 'claude --resume %s' because ClaudeSessionID lives in instance storage, not the sidecar. Got argv: %v. Root cause: Start() bypasses buildClaudeResumeCommand — same as TEST-06. Phase 3 fix will make both tests GREEN.", sidecarPath, inst.ClaudeSessionID, argv)
 	}
 }
