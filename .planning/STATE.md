@@ -3,9 +3,9 @@ gsd_state_version: 1.0
 milestone: v1.6.0
 milestone_name: milestone
 status: executing
-stopped_at: Wave B milestone bootstrap complete — PROJECT.md, REQUIREMENTS.md, ROADMAP.md, STATE.md updated to reflect v1.6.0 Wave B (Watcher Framework Completion) scope.
-last_updated: "2026-04-15T23:33:07.238Z"
-last_activity: 2026-04-15 -- Phase 19 planning complete
+stopped_at: Phase 19 plan 19-01 complete — 14-VERIFICATION.md shipped (REQ-WF-1 closed), commit 2c19e3f, 127/127 watcher tests green under -race.
+last_updated: "2026-04-16T00:35:00Z"
+last_activity: 2026-04-16 -- Plan 19-01 complete (REQ-WF-1)
 progress:
   total_phases: 12
   completed_phases: 1
@@ -43,10 +43,10 @@ See `.planning/REQUIREMENTS.md` for requirements and phase mappings.
 
 ## Current Position
 
-Phase: 19 (Verification Docs - Phases 14 + 15) - PLANNED, NOT STARTED
-Plan: 0 of 2
-Status: Ready to execute
-Last activity: 2026-04-15 -- Phase 19 planning complete
+Phase: 19 (verification-docs-phases-14-15) — EXECUTING
+Plan: 2 of 2 (19-01 complete, 19-02 pending)
+Status: Plan 19-01 complete — REQ-WF-1 closed; plan 19-02 (Phase 15 backfill, REQ-WF-2) next
+Last activity: 2026-04-16 -- Plan 19-01 complete (REQ-WF-1)
 
 ## Phase Progress
 
@@ -56,7 +56,7 @@ Last activity: 2026-04-15 -- Phase 19 planning complete
 |---|-------|--------|--------------|
 | 12 | Schema & Config | Code shipped (SchemaVersion 5) | SCHEMA-01..06 |
 | 13 | Engine Core | VERIFIED COMPLETE (`13-VERIFICATION.md`, 7/7 truths) | ENGINE-01..07 |
-| 14 | Simple Adapters (Webhook + ntfy + GitHub) | Code shipped, 62 tests pass with -race; verification doc owed (REQ-WF-1) | ADAPT-01, ADAPT-02, ADAPT-03 |
+| 14 | Simple Adapters (Webhook + ntfy + GitHub) | VERIFIED COMPLETE (`14-VERIFICATION.md`, 10/10 truths, aggregate 127 tests green under -race) | ADAPT-01, ADAPT-02, ADAPT-03 |
 | 15 | Slack Adapter + watcher import | Code shipped, 50+ tests; PLAN/SUMMARY/VERIFICATION owed (REQ-WF-2) | ADAPT-04, CLI-07 |
 | 16 | CLI + TUI Integration | Code shipped beyond plan (8 CLI subcommands + watcher panel); health alerts deferred to Wave B Phase 20 | CLI-01..06, TUI-01, TUI-02, TUI-04 |
 | 17 | Gmail Adapter | Code shipped (~60KB) with OAuth2 + Pub/Sub watch renewal | ADAPT-05, ADAPT-06 |
@@ -66,7 +66,7 @@ Last activity: 2026-04-15 -- Phase 19 planning complete
 
 | # | Phase | Status | Requirements | Plans |
 |---|-------|--------|--------------|-------|
-| 19 | Verification Docs (Phases 14 + 15) | Planned, awaiting plan spawn | REQ-WF-1, REQ-WF-2 | 2 |
+| 19 | Verification Docs (Phases 14 + 15) | Plan 19-01 complete (REQ-WF-1 closed); plan 19-02 pending | REQ-WF-1 ✓, REQ-WF-2 | 2 |
 | 20 | Health Alerts Bridge | Planned (depends on 19) | REQ-WF-3 | 1 (RED+GREEN tasks) |
 | 21 | Watcher Folder Hierarchy | Planned (depends on 19) | REQ-WF-6 | 1 (RED+GREEN+migration tasks) |
 | 22 | Skills + Docs Sync | Planned (depends on 21) | REQ-WF-7 | 1 |
@@ -216,6 +216,22 @@ Last activity: 2026-04-15 -- Phase 19 planning complete
 - **Local tooling:** `tests/lighthouse/budget-check.sh` (pre-push verification, port 19999) and `tests/lighthouse/calibrate.sh` (10-run p95+10%/20% threshold calibration, port 19998). Both scripts include pre-flight checks, server lifecycle management, healthz polling, pre-warm.
 - **Pre-calibration fallback used:** `./build/agent-deck web` cannot start inside agent-deck sessions (nested-session detection exits immediately). Conservative Phase 8 spec + CI noise buffers used as documented in the plan. Run `calibrate.sh` from a plain terminal to replace with real calibrated values.
 - **Documentation:** `tests/lighthouse/README.md` covers threshold tiers, CI flow, local verification, recalibration process, troubleshooting (including nested-session limitation), and design decisions (JSON vs CJS, temporary-public-storage, 5 runs, desktop preset).
+
+### Plan 19-01 Complete (2026-04-16) — REQ-WF-1 CLOSED
+
+- **Phase 14 verification doc shipped.** `.planning/phases/14-simple-adapters-webhook-ntfy-github/14-VERIFICATION.md` written from scratch (101 lines) with 10 observable-truth rows, every Evidence cell carrying at least one `internal/watcher/<file>.go:<line>` citation. Matches the structural template set by `13-VERIFICATION.md`.
+- **All path:line anchors re-derived against the current worktree tree.** Plan's must-haves explicitly required this; the 14-01 and 14-02 SUMMARYs quoted drifted numbers from 2026-04-10. Anchors cover webhook.go (194 lines), ntfy.go (213 lines), github.go (356 lines), adapters_integration_test.go (424 lines), plus the 12/12/17 test files.
+- **Central REQ-WF-1 claims anchored:**
+  - WebhookAdapter lifecycle (Setup/Listen/Teardown/HealthCheck) at `internal/watcher/webhook.go:33/65/166/171`
+  - NtfyAdapter 2s/2x/30s backoff at `internal/watcher/ntfy.go:67,70,95-98`
+  - GitHubAdapter constant-time `hmac.Equal` at `internal/watcher/github.go:179`
+  - Integration pipeline test at `internal/watcher/adapters_integration_test.go:29`
+  - Cross-adapter dedup test at `internal/watcher/adapters_integration_test.go:240`
+- **62-test pass claim reproduced live.** `go test ./internal/watcher/... -race -count=1 -timeout 120s` exits 0 in 17.063s. Pass banner `ok  	github.com/asheshgoplani/agent-deck/internal/watcher	17.063s` pasted verbatim into Behavioral Spot-Checks table. Current aggregate is 127 tests (Phase 14 subset still green; Phases 15/17/18 added the surplus) — documented transparently rather than filtered.
+- **Anti-speculation grep clean.** `grep -E "\bTODO\b|\bmight\b|\bprobably\b|\blikely\b" 14-VERIFICATION.md` returns zero matches. 25 `path:line` citations in total (target was ≥8).
+- **Single atomic commit `2c19e3f`:** `docs(19-01): Phase 14 verification doc -- webhook + ntfy + GitHub adapters`. Signed `Committed by Ashesh Goplani`. Zero Claude/Co-Authored-By attribution. Only `14-VERIFICATION.md` staged. Pre-commit hooks passed (fmt-check + vet, .planning-only diff).
+- **No `--no-verify` used.** Honored the repo-root v1.5.4 CLAUDE.md mandate despite this being a `.planning/`-only commit.
+- **REQ-WF-1 ready to be flipped to `[x]` in REQUIREMENTS.md.** Plan 19-02 (Phase 15 backfill, REQ-WF-2) is now unblocked — sibling Wave B Phase 19 plan, no file overlap.
 
 ### Plan 10-04 Complete (2026-04-10) — Phase 10 CLOSED
 

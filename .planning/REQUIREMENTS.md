@@ -15,7 +15,7 @@ Wave B closes out v1.6.0 by adding the verification ledger, the health-alerts br
 
 ### Verification Docs
 
-- [ ] **REQ-WF-1**: Phase 14 verification doc at `.planning/phases/14-simple-adapters-webhook-ntfy-github/14-VERIFICATION.md` covers WebhookAdapter Setup/Listen/Teardown/HealthCheck, NtfyAdapter backoff reconnect (2s/2x/30s), GitHubAdapter HMAC-SHA256 constant-time verification, integration test wiring 3 adapters through engine + dedup + routing, and 62 watcher tests passing with `-race`. Every claim cites `path:line`.
+- [x] **REQ-WF-1**: Phase 14 verification doc at `.planning/phases/14-simple-adapters-webhook-ntfy-github/14-VERIFICATION.md` covers WebhookAdapter Setup/Listen/Teardown/HealthCheck, NtfyAdapter backoff reconnect (2s/2x/30s), GitHubAdapter HMAC-SHA256 constant-time verification, integration test wiring 3 adapters through engine + dedup + routing, and 62 watcher tests passing with `-race`. Every claim cites `path:line`. (Closed 2026-04-16 by plan 19-01, commit 2c19e3f.)
 - [ ] **REQ-WF-2**: Phase 15 backfill: `.planning/phases/15-slack-adapter-and-import/{15-01-PLAN.md, 15-01-SUMMARY.md, 15-VERIFICATION.md}` reconstructed from `slack.go` + `watcher_cmd.go` + test evidence. Verification covers Slack adapter interface implementation, event normalization, `slack:{CHANNEL_ID}` channel routing, and `watcher import` atomic merge with `Lstat` symlink rejection.
 
 ### Health Alerts Bridge
@@ -39,7 +39,7 @@ Wave B closes out v1.6.0 by adding the verification ledger, the health-alerts br
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| REQ-WF-1 | Phase 19 | Pending |
+| REQ-WF-1 | Phase 19 | Complete (plan 19-01, 2026-04-16, commit 2c19e3f) |
 | REQ-WF-2 | Phase 19 | Pending |
 | REQ-WF-3 | Phase 20 | Pending |
 | REQ-WF-6 | Phase 21 | Pending |
@@ -81,9 +81,9 @@ Requirements for the watcher framework milestone. Each maps to exactly one phase
 
 ### Adapters
 
-- [ ] **ADAPT-01**: Webhook adapter receives HTTP POST on configurable port, normalizes to Event, responds 202 immediately
-- [ ] **ADAPT-02**: ntfy adapter subscribes to topic via SSE stream (bufio.Scanner), auto-reconnects on disconnect
-- [ ] **ADAPT-03**: GitHub adapter verifies X-Hub-Signature-256 HMAC-SHA256, rejects invalid signatures with 401
+- [x] **ADAPT-01**: Webhook adapter receives HTTP POST on configurable port, normalizes to Event, responds 202 immediately (verified 2026-04-16 via `14-VERIFICATION.md`, commit 2c19e3f)
+- [x] **ADAPT-02**: ntfy adapter subscribes to topic via SSE stream (bufio.Scanner), auto-reconnects on disconnect (verified 2026-04-16 via `14-VERIFICATION.md`, commit 2c19e3f)
+- [x] **ADAPT-03**: GitHub adapter verifies X-Hub-Signature-256 HMAC-SHA256, rejects invalid signatures with 401 (verified 2026-04-16 via `14-VERIFICATION.md`, commit 2c19e3f)
 - [x] **ADAPT-04**: Slack adapter routes via ntfy bridge with thread reply routing (session_id lookup by parent dedup_key)
 - [ ] **ADAPT-05**: Gmail adapter handles OAuth2 token refresh via ReuseTokenSource, Pub/Sub watch registration via users.Watch()
 - [ ] **ADAPT-06**: Gmail watch_expiry persisted in meta.json, renewal scheduled 1hr before expiry, immediate renewal on startup if within 2hr

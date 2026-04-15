@@ -42,9 +42,9 @@ The v1.5.4 CLAUDE.md mandate at repo root forbids `--no-verify` on source commit
 
 ### Phase 14: Simple Adapters (Webhook + ntfy + GitHub)
 
-**Status:** Code shipped (`internal/watcher/{webhook,ntfy,github}.go`, 62 tests pass with `-race`). No verification doc.
+**Status:** VERIFIED COMPLETE — `14-VERIFICATION.md` exists with 10/10 observable truths (REQ-WF-1 closed by Wave B Phase 19 plan 19-01 on 2026-04-16). Aggregate watcher package: 127 tests green under `-race` (Phase 14 subset included).
 **Requirements:** ADAPT-01, ADAPT-02, ADAPT-03
-**Verification:** Closed by Wave B Phase 19 (REQ-WF-1).
+**Verification:** Closed by Wave B Phase 19 plan 19-01 (commit 2c19e3f).
 
 ### Phase 15: Slack Adapter + `watcher import`
 
@@ -73,7 +73,7 @@ The v1.5.4 CLAUDE.md mandate at repo root forbids `--no-verify` on source commit
 
 ## Wave B — Phases 19–23 (THIS MILESTONE)
 
-- [ ] **Phase 19: Verification Docs (Phases 14 + 15)** — Backfill verification docs + Phase 15 PLAN/SUMMARY from shipped code (REQ-WF-1, REQ-WF-2)
+- [ ] **Phase 19: Verification Docs (Phases 14 + 15)** — Plan 19-01 complete (REQ-WF-1 ✓ via `14-VERIFICATION.md`, commit 2c19e3f). Plan 19-02 (REQ-WF-2 Phase 15 backfill) pending.
 - [ ] **Phase 20: Health Alerts Bridge** — Subscribe to engine health signal, fan out to Telegram/Slack/Discord via conductor notification bridge with 15-min debounce (REQ-WF-3)
 - [ ] **Phase 21: Watcher Folder Hierarchy** — Reorganize `~/.agent-deck/watchers/` → singular `watcher/` with conductor-style per-instance dirs and atomic legacy migration (REQ-WF-6)
 - [ ] **Phase 22: Skills + Docs Sync** — Update embedded watcher-creator SKILL.md, repo README, design-spec addendum, CHANGELOG to new layout; add drift-check test (REQ-WF-7)
