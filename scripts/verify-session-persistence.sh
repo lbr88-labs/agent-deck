@@ -37,9 +37,10 @@ export AGENT_DECK_VERIFY_ARGV_OUT="${ARGV_OUT}"
 # ---------- cleanup ----------
 cleanup() {
   set +e
-  # Stop any sessions we created.
+  # Stop any sessions we created. agent-deck has no `session ls` subcommand;
+  # use the top-level `agent-deck list` (TITLE is col 1, ID is last column).
   if command -v agent-deck >/dev/null 2>&1; then
-    for n in $(agent-deck session ls 2>/dev/null | awk '{print $1}' | grep -E "^${SESSION_PREFIX}" || true); do
+    for n in $(agent-deck list 2>/dev/null | awk -v P="${SESSION_PREFIX}" '$1 ~ "^"P {print $1}' || true); do
       agent-deck session stop "$n" >/dev/null 2>&1 || true
       agent-deck remove "$n" >/dev/null 2>&1 || true
     done
@@ -96,14 +97,16 @@ EOF
 # ---------- helpers ----------
 tmux_pid_for_session() {
   # Prints the PID of the tmux server hosting the agent-deck session $1.
+  # Uses `session show --json` to resolve the tmux session name, then asks
+  # tmux itself for the server PID via `display-message -p -F '#{pid}'`.
   local name="$1"
-  local sock
-  sock="$(agent-deck session show "$name" 2>/dev/null | awk -F'= ' '/tmux_socket/{print $2}' | tr -d '"')"
-  if [[ -n "${sock}" ]]; then
-    tmux -S "${sock}" display-message -p -F '#{pid}' 2>/dev/null || true
-  else
+  local tsess
+  tsess=$(agent-deck session show --json "${name}" 2>/dev/null | jq -r '.tmux_session // empty' 2>/dev/null)
+  if [[ -z "${tsess}" || "${tsess}" == "null" ]]; then
     pgrep -f "tmux.*${name}" | head -1 || true
+    return
   fi
+  tmux display-message -t "${tsess}" -p -F '#{pid}' 2>/dev/null || true
 }
 
 print_cgroup_for_pid() {
@@ -127,7 +130,7 @@ want_scenario() {
 scenario_1_live_session_cgroup() {
   local name="${SESSION_PREFIX}-s1"
   log "creating session: ${name}"
-  agent-deck add -t "verify-s1" -c claude "${TMPROOT}" --name "${name}" >/dev/null
+  agent-deck add -t "${name}" -c claude -Q "${TMPROOT}" >/dev/null
   agent-deck session start "${name}" >/dev/null
   sleep 2
   local pid
@@ -151,7 +154,10 @@ scenario_1_live_session_cgroup() {
 
 # ---------- Scenario 2 ----------
 scenario_2_login_teardown() {
-  if ! command -v systemd-run >/dev/null 2>&1 || ! systemctl --user is-system-running >/dev/null 2>&1; then
+  # Probe user bus reachability via show-environment (works on "degraded"
+  # hosts where is-system-running returns non-zero even though the bus is up
+  # and systemd-run works). Skip cleanly on non-Linux or if bus is truly gone.
+  if ! command -v systemd-run >/dev/null 2>&1 || ! systemctl --user show-environment >/dev/null 2>&1; then
     banner_skip "[2] skipped: no systemd-run (non-Linux or systemd user bus unavailable)"
     return
   fi
@@ -161,7 +167,7 @@ scenario_2_login_teardown() {
   local scope_pid=$!
   sleep 1
   log "creating session inside simulated login scope: ${name}"
-  agent-deck add -t "verify-s2" -c claude "${TMPROOT}" --name "${name}" >/dev/null
+  agent-deck add -t "${name}" -c claude -Q "${TMPROOT}" >/dev/null
   agent-deck session start "${name}" >/dev/null
   sleep 2
   local pid
@@ -196,7 +202,7 @@ scenario_2_login_teardown() {
 scenario_3_restart_resume() {
   local name="${SESSION_PREFIX}-s3"
   log "creating session: ${name}"
-  agent-deck add -t "verify-s3" -c claude "${TMPROOT}" --name "${name}" >/dev/null
+  agent-deck add -t "${name}" -c claude -Q "${TMPROOT}" >/dev/null
   agent-deck session start "${name}" >/dev/null
   sleep 2
   # Seed a non-empty ClaudeSessionID via the state-set command if available;
@@ -229,7 +235,7 @@ scenario_4_fresh_session_shape() {
   local name="${SESSION_PREFIX}-s4"
   : > "${ARGV_OUT}"
   log "creating fresh session: ${name}"
-  agent-deck add -t "verify-s4" -c claude "${TMPROOT}" --name "${name}" >/dev/null
+  agent-deck add -t "${name}" -c claude -Q "${TMPROOT}" >/dev/null
   agent-deck session start "${name}" >/dev/null
   sleep 2
   local argv=""
