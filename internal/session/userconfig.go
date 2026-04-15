@@ -662,18 +662,35 @@ func (c *UserConfig) GetGroupClaudeEnvFile(groupPath string) string {
 	return groupCfg.Claude.EnvFile
 }
 
-// GetConductorClaudeConfigDir is a RED-gate stub. Task 2 (GREEN step 1)
-// replaces this body with the real lookup. Returns "" so CFG-11 test 1
-// (SchemaParses) fails on its assertion, not at compile time.
+// GetConductorClaudeConfigDir returns the conductor-specific Claude config
+// directory, if configured. Keyed by conductor name (Instance.Title minus
+// "conductor-" prefix — single source of truth is conductorNameFromInstance
+// in claude.go). Path expansion matches GetGroupClaudeConfigDir. Returns ""
+// when the conductor has no block or no config_dir — callers fall through
+// to the group/profile/global chain.
 func (c *UserConfig) GetConductorClaudeConfigDir(name string) string {
-	_ = name
-	return ""
+	if c == nil || name == "" || c.Conductors == nil {
+		return ""
+	}
+	conductorCfg, ok := c.Conductors[name]
+	if !ok || conductorCfg.Claude.ConfigDir == "" {
+		return ""
+	}
+	return ExpandPath(conductorCfg.Claude.ConfigDir)
 }
 
-// GetConductorClaudeEnvFile is a RED-gate stub. Task 2 replaces the body.
+// GetConductorClaudeEnvFile returns the conductor-specific Claude env_file,
+// if configured. Mirrors GetGroupClaudeEnvFile — no expansion here;
+// resolvePath handles it at the spawn-command build site (env.go).
 func (c *UserConfig) GetConductorClaudeEnvFile(name string) string {
-	_ = name
-	return ""
+	if c == nil || name == "" || c.Conductors == nil {
+		return ""
+	}
+	conductorCfg, ok := c.Conductors[name]
+	if !ok || conductorCfg.Claude.EnvFile == "" {
+		return ""
+	}
+	return conductorCfg.Claude.EnvFile
 }
 
 // GetDangerousMode returns whether dangerous mode is enabled, defaulting to true
