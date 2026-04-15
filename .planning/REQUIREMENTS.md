@@ -16,7 +16,7 @@ Wave B closes out v1.6.0 by adding the verification ledger, the health-alerts br
 ### Verification Docs
 
 - [x] **REQ-WF-1**: Phase 14 verification doc at `.planning/phases/14-simple-adapters-webhook-ntfy-github/14-VERIFICATION.md` covers WebhookAdapter Setup/Listen/Teardown/HealthCheck, NtfyAdapter backoff reconnect (2s/2x/30s), GitHubAdapter HMAC-SHA256 constant-time verification, integration test wiring 3 adapters through engine + dedup + routing, and 62 watcher tests passing with `-race`. Every claim cites `path:line`. (Closed 2026-04-16 by plan 19-01, commit 2c19e3f.)
-- [ ] **REQ-WF-2**: Phase 15 backfill: `.planning/phases/15-slack-adapter-and-import/{15-01-PLAN.md, 15-01-SUMMARY.md, 15-VERIFICATION.md}` reconstructed from `slack.go` + `watcher_cmd.go` + test evidence. Verification covers Slack adapter interface implementation, event normalization, `slack:{CHANNEL_ID}` channel routing, and `watcher import` atomic merge with `Lstat` symlink rejection.
+- [x] **REQ-WF-2**: Phase 15 backfill: `.planning/phases/15-slack-adapter-and-import/{15-01-PLAN.md, 15-01-SUMMARY.md, 15-VERIFICATION.md}` reconstructed from `slack.go` + `watcher_cmd.go` + test evidence. Verification covers Slack adapter interface implementation, event normalization, `slack:{CHANNEL_ID}` channel routing, and `watcher import` atomic merge with `Lstat` symlink rejection. (Closed 2026-04-16 by plan 19-02, commit e294ed1.)
 
 ### Health Alerts Bridge
 
@@ -40,7 +40,7 @@ Wave B closes out v1.6.0 by adding the verification ledger, the health-alerts br
 | Requirement | Phase | Status |
 |-------------|-------|--------|
 | REQ-WF-1 | Phase 19 | Complete (plan 19-01, 2026-04-16, commit 2c19e3f) |
-| REQ-WF-2 | Phase 19 | Pending |
+| REQ-WF-2 | Phase 19 | Complete (plan 19-02, 2026-04-16, commit e294ed1) |
 | REQ-WF-3 | Phase 20 | Pending |
 | REQ-WF-6 | Phase 21 | Pending |
 | REQ-WF-7 | Phase 22 | Pending |

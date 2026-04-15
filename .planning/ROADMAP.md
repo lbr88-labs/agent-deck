@@ -48,9 +48,9 @@ The v1.5.4 CLAUDE.md mandate at repo root forbids `--no-verify` on source commit
 
 ### Phase 15: Slack Adapter + `watcher import`
 
-**Status:** Code shipped (`internal/watcher/slack.go` 450+ lines, atomic merge in `cmd/agent-deck/watcher_cmd.go` 22KB, 50+ tests). No PLAN/SUMMARY/VERIFICATION docs.
+**Status:** VERIFIED COMPLETE — `15-VERIFICATION.md` exists with 7/7 observable truths; `15-01-PLAN.md` + `15-01-SUMMARY.md` backfilled from shipped code + git commit evidence (REQ-WF-2 closed by Wave B Phase 19 plan 19-02 on 2026-04-16). Slack adapter tests + watcher import tests both green under `-race -count=1`.
 **Requirements:** ADAPT-04, CLI-07
-**Verification:** Closed by Wave B Phase 19 (REQ-WF-2).
+**Verification:** Closed by Wave B Phase 19 plan 19-02 (commit e294ed1).
 
 ### Phase 16: Watcher CLI + TUI Integration
 
@@ -73,7 +73,7 @@ The v1.5.4 CLAUDE.md mandate at repo root forbids `--no-verify` on source commit
 
 ## Wave B — Phases 19–23 (THIS MILESTONE)
 
-- [ ] **Phase 19: Verification Docs (Phases 14 + 15)** — Plan 19-01 complete (REQ-WF-1 ✓ via `14-VERIFICATION.md`, commit 2c19e3f). Plan 19-02 (REQ-WF-2 Phase 15 backfill) pending.
+- [x] **Phase 19: Verification Docs (Phases 14 + 15)** — COMPLETE. Plan 19-01 closed REQ-WF-1 via `14-VERIFICATION.md` (commit 2c19e3f). Plan 19-02 closed REQ-WF-2 via `15-01-PLAN.md` + `15-01-SUMMARY.md` + `15-VERIFICATION.md` (commit e294ed1, 2026-04-16).
 - [ ] **Phase 20: Health Alerts Bridge** — Subscribe to engine health signal, fan out to Telegram/Slack/Discord via conductor notification bridge with 15-min debounce (REQ-WF-3)
 - [ ] **Phase 21: Watcher Folder Hierarchy** — Reorganize `~/.agent-deck/watchers/` → singular `watcher/` with conductor-style per-instance dirs and atomic legacy migration (REQ-WF-6)
 - [ ] **Phase 22: Skills + Docs Sync** — Update embedded watcher-creator SKILL.md, repo README, design-spec addendum, CHANGELOG to new layout; add drift-check test (REQ-WF-7)
@@ -85,7 +85,7 @@ The v1.5.4 CLAUDE.md mandate at repo root forbids `--no-verify` on source commit
 
 | # | Phase | Requirements | Plans | Status | TDD? | Depends on |
 |---|-------|-------------|-------|--------|------|------------|
-| 19 | Verification Docs | REQ-WF-1, REQ-WF-2 | 2 | Planned | No (backfill) | — |
+| 19 | Verification Docs | REQ-WF-1, REQ-WF-2 | 2 | COMPLETE (2026-04-16) | No (backfill) | — |
 | 20 | Health Alerts Bridge | REQ-WF-3 | 1 (RED+GREEN tasks) | Planned | Yes | 19 |
 | 21 | Watcher Folder Hierarchy | REQ-WF-6 | 1 (RED+GREEN+migration tasks) | Planned | Yes | 19 |
 | 22 | Skills + Docs Sync | REQ-WF-7 | 1 | Planned | Yes (drift-check test) | 21 |
@@ -108,8 +108,8 @@ The v1.5.4 CLAUDE.md mandate at repo root forbids `--no-verify` on source commit
 **Plans:** 2 plans
 
 Plans:
-- [ ] 19-01: Phase 14 verification doc (`14-VERIFICATION.md`) — webhook + ntfy + GitHub adapters with file:line citations for HMAC-SHA256 verify, ntfy backoff timings, integration test wiring; rerun `go test ./internal/watcher/... -race -count=1` to confirm 62-test pass claim
-- [ ] 19-02: Phase 15 backfill (`15-01-PLAN.md`, `15-01-SUMMARY.md`, `15-VERIFICATION.md`) — Slack adapter interface, `slack:{CHANNEL_ID}` channel routing, `watcher import` atomic merge with `Lstat` symlink rejection, all with citations
+- [x] 19-01: Phase 14 verification doc (`14-VERIFICATION.md`) — COMPLETE 2026-04-16 (commit 2c19e3f). 10/10 observable truths, 25 `path:line` citations, 62-test pass banner reproduced live under `-race`.
+- [x] 19-02: Phase 15 backfill (`15-01-PLAN.md`, `15-01-SUMMARY.md`, `15-VERIFICATION.md`) — COMPLETE 2026-04-16 (commit e294ed1). 7/7 observable truths, 17 `path:line` citations, TestSlack + Watcher pass banners reproduced live under `-race`.
 
 **Success Criteria** (what must be TRUE):
 1. `.planning/phases/14-simple-adapters-webhook-ntfy-github/14-VERIFICATION.md` exists with at least one observable-truth row per shipped adapter (Webhook, Ntfy, GitHub)
