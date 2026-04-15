@@ -2,9 +2,10 @@
 gsd_state_version: 1.0
 milestone: v1.5.4
 milestone_name: milestone
-status: complete
-last_updated: "2026-04-16T00:16:00.000Z"
-last_activity: 2026-04-16
+status: completed
+stopped_at: Completed 04-02-PLAN.md
+last_updated: "2026-04-15T22:35:14.784Z"
+last_activity: 2026-04-15
 progress:
   total_phases: 4
   completed_phases: 4
@@ -38,10 +39,10 @@ See `docs/PER-GROUP-CLAUDE-CONFIG-SPEC.md` for the source spec.
 
 ## Current Position
 
-Phase: 04 (conductor-schema-docs-refresh-mandate-clarification) — COMPLETE
-Plan: Complete (04-01 + 04-02)
+Phase: 04
+Plan: Not started
 Status: Phase 04 complete; milestone ready for /gsd-complete-milestone
-Last activity: 2026-04-16 -- Plan 04-02 complete: CFG-09 + CFG-10 closed, canonical SKILL.md updated, pool SKILL.md absence recorded in SKILL_MD_DIFF.md audit artifact, CLAUDE.md --no-verify bullet + scope clarification shipped, all four Phase 4 hard-rule audit gates pass
+Last activity: 2026-04-15
 Stopped at: Completed 04-02-PLAN.md
 
 ## Phase Progress
