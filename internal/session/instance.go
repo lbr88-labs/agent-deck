@@ -593,9 +593,10 @@ func (i *Instance) buildClaudeCommandWithMessage(baseCommand, message string) st
 	}
 
 	// For custom commands (e.g., fork commands or conductor wrappers), prepend
-	// the bash export prefix so CLAUDE_CONFIG_DIR from a group override lands
-	// in the spawn env before exec'ing the wrapper. (REQ CFG-02)
-	return i.buildBashExportPrefix() + baseCommand
+	// the env-source prefix (CFG-03) and the bash export prefix (CFG-02) so
+	// group env_file exports AND CLAUDE_CONFIG_DIR both land in the spawn env
+	// before exec'ing the wrapper.
+	return i.buildEnvSourceCommand() + i.buildBashExportPrefix() + baseCommand
 }
 
 // buildBashExportPrefix builds the export prefix used in bash -c commands.
