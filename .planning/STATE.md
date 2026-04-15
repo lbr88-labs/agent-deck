@@ -3,14 +3,14 @@ gsd_state_version: 1.0
 milestone: v1.5.4
 milestone_name: milestone
 status: executing
-last_updated: "2026-04-15T12:19:18.683Z"
-last_activity: 2026-04-15 -- Phase 1 planning complete
+last_updated: "2026-04-15T12:35:43Z"
+last_activity: 2026-04-15 -- Phase 01 plan 01 complete (CFG-01, CFG-02, CFG-04 tests 1/2/3/6 shipped)
 progress:
   total_phases: 3
   completed_phases: 0
   total_plans: 1
-  completed_plans: 0
-  percent: 0
+  completed_plans: 1
+  percent: 33
 ---
 
 # Project State — v1.5.4
@@ -38,18 +38,26 @@ See `docs/PER-GROUP-CLAUDE-CONFIG-SPEC.md` for the source spec.
 
 ## Current Position
 
-Phase: Not started (roadmap bootstrapped; awaiting plan-phase)
-Plan: —
-Status: Ready to execute
-Last activity: 2026-04-15 -- Phase 1 planning complete
+Phase: 01 (custom-command-injection-core-regression-tests) — COMPLETE
+Plan: 1 of 1 — `01-01-PLAN.md` shipped
+Status: Phase 01 complete; awaiting Phase 02 planning
+Last activity: 2026-04-15 -- Phase 01 plan 01 complete (CFG-02 closed, CFG-04 tests 1/2/3/6 locked under regression suite)
 
 ## Phase Progress
 
 | # | Phase | Status | Requirements | Plans |
 |---|-------|--------|--------------|-------|
-| 1 | Custom-command injection + core regression tests | Pending | CFG-01, CFG-02, CFG-04 (tests 1, 2, 3, 6) | — |
+| 1 | Custom-command injection + core regression tests | Complete | CFG-01, CFG-02, CFG-04 (tests 1, 2, 3, 6) | 1/1 (01-01) |
 | 2 | env_file source semantics + observability + conductor E2E | Pending | CFG-03, CFG-04 (tests 4, 5), CFG-07 | — |
 | 3 | Visual harness + documentation + attribution commit | Pending | CFG-05, CFG-06 | — |
+
+## Phase 01 commits (since base 3e402e2)
+
+| Hash | Type | Subject |
+|------|------|---------|
+| 4730aa5 | docs | docs(planning): plan phase 01 — custom-command injection + core regression tests |
+| 40f4f04 | test | test(session): add per-group Claude config regression tests (CFG-04 tests 1/2/3/6) |
+| b39bbf3 | fix | fix(session): export CLAUDE_CONFIG_DIR for custom-command sessions (CFG-02) |
 
 ## Hard rules in force (carried from CLAUDE.md + spec)
 

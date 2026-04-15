@@ -14,11 +14,11 @@ Every requirement below is in scope. Mapping: REQ-ID in this file == CFG-NN in P
 
 ### Config schema & lookup
 
-- [ ] **CFG-01** (P0): PR #578 config schema and lookup priority hold. `[groups."<name>".claude] { config_dir, env_file }` parses. `GetClaudeConfigDirForGroup(groupPath)` resolves with priority `env var CLAUDE_CONFIG_DIR > group override > profile override > global [claude].config_dir > ~/.claude`. Empty/missing group name falls through to profile. `config_dir` accepts `~`, absolute paths, and env-var expansion (`$HOME`). Adding/removing a group override at runtime is picked up after `ClearUserConfigCache()`. PR #578's existing unit tests (`TestGetClaudeConfigDirForGroup_GroupWins`, `TestIsClaudeConfigDirExplicitForGroup`) stay GREEN with no assertion changes.
+- [x] **CFG-01** (P0): PR #578 config schema and lookup priority hold. `[groups."<name>".claude] { config_dir, env_file }` parses. `GetClaudeConfigDirForGroup(groupPath)` resolves with priority `env var CLAUDE_CONFIG_DIR > group override > profile override > global [claude].config_dir > ~/.claude`. Empty/missing group name falls through to profile. `config_dir` accepts `~`, absolute paths, and env-var expansion (`$HOME`). Adding/removing a group override at runtime is picked up after `ClearUserConfigCache()`. PR #578's existing unit tests (`TestGetClaudeConfigDirForGroup_GroupWins`, `TestIsClaudeConfigDirExplicitForGroup`) stay GREEN with no assertion changes.
 
 ### Custom-command (conductor) session injection
 
-- [ ] **CFG-02** (P0): Custom-command sessions honor per-group `config_dir`. When `Instance.Command` is non-empty (e.g. `~/.agent-deck/conductor/agent-deck/start-conductor.sh`), the tmux spawn environment for that session MUST contain `CLAUDE_CONFIG_DIR=<resolved>` whenever the group or profile sets an override. Closes PR #578's intentional skip in `buildClaudeCommandWithMessage` ("alias handles config dir") for the wrapper-script case where no alias runs. `buildBashExportPrefix` already exports unconditionally — this REQ locks that path under test, or moves the export into the tmux pane env if not. Acceptance: session created via `agent-deck add ./wrapper.sh -t "test-conductor" -g "conductor"` with group override launches with `CLAUDE_CONFIG_DIR=~/.claude-work` visible via `agent-deck session send <id> "echo CLAUDE_CONFIG_DIR=\$CLAUDE_CONFIG_DIR"`. Persists across restart. Conductor restart via `start-conductor.sh` preserves the var — inner `exec claude` uses the overridden dir. Sessions in groups with no override fall through to profile.
+- [x] **CFG-02** (P0): Custom-command sessions honor per-group `config_dir`. When `Instance.Command` is non-empty (e.g. `~/.agent-deck/conductor/agent-deck/start-conductor.sh`), the tmux spawn environment for that session MUST contain `CLAUDE_CONFIG_DIR=<resolved>` whenever the group or profile sets an override. Closes PR #578's intentional skip in `buildClaudeCommandWithMessage` ("alias handles config dir") for the wrapper-script case where no alias runs. `buildBashExportPrefix` already exports unconditionally — this REQ locks that path under test, or moves the export into the tmux pane env if not. Acceptance: session created via `agent-deck add ./wrapper.sh -t "test-conductor" -g "conductor"` with group override launches with `CLAUDE_CONFIG_DIR=~/.claude-work` visible via `agent-deck session send <id> "echo CLAUDE_CONFIG_DIR=\$CLAUDE_CONFIG_DIR"`. Persists across restart. Conductor restart via `start-conductor.sh` preserves the var — inner `exec claude` uses the overridden dir. Sessions in groups with no override fall through to profile.
 
 ### env_file source semantics
 
@@ -90,9 +90,9 @@ Every active REQ maps to exactly one phase.
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| CFG-01 | Phase 1 | Pending |
-| CFG-02 | Phase 1 | Pending |
-| CFG-04 (tests 1, 2, 3, 6) | Phase 1 | Pending |
+| CFG-01 | Phase 1 | Complete (01-01) |
+| CFG-02 | Phase 1 | Complete (01-01) |
+| CFG-04 (tests 1, 2, 3, 6) | Phase 1 | Complete (01-01) |
 | CFG-03 | Phase 2 | Pending |
 | CFG-04 (tests 4, 5) | Phase 2 | Pending |
 | CFG-07 | Phase 2 | Pending |

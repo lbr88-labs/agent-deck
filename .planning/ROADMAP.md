@@ -30,7 +30,7 @@ No `git push`, no tags, no PR create, no merge — this is local-only work for r
 
 ## Phases
 
-- [ ] **Phase 1: Custom-command injection + core regression tests** (~25–35 min) — Prove that custom-command (conductor) sessions receive per-group `CLAUDE_CONFIG_DIR`. Write four TDD regression tests (CFG-04 tests 1, 2, 3, 6), run them red, fix any injection gap, run green. Close CFG-01 by keeping PR #578's unit tests green. [REQ mapping: CFG-01, CFG-02, CFG-04 (subset)]
+- [x] **Phase 1: Custom-command injection + core regression tests** (~13 min actual) — DONE. Four TDD regression tests (CFG-04 tests 1, 2, 3, 6) added in `internal/session/pergroupconfig_test.go`. `buildBashExportPrefix()` now prepended to the custom-command return path at `instance.go:596` (+4/-2 lines). All 4 tests GREEN under `-race -count=1`; PR #578's `TestGetClaudeConfigDirForGroup_GroupWins`, `TestIsClaudeConfigDirExplicitForGroup`, `TestBuildClaudeCommand_CustomAlias`, and all `TestUserConfig_GroupClaude*` tests remain GREEN. Commits: `40f4f04` (RED test) + `b39bbf3` (GREEN fix, carries `Builds on PR #578 by @alec-pinson.`). [REQ mapping: CFG-01, CFG-02, CFG-04 (subset)]
 
 - [ ] **Phase 2: env_file source semantics + observability + conductor E2E** (~25–30 min) — Prove `env_file` is `source`d before `claude` exec in the spawn pipeline. Write two TDD regression tests (CFG-04 tests 4, 5). Add the observability log line (CFG-07). All Go tests green under `-race -count=1`. [REQ mapping: CFG-03, CFG-04 (remainder), CFG-07]
 
@@ -70,7 +70,7 @@ No `git push`, no tags, no PR create, no merge — this is local-only work for r
 **Plans:** 1 plan
 
 Plans:
-- [ ] 01-01-PLAN.md — Add four regression tests (CFG-04 tests 1/2/3/6) RED, apply surgical `buildBashExportPrefix()` patch at `internal/session/instance.go:596` to close CFG-02 GREEN, verify no PR #578 regressions, run `make ci`.
+- [x] 01-01-PLAN.md — DONE (see `01-01-SUMMARY.md`). Four regression tests (CFG-04 tests 1/2/3/6) added in `40f4f04`, surgical `buildBashExportPrefix()` patch at `instance.go:596` shipped in `b39bbf3`. RED split confirmed (`/tmp/pergroupconfig-red.log`: 2 FAIL / 2 PASS), GREEN gate clean (`/tmp/pergroupconfig-green.log`: 4/4 PASS). PR #578 regression tests all GREEN. `make ci` returns non-zero from six pre-existing tmux-env failures in `internal/session` (verified pre-existing at parent `4730aa5`; logged in `deferred-items.md` — not a Phase-01 regression).
 
 ---
 
