@@ -3,14 +3,14 @@ gsd_state_version: 1.0
 milestone: v1.5.4
 milestone_name: milestone
 status: executing
-last_updated: "2026-04-15T21:29:04.673Z"
-last_activity: 2026-04-15 -- Phase 4 planning complete
+last_updated: "2026-04-15T21:45:16.465Z"
+last_activity: 2026-04-15
 progress:
   total_phases: 4
   completed_phases: 3
   total_plans: 7
-  completed_plans: 5
-  percent: 71
+  completed_plans: 6
+  percent: 86
 ---
 
 # Project State — v1.5.4
@@ -38,10 +38,11 @@ See `docs/PER-GROUP-CLAUDE-CONFIG-SPEC.md` for the source spec.
 
 ## Current Position
 
-Phase: 04
-Plan: 04-01 + 04-02 (planned, not yet executed)
-Status: Ready to execute — `/gsd-execute-phase 4`
-Last activity: 2026-04-15 -- Phase 4 planning complete (2 plans, verified iteration 2/3)
+Phase: 04 (conductor-schema-docs-refresh-mandate-clarification) — EXECUTING
+Plan: 2 of 2
+Status: Plan 04-01 complete; 04-02 pending (`/gsd-execute-plan 04-02`)
+Last activity: 2026-04-15 -- Plan 04-01 complete: CFG-08 + CFG-11 closed, 8/8 TestConductorConfig_* GREEN, 8/8 TestPerGroupConfig_* regression GREEN
+Stopped at: Completed 04-01-PLAN.md
 
 ## Phase Progress
 
@@ -50,7 +51,7 @@ Last activity: 2026-04-15 -- Phase 4 planning complete (2 plans, verified iterat
 | 1 | Custom-command injection + core regression tests | Complete | CFG-01, CFG-02, CFG-04 (tests 1, 2, 3, 6) | 1/1 (01-01) |
 | 2 | env_file source semantics + observability + conductor E2E | Plans complete (verification pending) | CFG-03, CFG-04 (tests 4, 5), CFG-07 | 2/2 (02-01 + 02-02 complete) |
 | 3 | Visual harness + documentation + attribution commit | Complete | CFG-05, CFG-06 | 2/2 (03-01 + 03-02) |
-| 4 | Conductor schema + docs refresh + mandate clarification | Planned (2 plans verified iteration 2/3; awaiting `/gsd-execute-phase 4`) | CFG-08, CFG-09, CFG-10, CFG-11 | 0/2 (04-01 + 04-02 planned) |
+| 4 | Conductor schema + docs refresh + mandate clarification | Plan 04-01 complete; 04-02 pending | CFG-08, CFG-09, CFG-10, CFG-11 | 1/2 (04-01 complete, 04-02 pending) |
 
 ## Phase 01 commits (since base 3e402e2)
 
@@ -71,6 +72,22 @@ Last activity: 2026-04-15 -- Phase 4 planning complete (2 plans, verified iterat
 | 5d8737f | docs | docs(02-01): complete phase 02 plan 01 — CFG-03 closed, CFG-04 test 4 locked |
 | e000801 | test | test(session): add conductor-restart + CFG-07 source-label + log-format regression tests |
 | 476367c | feat | feat(session): add CFG-07 claude-config-resolution log line + source-label helper |
+
+## Phase 04 commits
+
+| Hash | Type | Subject |
+|------|------|---------|
+| 13265f4 | docs | docs(planning): plan phase 04 — conductor schema + docs + mandate clarification |
+| 41c9b8e | test | test(04): add conductor config regression tests (RED, CFG-11) |
+| f0cf791 | feat | feat(04): add [conductors.<name>.claude] schema (CFG-08 partial) |
+| 6fdac26 | feat | feat(04): wire conductor-block loader + four callsites (CFG-08) |
+
+## Decisions — Plan 04-01
+
+- Nested `[conductors.<name>.claude]` TOML shape chosen (NOT flat `[conductors.<name>]`) — mirrors `[groups."<g>".claude]` pattern for internal consistency. Plan 04-02's README/CHANGELOG/SKILL docs MUST use this nested form.
+- Per-conductor struct renamed `ConductorSettings` → `ConductorOverrides` (Rule 3 blocking deviation). `ConductorSettings` already exists in `internal/session/conductor.go:49` for the global `[conductor]` bot orchestration block (heartbeat, telegram, slack, discord) — Go cannot declare the same type name twice in a package.
+- Fourth callsite swap at `instance.go:4172` (`buildClaudeResumeCommand`) is the critical one. Without it, `Restart()` of a conductor session would silently fall through to group-only resolution on the resume path, breaking milestone success criterion #8 (restart `gsd-v154` conductor → reports `~/.claude-work`). CFG-11 test 6 sub-assertion 6c exercises this path explicitly.
+- RED-gate stubs for `GetConductorClaudeConfigDir` / `GetConductorClaudeEnvFile` in userconfig.go allowed CFG-11 test 1 (SchemaParses) to FAIL at the assertion (not compile) in Task 1. Task 2 replaced the stubs with real bodies.
 
 ## Decisions — Plan 02-02
 

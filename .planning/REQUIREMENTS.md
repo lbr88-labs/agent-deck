@@ -58,7 +58,7 @@ Every requirement below is in scope. Mapping: REQ-ID in this file == CFG-NN in P
 
 ### Conductor schema (Phase 4 — added 2026-04-15)
 
-- [ ] **CFG-08** (P0): Top-level `[conductors.<name>]` TOML section recognized, with `config_dir` and `env_file` keys (semantics mirror `[groups."<g>".claude]`). The lookup chain in `GetClaudeConfigDirForGroup(groupPath)` is extended to: `env var > [conductors.<name>] (when groupPath == "conductor/<name>") > [groups."<g>".claude] > [profiles.<p>.claude] > [claude] > ~/.claude`. `GetClaudeConfigDirSourceForGroup` returns label `conductor` for the new branch. Path expansion (`~`, `$HOME`) handled. Backward compat: a session in `conductor/<name>` with NO `[conductors.<name>]` block but WITH `[groups."conductor/<name>".claude]` still resolves to the group value. Closes [issue #602](https://github.com/asheshgoplani/agent-deck/issues/602). Acceptance: CFG-11 tests 1, 2, 3, 4, 5, 6, 8 GREEN; manual conductor-host proof on milestone close (success criterion #8).
+- [x] **CFG-08** (P0): Top-level `[conductors.<name>]` TOML section recognized, with `config_dir` and `env_file` keys (semantics mirror `[groups."<g>".claude]`). The lookup chain in `GetClaudeConfigDirForGroup(groupPath)` is extended to: `env var > [conductors.<name>] (when groupPath == "conductor/<name>") > [groups."<g>".claude] > [profiles.<p>.claude] > [claude] > ~/.claude`. `GetClaudeConfigDirSourceForGroup` returns label `conductor` for the new branch. Path expansion (`~`, `$HOME`) handled. Backward compat: a session in `conductor/<name>` with NO `[conductors.<name>]` block but WITH `[groups."conductor/<name>".claude]` still resolves to the group value. Closes [issue #602](https://github.com/asheshgoplani/agent-deck/issues/602). Acceptance: CFG-11 tests 1, 2, 3, 4, 5, 6, 8 GREEN; manual conductor-host proof on milestone close (success criterion #8).
 
 ### Documentation refresh (Phase 4)
 
@@ -72,7 +72,7 @@ Every requirement below is in scope. Mapping: REQ-ID in this file == CFG-NN in P
 
 ### Phase 4 regression tests
 
-- [ ] **CFG-11** (P0): New file `internal/session/conductorconfig_test.go` (kept separate from `pergroupconfig_test.go` for clean Phase 4 revert) containing eight named tests, each independently runnable, self-cleaning, no network:
+- [x] **CFG-11** (P0): New file `internal/session/conductorconfig_test.go` (kept separate from `pergroupconfig_test.go` for clean Phase 4 revert) containing eight named tests, each independently runnable, self-cleaning, no network:
   1. `TestConductorConfig_SchemaParses` — TOML `[conductors.foo] config_dir = "/tmp/x" env_file = "/tmp/y"` parses into `UserConfig.Conductors["foo"]`; path expansion handled.
   2. `TestConductorConfig_PrecedenceConductorBeatsGroup` — both `[conductors.foo]` and `[groups."conductor/foo".claude]` set; conductor wins.
   3. `TestConductorConfig_PrecedenceEnvBeatsConductor` — `CLAUDE_CONFIG_DIR` env var set; env wins.
@@ -126,10 +126,10 @@ Every active REQ maps to exactly one phase.
 | CFG-07 | Phase 2 | Complete (02-02) |
 | CFG-05 | Phase 3 | Complete (03-01) |
 | CFG-06 | Phase 3 | Complete (03-02) |
-| CFG-08 | Phase 4 | Pending |
+| CFG-08 | Phase 4 | Complete |
 | CFG-09 | Phase 4 | Pending |
 | CFG-10 | Phase 4 | Pending |
-| CFG-11 | Phase 4 | Pending |
+| CFG-11 | Phase 4 | Complete |
 
 **Coverage:**
 - v1.5.4 requirements: 11 (CFG-01 through CFG-11; CFG-08/09/10/11 added 2026-04-15 as Phase 4)
