@@ -1,15 +1,14 @@
 ---
 gsd_state_version: 1.0
 milestone: v1.5.4
-milestone_name: "Per-group Claude Config"
-status: defining_requirements_complete
-stopped_at: Roadmap bootstrapped; awaiting conductor to spawn gsd-v154-plan-1 (per user instruction, do NOT auto-plan)
-last_updated: "2026-04-15T00:00:00.000Z"
-last_activity: 2026-04-15
+milestone_name: milestone
+status: executing
+last_updated: "2026-04-15T12:19:18.683Z"
+last_activity: 2026-04-15 -- Phase 1 planning complete
 progress:
   total_phases: 3
   completed_phases: 0
-  total_plans: 0
+  total_plans: 1
   completed_plans: 0
   percent: 0
 ---
@@ -41,8 +40,8 @@ See `docs/PER-GROUP-CLAUDE-CONFIG-SPEC.md` for the source spec.
 
 Phase: Not started (roadmap bootstrapped; awaiting plan-phase)
 Plan: —
-Status: Defining requirements COMPLETE, Roadmap COMPLETE, planning deferred per conductor instruction
-Last activity: 2026-04-15 — v1.5.4 milestone initialization (PROJECT.md, REQUIREMENTS.md, ROADMAP.md, STATE.md written)
+Status: Ready to execute
+Last activity: 2026-04-15 -- Phase 1 planning complete
 
 ## Phase Progress
 
@@ -67,6 +66,7 @@ Last activity: 2026-04-15 — v1.5.4 milestone initialization (PROJECT.md, REQUI
 The user instructed: **stop after bootstrapping the roadmap. Do NOT auto-plan.** The conductor will spawn `gsd-v154-plan-1` to plan Phase 1.
 
 When that happens, the phase-1 planner should:
+
 1. Read `.planning/PROJECT.md`, `.planning/ROADMAP.md`, `.planning/REQUIREMENTS.md`, `docs/PER-GROUP-CLAUDE-CONFIG-SPEC.md`.
 2. Run `/gsd-plan-phase 1` to produce `.planning/phases/01-custom-command-injection/PLAN.md`.
 3. Honor the scope list in REQUIREMENTS.md — any touch outside is escalation.

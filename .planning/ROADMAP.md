@@ -67,6 +67,11 @@ No `git push`, no tags, no PR create, no merge — this is local-only work for r
 
 **Dependencies:** None (phase entry point). The branch is already at `fa9971e` which contains PR #578's implementation.
 
+**Plans:** 1 plan
+
+Plans:
+- [ ] 01-01-PLAN.md — Add four regression tests (CFG-04 tests 1/2/3/6) RED, apply surgical `buildBashExportPrefix()` patch at `internal/session/instance.go:596` to close CFG-02 GREEN, verify no PR #578 regressions, run `make ci`.
+
 ---
 
 ### Phase 2: env_file source semantics + observability + conductor E2E
