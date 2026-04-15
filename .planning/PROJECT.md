@@ -65,18 +65,21 @@ Reliable session management for AI coding agents: users can create, monitor, and
 - ✓ WEB-P0-2: profile switcher shipped as Option B read-only label (single-profile `role="status"`, multi-profile `aria-disabled` listbox) — decision gate resolved: `server.go:79` binds `cfg.Profile` once at `NewServer()`, per-request override out of scope — v1.5.0 Phase 6
 - ✓ WEB-P0-3: session title truncation eliminated (action toolbar converted from in-flow flex to `absolute right-2 top-1/2` overlay, title width 82px → 184px at 1280x800; row height stable at 44px for PERF-K) — v1.5.0 Phase 6
 - ✓ WEB-P0-4 + POL-7: toast stack capped at 3, errors sticky, `ToastHistoryDrawer` persists last 50 to localStorage; prevention layer hides write buttons + `CreateSessionDialog` when `webMutations=false` — v1.5.0 Phase 6
+- ✓ CFG-01: PR #578 config schema + lookup priority (env > group > profile > global > default) with `ClearUserConfigCache()` invalidation — v1.5.4 Phase 1
+- ✓ CFG-02: custom-command/conductor sessions receive `CLAUDE_CONFIG_DIR` from group override even when `Instance.Command` is non-empty — v1.5.4 Phase 1
+- ✓ CFG-03: `[groups."<name>".claude] env_file` is `source`d before `claude` exec (supports `.envrc` and flat `KEY=VALUE`) — v1.5.4 Phase 2
+- ✓ CFG-04: six named `TestPerGroupConfig_*` regression tests — v1.5.4 Phases 1–2
+- ✓ CFG-05: visual harness `scripts/verify-per-group-claude-config.sh` with two-group pass/fail table — v1.5.4 Phase 3
+- ✓ CFG-06: per-group documentation (README subsection, CLAUDE.md one-liner, CHANGELOG entry, @alec-pinson attribution) — v1.5.4 Phase 3
+- ✓ CFG-07: one-line spawn log `claude config resolution: session=... group=... resolved=... source=...` — v1.5.4 Phase 2
+- ✓ CFG-08: `[conductors.<name>.claude]` config block + Instance-aware loader + four callsite swaps in `instance.go` (including `buildClaudeResumeCommand` L4172, the resume path) — closes issue #602 — v1.5.4 Phase 4
+- ✓ CFG-09: conductor schema documented in README + canonical plugin-cache SKILL.md; pool SKILL.md absent on this host (recorded in SKILL_MD_DIFF.md) — v1.5.4 Phase 4
+- ✓ CFG-10: repo-root CLAUDE.md `--no-verify` ban + scope clarification (source-modifying vs metadata-only) — v1.5.4 Phase 4
+- ✓ CFG-11: eight named `TestConductorConfig_*` regression tests in `internal/session/conductorconfig_test.go` — v1.5.4 Phase 4
 
 ### Active (v1.5.4 scope)
 
-Detailed requirements defined in `.planning/REQUIREMENTS.md`.
-
-- [ ] **CFG-01** (REQ-1, P0): PR #578 config schema + lookup priority (env > group > profile > global > default); cache invalidation via `ClearUserConfigCache()`
-- [ ] **CFG-02** (REQ-2, P0): Custom-command (conductor) sessions receive `CLAUDE_CONFIG_DIR` from group override even when `Instance.Command` is non-empty
-- [ ] **CFG-03** (REQ-3, P0): `[groups."<name>".claude] env_file` is `source`d before `claude` exec (supports `.envrc` and flat `KEY=VALUE`)
-- [ ] **CFG-04** (REQ-4, P0): Six named regression tests in `internal/session/pergroupconfig_test.go` (all green, independently runnable, `-race -count=1`)
-- [ ] **CFG-05** (REQ-5, P1): Visual harness `scripts/verify-per-group-claude-config.sh` — two groups, two sessions, pass/fail table, exit 0 on success
-- [ ] **CFG-06** (REQ-6, P0): Documentation — `README.md` subsection, `CLAUDE.md` one-liner, `CHANGELOG.md [Unreleased] > Added`, attribution commit referencing @alec-pinson
-- [ ] **CFG-07** (REQ-7, P2): Observability — one-line spawn log `claude config resolution: session=<id> group=<g> resolved=<path> source=<env|group|profile|global|default>`
+v1.5.4 milestone complete — all 11 CFG requirements validated. See validated entries above (CFG-01..CFG-11) and `.planning/REQUIREMENTS.md` for traceability.
 
 ### v1.6.0 — Watcher Framework (deferred on this branch)
 
@@ -180,4 +183,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-04-15 (Phase 3 complete — CFG-05 harness + CFG-06 docs + attribution)
+*Last updated: 2026-04-16 (v1.5.4 milestone complete — CFG-01..11 all validated; Phase 4 closed with 11/11 automated must-haves + 1 human UAT tracked for issue #602 conductor-host E2E)
