@@ -1452,3 +1452,110 @@ func TestPersistence_CustomCommandResumesFromLatestJSONL(t *testing.T) {
 		}
 	})
 }
+
+// TestPersistence_DiscoverLatestClaudeJSONL_Unit is a host-portable,
+// tmux-free unit test for the pure Phase 5 helper discoverLatestClaudeJSONL
+// (internal/session/claude.go). It complements
+// TestPersistence_CustomCommandResumesFromLatestJSONL by locking the helper's
+// filename-selection rules independently of the Start() dispatch path.
+//
+// This test runs on every host (macOS, Linux, WSL) — no external dependency.
+func TestPersistence_DiscoverLatestClaudeJSONL_Unit(t *testing.T) {
+	const projectPath = "/fake/project/for-unit-test"
+
+	stage := func(t *testing.T, home, name string, mtime time.Time) {
+		t.Helper()
+		dir := filepath.Join(home, ".claude", "projects", ConvertToClaudeDirName(projectPath))
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatalf("mkdir %s: %v", dir, err)
+		}
+		p := filepath.Join(dir, name)
+		if err := os.WriteFile(p, []byte(`{"sessionId":"x"}`+"\n"), 0o644); err != nil {
+			t.Fatalf("write %s: %v", p, err)
+		}
+		if err := os.Chtimes(p, mtime, mtime); err != nil {
+			t.Fatalf("chtimes %s: %v", p, err)
+		}
+	}
+
+	t.Run("newest_wins_on_mtime", func(t *testing.T) {
+		home := isolatedHomeDir(t)
+		t.Setenv("CLAUDE_CONFIG_DIR", "")
+		now := time.Now()
+		stage(t, home, "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa.jsonl", now.Add(-30*time.Second))
+		stage(t, home, "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb.jsonl", now)
+		got, found := discoverLatestClaudeJSONL(projectPath)
+		if !found {
+			t.Fatalf("newest_wins_on_mtime: found=false, want true")
+		}
+		if got != "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb" {
+			t.Fatalf("newest_wins_on_mtime: got %q, want bbbbbbbb-...", got)
+		}
+	})
+
+	t.Run("agent_prefix_skipped", func(t *testing.T) {
+		home := isolatedHomeDir(t)
+		t.Setenv("CLAUDE_CONFIG_DIR", "")
+		now := time.Now()
+		stage(t, home, "agent-cccccccc-cccc-cccc-cccc-cccccccccccc.jsonl", now)
+		stage(t, home, "dddddddd-dddd-dddd-dddd-dddddddddddd.jsonl", now.Add(-30*time.Second))
+		got, found := discoverLatestClaudeJSONL(projectPath)
+		if !found {
+			t.Fatalf("agent_prefix_skipped: found=false, want true")
+		}
+		if got != "dddddddd-dddd-dddd-dddd-dddddddddddd" {
+			t.Fatalf("agent_prefix_skipped: got %q, want dddddddd-... (agent-* must be skipped even when newer)", got)
+		}
+	})
+
+	t.Run("non_uuid_skipped", func(t *testing.T) {
+		home := isolatedHomeDir(t)
+		t.Setenv("CLAUDE_CONFIG_DIR", "")
+		now := time.Now()
+		stage(t, home, "not-a-uuid.jsonl", now)
+		stage(t, home, "random.jsonl", now)
+		stage(t, home, "eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee.jsonl", now.Add(-30*time.Second))
+		got, found := discoverLatestClaudeJSONL(projectPath)
+		if !found {
+			t.Fatalf("non_uuid_skipped: found=false, want true")
+		}
+		if got != "eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee" {
+			t.Fatalf("non_uuid_skipped: got %q, want eeeeeeee-... (non-UUID filenames must be skipped)", got)
+		}
+	})
+
+	t.Run("empty_dir", func(t *testing.T) {
+		home := isolatedHomeDir(t)
+		t.Setenv("CLAUDE_CONFIG_DIR", "")
+		dir := filepath.Join(home, ".claude", "projects", ConvertToClaudeDirName(projectPath))
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatalf("mkdir: %v", err)
+		}
+		got, found := discoverLatestClaudeJSONL(projectPath)
+		if found || got != "" {
+			t.Fatalf("empty_dir: got (%q, %v), want (\"\", false)", got, found)
+		}
+	})
+
+	t.Run("missing_dir", func(t *testing.T) {
+		_ = isolatedHomeDir(t)
+		t.Setenv("CLAUDE_CONFIG_DIR", "")
+		got, found := discoverLatestClaudeJSONL(projectPath)
+		if found || got != "" {
+			t.Fatalf("missing_dir: got (%q, %v), want (\"\", false)", got, found)
+		}
+	})
+
+	t.Run("no_recency_cap", func(t *testing.T) {
+		home := isolatedHomeDir(t)
+		t.Setenv("CLAUDE_CONFIG_DIR", "")
+		stage(t, home, "ffffffff-ffff-ffff-ffff-ffffffffffff.jsonl", time.Now().Add(-2*time.Hour))
+		got, found := discoverLatestClaudeJSONL(projectPath)
+		if !found {
+			t.Fatalf("no_recency_cap: found=false on a 2-hour-old jsonl; helper MUST NOT have a 5-minute cap (spec D-05)")
+		}
+		if got != "ffffffff-ffff-ffff-ffff-ffffffffffff" {
+			t.Fatalf("no_recency_cap: got %q, want ffffffff-...", got)
+		}
+	})
+}
