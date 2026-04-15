@@ -3,14 +3,14 @@ gsd_state_version: 1.0
 milestone: v1.5.4
 milestone_name: milestone
 status: executing
-last_updated: "2026-04-15T20:49:40.096Z"
+last_updated: "2026-04-15T21:30:00.000Z"
 last_activity: 2026-04-15
 progress:
-  total_phases: 3
+  total_phases: 4
   completed_phases: 3
   total_plans: 5
   completed_plans: 5
-  percent: 100
+  percent: 75
 ---
 
 # Project State — v1.5.4
@@ -38,9 +38,9 @@ See `docs/PER-GROUP-CLAUDE-CONFIG-SPEC.md` for the source spec.
 
 ## Current Position
 
-Phase: 03
-Plan: Not started
-Status: Executing Phase 03
+Phase: 04
+Plan: Not started (awaiting `/gsd-plan-phase 4`)
+Status: Phase 04 queued — spec/roadmap/state amendments committed; planner agent up next
 Last activity: 2026-04-15
 
 ## Phase Progress
@@ -49,7 +49,8 @@ Last activity: 2026-04-15
 |---|-------|--------|--------------|-------|
 | 1 | Custom-command injection + core regression tests | Complete | CFG-01, CFG-02, CFG-04 (tests 1, 2, 3, 6) | 1/1 (01-01) |
 | 2 | env_file source semantics + observability + conductor E2E | Plans complete (verification pending) | CFG-03, CFG-04 (tests 4, 5), CFG-07 | 2/2 (02-01 + 02-02 complete) |
-| 3 | Visual harness + documentation + attribution commit | Pending | CFG-05, CFG-06 | — |
+| 3 | Visual harness + documentation + attribution commit | Complete | CFG-05, CFG-06 | 2/2 (03-01 + 03-02) |
+| 4 | Conductor schema + docs refresh + mandate clarification | Queued (spec/roadmap/state amended; awaiting `/gsd-plan-phase 4`) | CFG-08, CFG-09, CFG-10, CFG-11 | — |
 
 ## Phase 01 commits (since base 3e402e2)
 
@@ -94,15 +95,29 @@ Last activity: 2026-04-15
 - Additive only vs PR #578 — do not revert or refactor its existing code.
 - At least one commit must carry: "Base implementation by @alec-pinson in PR #578."
 
-## Next action (from conductor)
+## Phase 04 context (added 2026-04-15, user-authorized post-Phase-3)
 
-The user instructed: **stop after bootstrapping the roadmap. Do NOT auto-plan.** The conductor will spawn `gsd-v154-plan-1` to plan Phase 1.
+Phase 4 was added after Phases 1–3 completed. Three drivers:
 
-When that happens, the phase-1 planner should:
+1. **Issue [#602](https://github.com/asheshgoplani/agent-deck/issues/602)** — conductors are first-class entities but cannot carry their own Claude `config_dir`. Adding `[conductors.<name>]` schema + loader closes this. Precedence sits between env-var and group: `env > conductors.<name> > groups."<g>".claude > profiles.<p>.claude > [claude] > default`.
+2. **Docs surface gap** — Phase 3's CFG-06 covered README + repo-root CLAUDE.md + CHANGELOG, but did NOT touch the agent-deck skill `SKILL.md` at the canonical plugin-cache path or the pool path. Other Claude sessions discover agent-deck features via that skill. Phase 4 closes the gap.
+3. **Mandate UX issue** — the v1.5.3 `--no-verify` ban (repo-root CLAUDE.md) made no exception for metadata-only commits. `.planning/` and docs commits pay 10–30s of hook latency for zero verification value. Phase 4 clarifies the mandate: `--no-verify` is banned for source-modifying commits; metadata-only commits MAY use it when hooks would no-op.
 
-1. Read `.planning/PROJECT.md`, `.planning/ROADMAP.md`, `.planning/REQUIREMENTS.md`, `docs/PER-GROUP-CLAUDE-CONFIG-SPEC.md`.
-2. Run `/gsd-plan-phase 1` to produce `.planning/phases/01-custom-command-injection/PLAN.md`.
-3. Honor the scope list in REQUIREMENTS.md — any touch outside is escalation.
+**Phase 4 hard rules (in addition to milestone-wide rules below):**
+- NO @alec-pinson attribution on Phase 4 commits — this is user-driven, not PR #578.
+- Issue #602 reference acceptable in commit body (reporter is the milestone user).
+- TDD: RED tests first (CFG-11's eight tests in new file `internal/session/conductorconfig_test.go`), then schema, then loader, then docs, then mandate edit.
+- Additive only — no refactors of PR #578's code, no refactors of Phases 1–3 code unless a CFG-11 test requires it.
+
+## Next action
+
+User authorized Phase 4 on 2026-04-15. Spec/roadmap/state/requirements amendment commit lands first (this commit), then `/gsd-plan-phase 4` produces `.planning/phases/04-conductor-schema-docs-mandate/PLAN.md`. The Phase 4 planner should:
+
+1. Read `.planning/PROJECT.md`, `.planning/ROADMAP.md` (Phase 4 section), `.planning/REQUIREMENTS.md` (CFG-08/09/10/11), `docs/PER-GROUP-CLAUDE-CONFIG-SPEC.md` (Phase 4 amendment block).
+2. Inspect Phase 1–3 outputs in `internal/session/claude.go`, `userconfig.go`, `pergroupconfig_test.go` to find the right additive seams.
+3. Confirm the canonical conductor-group prefix in `cmd/agent-deck/conductor_cmd.go` (whether it's `conductor/<name>` literal or composed differently) before writing the loader test assertions.
+4. Produce `04-01-PLAN.md` (test+schema+loader) and `04-02-PLAN.md` (docs+mandate) — or fewer plans if the planner judges the work fits in one.
+5. Honor the Phase 4 hard rules above plus all milestone-wide hard rules.
 
 ## Accumulated Context
 

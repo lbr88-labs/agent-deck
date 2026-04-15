@@ -4,8 +4,8 @@
 **Starting point:** v1.5.3 (`ee7f29e` on `fix/feedback-closeout`)
 **Branch:** `fix/per-group-claude-config-v154` (worktree-isolated, forked from `fa9971e` — PR #578 HEAD by @alec-pinson)
 **Created:** 2026-04-15
-**Granularity:** Small patch (3 phases)
-**Estimated duration:** 60–90 minutes
+**Granularity:** Small patch (4 phases — Phase 4 added 2026-04-15 post-Phase-3, user-authorized)
+**Estimated duration:** 60–90 minutes for Phases 1–3 (actuals on track); Phase 4 adds ~30–45 minutes
 **Parallelization:** None — phases are sequential along TDD seams and dependency order
 
 ---
@@ -35,6 +35,8 @@ No `git push`, no tags, no PR create, no merge — this is local-only work for r
 - [ ] **Phase 2: env_file source semantics + observability + conductor E2E** (~25–30 min) — Prove `env_file` is `source`d before `claude` exec in the spawn pipeline for BOTH normal-claude and custom-command paths. Write three TDD regression tests (CFG-04 tests 4, 5 plus the CFG-07 log-format lock). Add the observability log line (CFG-07) via a `logClaudeConfigResolution` helper called from Start/StartWithMessage/Restart. All Go tests green under `-race -count=1`. [REQ mapping: CFG-03, CFG-04 (remainder), CFG-07] — **Plan 02-01 DONE (CFG-03 + CFG-04 test 4 locked in 38a2af3 + e608480); plan 02-02 pending (CFG-04 test 5 + CFG-07 observability).**
 
 - [ ] **Phase 3: Visual harness + documentation + attribution commit** (~15–25 min) — Ship `scripts/verify-per-group-claude-config.sh` (CFG-05), the README / CLAUDE.md / CHANGELOG updates (CFG-06), and an attribution commit referencing @alec-pinson. Run the harness on the conductor host and capture its output. [REQ mapping: CFG-05, CFG-06]
+
+- [ ] **Phase 4: Conductor schema + docs refresh + mandate clarification** (~30–45 min, added 2026-04-15 post-Phase-3, user-authorized) — Ship the `[conductors.<name>]` config block (CFG-08, closes issue #602), the eight-test regression suite that locks it (CFG-11), the README + agent-deck SKILL.md docs refresh (CFG-09), and the repo-root `CLAUDE.md` `--no-verify` mandate scope clarification (CFG-10). NO @alec-pinson attribution on Phase 4 (this is user-driven, not PR #578); commit body may reference issue #602 reporter (the milestone user). [REQ mapping: CFG-08, CFG-09, CFG-10, CFG-11]
 
 ---
 
@@ -154,16 +156,70 @@ Plans:
 
 ---
 
+### Phase 4: Conductor schema + docs refresh + mandate clarification
+
+**Goal:** Add a top-level `[conductors.<name>]` config block (with `config_dir` + `env_file`) and a loader seam in `GetClaudeConfigDirForGroup` so conductor-tagged sessions (`groupPath == "conductor/<name>"`) inherit Claude config from the conductor block. Refresh README and the agent-deck skill SKILL.md to document the new schema. Clarify the repo-root `CLAUDE.md` `--no-verify` mandate so metadata-only commits don't pay hook latency for zero verification value.
+
+**Requirements covered:**
+- CFG-08 — `[conductors.<name>]` schema + loader, precedence env > conductor > group > profile > global > default, propagation to conductor-group sessions (closes issue [#602](https://github.com/asheshgoplani/agent-deck/issues/602))
+- CFG-09 — README "Per-group Claude config" subsection extension + agent-deck SKILL.md update at canonical plugin-cache path AND pool path (if present)
+- CFG-10 — repo-root `CLAUDE.md` `--no-verify` mandate scope clarification (metadata-only commits exemption with negative example)
+- CFG-11 — eight regression tests in new file `internal/session/conductorconfig_test.go`
+
+**Approach (TDD, in order):**
+1. Create `internal/session/conductorconfig_test.go` with the eight tests from CFG-11 — RED first. Tests 1 (`SchemaParses`) and 4 (`FallsThroughToGroupOverride`) probably fail at compile because `UserConfig.Conductors` doesn't exist yet; tests 2/3/5/6/7/8 fail at assertion because the loader doesn't consult the conductor block.
+2. Run `go test ./internal/session/... -run TestConductorConfig_ -race -count=1` — confirm RED across the suite (some compile errors, some assertion failures).
+3. **Schema first.** In `internal/session/userconfig.go`, add `ConductorClaudeConfig` struct (mirroring `GroupClaudeConfig`), top-level `Conductors map[string]ConductorClaudeConfig` on `UserConfig`, and `GetConductorClaudeConfigDir(name) string` / `GetConductorClaudeEnvFile(name) string` helpers with the same `~`/env-var expansion as the group helpers. Re-run tests — `SchemaParses` and `FallsThroughToGroupOverride` go GREEN; the loader-dependent tests still RED.
+4. **Loader seam.** In `internal/session/claude.go`, extend `GetClaudeConfigDirForGroup(groupPath)` to detect the `conductor/<name>` prefix (use the canonical prefix from `cmd/agent-deck/conductor_cmd.go` — confirm via Read before editing), look up `cfg.Conductors[name]`, and slot the conductor-block check between the env-var check and the existing group check. Mirror the change in `GetClaudeConfigDirSourceForGroup` so the source label `conductor` is returned for the new branch.
+5. **env_file wiring.** Confirm via Read that `buildEnvSourceCommand()` (touched in Phase 2 plan 02-01) reads `env_file` via the same group-aware helper chain. If not, add a `GetEnvFileForGroup(groupPath)` shim that walks conductor → group → (no profile/global env_file today) and have `buildEnvSourceCommand` call it. Test 7 (`EnvFileSourced`) gates this.
+6. Re-run the full `TestConductorConfig_*` suite — all 8 GREEN under `-race -count=1`.
+7. Re-run `TestPerGroupConfig_*` (Phases 1–2) — confirm no regression. The conductor branch is upstream of the group branch in the precedence chain, so existing group-only configs MUST still resolve to their group value.
+8. **Docs.** Update README `### Per-group Claude config` subsection (added in Phase 3 plan 03-02) with a sibling `[conductors.<name>]` example and a one-line precedence note linking to issue #602. Update agent-deck SKILL.md at canonical plugin-cache path (`~/.claude/plugins/cache/agent-deck/agent-deck/<hash>/skills/agent-deck/SKILL.md` — find the actual hash via `ls`) AND the pool copy at `~/.agent-deck/skills/pool/agent-deck/SKILL.md` if present.
+9. **Mandate clarification.** Update repo-root `CLAUDE.md` "General rules" block: clarify that the `--no-verify` ban applies to source-modifying commits only, define metadata-only paths (`.planning/**`, `docs/**`, `*.md` outside source dirs, `CHANGELOG.md` during milestone-prep), include the negative example (mixed metadata+source = source-modifying = hooks required).
+10. **Atomic commits.** TDD test commit (RED), schema commit, loader commit, docs commit, CLAUDE.md mandate commit — each signed "Committed by Ashesh Goplani", no Claude attribution, no @alec-pinson attribution. Body of one commit references issue #602.
+
+**Scope (files touched):**
+- `internal/session/conductorconfig_test.go` (NEW — kept separate from `pergroupconfig_test.go` for clean revert)
+- `internal/session/userconfig.go` (additive — new struct, new field, new helpers)
+- `internal/session/claude.go` (additive — new branch in `GetClaudeConfigDirForGroup` + `GetClaudeConfigDirSourceForGroup`)
+- `internal/session/env.go` (only if step 5 finds a gap)
+- `README.md` (extend Phase 3's "Per-group Claude config" subsection)
+- `~/.claude/plugins/cache/agent-deck/agent-deck/<hash>/skills/agent-deck/SKILL.md` (canonical) + `~/.agent-deck/skills/pool/agent-deck/SKILL.md` (pool, if present) — outside repo, but in the milestone scope per spec amendment
+- Repo-root `CLAUDE.md` (mandate clarification)
+- `docs/PER-GROUP-CLAUDE-CONFIG-SPEC.md` (already amended — this commit)
+- `.planning/ROADMAP.md`, `.planning/STATE.md`, `.planning/REQUIREMENTS.md` (already amended — this commit)
+
+**Success criteria:**
+1. `go test ./internal/session/... -run TestConductorConfig_ -race -count=1` — all 8 GREEN.
+2. `go test ./internal/session/... -run TestPerGroupConfig_ -race -count=1` — all 8 still GREEN (no regression on Phases 1–2 test suite).
+3. README documents `[conductors.<name>]` schema with example and precedence note, cross-linked to issue #602.
+4. Both agent-deck SKILL.md surfaces (canonical + pool, if present) document the new block.
+5. Repo-root `CLAUDE.md` carries the `--no-verify` mandate clarification with metadata-paths list and negative example.
+6. All Phase 4 commits sign "Committed by Ashesh Goplani"; no Claude attribution; no @alec-pinson attribution. Issue #602 referenced in commit body.
+7. No `git push`, `git tag`, `gh release`, `gh pr create`, `gh pr merge` executed.
+
+**Dependencies:** Phases 1–3 complete. Phase 4 reads the existing `GetClaudeConfigDirForGroup` (Phase 1), `GetClaudeConfigDirSourceForGroup` (Phase 2 plan 02-02), `buildEnvSourceCommand` (Phase 2 plan 02-01), and the README `### Per-group Claude config` subsection (Phase 3 plan 03-02) and extends them additively.
+
+**Plans:** TBD by `/gsd-plan-phase 4` — likely 2 plans (test+schema+loader as plan 04-01; docs+mandate as plan 04-02), but the planner agent decides.
+
+---
+
 ## Milestone Verification (runs at `/gsd-complete-milestone`)
 
-Recap of the six success criteria from the spec — the audit step will confirm all six:
+Recap of the spec success criteria — the audit step will confirm all of them:
 
 1. PR #578 unit tests remain GREEN.
 2. `go test ./internal/session/... -run TestPerGroupConfig_ -race -count=1` — all 8 GREEN (six ROADMAP-numbered tests 1/2/3/4/5/6 + two CFG-07 helper tests).
 3. `bash scripts/verify-per-group-claude-config.sh` exits 0 on conductor host.
 4. Manual conductor proof: `ps -p <pane_pid>` env shows the overridden `CLAUDE_CONFIG_DIR` after restart.
-5. Commit log includes README + CHANGELOG + CLAUDE.md commits and at least one `@alec-pinson` attribution commit.
+5. Commit log includes README + CHANGELOG + CLAUDE.md commits and at least one `@alec-pinson` attribution commit (Phases 1–3 only; Phase 4 commits MUST NOT carry @alec-pinson attribution).
 6. No push / tag / PR / merge performed.
+
+Phase 4 additions (gated alongside #1–#6):
+
+7. `go test ./internal/session/... -run TestConductorConfig_ -race -count=1` — all 8 GREEN.
+8. README + agent-deck SKILL.md (canonical + pool) document `[conductors.<name>]`. Repo-root `CLAUDE.md` carries the `--no-verify` mandate clarification.
+9. Phase 4 commits sign "Committed by Ashesh Goplani"; no Claude attribution; no @alec-pinson attribution; commit body references issue #602.
 
 ---
 
@@ -177,4 +233,4 @@ Recap of the six success criteria from the spec — the audit step will confirm 
 ---
 
 *Roadmap created: 2026-04-15*
-*Last updated: 2026-04-15 — Phase 2 revision (iteration 1/3): env_file wiring fix for custom-command path at instance.go:598; CFG-07 factored into logClaudeConfigResolution helper called from Start/StartWithMessage/Restart; added TestPerGroupConfig_ClaudeConfigResolutionLogFormat automated format lock*
+*Last updated: 2026-04-15 — Phase 4 added post-Phase-3 (user-authorized): conductor schema (CFG-08, closes issue #602), docs refresh (CFG-09), `--no-verify` mandate clarification (CFG-10), eight regression tests (CFG-11). Phase 4 commits use no @alec-pinson attribution.*

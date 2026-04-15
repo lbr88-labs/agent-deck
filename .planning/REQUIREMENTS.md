@@ -56,6 +56,33 @@ Every requirement below is in scope. Mapping: REQ-ID in this file == CFG-NN in P
 
 - [x] **CFG-07** (P2): One log line emitted at session spawn: `claude config resolution: session=<id> group=<g> resolved=<path> source=<env|group|profile|global|default>`. Helps future debugging by surfacing which priority level set the dir for a given session.
 
+### Conductor schema (Phase 4 — added 2026-04-15)
+
+- [ ] **CFG-08** (P0): Top-level `[conductors.<name>]` TOML section recognized, with `config_dir` and `env_file` keys (semantics mirror `[groups."<g>".claude]`). The lookup chain in `GetClaudeConfigDirForGroup(groupPath)` is extended to: `env var > [conductors.<name>] (when groupPath == "conductor/<name>") > [groups."<g>".claude] > [profiles.<p>.claude] > [claude] > ~/.claude`. `GetClaudeConfigDirSourceForGroup` returns label `conductor` for the new branch. Path expansion (`~`, `$HOME`) handled. Backward compat: a session in `conductor/<name>` with NO `[conductors.<name>]` block but WITH `[groups."conductor/<name>".claude]` still resolves to the group value. Closes [issue #602](https://github.com/asheshgoplani/agent-deck/issues/602). Acceptance: CFG-11 tests 1, 2, 3, 4, 5, 6, 8 GREEN; manual conductor-host proof on milestone close (success criterion #8).
+
+### Documentation refresh (Phase 4)
+
+- [ ] **CFG-09** (P0): Two doc surfaces beyond CFG-06:
+  - `README.md` — extend the "Per-group Claude config" subsection (added in CFG-06) with a sibling `[conductors.<name>]` example and a one-line precedence note. Cross-link to issue #602.
+  - agent-deck skill `SKILL.md` — at canonical plugin-cache path (`~/.claude/plugins/cache/agent-deck/agent-deck/<hash>/skills/agent-deck/SKILL.md`) AND pool path (`~/.agent-deck/skills/pool/agent-deck/SKILL.md`) if present. One-paragraph addition documenting `[conductors.<name>]` block + precedence + pool-vs-canonical distinction.
+
+### Mandate clarification (Phase 4)
+
+- [ ] **CFG-10** (P1): Repo-root `CLAUDE.md` "General rules" gets a sub-section clarifying that the `--no-verify` ban applies to source-modifying commits only. Metadata-only commits (paths: `.planning/**`, `docs/**`, `*.md` outside source dirs, `CHANGELOG.md` during milestone-prep) MAY use `--no-verify` IFF the hook would no-op. Negative example: a commit mixing `.planning/` AND `internal/session/*.go` is source-modifying — hooks required.
+
+### Phase 4 regression tests
+
+- [ ] **CFG-11** (P0): New file `internal/session/conductorconfig_test.go` (kept separate from `pergroupconfig_test.go` for clean Phase 4 revert) containing eight named tests, each independently runnable, self-cleaning, no network:
+  1. `TestConductorConfig_SchemaParses` — TOML `[conductors.foo] config_dir = "/tmp/x" env_file = "/tmp/y"` parses into `UserConfig.Conductors["foo"]`; path expansion handled.
+  2. `TestConductorConfig_PrecedenceConductorBeatsGroup` — both `[conductors.foo]` and `[groups."conductor/foo".claude]` set; conductor wins.
+  3. `TestConductorConfig_PrecedenceEnvBeatsConductor` — `CLAUDE_CONFIG_DIR` env var set; env wins.
+  4. `TestConductorConfig_FallsThroughToGroupOverride` — only `[groups."conductor/foo".claude]` set, no `[conductors.foo]`; group value returned (PR #578 backward compat).
+  5. `TestConductorConfig_FallsThroughToProfile` — only `[profiles.personal.claude]` set; profile value returned for `conductor/foo` session.
+  6. `TestConductorConfig_PropagatesToConductorGroupSession` — end-to-end: build spawn command for Instance with `GroupPath = "conductor/foo"` and `[conductors.foo] config_dir = "/tmp/x"`; assert rendered command contains `export CLAUDE_CONFIG_DIR=/tmp/x`. Closes propagation gap from issue #602.
+  7. `TestConductorConfig_EnvFileSourced` — `[conductors.foo] env_file = "/tmp/conductor.envrc"` causes spawn command to `source /tmp/conductor.envrc` for both normal-claude and custom-command paths.
+  8. `TestConductorConfig_SourceLabelIsConductor` — `GetClaudeConfigDirSourceForGroup("conductor/foo")` returns `conductor` when value comes from conductor block.
+  All eight GREEN under `go test ./internal/session/... -run TestConductorConfig_ -race -count=1`.
+
 ---
 
 ## Out of Scope (v1.5.4)
@@ -97,28 +124,41 @@ Every active REQ maps to exactly one phase.
 | CFG-04 (test 4) | Phase 2 | Complete (02-01) |
 | CFG-04 (test 5) | Phase 2 | Complete (02-02) |
 | CFG-07 | Phase 2 | Complete (02-02) |
-| CFG-05 | Phase 3 | Pending |
-| CFG-06 | Phase 3 | Pending |
+| CFG-05 | Phase 3 | Complete (03-01) |
+| CFG-06 | Phase 3 | Complete (03-02) |
+| CFG-08 | Phase 4 | Pending |
+| CFG-09 | Phase 4 | Pending |
+| CFG-10 | Phase 4 | Pending |
+| CFG-11 | Phase 4 | Pending |
 
 **Coverage:**
-- v1.5.4 requirements: 7 (CFG-01 through CFG-07)
-- Mapped to phases: 7
+- v1.5.4 requirements: 11 (CFG-01 through CFG-11; CFG-08/09/10/11 added 2026-04-15 as Phase 4)
+- Mapped to phases: 11
 - Unmapped: 0 ✓
 
 ---
 
 ## Success criteria (milestone-level)
 
-All six below come from the spec's "Success criteria for the milestone" section and gate `/gsd-complete-milestone`:
+All twelve below come from the spec's "Success criteria for the milestone" section (#1–6 original; #7–12 added with Phase 4 on 2026-04-15) and gate `/gsd-complete-milestone`:
 
 1. PR #578 unit tests remain GREEN (no assertion changes).
 2. `go test ./internal/session/... -run TestPerGroupConfig_ -race -count=1` — all 6 GREEN.
 3. `bash scripts/verify-per-group-claude-config.sh` exits 0 on conductor host with a visual pass/fail table.
 4. Manual proof on conductor host: add `[groups."conductor".claude] config_dir = "~/.claude-work"` to `~/.agent-deck/config.toml`, restart conductor, `ps -p <pane_pid>` env shows `CLAUDE_CONFIG_DIR=/home/user/.claude-work`, conductor uses the work Claude account.
-5. `git log main..HEAD --oneline` ends with README + CHANGELOG + CLAUDE.md commits and at least one commit carrying `@alec-pinson` attribution.
+5. `git log main..HEAD --oneline` ends with README + CHANGELOG + CLAUDE.md commits and at least one commit carrying `@alec-pinson` attribution (Phases 1–3 only).
 6. No `git push`, `git tag`, `gh release`, `gh pr create`, or `gh pr merge` performed during this milestone.
+
+**Phase 4 success criteria (added 2026-04-15):**
+
+7. `go test ./internal/session/... -run TestConductorConfig_ -race -count=1` — all 8 GREEN.
+8. Manual conductor-host proof for issue #602: add `[conductors.gsd-v154] config_dir = "~/.claude-work"` with NO matching `[groups.*]` entry, restart `gsd-v154` conductor, `agent-deck session send <id> "echo CLAUDE_CONFIG_DIR=\$CLAUDE_CONFIG_DIR"` reports `~/.claude-work`.
+9. README "Per-group Claude config" subsection includes `[conductors.<name>]` example + precedence note.
+10. agent-deck SKILL.md (canonical plugin-cache path + pool path if present) documents the new block.
+11. Repo-root `CLAUDE.md` carries the `--no-verify` mandate clarification (metadata-paths list + negative example).
+12. Phase 4 commits sign "Committed by Ashesh Goplani"; no Claude attribution; no @alec-pinson attribution; commit body references issue #602.
 
 ---
 
 *Requirements defined: 2026-04-15*
-*Last updated: 2026-04-15 — initial v1.5.4 definition*
+*Last updated: 2026-04-15 — Phase 4 amendment: CFG-08 (conductor schema, closes #602), CFG-09 (docs refresh), CFG-10 (`--no-verify` mandate clarification), CFG-11 (eight regression tests)*
