@@ -20,7 +20,7 @@ The work is organized TDD-first: **Phase 1** lands all eight `TestPersistence_*`
 - [x] **Phase 2: Cgroup isolation default (REQ-1 fix)** - Flip `launch_in_user_scope` default to true on Linux+systemd with detection and graceful fallback
 - [x] **Phase 3: Resume-on-start and error-recovery (REQ-2 fix)** - Route every Claude start path through `ClaudeSessionID` resume logic with authoritative instance storage
 - [x] **Phase 4: Verification harness, docs, and CI wiring** - Ship `scripts/verify-session-persistence.sh`, verify CLAUDE.md mandate completeness, and wire CI gates
-- [ ] **Phase 5: Custom-command JSONL resume (REQ-7 fix)** - Resume from latest JSONL when `ClaudeSessionID` is empty, then write-through persist the discovered UUID so future restarts take the Phase 3 fast path
+- [x] **Phase 5: Custom-command JSONL resume (REQ-7 fix)** - Resume from latest JSONL when `ClaudeSessionID` is empty, then write-through persist the discovered UUID so future restarts take the Phase 3 fast path
 
 ## Phase Details
 

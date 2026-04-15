@@ -3,15 +3,15 @@ gsd_state_version: 1.0
 milestone: v1.5.2
 milestone_name: milestone
 status: executing
-stopped_at: "Phase 04 fully landed. v1.5.2 milestone complete. Next step: user sign-off + manual SSH-logout verification per milestone criterion #2."
-last_updated: "2026-04-15T07:04:58.324Z"
-last_activity: 2026-04-15 -- Phase 5 planning complete
+stopped_at: "Phase 05 fully landed (REQ-7 custom-command JSONL resume). TEST-09 GREEN + new portable unit test. Visual verify-session-persistence.sh still OVERALL PASS. v1.5.2 milestone complete. Next step: user sign-off + manual SSH-logout verification per milestone criterion #2."
+last_updated: "2026-04-15T20:00:00.000Z"
+last_activity: 2026-04-15 -- Phase 5 executed (waves 1-3) on post-update GSD v1.36.0
 progress:
   total_phases: 5
-  completed_phases: 3
-  total_plans: 20
-  completed_plans: 16
-  percent: 80
+  completed_phases: 5
+  total_plans: 23
+  completed_plans: 23
+  percent: 100
 ---
 
 # Project State
@@ -25,10 +25,10 @@ See: .planning/PROJECT.md (updated 2026-04-14)
 
 ## Current Position
 
-Phase: 04 (verification-harness-docs-and-ci-wiring) — COMPLETE
-Plan: 4 of 4
-Status: Ready to execute
-Last activity: 2026-04-15 -- Phase 5 planning complete
+Phase: 05 (custom-command-jsonl-resume) — COMPLETE
+Plan: 3 of 3
+Status: Milestone v1.5.2 complete; awaiting user sign-off
+Last activity: 2026-04-15 -- Phase 5 waves 1-3 executed, TEST-09 GREEN, portable unit test added
 
 Progress: [██████████] 100%
 
@@ -48,6 +48,7 @@ Progress: [██████████] 100%
 | 2. Cgroup isolation default (REQ-1 fix) | 6/6 | — | — |
 | 3. Resume-on-start and error-recovery (REQ-2 fix) | 5/5 | — | — |
 | 4. Verification harness, docs, and CI wiring | 4/4 | — | — |
+| 5. Custom-command JSONL resume (REQ-7 fix) | 3/3 | — | — |
 
 **Recent Trend:**
 
@@ -69,6 +70,7 @@ Recent decisions affecting current work:
 - Do not migrate the 33 error / 39 stopped sessions on the conductor host — separate manual operator task.
 - Do not resume the legacy v15 roadmap in `.planning.legacy-v15/` — out of scope per PROJECT.md.
 - Phase 03: routed Start() and StartWithMessage() through buildClaudeResumeCommand when ClaudeSessionID != "" — closed the 2026-04-14 f1e103df/b9403638 divergence. OBS-02 per-call audit line landed. docs/session-id-lifecycle.md gained a Start / Restart Dispatch subsection (PERSIST-10).
+- Phase 05: added `discoverLatestClaudeJSONL` pure helper in claude.go + `ensureClaudeSessionIDFromDisk` prelude on Instance at two dispatch sites (Start / StartWithMessage). Empty-ID Claude-compatible starts now write-through the newest UUID JSONL before spawn — retires the 2026-04-15 conductor `start-conductor.sh` wrapper hack. TEST-09 GREEN + host-portable unit test covers PERSIST-11..13 / D-04 no-branch-on-Command / D-05 no-5-minute-cap.
 
 ### Pending Todos
 
@@ -80,6 +82,7 @@ None yet. Spec is authoritative; requirements are atomic and testable; CLAUDE.md
 
 ## Session Continuity
 
-Last session: 2026-04-15 — Phase 04 execution complete
-Stopped at: Phase 04 fully landed. v1.5.2 milestone complete. Next step: user sign-off + manual SSH-logout verification per milestone criterion #2.
+Last session: 2026-04-15 — Phase 05 execution complete (waves 1-3)
+Stopped at: Phase 05 fully landed (REQ-7 custom-command JSONL resume). TEST-09 GREEN + portable unit test added. scripts/verify-session-persistence.sh still OVERALL PASS. v1.5.2 milestone complete end-to-end. Next step: user sign-off + manual SSH-logout verification per milestone criterion #2.
 Resume file: None
+Commits (Phase 05): 7f2ff35 (05-01 RED), d1590d6 (05-02 GREEN), 108132a (05-03 portable unit test)
