@@ -31,7 +31,7 @@ Every requirement below is in scope. Mapping: REQ-ID in this file == CFG-NN in P
   2. `TestPerGroupConfig_GroupOverrideBeatsProfile` — both set; group wins.
   3. `TestPerGroupConfig_UnknownGroupFallsThroughToProfile` — instance in non-existent group; falls through to profile override.
   4. `TestPerGroupConfig_EnvFileSourcedInSpawn` — `env_file` set; its exported vars visible in spawn env (via `buildBashExportPrefix` or the prefix pipeline equivalent). **[DONE — plan 02-01, commit 38a2af3]**
-  5. `TestPerGroupConfig_ConductorRestartPreservesConfigDir` — end-to-end: create custom-command session, stop, restart; assert `CLAUDE_CONFIG_DIR` in new spawn matches group's override. Links REQ-2 to v1.5.2's REQ-7 (custom-command resume path).
+  5. `TestPerGroupConfig_ConductorRestartPreservesConfigDir` — end-to-end: create custom-command session, stop, restart; assert `CLAUDE_CONFIG_DIR` in new spawn matches group's override. Links REQ-2 to v1.5.2's REQ-7 (custom-command resume path). **[DONE — plan 02-02, commit 476367c]**
   6. `TestPerGroupConfig_CacheInvalidation` — add override, resolve; remove override, `ClearUserConfigCache()`, resolve returns new value.
   All six green under `go test ./internal/session/... -run TestPerGroupConfig_ -race -count=1`.
 
@@ -54,7 +54,7 @@ Every requirement below is in scope. Mapping: REQ-ID in this file == CFG-NN in P
 
 ### Observability
 
-- [ ] **CFG-07** (P2): One log line emitted at session spawn: `claude config resolution: session=<id> group=<g> resolved=<path> source=<env|group|profile|global|default>`. Helps future debugging by surfacing which priority level set the dir for a given session.
+- [x] **CFG-07** (P2): One log line emitted at session spawn: `claude config resolution: session=<id> group=<g> resolved=<path> source=<env|group|profile|global|default>`. Helps future debugging by surfacing which priority level set the dir for a given session.
 
 ---
 
@@ -95,8 +95,8 @@ Every active REQ maps to exactly one phase.
 | CFG-04 (tests 1, 2, 3, 6) | Phase 1 | Complete (01-01) |
 | CFG-03 | Phase 2 | Complete (02-01) |
 | CFG-04 (test 4) | Phase 2 | Complete (02-01) |
-| CFG-04 (test 5) | Phase 2 | Pending (02-02) |
-| CFG-07 | Phase 2 | Pending (02-02) |
+| CFG-04 (test 5) | Phase 2 | Complete (02-02) |
+| CFG-07 | Phase 2 | Complete (02-02) |
 | CFG-05 | Phase 3 | Pending |
 | CFG-06 | Phase 3 | Pending |
 

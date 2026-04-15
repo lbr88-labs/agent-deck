@@ -107,7 +107,7 @@ Plans:
 
 Plans:
 - [x] 02-01-PLAN.md — DONE (see `02-01-SUMMARY.md`). TestPerGroupConfig_EnvFileSourcedInSpawn added in `38a2af3` (138 lines); pre-authorized L599 hardening shipped in `e608480` (+4/-3 lines, carries `Base implementation by @alec-pinson in PR #578.`). All 5 TestPerGroupConfig_* tests GREEN under `-race -count=1`; PR #578 regression subset (7 tests) GREEN. Diagnosis: outer `buildClaudeCommand` wrapper at L477-480 already prepends envPrefix unconditionally, so the L599 change is defense-in-depth against future callsites that bypass `buildClaudeCommand`. Three new pre-existing StatusEventWatcher fsnotify-timeout failures logged to Phase 02 deferred-items.md (not a regression).
-- [ ] 02-02-PLAN.md — CFG-04 test 5 + CFG-07: conductor-restart regression test + source-label helper (`GetClaudeConfigDirSourceForGroup`) in claude.go + private `logClaudeConfigResolution` helper in instance.go emitted from THREE sites (Start, StartWithMessage, Restart). Two CFG-07 unit tests (`ClaudeConfigDirSourceLabel` priority-chain, `ClaudeConfigResolutionLogFormat` slog text-handler format lock).
+- [x] 02-02-PLAN.md — CFG-04 test 5 + CFG-07: conductor-restart regression test + source-label helper (`GetClaudeConfigDirSourceForGroup`) in claude.go + private `logClaudeConfigResolution` helper in instance.go emitted from THREE sites (Start, StartWithMessage, Restart). Two CFG-07 unit tests (`ClaudeConfigDirSourceLabel` priority-chain, `ClaudeConfigResolutionLogFormat` slog text-handler format lock).
 
 ---
 

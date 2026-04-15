@@ -3,14 +3,14 @@ gsd_state_version: 1.0
 milestone: v1.5.4
 milestone_name: milestone
 status: executing
-last_updated: "2026-04-15T13:38:00.000Z"
-last_activity: 2026-04-15 -- Phase 02 plan 01 (CFG-03 + CFG-04 test 4) COMPLETE
+last_updated: "2026-04-15T13:51:58.669Z"
+last_activity: 2026-04-15 -- Phase 02 plan 02 (CFG-04 test 5 + CFG-07) COMPLETE
 progress:
   total_phases: 3
-  completed_phases: 1
-  total_plans: 4
-  completed_plans: 2
-  percent: 50
+  completed_phases: 2
+  total_plans: 3
+  completed_plans: 3
+  percent: 100
 ---
 
 # Project State — v1.5.4
@@ -38,17 +38,17 @@ See `docs/PER-GROUP-CLAUDE-CONFIG-SPEC.md` for the source spec.
 
 ## Current Position
 
-Phase: 02 (env-file-source-semantics-observability-conductor-e2e) — EXECUTING
-Plan: 1 of 2 — **COMPLETE**; next: 02-02 (CFG-07 observability + conductor E2E + CFG-04 test 5)
-Status: Executing Phase 02
-Last activity: 2026-04-15 -- Plan 02-01 complete (CFG-03 locked + CFG-04 test 4 GREEN)
+Phase: 02 (env-file-source-semantics-observability-conductor-e2e) — 2/2 PLANS COMPLETE; awaiting phase verification
+Plan: 2 of 2 — **COMPLETE** (CFG-04 test 5 + CFG-07 closed)
+Status: Ready for `/gsd-verify-phase` on Phase 02, then Phase 03 (CFG-05 visual harness + CFG-06 docs + attribution)
+Last activity: 2026-04-15 -- Plan 02-02 complete (CFG-04 test 5 + CFG-07 closed)
 
 ## Phase Progress
 
 | # | Phase | Status | Requirements | Plans |
 |---|-------|--------|--------------|-------|
 | 1 | Custom-command injection + core regression tests | Complete | CFG-01, CFG-02, CFG-04 (tests 1, 2, 3, 6) | 1/1 (01-01) |
-| 2 | env_file source semantics + observability + conductor E2E | In progress | CFG-03, CFG-04 (tests 4, 5), CFG-07 | 1/2 (02-01 complete) |
+| 2 | env_file source semantics + observability + conductor E2E | Plans complete (verification pending) | CFG-03, CFG-04 (tests 4, 5), CFG-07 | 2/2 (02-01 + 02-02 complete) |
 | 3 | Visual harness + documentation + attribution commit | Pending | CFG-05, CFG-06 | — |
 
 ## Phase 01 commits (since base 3e402e2)
@@ -67,6 +67,16 @@ Last activity: 2026-04-15 -- Plan 02-01 complete (CFG-03 locked + CFG-04 test 4 
 | 6a0205d | docs | docs(planning): plan phase 02 — env_file source + observability + conductor E2E |
 | 38a2af3 | test | test(session): add env_file spawn-source regression test (CFG-04 test 4) |
 | e608480 | fix  | fix(session): source group env_file on custom-command spawn path (CFG-03) |
+| 5d8737f | docs | docs(02-01): complete phase 02 plan 01 — CFG-03 closed, CFG-04 test 4 locked |
+| e000801 | test | test(session): add conductor-restart + CFG-07 source-label + log-format regression tests |
+| 476367c | feat | feat(session): add CFG-07 claude-config-resolution log line + source-label helper |
+
+## Decisions — Plan 02-02
+
+- `GetClaudeConfigDirSourceForGroup(groupPath)` in `internal/session/claude.go` mirrors the priority chain at `claude.go:246` and returns both path and source label (env|group|profile|global|default). Keeps a single source-of-truth for observability labels.
+- `(i *Instance) logClaudeConfigResolution()` owns the single CFG-07 slog message literal. Called from exactly 3 sites: `Start()`, `StartWithMessage()`, `Restart()` — each gated on `IsClaudeCompatible(i.Tool)`. Fork path intentionally silent (Fork can trigger a subsequent Start() which logs).
+- Rule 1 deviation captured in SUMMARY: plan's LogFormat test assumed `NewInstanceWithGroupAndTool`'s first arg populated `i.ID`, but it populates `i.Title`. The CFG-07 helper correctly logs `i.ID` (session logs key on ID, not Title). Fixed with a one-line `inst.ID = "logfmt-sess-123"` override in the test; helper is unchanged.
+- Rule 3 deviation captured in SUMMARY: helper comment originally contained the string `"claude config resolution"` which inflated `grep -c` past the plan's expected 1. Reworded comment to `"the single CFG-07 slog message literal"` — no semantic change; grep now returns 1.
 
 ## Decisions — Plan 02-01
 
