@@ -150,7 +150,7 @@ Plans:
 
 Plans:
 - [x] 03-01-PLAN.md — CFG-05 visual harness: ship `scripts/verify-per-group-claude-config.sh` with preflight + config isolation + trap cleanup + TTY-aware pass/fail table; run on conductor host; commit with @alec-pinson attribution trailer.
-- [ ] 03-02-PLAN.md — CFG-06 docs: README `### Per-group Claude config` subsection under §Features, repo-root CLAUDE.md resurrection (Path A from `5013940^`) + TestPerGroupConfig_* one-liner, CHANGELOG `[Unreleased] > Added` bullet with PR #578 reference, phase-wide hard-rule audit (attribution ≥ 2, no Claude attribution, all commits signed).
+- [x] 03-02-PLAN.md — CFG-06 docs: README `### Per-group Claude config` subsection under §Features, repo-root CLAUDE.md resurrection (Path A from `5013940^`) + TestPerGroupConfig_* one-liner, CHANGELOG `[Unreleased] > Added` bullet with PR #578 reference, phase-wide hard-rule audit (attribution ≥ 2, no Claude attribution, all commits signed).
 
 ---
 
