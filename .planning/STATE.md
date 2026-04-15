@@ -3,14 +3,14 @@ gsd_state_version: 1.0
 milestone: v1.5.4
 milestone_name: milestone
 status: executing
-last_updated: "2026-04-15T21:30:00.000Z"
-last_activity: 2026-04-15
+last_updated: "2026-04-15T21:29:04.673Z"
+last_activity: 2026-04-15 -- Phase 4 planning complete
 progress:
   total_phases: 4
   completed_phases: 3
-  total_plans: 5
+  total_plans: 7
   completed_plans: 5
-  percent: 75
+  percent: 71
 ---
 
 # Project State — v1.5.4
@@ -39,9 +39,9 @@ See `docs/PER-GROUP-CLAUDE-CONFIG-SPEC.md` for the source spec.
 ## Current Position
 
 Phase: 04
-Plan: Not started (awaiting `/gsd-plan-phase 4`)
-Status: Phase 04 queued — spec/roadmap/state amendments committed; planner agent up next
-Last activity: 2026-04-15
+Plan: 04-01 + 04-02 (planned, not yet executed)
+Status: Ready to execute — `/gsd-execute-phase 4`
+Last activity: 2026-04-15 -- Phase 4 planning complete (2 plans, verified iteration 2/3)
 
 ## Phase Progress
 
@@ -50,7 +50,7 @@ Last activity: 2026-04-15
 | 1 | Custom-command injection + core regression tests | Complete | CFG-01, CFG-02, CFG-04 (tests 1, 2, 3, 6) | 1/1 (01-01) |
 | 2 | env_file source semantics + observability + conductor E2E | Plans complete (verification pending) | CFG-03, CFG-04 (tests 4, 5), CFG-07 | 2/2 (02-01 + 02-02 complete) |
 | 3 | Visual harness + documentation + attribution commit | Complete | CFG-05, CFG-06 | 2/2 (03-01 + 03-02) |
-| 4 | Conductor schema + docs refresh + mandate clarification | Queued (spec/roadmap/state amended; awaiting `/gsd-plan-phase 4`) | CFG-08, CFG-09, CFG-10, CFG-11 | — |
+| 4 | Conductor schema + docs refresh + mandate clarification | Planned (2 plans verified iteration 2/3; awaiting `/gsd-execute-phase 4`) | CFG-08, CFG-09, CFG-10, CFG-11 | 0/2 (04-01 + 04-02 planned) |
 
 ## Phase 01 commits (since base 3e402e2)
 
@@ -104,6 +104,7 @@ Phase 4 was added after Phases 1–3 completed. Three drivers:
 3. **Mandate UX issue** — the v1.5.3 `--no-verify` ban (repo-root CLAUDE.md) made no exception for metadata-only commits. `.planning/` and docs commits pay 10–30s of hook latency for zero verification value. Phase 4 clarifies the mandate: `--no-verify` is banned for source-modifying commits; metadata-only commits MAY use it when hooks would no-op.
 
 **Phase 4 hard rules (in addition to milestone-wide rules below):**
+
 - NO @alec-pinson attribution on Phase 4 commits — this is user-driven, not PR #578.
 - Issue #602 reference acceptable in commit body (reporter is the milestone user).
 - TDD: RED tests first (CFG-11's eight tests in new file `internal/session/conductorconfig_test.go`), then schema, then loader, then docs, then mandate edit.
