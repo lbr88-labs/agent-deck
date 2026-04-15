@@ -180,4 +180,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-04-15 after milestone v1.5.4 (Per-group Claude Config) initialization on worktree branch `fix/per-group-claude-config-v154`. Scope derived from `docs/PER-GROUP-CLAUDE-CONFIG-SPEC.md` (`4ade7f8`). Base: upstream PR #578 by @alec-pinson.*
+*Last updated: 2026-04-15 (Phase 3 complete — CFG-05 harness + CFG-06 docs + attribution)
