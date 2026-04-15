@@ -609,6 +609,13 @@ func (i *Instance) buildBashExportPrefix() string {
 	return prefix
 }
 
+// logClaudeConfigResolution emits the CFG-07 observability line.
+// Stub body — real implementation lands in plan 02-02 Task 2.
+// Callers MUST gate on IsClaudeCompatible(i.Tool).
+func (i *Instance) logClaudeConfigResolution() {
+	// intentional stub — Task 2 fills this in
+}
+
 // buildClaudeExtraFlags builds extra command-line flags string from ClaudeOptions
 // Also handles instance-level flags like --add-dir for subagent access
 func (i *Instance) buildClaudeExtraFlags(opts *ClaudeOptions) string {

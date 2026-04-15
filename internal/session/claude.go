@@ -290,6 +290,22 @@ func IsClaudeConfigDirExplicitForGroup(groupPath string) bool {
 	return false
 }
 
+// GetClaudeConfigDirSourceForGroup returns the resolved Claude config dir
+// and the priority level that set it. Source is one of:
+//
+//	"env"     — CLAUDE_CONFIG_DIR env var was set at process start
+//	"group"   — [groups."<groupPath>".claude].config_dir override
+//	"profile" — [profiles.<profile>.claude].config_dir override
+//	"global"  — top-level [claude].config_dir
+//	"default" — fell through to ~/.claude
+//
+// Stub body — real implementation lands in plan 02-02 Task 2 alongside
+// the CFG-07 emission sites. Intentional runtime-RED for the tests added
+// in Task 1.
+func GetClaudeConfigDirSourceForGroup(groupPath string) (path, source string) {
+	return "", ""
+}
+
 // GetClaudeCommand returns the configured Claude command/alias
 // Priority: 1) UserConfig setting, 2) Default "claude"
 // This allows users to configure an alias like "cdw" or "cdp" that sets

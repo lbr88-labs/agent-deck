@@ -1,10 +1,13 @@
 package session
 
 import (
+	"bytes"
 	"fmt"
+	"log/slog"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 )
@@ -369,5 +372,289 @@ env_file = "%s"
 	cmdNormal3 := instNormal3.buildClaudeCommand("claude")
 	if !strings.Contains(cmdNormal3, missingPath) {
 		t.Errorf("missing-file (normal): cmd should still reference path %q; got: %s", missingPath, cmdNormal3)
+	}
+}
+
+// TestPerGroupConfig_ConductorRestartPreservesConfigDir locks CFG-04 test 5:
+// a custom-command (conductor) session with a group config_dir override
+// receives the same CLAUDE_CONFIG_DIR export in its spawn command after a
+// simulated stop-then-restart (cache clear + rebuild). Proves the restart
+// loop in v1.5.2's REQ-7 is honored for per-group config overrides.
+//
+// Pure build-and-assert; no tmux, no real process spawn.
+func TestPerGroupConfig_ConductorRestartPreservesConfigDir(t *testing.T) {
+	tmpHome := t.TempDir()
+	origHome := os.Getenv("HOME")
+	origProfile := os.Getenv("AGENTDECK_PROFILE")
+	origEnvDir := os.Getenv("CLAUDE_CONFIG_DIR")
+	t.Cleanup(func() {
+		_ = os.Setenv("HOME", origHome)
+		if origProfile != "" {
+			_ = os.Setenv("AGENTDECK_PROFILE", origProfile)
+		} else {
+			_ = os.Unsetenv("AGENTDECK_PROFILE")
+		}
+		if origEnvDir != "" {
+			_ = os.Setenv("CLAUDE_CONFIG_DIR", origEnvDir)
+		} else {
+			_ = os.Unsetenv("CLAUDE_CONFIG_DIR")
+		}
+		ClearUserConfigCache()
+	})
+
+	_ = os.Setenv("HOME", tmpHome)
+	_ = os.Unsetenv("CLAUDE_CONFIG_DIR")
+	_ = os.Unsetenv("AGENTDECK_PROFILE")
+
+	agentDeckDir := filepath.Join(tmpHome, ".agent-deck")
+	if err := os.MkdirAll(agentDeckDir, 0o700); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	cfg := `
+[groups."conductor".claude]
+config_dir = "~/.claude-work"
+`
+	if err := os.WriteFile(filepath.Join(agentDeckDir, "config.toml"), []byte(cfg), 0o600); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+	ClearUserConfigCache()
+
+	wantDir := filepath.Join(tmpHome, ".claude-work")
+	wrapper := "/tmp/start-conductor.sh"
+
+	inst1 := NewInstanceWithGroupAndTool("conductor-a", tmpHome, "conductor", "claude")
+	cmd1 := inst1.buildClaudeCommand(wrapper)
+	if !strings.Contains(cmd1, "CLAUDE_CONFIG_DIR="+wantDir) {
+		t.Fatalf("first spawn missing CLAUDE_CONFIG_DIR=%s\ngot: %s", wantDir, cmd1)
+	}
+
+	ClearUserConfigCache()
+	inst2 := NewInstanceWithGroupAndTool("conductor-b", tmpHome, "conductor", "claude")
+	cmd2 := inst2.buildClaudeCommand(wrapper)
+	if !strings.Contains(cmd2, "CLAUDE_CONFIG_DIR="+wantDir) {
+		t.Fatalf("post-restart spawn missing CLAUDE_CONFIG_DIR=%s\ngot: %s", wantDir, cmd2)
+	}
+
+	re := regexp.MustCompile(`export CLAUDE_CONFIG_DIR=([^;]+);`)
+	m1 := re.FindStringSubmatch(cmd1)
+	m2 := re.FindStringSubmatch(cmd2)
+	if m1 == nil || m2 == nil {
+		t.Fatalf("could not extract CLAUDE_CONFIG_DIR export from one or both spawns\ncmd1=%s\ncmd2=%s", cmd1, cmd2)
+	}
+	if m1[1] != m2[1] {
+		t.Errorf("CLAUDE_CONFIG_DIR drifted across restart: pre=%q post=%q", m1[1], m2[1])
+	}
+	if !strings.HasSuffix(cmd1, wrapper) || !strings.HasSuffix(cmd2, wrapper) {
+		t.Errorf("both spawns must end with wrapper %q\ncmd1=%s\ncmd2=%s", wrapper, cmd1, cmd2)
+	}
+}
+
+// TestPerGroupConfig_ClaudeConfigDirSourceLabel locks CFG-07's source-label
+// mapping against the priority chain in GetClaudeConfigDirForGroup at
+// claude.go:246. Exercises all 5 priority levels: env, group, profile,
+// global, default.
+//
+// Expected RED against the stub: all 5 subtests fail (stub returns "", "").
+// Task 2 replaces the stub body and turns GREEN.
+func TestPerGroupConfig_ClaudeConfigDirSourceLabel(t *testing.T) {
+	tmpHome := t.TempDir()
+	origHome := os.Getenv("HOME")
+	origProfile := os.Getenv("AGENTDECK_PROFILE")
+	origEnvDir := os.Getenv("CLAUDE_CONFIG_DIR")
+	t.Cleanup(func() {
+		_ = os.Setenv("HOME", origHome)
+		if origProfile != "" {
+			_ = os.Setenv("AGENTDECK_PROFILE", origProfile)
+		} else {
+			_ = os.Unsetenv("AGENTDECK_PROFILE")
+		}
+		if origEnvDir != "" {
+			_ = os.Setenv("CLAUDE_CONFIG_DIR", origEnvDir)
+		} else {
+			_ = os.Unsetenv("CLAUDE_CONFIG_DIR")
+		}
+		ClearUserConfigCache()
+	})
+
+	agentDeckDir := filepath.Join(tmpHome, ".agent-deck")
+	configPath := filepath.Join(agentDeckDir, "config.toml")
+	if err := os.MkdirAll(agentDeckDir, 0o700); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	writeConfig := func(t *testing.T, body string) {
+		t.Helper()
+		if err := os.WriteFile(configPath, []byte(body), 0o600); err != nil {
+			t.Fatalf("write config: %v", err)
+		}
+	}
+	_ = os.Setenv("HOME", tmpHome)
+
+	t.Run("env_var_wins", func(t *testing.T) {
+		_ = os.Setenv("CLAUDE_CONFIG_DIR", "/tmp/env-dir")
+		_ = os.Setenv("AGENTDECK_PROFILE", "p")
+		writeConfig(t, `
+[groups."g".claude]
+config_dir = "~/.claude-g"
+[profiles.p.claude]
+config_dir = "~/.claude-p"
+[claude]
+config_dir = "~/.claude-global"
+`)
+		ClearUserConfigCache()
+		path, source := GetClaudeConfigDirSourceForGroup("g")
+		if source != "env" {
+			t.Errorf("source=%q want %q", source, "env")
+		}
+		if path != "/tmp/env-dir" {
+			t.Errorf("path=%q want %q", path, "/tmp/env-dir")
+		}
+		_ = os.Unsetenv("CLAUDE_CONFIG_DIR")
+	})
+
+	t.Run("group_wins_over_profile_global", func(t *testing.T) {
+		_ = os.Unsetenv("CLAUDE_CONFIG_DIR")
+		_ = os.Setenv("AGENTDECK_PROFILE", "p")
+		writeConfig(t, `
+[groups."g".claude]
+config_dir = "~/.claude-g"
+[profiles.p.claude]
+config_dir = "~/.claude-p"
+[claude]
+config_dir = "~/.claude-global"
+`)
+		ClearUserConfigCache()
+		path, source := GetClaudeConfigDirSourceForGroup("g")
+		if source != "group" {
+			t.Errorf("source=%q want %q", source, "group")
+		}
+		if want := filepath.Join(tmpHome, ".claude-g"); path != want {
+			t.Errorf("path=%q want %q", path, want)
+		}
+	})
+
+	t.Run("profile_wins_over_global", func(t *testing.T) {
+		_ = os.Unsetenv("CLAUDE_CONFIG_DIR")
+		_ = os.Setenv("AGENTDECK_PROFILE", "p")
+		writeConfig(t, `
+[profiles.p.claude]
+config_dir = "~/.claude-p"
+[claude]
+config_dir = "~/.claude-global"
+`)
+		ClearUserConfigCache()
+		path, source := GetClaudeConfigDirSourceForGroup("unknown-group")
+		if source != "profile" {
+			t.Errorf("source=%q want %q", source, "profile")
+		}
+		if want := filepath.Join(tmpHome, ".claude-p"); path != want {
+			t.Errorf("path=%q want %q", path, want)
+		}
+	})
+
+	t.Run("global_fallback", func(t *testing.T) {
+		_ = os.Unsetenv("CLAUDE_CONFIG_DIR")
+		_ = os.Unsetenv("AGENTDECK_PROFILE")
+		writeConfig(t, `
+[claude]
+config_dir = "~/.claude-global"
+`)
+		ClearUserConfigCache()
+		path, source := GetClaudeConfigDirSourceForGroup("")
+		if source != "global" {
+			t.Errorf("source=%q want %q", source, "global")
+		}
+		if want := filepath.Join(tmpHome, ".claude-global"); path != want {
+			t.Errorf("path=%q want %q", path, want)
+		}
+	})
+
+	t.Run("default_fallback", func(t *testing.T) {
+		_ = os.Unsetenv("CLAUDE_CONFIG_DIR")
+		_ = os.Unsetenv("AGENTDECK_PROFILE")
+		writeConfig(t, "# empty\n")
+		ClearUserConfigCache()
+		path, source := GetClaudeConfigDirSourceForGroup("")
+		if source != "default" {
+			t.Errorf("source=%q want %q", source, "default")
+		}
+		if want := filepath.Join(tmpHome, ".claude"); path != want {
+			t.Errorf("path=%q want %q", path, want)
+		}
+	})
+}
+
+// TestPerGroupConfig_ClaudeConfigResolutionLogFormat locks the CFG-07
+// slog output format against the spec's rendered form:
+//
+//	claude config resolution session=<id> group=<g> resolved=<path> source=<label>
+//
+// Swaps sessionLog's handler for a bytes.Buffer-backed slog.NewTextHandler,
+// calls (*Instance).logClaudeConfigResolution() on a known instance, and
+// regex-matches the rendered line.
+//
+// Expected RED against the stub logClaudeConfigResolution: buffer is empty,
+// regex does not match. Task 2 fills in the helper body and turns GREEN.
+func TestPerGroupConfig_ClaudeConfigResolutionLogFormat(t *testing.T) {
+	tmpHome := t.TempDir()
+	origHome := os.Getenv("HOME")
+	origEnvDir := os.Getenv("CLAUDE_CONFIG_DIR")
+	origProfile := os.Getenv("AGENTDECK_PROFILE")
+	t.Cleanup(func() {
+		_ = os.Setenv("HOME", origHome)
+		if origEnvDir != "" {
+			_ = os.Setenv("CLAUDE_CONFIG_DIR", origEnvDir)
+		} else {
+			_ = os.Unsetenv("CLAUDE_CONFIG_DIR")
+		}
+		if origProfile != "" {
+			_ = os.Setenv("AGENTDECK_PROFILE", origProfile)
+		} else {
+			_ = os.Unsetenv("AGENTDECK_PROFILE")
+		}
+		ClearUserConfigCache()
+	})
+
+	_ = os.Setenv("HOME", tmpHome)
+	_ = os.Unsetenv("CLAUDE_CONFIG_DIR")
+	_ = os.Unsetenv("AGENTDECK_PROFILE")
+
+	agentDeckDir := filepath.Join(tmpHome, ".agent-deck")
+	if err := os.MkdirAll(agentDeckDir, 0o700); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	if err := os.WriteFile(
+		filepath.Join(agentDeckDir, "config.toml"),
+		[]byte(`[groups."logfmt".claude]`+"\n"+`config_dir = "~/.claude-logfmt"`+"\n"),
+		0o600,
+	); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+	ClearUserConfigCache()
+
+	// Swap the package-level sessionLog for a buffer-backed TextHandler.
+	var buf bytes.Buffer
+	testLogger := slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelInfo}))
+	origLog := sessionLog
+	sessionLog = testLogger
+	t.Cleanup(func() { sessionLog = origLog })
+
+	inst := NewInstanceWithGroupAndTool("logfmt-sess-123", tmpHome, "logfmt", "claude")
+	inst.logClaudeConfigResolution()
+
+	line := buf.String()
+	if !strings.Contains(line, "claude config resolution") {
+		t.Fatalf("missing CFG-07 message literal in rendered log\ngot: %s", line)
+	}
+	formatRe := regexp.MustCompile(`claude config resolution.*session=\S+\s+group=\S*\s+resolved=\S+\s+source=(env|group|profile|global|default)`)
+	if !formatRe.MatchString(line) {
+		t.Errorf("CFG-07 rendered log does not match spec format\nregex: %s\ngot:   %s", formatRe.String(), line)
+	}
+	if !strings.Contains(line, "session=logfmt-sess-123") &&
+		!strings.Contains(line, `session="logfmt-sess-123"`) {
+		t.Errorf("expected session id in log; got: %s", line)
+	}
+	if !strings.Contains(line, "source=group") &&
+		!strings.Contains(line, `source="group"`) {
+		t.Errorf("expected source=group for [groups.\"logfmt\".claude] override; got: %s", line)
 	}
 }
