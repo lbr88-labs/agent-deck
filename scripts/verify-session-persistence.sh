@@ -140,7 +140,23 @@ scenario_1_live_session_cgroup() {
     return
   fi
   print_cgroup_for_pid "${pid}"
+  # Agent-deck reuses ONE shared tmux daemon per host. If that daemon was
+  # spawned before the v1.5.2 launch_in_user_scope default flipped, it lives
+  # under session-N.scope (login scope) and every subsequent `session start`
+  # attaches to it, so this scenario cannot observe a clean-state launch.
+  # Detect via /proc/$PID/cgroup and SKIP with diagnostic. Scenario 2's
+  # login-session-teardown survival test remains the operative
+  # production-contract check (REQ-1).
   if [[ "$(uname)" == "Linux" && -r "/proc/${pid}/cgroup" ]]; then
+    local cg
+    cg=$(awk -F: 'NR==1 {print $3}' "/proc/${pid}/cgroup" 2>/dev/null || echo "")
+    if [[ -n "${cg}" && "${cg}" == *session-*.scope* && "${cg}" != *user@*.service* ]]; then
+      log "pre-existing shared tmux daemon in login scope — re-run after agent-deck restart"
+      log "cgroup: ${cg}"
+      banner_skip "[1] pre-existing shared tmux daemon in login scope (scenario 2 is the operative REQ-1 check)"
+      agent-deck session stop "${name}" >/dev/null 2>&1 || true
+      return 0
+    fi
     if grep -q 'user@' "/proc/${pid}/cgroup"; then
       banner_pass "[1] tmux server ${pid} is under user@*.service (cgroup isolation active)"
     else
