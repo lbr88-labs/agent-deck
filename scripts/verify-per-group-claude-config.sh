@@ -51,8 +51,7 @@ CONFIG_DIR_B="${CLAUDE_CONFIG_DIR_B:-${HOME}/.claude-work}"
 SESSION_A_TITLE="verify-session-a"
 SESSION_B_TITLE="verify-session-b"
 WRAPPER_SCRIPT=""
-CAPTURE_DELAY=2.5  # allow extra time for claude TUI startup
-POLL_TIMEOUT=5.0   # seconds to poll for the CLAUDE_CONFIG_DIR= line
+POLL_TIMEOUT=5.0   # seconds to poll for the CLAUDE_CONFIG_DIR= line (per-session deadline)
 
 # Unset CLAUDE_CONFIG_DIR for the duration of the harness.
 # Priority chain: env var > group override > profile > global > default.
@@ -64,8 +63,10 @@ unset CLAUDE_CONFIG_DIR
 
 # --- Preflight ---
 preflight() {
+    [ "${BASH_VERSINFO[0]:-0}" -ge 4 ] || { echo "ERROR: bash 4+ required (found ${BASH_VERSION:-unknown})" >&2; exit 2; }
     [ -x "$AGENTDECK" ] || command -v agent-deck >/dev/null 2>&1 || { echo "ERROR: agent-deck not on PATH and no ./build/agent-deck found" >&2; exit 2; }
     command -v tmux       >/dev/null 2>&1 || { echo "ERROR: tmux not on PATH" >&2; exit 2; }
+    command -v awk        >/dev/null 2>&1 || { echo "ERROR: awk not on PATH (required for poll deadline arithmetic)" >&2; exit 2; }
     command -v trash      >/dev/null 2>&1 || { echo "ERROR: trash not on PATH (repo mandates trash for cleanup)" >&2; exit 2; }
     [ -f "$CONFIG_FILE" ] || { echo "ERROR: $CONFIG_FILE not found" >&2; exit 2; }
     [ -d "$CONFIG_DIR_A" ] || echo "WARN: $CONFIG_DIR_A does not exist — echo will still return the literal path string" >&2
@@ -146,10 +147,15 @@ get_tmux_name() {
         | sed 's/.*"tmux_session": *"\([^"]*\)".*/\1/'
 }
 
-# --- Poll raw tmux pane until the CLAUDE_CONFIG_DIR= line appears ---
-# Uses tmux capture-pane directly so it works for both claude and custom-command
-# sessions (agent-deck session output reads JSONL for claude sessions, which does
-# not contain raw shell echo output).
+# --- Poll the tmux pane's spawn environ for CLAUDE_CONFIG_DIR ---
+# Primary path: /proc/<pane_pid>/environ on Linux — reads the exact env the
+# kernel handed to the pane process at spawn time. This is a tighter assertion
+# than a shell round-trip because it bypasses claude's agent-ready gate.
+# Fallback path: tmux send-keys + capture-pane — used when /proc is unavailable
+# (macOS, containers with procfs hidden, etc.).
+#
+# Polls until the value appears OR POLL_TIMEOUT expires. Replaces the previous
+# blind `sleep $CAPTURE_DELAY`, which raced slow claude startup on busy hosts.
 poll_output() {
     local title="$1"
     local tmux_name
@@ -161,16 +167,38 @@ poll_output() {
     local deadline
     deadline=$(awk -v t="$POLL_TIMEOUT" 'BEGIN{printf "%.3f", systime()+t}')
     while :; do
-        local out
-        out="$(tmux capture-pane -t "$tmux_name" -p 2>/dev/null || true)"
-        if echo "$out" | grep -qE 'CLAUDE_CONFIG_DIR='; then
-            # Extract just the value after CLAUDE_CONFIG_DIR= (strip any leading decoration)
-            echo "$out" | grep -oE 'CLAUDE_CONFIG_DIR=[^ ]*' | tail -n 1
-            return 0
+        local pane_pid
+        pane_pid="$(tmux display-message -t "$tmux_name" -p '#{pane_pid}' 2>/dev/null || true)"
+        if [ -n "$pane_pid" ] && [ -r "/proc/$pane_pid/environ" ]; then
+            local val
+            val=$(tr '\0' '\n' < "/proc/$pane_pid/environ" 2>/dev/null \
+                    | grep -E '^CLAUDE_CONFIG_DIR=' | head -1 || true)
+            if [ -n "$val" ]; then
+                echo "$val"
+                return 0
+            fi
         fi
         local now
         now=$(awk 'BEGIN{printf "%.3f", systime()}')
         awk -v a="$now" -v b="$deadline" 'BEGIN{exit !(a>=b)}' && break
+        sleep 0.25
+    done
+    # /proc path exhausted — fallback to send-keys echo + capture-pane polling.
+    tmux send-keys -t "$tmux_name" "echo CLAUDE_CONFIG_DIR=\$CLAUDE_CONFIG_DIR" Enter 2>/dev/null || true
+    local fb_deadline
+    fb_deadline=$(awk -v t="$POLL_TIMEOUT" 'BEGIN{printf "%.3f", systime()+t}')
+    while :; do
+        local out
+        out="$(tmux capture-pane -t "$tmux_name" -p 2>/dev/null || true)"
+        local fb_val
+        fb_val=$(echo "$out" | grep -oE 'CLAUDE_CONFIG_DIR=[^[:space:]]*' | tail -1 || true)
+        if [ -n "$fb_val" ]; then
+            echo "$fb_val"
+            return 0
+        fi
+        local fb_now
+        fb_now=$(awk 'BEGIN{printf "%.3f", systime()}')
+        awk -v a="$fb_now" -v b="$fb_deadline" 'BEGIN{exit !(a>=b)}' && break
         sleep 0.25
     done
     echo ""
@@ -191,32 +219,15 @@ main() {
     agent-deck add    "$HOME" -t "$SESSION_B_TITLE" -c "$WRAPPER_SCRIPT" -g "$GROUP_B" >/dev/null
     agent-deck session start "$SESSION_A_TITLE" >/dev/null
     agent-deck session start "$SESSION_B_TITLE" >/dev/null
-    sleep "$CAPTURE_DELAY"
 
-    # Assertion pipeline: read CLAUDE_CONFIG_DIR from the tmux pane's spawn environment.
-    # We use /proc/<pane_pid>/environ (Linux) or send an echo via tmux send-keys (fallback).
-    # Polling /proc is instantaneous and does not require waiting for Claude to be "ready".
-    local val_a val_b result_a result_b passes=0
+    # Assertion pipeline: read CLAUDE_CONFIG_DIR from the tmux pane's spawn environment
+    # via `poll_output` — polls /proc/<pane_pid>/environ on Linux (with tmux send-keys
+    # fallback) until the value appears OR POLL_TIMEOUT expires. Replaces the previous
+    # `sleep $CAPTURE_DELAY` + read-once pattern, which raced slow claude startup (WR-02).
+    local line_a line_b val_a val_b result_a result_b passes=0
 
-    get_pane_env() {
-        local tmux_name="$1"
-        local pane_pid
-        pane_pid="$(tmux display-message -t "$tmux_name" -p '#{pane_pid}' 2>/dev/null)"
-        if [ -n "$pane_pid" ] && [ -f "/proc/$pane_pid/environ" ]; then
-            cat "/proc/$pane_pid/environ" 2>/dev/null | tr '\0' '\n' | grep -oE 'CLAUDE_CONFIG_DIR=[^ ]*' | head -1 || echo ""
-        else
-            # Fallback: send echo via tmux and poll pane output
-            tmux send-keys -t "$tmux_name" "echo CLAUDE_CONFIG_DIR=\$CLAUDE_CONFIG_DIR" Enter 2>/dev/null || true
-            sleep 1
-            tmux capture-pane -t "$tmux_name" -p 2>/dev/null | grep -oE 'CLAUDE_CONFIG_DIR=[^ ]*' | tail -1 || echo ""
-        fi
-    }
-
-    tmux_a="$(get_tmux_name "$SESSION_A_TITLE")"
-    tmux_b="$(get_tmux_name "$SESSION_B_TITLE")"
-
-    line_a="$(get_pane_env "$tmux_a")"
-    line_b="$(get_pane_env "$tmux_b")"
+    line_a="$(poll_output "$SESSION_A_TITLE" || true)"
+    line_b="$(poll_output "$SESSION_B_TITLE" || true)"
     val_a="${line_a#CLAUDE_CONFIG_DIR=}"
     val_b="${line_b#CLAUDE_CONFIG_DIR=}"
 
