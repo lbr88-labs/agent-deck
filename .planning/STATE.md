@@ -1,17 +1,17 @@
 ---
 gsd_state_version: 1.0
 milestone: v1.6.0
-milestone_name: "v1.6.0 Watcher Framework Completion (Wave B). Wave A (phases 12-18) shipped. Wave B (phases 19-23) closes the verification ledger, adds health alerts bridge, reorganizes watcher folder hierarchy, syncs skills + docs, and locks the framework under a CLAUDE.md test-coverage mandate."
-status: bootstrapped
-stopped_at: Wave B milestone bootstrap complete — PROJECT.md, REQUIREMENTS.md, ROADMAP.md, STATE.md updated. 5 phases (19-23) defined. Awaiting conductor to spawn gsd-v160-plan-1 for Phase 19 planning. NOT auto-planning per conductor instruction.
-last_updated: "2026-04-16T00:00:00.000Z"
-last_activity: 2026-04-16
+milestone_name: milestone
+status: executing
+stopped_at: Wave B milestone bootstrap complete — PROJECT.md, REQUIREMENTS.md, ROADMAP.md, STATE.md updated to reflect v1.6.0 Wave B (Watcher Framework Completion) scope.
+last_updated: "2026-04-15T23:33:07.238Z"
+last_activity: 2026-04-15 -- Phase 19 planning complete
 progress:
-  total_phases: 5
-  completed_phases: 0
-  total_plans: 7
-  completed_plans: 0
-  percent: 0
+  total_phases: 12
+  completed_phases: 1
+  total_plans: 4
+  completed_plans: 5
+  percent: 100
 ---
 
 # Project State
@@ -34,8 +34,10 @@ See `.planning/REQUIREMENTS.md` for requirements and phase mappings.
 **Goal:** Close out the watcher framework. Wave A (phases 12-18) shipped engine + adapters + CLI + TUI + triage. Wave B (phases 19-23) writes verification docs, ships the health alerts bridge, reorganizes on-disk state to mirror the conductor folder pattern, syncs skills + repo docs, ships an integration harness, and locks the framework under a CLAUDE.md mandate.
 
 **Source specs:**
+
 - Wave A: `docs/superpowers/specs/2026-04-10-watcher-framework-design.md`
 - Wave B: `docs/WATCHER-COMPLETION-SPEC.md`
+
 **Starting point:** v1.5.4 (local hotfix series)
 **Branch:** feat/watcher-completion (already checked out in this worktree)
 
@@ -43,8 +45,8 @@ See `.planning/REQUIREMENTS.md` for requirements and phase mappings.
 
 Phase: 19 (Verification Docs - Phases 14 + 15) - PLANNED, NOT STARTED
 Plan: 0 of 2
-Status: Awaiting conductor to spawn `gsd-v160-plan-1` for Phase 19 planning (per conductor instruction: "Do NOT auto-plan")
-Last activity: 2026-04-16 (Wave B bootstrap)
+Status: Ready to execute
+Last activity: 2026-04-15 -- Phase 19 planning complete
 
 ## Phase Progress
 
@@ -288,6 +290,7 @@ From `.planning/config.json`:
 **Wave B milestone bootstrapped 2026-04-16.** Awaiting conductor to spawn `gsd-v160-plan-1` for Phase 19 (Verification Docs) planning. Per conductor instruction: **do NOT auto-plan** — this session's job ends with the roadmap.
 
 When conductor spawns the planner, recommended invocation:
+
 ```
 /gsd:plan-phase 19
 ```
