@@ -138,10 +138,12 @@ Plans:
   8. An OBS-02-style log line is emitted when discovery finds a JSONL: `resume: id=<uuid> reason=jsonl_discovery` — so `grep 'resume:' ~/.agent-deck/logs/*.log` shows the discovery path was taken and distinguishes it from `conversation_data_present`. (Observability consistency with Phase 3, not a new OBS requirement.)
   9. `scripts/verify-session-persistence.sh` continues to exit 0 on the conductor host — Phase 5 does not change script scenarios but also does not regress them.
 
-**Plans:** TBD (planner will decompose into TDD waves: RED test #9 → GREEN shared helper extraction + dispatch-site wiring → REFACTOR write-through persistence consolidation)
+**Plans:** 3 plans
 
 Plans:
-- [ ] TBD — populated by gsd-planner
+- [ ] 05-01-PLAN.md — RED: TestPersistence_CustomCommandResumesFromLatestJSONL against unmodified Start() (TEST-09)
+- [ ] 05-02-PLAN.md — GREEN: discoverLatestClaudeJSONL helper + ensureClaudeSessionIDFromDisk wired into Start/StartWithMessage (PERSIST-11, PERSIST-12, PERSIST-13; TEST-09 GREEN)
+- [ ] 05-03-PLAN.md — REFACTOR/optional: portable unit tests for discoverLatestClaudeJSONL (newest-wins, agent-* skipped, non-UUID skipped, empty/missing dirs, no recency cap)
 
 ## Milestone success criteria
 
@@ -165,7 +167,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5. Within each phase, T
 | 2. Cgroup isolation default (REQ-1 fix) | 6/6 | Complete | 2026-04-14 |
 | 3. Resume-on-start and error-recovery (REQ-2 fix) | 5/5 | Complete | 2026-04-14 |
 | 4. Verification harness, docs, and CI wiring | 4/4 | Complete | 2026-04-15 |
-| 5. Custom-command JSONL resume (REQ-7 fix) | 0/TBD | Planning | — |
+| 5. Custom-command JSONL resume (REQ-7 fix) | 0/3 | Planning | — |
 
 ---
 *Roadmap created: 2026-04-14 from `docs/SESSION-PERSISTENCE-SPEC.md` and `.planning/REQUIREMENTS.md`. Phase 5 appended 2026-04-15 for REQ-7 (spec updated same day). Granularity: standard. Coverage: 37/37 v1 requirements mapped.*
