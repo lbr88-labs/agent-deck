@@ -2,16 +2,16 @@
 gsd_state_version: 1.0
 milestone: v1.5.2
 milestone_name: milestone
-status: executing
-stopped_at: "Phase 03 fully landed. Next step: /gsd-plan-phase 4"
-last_updated: "2026-04-14T14:11:12.841Z"
-last_activity: 2026-04-14 -- Phase 04 execution started
+status: ready-for-signoff
+stopped_at: "Phase 04 complete — v1.5.2 milestone ready for user sign-off (no push/tag/PR per hard rule)"
+last_updated: "2026-04-15T06:15:00Z"
+last_activity: 2026-04-15 -- Phase 04 complete — verification harness shipped, CLAUDE.md mandate audited, CI workflow wired, end-to-end run PASS
 progress:
   total_phases: 4
-  completed_phases: 3
+  completed_phases: 4
   total_plans: 17
-  completed_plans: 13
-  percent: 76
+  completed_plans: 17
+  percent: 100
 ---
 
 # Project State
@@ -21,14 +21,14 @@ progress:
 See: .planning/PROJECT.md (updated 2026-04-14)
 
 **Core value:** After v1.5.2, SSH logout on Linux+systemd must not kill any agent-deck tmux server, and restarting any dead session must resume the prior Claude conversation — both permanently test-gated.
-**Current focus:** Phase 04 — verification-harness-docs-and-ci-wiring
+**Current focus:** v1.5.2 milestone complete on branch fix/session-persistence — awaiting user sign-off (no push/tag/PR allowed).
 
 ## Current Position
 
-Phase: 04 (verification-harness-docs-and-ci-wiring) — EXECUTING
-Plan: 1 of 4
-Status: Executing Phase 04
-Last activity: 2026-04-14 -- Phase 04 execution started
+Phase: 04 (verification-harness-docs-and-ci-wiring) — COMPLETE
+Plan: 4 of 4
+Status: Phase 04 complete — v1.5.2 shippable pending user sign-off
+Last activity: 2026-04-15 -- Phase 04 complete — scripts/verify-session-persistence.sh PASS, CI workflow landed
 
 Progress: [██████████] 100%
 
@@ -47,7 +47,7 @@ Progress: [██████████] 100%
 | 1. Persistence test scaffolding (RED) | 2/2 | — | — |
 | 2. Cgroup isolation default (REQ-1 fix) | 6/6 | — | — |
 | 3. Resume-on-start and error-recovery (REQ-2 fix) | 5/5 | — | — |
-| 4. Verification harness, docs, and CI wiring | 0/TBD | 0m | — |
+| 4. Verification harness, docs, and CI wiring | 4/4 | — | — |
 
 **Recent Trend:**
 
@@ -80,6 +80,6 @@ None yet. Spec is authoritative; requirements are atomic and testable; CLAUDE.md
 
 ## Session Continuity
 
-Last session: 2026-04-14 — Phase 03 execution complete
-Stopped at: Phase 03 fully landed. Next step: /gsd-plan-phase 4
+Last session: 2026-04-15 — Phase 04 execution complete
+Stopped at: Phase 04 fully landed. v1.5.2 milestone complete. Next step: user sign-off + manual SSH-logout verification per milestone criterion #2.
 Resume file: None

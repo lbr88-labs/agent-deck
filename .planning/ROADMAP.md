@@ -16,10 +16,10 @@ The work is organized TDD-first: **Phase 1** lands all eight `TestPersistence_*`
 
 ## Phases
 
-- [ ] **Phase 1: Persistence test scaffolding (RED)** - Land all eight `TestPersistence_*` regression tests to fail against current code, pinning both failure modes
-- [ ] **Phase 2: Cgroup isolation default (REQ-1 fix)** - Flip `launch_in_user_scope` default to true on Linux+systemd with detection and graceful fallback
-- [ ] **Phase 3: Resume-on-start and error-recovery (REQ-2 fix)** - Route every Claude start path through `ClaudeSessionID` resume logic with authoritative instance storage
-- [ ] **Phase 4: Verification harness, docs, and CI wiring** - Ship `scripts/verify-session-persistence.sh`, verify CLAUDE.md mandate completeness, and wire CI gates
+- [x] **Phase 1: Persistence test scaffolding (RED)** - Land all eight `TestPersistence_*` regression tests to fail against current code, pinning both failure modes
+- [x] **Phase 2: Cgroup isolation default (REQ-1 fix)** - Flip `launch_in_user_scope` default to true on Linux+systemd with detection and graceful fallback
+- [x] **Phase 3: Resume-on-start and error-recovery (REQ-2 fix)** - Route every Claude start path through `ClaudeSessionID` resume logic with authoritative instance storage
+- [x] **Phase 4: Verification harness, docs, and CI wiring** - Ship `scripts/verify-session-persistence.sh`, verify CLAUDE.md mandate completeness, and wire CI gates
 
 ## Phase Details
 
@@ -116,7 +116,7 @@ Plans:
 - [x] 04-01-PLAN.md — scripts/verify-session-persistence.sh + fake-claude stub (SCRIPT-01..06)
 - [x] 04-02-PLAN.md — CLAUDE.md mandate audit + CHANGELOG.md v1.5.2 line (DOC-01..05)
 - [x] 04-03-PLAN.md — .github/workflows/session-persistence.yml CI gate (SCRIPT-07)
-- [ ] 04-04-PLAN.md — End-to-end verify run + 04-VERIFY.md + STATE.md sign-off (verification-only)
+- [x] 04-04-PLAN.md — End-to-end verify run + 04-VERIFY.md + STATE.md sign-off (verification-only)
 
 ## Milestone success criteria
 
@@ -136,10 +136,10 @@ Phases execute in numeric order: 1 → 2 → 3 → 4. Within each phase, TDD ord
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 1. Persistence test scaffolding (RED) | 0/TBD | Not started | - |
-| 2. Cgroup isolation default (REQ-1 fix) | 0/TBD | Not started | - |
-| 3. Resume-on-start and error-recovery (REQ-2 fix) | 0/5 | Not started | - |
-| 4. Verification harness, docs, and CI wiring | 0/4 | Not started | - |
+| 1. Persistence test scaffolding (RED) | 2/2 | Complete | 2026-04-14 |
+| 2. Cgroup isolation default (REQ-1 fix) | 6/6 | Complete | 2026-04-14 |
+| 3. Resume-on-start and error-recovery (REQ-2 fix) | 5/5 | Complete | 2026-04-14 |
+| 4. Verification harness, docs, and CI wiring | 4/4 | Complete | 2026-04-15 |
 
 ---
 *Roadmap created: 2026-04-14 from `docs/SESSION-PERSISTENCE-SPEC.md` and `.planning/REQUIREMENTS.md`. Granularity: standard. Coverage: 33/33 v1 requirements mapped.*

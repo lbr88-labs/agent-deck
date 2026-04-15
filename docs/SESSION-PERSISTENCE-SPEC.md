@@ -23,7 +23,7 @@ Additionally, neither failure mode has a regression test. The user has declared 
 ## Goals
 
 1. Make agent-deck **survive SSH logout by default** on Linux+systemd hosts, without user configuration.
-2. Make **session start and restart resume the prior Claude conversation** from any terminal state (`stopped`, `error`, cold boot), using the persisted `ClaudeSessionID`.
+2. Make **session start and restart resume the prior Claude conversation** from any terminal state (`stopped`, `error`, cold boot), using the persisted `ClaudeSessionID` — and for custom-command sessions where that ID is empty, discover the latest JSONL transcript on disk and resume from it (REQ-7).
 3. Make these behaviors **permanently test-enforced**: regression tests that replicate the 2026-04-14 incident must pass on every PR. The repo's `CLAUDE.md` must state this as a hard rule.
 
 ## Version
@@ -78,6 +78,7 @@ This is agent-deck **v1.5.2** — a hotfix milestone off v1.5.1. No breaking cha
 6. `TestPersistence_StartAfterSIGKILLResumesConversation` — same as #5 but the session is marked `error` after a simulated SIGKILL of its tmux server, and recovery is via `session start` not `session restart`.
 7. `TestPersistence_ClaudeSessionIDSurvivesHookSidecarDeletion` — delete `~/.agent-deck/hooks/<instance>.sid`, start the session, assert `ClaudeSessionID` is still read from instance JSON storage and applied.
 8. `TestPersistence_FreshSessionUsesSessionIDNotResume` — first start (no prior conversation) uses `--session-id <uuid>` only, not `--resume`. Guards against accidentally passing `--resume` with a non-existent ID.
+9. `TestPersistence_CustomCommandResumesFromLatestJSONL` (REQ-7) — instance with `command` field set (custom wrapper script) and empty `ClaudeSessionID`, but a JSONL transcript present in `~/.claude/projects/<cwd-encoded>/`. Start the session, assert the spawned command contains `--resume <uuid>` where the UUID matches the JSONL basename, and assert `Instance.ClaudeSessionID` is populated to that UUID after spawn. With two JSONLs of different mtimes, assert the newer one wins.
 
 Each test MUST be independently runnable (`go test -run TestPersistence_<name> ./internal/session/...`), MUST not depend on external network, MUST clean up any tmux servers and transcripts it creates.
 
@@ -111,6 +112,29 @@ This script is invoked in CI AND is referenced from the CLAUDE.md section (REQ-4
 **Rule:** On startup, emit one structured log line describing the cgroup isolation decision (`enabled` / `disabled` / `unavailable`). On every `session start` / `restart`, emit a structured log line stating whether the resume path was taken (`resume: id=<x> reason=conversation_data_present`) or skipped (`resume: none reason=fresh_session`).
 
 **Acceptance:** `grep 'tmux cgroup isolation' ~/.agent-deck/logs/*.log` and `grep 'resume:' ~/.agent-deck/logs/*.log` each return rows. No goal is to surface this in the TUI; log-level is enough.
+
+### REQ-7: Custom-command Claude sessions resume from latest JSONL (P0)
+
+**Rule:** When an `Instance` with `tool: claude` is started and its stored `ClaudeSessionID` is empty (common for conductor-style sessions launched via a custom wrapper script or `add --command <path>`), agent-deck MUST discover the latest JSONL under the canonical Claude Code project directory for that instance's `cwd` and:
+
+1. If a JSONL exists: spawn `claude --resume <uuid-from-filename>` (where the UUID is the JSONL basename without extension), and persist that UUID back into `Instance.ClaudeSessionID` so future restarts do not need to re-scan.
+2. If no JSONL exists: spawn fresh (`claude` with no resume flag), and capture the new `ClaudeSessionID` from hook sidecar as today.
+3. The project dir is resolved per Claude Code's convention: `~/.claude/projects/<cwd-with-slashes-replaced-by-dashes>/`. Example: cwd `/home/u/.agent-deck/conductor/agent-deck` → dir `-home-u--agent-deck-conductor-agent-deck`.
+
+**Why this matters (2026-04-15 incident):** the user's `conductor-agent-deck` session has ten JSONL transcripts on disk but `claude_session_id=""` in agent-deck storage. Every restart launches a fresh `claude` process, losing all chat history — despite other sessions (which have `claude_session_id` populated at creation via the `session add` happy path) resuming correctly. Custom-command sessions must reach the same resume guarantee.
+
+**Acceptance:**
+- Create a session via `agent-deck session add --command ./my-wrapper.sh` where `my-wrapper.sh` execs `claude` with flags. Confirm `claude_session_id` is empty in storage immediately after add.
+- Send one message to establish a JSONL transcript in the Claude Code project dir.
+- Stop the session. Restart it. The conversation history loads — `claude --resume <uuid>` was invoked.
+- After the first successful resume, `agent-deck session show --json <id>` shows `claude_session_id` populated from the discovered JSONL.
+- If multiple JSONLs exist in the project dir, the **most recently modified** one is chosen.
+- If the project dir is missing or empty, the spawn is fresh and no error is raised.
+- Regression test: a session whose `command` field is non-empty (custom wrapper) exercises the same resume path as a normal-command session. No code path branches on "custom command ⇒ skip resume".
+
+**Non-goals:**
+- Not changing the conductor's `start-conductor.sh` wrapper (the ops-layer fix landed 2026-04-15; REQ-7 is the structural code-layer fix so no future conductor or custom-command session ever needs a wrapper hack).
+- Not scanning for resume across `tool: codex` or `tool: gemini` — those have their own transcript formats (separate future work).
 
 ## Out of scope
 
