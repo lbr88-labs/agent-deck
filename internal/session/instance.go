@@ -609,11 +609,25 @@ func (i *Instance) buildBashExportPrefix() string {
 	return prefix
 }
 
-// logClaudeConfigResolution emits the CFG-07 observability line.
-// Stub body — real implementation lands in plan 02-02 Task 2.
-// Callers MUST gate on IsClaudeCompatible(i.Tool).
+// logClaudeConfigResolution emits the CFG-07 observability line documenting
+// which priority level resolved CLAUDE_CONFIG_DIR for this session.
+// Owns the single CFG-07 slog message literal for this package.
+//
+// Callers MUST gate on IsClaudeCompatible(i.Tool). The helper does not
+// re-gate — keeping the guard at each call site makes the three emission
+// sites grep-auditable.
+//
+// Called from: Start, StartWithMessage, Restart.
+// NOT called from: Fork (Fork may trigger a subsequent Start() on the
+// forked instance which will log), or from any builder function.
 func (i *Instance) logClaudeConfigResolution() {
-	// intentional stub — Task 2 fills this in
+	resolvedPath, source := GetClaudeConfigDirSourceForGroup(i.GroupPath)
+	sessionLog.Info("claude config resolution",
+		slog.String("session", i.ID),
+		slog.String("group", i.GroupPath),
+		slog.String("resolved", resolvedPath),
+		slog.String("source", source),
+	)
 }
 
 // buildClaudeExtraFlags builds extra command-line flags string from ClaudeOptions
@@ -1934,6 +1948,13 @@ func (i *Instance) Start() error {
 		return fmt.Errorf("failed to start tmux session: %w", err)
 	}
 
+	// CFG-07: emit a single-shot log line documenting which priority level
+	// resolved CLAUDE_CONFIG_DIR for this session. Claude-compatible tools
+	// only; Fork inherits from its parent and does not log here.
+	if IsClaudeCompatible(i.Tool) {
+		i.logClaudeConfigResolution()
+	}
+
 	// Set AGENTDECK_INSTANCE_ID for Claude hooks to identify this session
 	// This enables real-time status updates via Stop/SessionStart hooks
 	if err := i.tmuxSession.SetEnvironment("AGENTDECK_INSTANCE_ID", i.ID); err != nil {
@@ -2049,6 +2070,13 @@ func (i *Instance) StartWithMessage(message string) error {
 	// Start the tmux session
 	if err := i.tmuxSession.Start(command); err != nil {
 		return fmt.Errorf("failed to start tmux session: %w", err)
+	}
+
+	// CFG-07: emit a single-shot log line documenting which priority level
+	// resolved CLAUDE_CONFIG_DIR for this session. Claude-compatible tools
+	// only; sister path to Start().
+	if IsClaudeCompatible(i.Tool) {
+		i.logClaudeConfigResolution()
 	}
 
 	// Set AGENTDECK_INSTANCE_ID for Claude hooks to identify this session
@@ -4083,6 +4111,12 @@ func (i *Instance) Restart() error {
 	}
 
 	mcpLog.Debug("restart_start_succeeded")
+
+	// CFG-07: emit the config-resolution log on restart too — triage must not
+	// go dark on the exact scenario most likely to need debugging.
+	if IsClaudeCompatible(i.Tool) {
+		i.logClaudeConfigResolution()
+	}
 
 	// Set AGENTDECK_INSTANCE_ID for Claude hooks to identify this session
 	// This enables real-time status updates via Stop/SessionStart hooks

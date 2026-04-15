@@ -639,6 +639,10 @@ func TestPerGroupConfig_ClaudeConfigResolutionLogFormat(t *testing.T) {
 	t.Cleanup(func() { sessionLog = origLog })
 
 	inst := NewInstanceWithGroupAndTool("logfmt-sess-123", tmpHome, "logfmt", "claude")
+	// NewInstanceWithGroupAndTool sets Title from the first arg but assigns a
+	// generated UUID-based ID. The CFG-07 log line keys on i.ID (not Title),
+	// so override the ID here to make the session= assertion below precise.
+	inst.ID = "logfmt-sess-123"
 	inst.logClaudeConfigResolution()
 
 	line := buf.String()
