@@ -9,8 +9,8 @@ The work is organized TDD-first: **Phase 1** lands all eight `TestPersistence_*`
 - **Milestone:** v1.5.2 "session-persistence"
 - **Branch:** fix/session-persistence (off local `main`, not pushed)
 - **Granularity:** standard
-- **Total v1 requirements:** 33 (PERSIST × 10, TEST × 8, DOC × 5, SCRIPT × 7, OBS × 3)
-- **Phases:** 4
+- **Total v1 requirements:** 37 (PERSIST × 13, TEST × 9, DOC × 5, SCRIPT × 7, OBS × 3)
+- **Phases:** 5
 - **Spec:** `docs/SESSION-PERSISTENCE-SPEC.md`
 - **Repo mandate:** `CLAUDE.md` "Session persistence: mandatory test coverage" section
 
@@ -20,6 +20,7 @@ The work is organized TDD-first: **Phase 1** lands all eight `TestPersistence_*`
 - [x] **Phase 2: Cgroup isolation default (REQ-1 fix)** - Flip `launch_in_user_scope` default to true on Linux+systemd with detection and graceful fallback
 - [x] **Phase 3: Resume-on-start and error-recovery (REQ-2 fix)** - Route every Claude start path through `ClaudeSessionID` resume logic with authoritative instance storage
 - [x] **Phase 4: Verification harness, docs, and CI wiring** - Ship `scripts/verify-session-persistence.sh`, verify CLAUDE.md mandate completeness, and wire CI gates
+- [ ] **Phase 5: Custom-command JSONL resume (REQ-7 fix)** - Resume from latest JSONL when `ClaudeSessionID` is empty, then write-through persist the discovered UUID so future restarts take the Phase 3 fast path
 
 ## Phase Details
 
@@ -118,6 +119,30 @@ Plans:
 - [x] 04-03-PLAN.md — .github/workflows/session-persistence.yml CI gate (SCRIPT-07)
 - [x] 04-04-PLAN.md — End-to-end verify run + 04-VERIFY.md + STATE.md sign-off (verification-only)
 
+### Phase 5: Custom-command JSONL resume (REQ-7 fix)
+
+**Goal**: Any Claude-compatible Instance with empty `ClaudeSessionID` whose `ProjectPath` contains at least one UUID-named JSONL transcript resolves the latest one by mtime, populates `Instance.ClaudeSessionID` to that UUID, persists it to storage, and then routes through the existing Phase 3 `buildClaudeResumeCommand`. The structural code-layer fix that retires the 2026-04-15 ops-layer `start-conductor.sh` workaround — applies uniformly whether `Command` is empty (default wrapper) or a custom script path.
+
+**Depends on**: Phase 3 (reuses `buildClaudeResumeCommand` unchanged; Phase 3's write-through pattern for `ClaudeSessionID` from the hook sidecar is extended to write-through from disk discovery)
+
+**Requirements**: PERSIST-11, PERSIST-12, PERSIST-13, TEST-09
+
+**Success Criteria** (what must be TRUE):
+  1. `TestPersistence_CustomCommandResumesFromLatestJSONL` (TEST-09) passes: a Claude-compatible Instance with non-empty `Command`, empty `ClaudeSessionID`, and two UUID-named JSONLs of different mtimes under `~/.claude/projects/<encoded-path>/` produces a spawn command containing `--resume <newer-uuid>`.
+  2. After that start, `Instance.ClaudeSessionID` equals the newer JSONL's UUID and the instance has been saved to storage — verified by re-loading the instance from its JSON file and inspecting the field.
+  3. Existing tests TEST-05..TEST-08 continue to pass — no regression in Phase 3's resume contract. Verified by `go test -run TestPersistence_ ./internal/session/... -race -count=1` exiting 0 with all nine tests green.
+  4. `Instance.Start()` at `instance.go:1893` and the `StartWithMessage` dispatch at `instance.go:2019-2033` both see an `IsClaudeCompatible && ClaudeSessionID == ""` instance handed to a small discovery helper that either populates `ClaudeSessionID` (when a JSONL is found) or leaves it empty (fresh-session path). The two dispatch sites MUST reuse the same helper — no duplicated discovery logic.
+  5. The discovery helper is a new exported or internal function (e.g., `discoverLatestClaudeJSONL(projectPath string) (uuid string, found bool)`) in `internal/session/claude.go` that is pure (no side effects on `Instance`, no mutation) — `Instance.Start()` is responsible for the write-through persistence. Logic overlaps with `findActiveSessionID` (`claude.go:332`) but WITHOUT the 5-minute recency cap.
+  6. If the encoded project directory is absent, empty, or contains zero UUID-named JSONLs, `discoverLatestClaudeJSONL` returns `("", false)` and `Start()` falls through to the existing fresh-session branch (`buildClaudeCommand` with a newly-minted UUID) — no `--resume`, no error log, no `[FAIL]` banner.
+  7. No branch in `Start()` / `StartWithMessage` / `Restart()` reads the `Command` field to decide whether to scan for JSONLs — the discovery runs on every empty-ID Claude-compatible start, custom wrapper or not.
+  8. An OBS-02-style log line is emitted when discovery finds a JSONL: `resume: id=<uuid> reason=jsonl_discovery` — so `grep 'resume:' ~/.agent-deck/logs/*.log` shows the discovery path was taken and distinguishes it from `conversation_data_present`. (Observability consistency with Phase 3, not a new OBS requirement.)
+  9. `scripts/verify-session-persistence.sh` continues to exit 0 on the conductor host — Phase 5 does not change script scenarios but also does not regress them.
+
+**Plans:** TBD (planner will decompose into TDD waves: RED test #9 → GREEN shared helper extraction + dispatch-site wiring → REFACTOR write-through persistence consolidation)
+
+Plans:
+- [ ] TBD — populated by gsd-planner
+
 ## Milestone success criteria
 
 Mirrors the six items in `docs/SESSION-PERSISTENCE-SPEC.md` "Success criteria for the milestone". The milestone is shippable only when all six are observably true:
@@ -132,7 +157,7 @@ Mirrors the six items in `docs/SESSION-PERSISTENCE-SPEC.md` "Success criteria fo
 ## Progress
 
 **Execution Order:**
-Phases execute in numeric order: 1 → 2 → 3 → 4. Within each phase, TDD ordering is a hard rule — test commits precede fix commits.
+Phases execute in numeric order: 1 → 2 → 3 → 4 → 5. Within each phase, TDD ordering is a hard rule — test commits precede fix commits.
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
@@ -140,6 +165,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4. Within each phase, TDD ord
 | 2. Cgroup isolation default (REQ-1 fix) | 6/6 | Complete | 2026-04-14 |
 | 3. Resume-on-start and error-recovery (REQ-2 fix) | 5/5 | Complete | 2026-04-14 |
 | 4. Verification harness, docs, and CI wiring | 4/4 | Complete | 2026-04-15 |
+| 5. Custom-command JSONL resume (REQ-7 fix) | 0/TBD | Planning | — |
 
 ---
-*Roadmap created: 2026-04-14 from `docs/SESSION-PERSISTENCE-SPEC.md` and `.planning/REQUIREMENTS.md`. Granularity: standard. Coverage: 33/33 v1 requirements mapped.*
+*Roadmap created: 2026-04-14 from `docs/SESSION-PERSISTENCE-SPEC.md` and `.planning/REQUIREMENTS.md`. Phase 5 appended 2026-04-15 for REQ-7 (spec updated same day). Granularity: standard. Coverage: 37/37 v1 requirements mapped.*

@@ -19,6 +19,9 @@ All requirements below are in scope for the v1.5.2 hotfix milestone. Each is ato
 - [ ] **PERSIST-08**: `Instance.ClaudeSessionID` is preserved through any transition to `stopped` or `error` state, cleared only on explicit delete or user-initiated `fork`.
 - [ ] **PERSIST-09**: Resume works even when the hook sidecar at `~/.agent-deck/hooks/<instance>.sid` has been deleted — `ClaudeSessionID` is read from instance JSON storage as the authoritative source.
 - [ ] **PERSIST-10**: The `docs/session-id-lifecycle.md` invariants (no disk-scan authoritative binding) remain honored.
+- [ ] **PERSIST-11**: Any `IsClaudeCompatible` Instance whose stored `ClaudeSessionID` is empty AND whose `ProjectPath` has at least one UUID-named JSONL under `~/.claude/projects/<encoded-path>/` MUST resolve the latest JSONL by mtime and route through the existing resume builder — emitting `claude --resume <uuid>` (where UUID is the JSONL basename). Applies uniformly to the `Command` field being empty (default wrapper) or non-empty (custom wrapper / `--command ./script.sh`). No code path branches on "custom command ⇒ skip discovery".
+- [ ] **PERSIST-12**: On successful latest-JSONL discovery at start time, `Instance.ClaudeSessionID` is populated to the discovered UUID and persisted to instance JSON storage BEFORE spawn, so every subsequent restart takes the fast path (Phase 3 resume) without re-scanning the projects directory.
+- [ ] **PERSIST-13**: If the project directory is absent, empty, or contains zero UUID-named JSONLs, the spawn proceeds fresh (no `--resume`, no `--session-id` against a non-existent ID), no error is raised, and `Instance.ClaudeSessionID` stays empty until the hook sidecar binds it — matching today's fresh-session contract.
 
 ### Regression Tests (TEST) — spec REQ-3
 
@@ -32,6 +35,7 @@ All eight tests live in `internal/session/session_persistence_test.go`. Each is 
 - [ ] **TEST-06**: `TestPersistence_StartAfterSIGKILLResumesConversation` — same as TEST-05 but the session is marked `error` after a simulated SIGKILL of its tmux server, and recovery is via `session start` (not `session restart`).
 - [ ] **TEST-07**: `TestPersistence_ClaudeSessionIDSurvivesHookSidecarDeletion` — delete `~/.agent-deck/hooks/<instance>.sid`, start the session, assert `ClaudeSessionID` is still read from instance JSON storage and applied.
 - [ ] **TEST-08**: `TestPersistence_FreshSessionUsesSessionIDNotResume` — first start (no prior conversation) uses `--session-id <uuid>` only, not `--resume`. Guards against accidentally passing `--resume` with a non-existent ID.
+- [ ] **TEST-09**: `TestPersistence_CustomCommandResumesFromLatestJSONL` — Instance with a non-empty `Command` (custom wrapper script) and empty `ClaudeSessionID`, but a JSONL transcript present in `~/.claude/projects/<cwd-encoded>/`. Start the session; assert the spawned command line contains `--resume <uuid>` where the UUID matches the JSONL basename, AND assert `Instance.ClaudeSessionID` is populated to that UUID after spawn AND persisted in instance JSON storage. With two JSONLs of different mtimes, assert the newer one wins. Skips cleanly on hosts lacking `systemd-run` only when tmux spawn is attempted; pure discovery+build assertions run everywhere.
 
 ### Documentation (DOC) — spec REQ-4
 
@@ -117,10 +121,14 @@ Every v1 requirement maps to exactly one phase. Mapping reflects WHERE the requi
 | OBS-01 | Phase 2 | Pending |
 | OBS-02 | Phase 3 | Pending |
 | OBS-03 | Phase 3 | Pending |
+| PERSIST-11 | Phase 5 | Pending |
+| PERSIST-12 | Phase 5 | Pending |
+| PERSIST-13 | Phase 5 | Pending |
+| TEST-09 | Phase 5 | Pending |
 
 **Coverage:**
-- v1 requirements: 33 total
-- Mapped to phases: 33 (100%)
+- v1 requirements: 37 total
+- Mapped to phases: 37 (100%)
 - Unmapped: 0
 
 **Per-phase distribution:**
@@ -128,6 +136,7 @@ Every v1 requirement maps to exactly one phase. Mapping reflects WHERE the requi
 - Phase 2 (Cgroup isolation default — REQ-1 fix): 7 requirements (PERSIST-01..PERSIST-06, OBS-01)
 - Phase 3 (Resume-on-start and error-recovery — REQ-2 fix): 6 requirements (PERSIST-07..PERSIST-10, OBS-02, OBS-03)
 - Phase 4 (Verification harness, docs, and CI wiring): 12 requirements (DOC-01..DOC-05, SCRIPT-01..SCRIPT-07)
+- Phase 5 (Custom-command JSONL resume — REQ-7 fix): 4 requirements (PERSIST-11..PERSIST-13, TEST-09)
 
 ---
 *Requirements defined: 2026-04-14*
