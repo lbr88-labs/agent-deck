@@ -498,8 +498,8 @@ func (i *Instance) buildClaudeCommandWithMessage(baseCommand, message string) st
 	// set in their .bashrc/.zshrc - we should NOT override that with a default path.
 	// Also skip if using a custom command (alias handles config dir)
 	configDirPrefix := ""
-	if !hasCustomCommand && IsClaudeConfigDirExplicitForGroup(i.GroupPath) {
-		configDir := GetClaudeConfigDirForGroup(i.GroupPath)
+	if !hasCustomCommand && IsClaudeConfigDirExplicitForInstance(i) {
+		configDir := GetClaudeConfigDirForInstance(i)
 		configDirPrefix = fmt.Sprintf("CLAUDE_CONFIG_DIR=%s ", configDir)
 	}
 
@@ -603,8 +603,8 @@ func (i *Instance) buildClaudeCommandWithMessage(baseCommand, message string) st
 // It always exports AGENTDECK_INSTANCE_ID, and conditionally adds CLAUDE_CONFIG_DIR.
 func (i *Instance) buildBashExportPrefix() string {
 	prefix := fmt.Sprintf("export AGENTDECK_INSTANCE_ID=%s; ", i.ID)
-	if IsClaudeConfigDirExplicitForGroup(i.GroupPath) {
-		prefix += fmt.Sprintf("export CLAUDE_CONFIG_DIR=%s; ", GetClaudeConfigDirForGroup(i.GroupPath))
+	if IsClaudeConfigDirExplicitForInstance(i) {
+		prefix += fmt.Sprintf("export CLAUDE_CONFIG_DIR=%s; ", GetClaudeConfigDirForInstance(i))
 	}
 	return prefix
 }
@@ -621,7 +621,7 @@ func (i *Instance) buildBashExportPrefix() string {
 // NOT called from: Fork (Fork may trigger a subsequent Start() on the
 // forked instance which will log), or from any builder function.
 func (i *Instance) logClaudeConfigResolution() {
-	resolvedPath, source := GetClaudeConfigDirSourceForGroup(i.GroupPath)
+	resolvedPath, source := GetClaudeConfigDirSourceForInstance(i)
 	sessionLog.Info("claude config resolution",
 		slog.String("session", i.ID),
 		slog.String("group", i.GroupPath),
@@ -4169,8 +4169,8 @@ func (i *Instance) buildClaudeResumeCommand() string {
 	// If NOT explicit, don't set it - let the shell's environment handle it
 	// Also skip if using a custom command (alias handles config dir)
 	configDirPrefix := ""
-	if !hasCustomCommand && IsClaudeConfigDirExplicitForGroup(i.GroupPath) {
-		configDir := GetClaudeConfigDirForGroup(i.GroupPath)
+	if !hasCustomCommand && IsClaudeConfigDirExplicitForInstance(i) {
+		configDir := GetClaudeConfigDirForInstance(i)
 		configDirPrefix = fmt.Sprintf("CLAUDE_CONFIG_DIR=%s ", configDir)
 	}
 

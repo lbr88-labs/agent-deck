@@ -245,6 +245,17 @@ func (i *Instance) getToolEnvFile() string {
 
 	switch i.Tool {
 	case "claude":
+		// Conductor block wins over group (CFG-08 precedence chain).
+		// NOTE: This is separate from getConductorEnv below which sources
+		// conductor meta.json env_file. Both can be set; the TOML path
+		// sources here (via buildEnvSourceCommand step 4) and meta.json
+		// sources later (step 6 — overrides). CFG-08 layer, not a
+		// replacement for the meta.json layer.
+		if name := conductorNameFromInstance(i); name != "" {
+			if conductorEnv := config.GetConductorClaudeEnvFile(name); conductorEnv != "" {
+				return conductorEnv
+			}
+		}
 		if groupEnv := config.GetGroupClaudeEnvFile(i.GroupPath); groupEnv != "" {
 			return groupEnv
 		}

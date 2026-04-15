@@ -325,26 +325,137 @@ func GetClaudeConfigDirSourceForGroup(groupPath string) (path, source string) {
 	return filepath.Join(home, ".claude"), "default"
 }
 
-// GetClaudeConfigDirForInstance is the Instance-aware loader stub that the
-// CFG-11 regression tests compile against. Task 3 replaces this body with
-// the full priority chain (env > conductor > group > profile > global > default).
-//
-// RED-gate stub only — returns "" so the CFG-11 tests fail with ASSERTION
-// errors (not compile errors). This is the true RED signal.
-func GetClaudeConfigDirForInstance(inst *Instance) string {
-	_ = inst
-	return ""
+// conductorNameFromInstance extracts the conductor name from an Instance's
+// Title. Returns "" for non-conductor sessions. Mirrors the canonical pattern
+// used in env.go getConductorEnv (line 267) — single source of truth for
+// conductor name derivation from a session.
+func conductorNameFromInstance(inst *Instance) string {
+	if inst == nil {
+		return ""
+	}
+	name := strings.TrimPrefix(inst.Title, "conductor-")
+	if name == "" || name == inst.Title {
+		return ""
+	}
+	return name
 }
 
-// GetClaudeConfigDirSourceForInstance is the Instance-aware source-label stub.
-// Task 3 replaces this body with the full priority chain returning one of
-// env|conductor|group|profile|global|default.
+// GetClaudeConfigDirForInstance returns the Claude config directory,
+// extending GetClaudeConfigDirForGroup with a [conductors.<name>] branch
+// that sits between the env-var check and the group check.
 //
-// RED-gate stub — returns ("", "") so the CFG-11 tests fail with ASSERTION
-// errors (not compile errors).
+// Priority (most-specific → least-specific):
+//
+//  1. CLAUDE_CONFIG_DIR env var
+//  2. [conductors.<name>.claude].config_dir — NEW (CFG-08), consulted only when
+//     Instance.Title starts with "conductor-"
+//  3. [groups."<group>".claude].config_dir   — PR #578 (CFG-01)
+//  4. [profiles.<profile>.claude].config_dir
+//  5. [claude].config_dir
+//  6. ~/.claude
+//
+// Callers pass the *Instance; conductor name is derived via
+// conductorNameFromInstance. Backward compat: non-conductor sessions
+// (Title without "conductor-" prefix) resolve identically to
+// GetClaudeConfigDirForGroup(inst.GroupPath).
+func GetClaudeConfigDirForInstance(inst *Instance) string {
+	if envDir := os.Getenv("CLAUDE_CONFIG_DIR"); envDir != "" {
+		return ExpandPath(envDir)
+	}
+
+	userConfig, _ := LoadUserConfig()
+	if userConfig != nil {
+		if name := conductorNameFromInstance(inst); name != "" {
+			if conductorDir := userConfig.GetConductorClaudeConfigDir(name); conductorDir != "" {
+				return conductorDir
+			}
+		}
+		groupPath := ""
+		if inst != nil {
+			groupPath = inst.GroupPath
+		}
+		if groupDir := userConfig.GetGroupClaudeConfigDir(groupPath); groupDir != "" {
+			return groupDir
+		}
+		profile := GetEffectiveProfile("")
+		if profileDir := userConfig.GetProfileClaudeConfigDir(profile); profileDir != "" {
+			return profileDir
+		}
+		if userConfig.Claude.ConfigDir != "" {
+			return ExpandPath(userConfig.Claude.ConfigDir)
+		}
+	}
+
+	home, _ := os.UserHomeDir()
+	return filepath.Join(home, ".claude")
+}
+
+// GetClaudeConfigDirSourceForInstance returns the resolved path and the
+// priority-level label. Extends GetClaudeConfigDirSourceForGroup with a
+// "conductor" branch. Keep in sync with GetClaudeConfigDirForInstance —
+// both functions must change together if the priority chain ever changes.
 func GetClaudeConfigDirSourceForInstance(inst *Instance) (path, source string) {
-	_ = inst
-	return "", ""
+	if envDir := os.Getenv("CLAUDE_CONFIG_DIR"); envDir != "" {
+		return ExpandPath(envDir), "env"
+	}
+
+	userConfig, _ := LoadUserConfig()
+	if userConfig != nil {
+		if name := conductorNameFromInstance(inst); name != "" {
+			if conductorDir := userConfig.GetConductorClaudeConfigDir(name); conductorDir != "" {
+				return conductorDir, "conductor"
+			}
+		}
+		groupPath := ""
+		if inst != nil {
+			groupPath = inst.GroupPath
+		}
+		if groupDir := userConfig.GetGroupClaudeConfigDir(groupPath); groupDir != "" {
+			return groupDir, "group"
+		}
+		profile := GetEffectiveProfile("")
+		if profileDir := userConfig.GetProfileClaudeConfigDir(profile); profileDir != "" {
+			return profileDir, "profile"
+		}
+		if userConfig.Claude.ConfigDir != "" {
+			return ExpandPath(userConfig.Claude.ConfigDir), "global"
+		}
+	}
+
+	home, _ := os.UserHomeDir()
+	return filepath.Join(home, ".claude"), "default"
+}
+
+// IsClaudeConfigDirExplicitForInstance mirrors IsClaudeConfigDirExplicitForGroup
+// with the conductor-block branch. Returns true if ANY priority level sets a
+// config dir for this Instance.
+func IsClaudeConfigDirExplicitForInstance(inst *Instance) bool {
+	if os.Getenv("CLAUDE_CONFIG_DIR") != "" {
+		return true
+	}
+	userConfig, _ := LoadUserConfig()
+	if userConfig != nil {
+		if name := conductorNameFromInstance(inst); name != "" {
+			if userConfig.GetConductorClaudeConfigDir(name) != "" {
+				return true
+			}
+		}
+		groupPath := ""
+		if inst != nil {
+			groupPath = inst.GroupPath
+		}
+		if userConfig.GetGroupClaudeConfigDir(groupPath) != "" {
+			return true
+		}
+		profile := GetEffectiveProfile("")
+		if userConfig.GetProfileClaudeConfigDir(profile) != "" {
+			return true
+		}
+		if userConfig.Claude.ConfigDir != "" {
+			return true
+		}
+	}
+	return false
 }
 
 // GetClaudeCommand returns the configured Claude command/alias
