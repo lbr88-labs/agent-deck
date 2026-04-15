@@ -36,7 +36,7 @@ No `git push`, no tags, no PR create, no merge — this is local-only work for r
 
 - [ ] **Phase 3: Visual harness + documentation + attribution commit** (~15–25 min) — Ship `scripts/verify-per-group-claude-config.sh` (CFG-05), the README / CLAUDE.md / CHANGELOG updates (CFG-06), and an attribution commit referencing @alec-pinson. Run the harness on the conductor host and capture its output. [REQ mapping: CFG-05, CFG-06]
 
-- [ ] **Phase 4: Conductor schema + docs refresh + mandate clarification** (~30–45 min, added 2026-04-15 post-Phase-3, user-authorized) — Ship the `[conductors.<name>]` config block (CFG-08, closes issue #602), the eight-test regression suite that locks it (CFG-11), the README + agent-deck SKILL.md docs refresh (CFG-09), and the repo-root `CLAUDE.md` `--no-verify` mandate scope clarification (CFG-10). NO @alec-pinson attribution on Phase 4 (this is user-driven, not PR #578); commit body may reference issue #602 reporter (the milestone user). [REQ mapping: CFG-08, CFG-09, CFG-10, CFG-11]
+- [x] **Phase 4: Conductor schema + docs refresh + mandate clarification** (added 2026-04-15 post-Phase-3, user-authorized) — DONE. `[conductors.<name>.claude]` config block (CFG-08, closes issue #602), eight-test regression suite (CFG-11), README + agent-deck SKILL.md docs refresh (CFG-09), and repo-root `CLAUDE.md` `--no-verify` ban + scope clarification (CFG-10). Plans 04-01 + 04-02 complete. Hard-rule audit: 0 @alec-pinson, 0 Claude attribution, 7/7 signed, 8 #602 refs. Tests: 8/8 TestConductorConfig_ + 8/8 TestPerGroupConfig_ GREEN. [REQ mapping: CFG-08, CFG-09, CFG-10, CFG-11]
 
 ---
 
@@ -233,4 +233,4 @@ Phase 4 additions (gated alongside #1–#6):
 ---
 
 *Roadmap created: 2026-04-15*
-*Last updated: 2026-04-15 — Phase 4 added post-Phase-3 (user-authorized): conductor schema (CFG-08, closes issue #602), docs refresh (CFG-09), `--no-verify` mandate clarification (CFG-10), eight regression tests (CFG-11). Phase 4 commits use no @alec-pinson attribution.*
+*Last updated: 2026-04-16 — Phase 4 complete (plans 04-01 + 04-02); CFG-08/09/10/11 all closed; milestone ready for /gsd-complete-milestone.*

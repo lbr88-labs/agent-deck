@@ -62,13 +62,13 @@ Every requirement below is in scope. Mapping: REQ-ID in this file == CFG-NN in P
 
 ### Documentation refresh (Phase 4)
 
-- [ ] **CFG-09** (P0): Two doc surfaces beyond CFG-06:
+- [x] **CFG-09** (P0): Two doc surfaces beyond CFG-06:
   - `README.md` — extend the "Per-group Claude config" subsection (added in CFG-06) with a sibling `[conductors.<name>]` example and a one-line precedence note. Cross-link to issue #602.
   - agent-deck skill `SKILL.md` — at canonical plugin-cache path (`~/.claude/plugins/cache/agent-deck/agent-deck/<hash>/skills/agent-deck/SKILL.md`) AND pool path (`~/.agent-deck/skills/pool/agent-deck/SKILL.md`) if present. One-paragraph addition documenting `[conductors.<name>]` block + precedence + pool-vs-canonical distinction.
 
 ### Mandate clarification (Phase 4)
 
-- [ ] **CFG-10** (P1): Repo-root `CLAUDE.md` "General rules" gets a sub-section clarifying that the `--no-verify` ban applies to source-modifying commits only. Metadata-only commits (paths: `.planning/**`, `docs/**`, `*.md` outside source dirs, `CHANGELOG.md` during milestone-prep) MAY use `--no-verify` IFF the hook would no-op. Negative example: a commit mixing `.planning/` AND `internal/session/*.go` is source-modifying — hooks required.
+- [x] **CFG-10** (P1): Repo-root `CLAUDE.md` "General rules" gets a sub-section clarifying that the `--no-verify` ban applies to source-modifying commits only. Metadata-only commits (paths: `.planning/**`, `docs/**`, `*.md` outside source dirs, `CHANGELOG.md` during milestone-prep) MAY use `--no-verify` IFF the hook would no-op. Negative example: a commit mixing `.planning/` AND `internal/session/*.go` is source-modifying — hooks required.
 
 ### Phase 4 regression tests
 
@@ -126,10 +126,10 @@ Every active REQ maps to exactly one phase.
 | CFG-07 | Phase 2 | Complete (02-02) |
 | CFG-05 | Phase 3 | Complete (03-01) |
 | CFG-06 | Phase 3 | Complete (03-02) |
-| CFG-08 | Phase 4 | Complete |
-| CFG-09 | Phase 4 | Pending |
-| CFG-10 | Phase 4 | Pending |
-| CFG-11 | Phase 4 | Complete |
+| CFG-08 | Phase 4 | Complete (04-01) |
+| CFG-09 | Phase 4 | Complete (04-02) |
+| CFG-10 | Phase 4 | Complete (04-02) |
+| CFG-11 | Phase 4 | Complete (04-01) |
 
 **Coverage:**
 - v1.5.4 requirements: 11 (CFG-01 through CFG-11; CFG-08/09/10/11 added 2026-04-15 as Phase 4)
@@ -161,4 +161,4 @@ All twelve below come from the spec's "Success criteria for the milestone" secti
 ---
 
 *Requirements defined: 2026-04-15*
-*Last updated: 2026-04-15 — Phase 4 amendment: CFG-08 (conductor schema, closes #602), CFG-09 (docs refresh), CFG-10 (`--no-verify` mandate clarification), CFG-11 (eight regression tests)*
+*Last updated: 2026-04-16 — Phase 4 complete: CFG-08/09/10/11 all closed; milestone ready for /gsd-complete-milestone.*

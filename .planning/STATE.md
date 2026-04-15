@@ -2,15 +2,15 @@
 gsd_state_version: 1.0
 milestone: v1.5.4
 milestone_name: milestone
-status: executing
-last_updated: "2026-04-15T21:45:16.465Z"
-last_activity: 2026-04-15
+status: complete
+last_updated: "2026-04-16T00:16:00.000Z"
+last_activity: 2026-04-16
 progress:
   total_phases: 4
-  completed_phases: 3
+  completed_phases: 4
   total_plans: 7
-  completed_plans: 6
-  percent: 86
+  completed_plans: 7
+  percent: 100
 ---
 
 # Project State — v1.5.4
@@ -38,11 +38,11 @@ See `docs/PER-GROUP-CLAUDE-CONFIG-SPEC.md` for the source spec.
 
 ## Current Position
 
-Phase: 04 (conductor-schema-docs-refresh-mandate-clarification) — EXECUTING
-Plan: 2 of 2
-Status: Plan 04-01 complete; 04-02 pending (`/gsd-execute-plan 04-02`)
-Last activity: 2026-04-15 -- Plan 04-01 complete: CFG-08 + CFG-11 closed, 8/8 TestConductorConfig_* GREEN, 8/8 TestPerGroupConfig_* regression GREEN
-Stopped at: Completed 04-01-PLAN.md
+Phase: 04 (conductor-schema-docs-refresh-mandate-clarification) — COMPLETE
+Plan: Complete (04-01 + 04-02)
+Status: Phase 04 complete; milestone ready for /gsd-complete-milestone
+Last activity: 2026-04-16 -- Plan 04-02 complete: CFG-09 + CFG-10 closed, canonical SKILL.md updated, pool SKILL.md absence recorded in SKILL_MD_DIFF.md audit artifact, CLAUDE.md --no-verify bullet + scope clarification shipped, all four Phase 4 hard-rule audit gates pass
+Stopped at: Completed 04-02-PLAN.md
 
 ## Phase Progress
 
@@ -51,7 +51,7 @@ Stopped at: Completed 04-01-PLAN.md
 | 1 | Custom-command injection + core regression tests | Complete | CFG-01, CFG-02, CFG-04 (tests 1, 2, 3, 6) | 1/1 (01-01) |
 | 2 | env_file source semantics + observability + conductor E2E | Plans complete (verification pending) | CFG-03, CFG-04 (tests 4, 5), CFG-07 | 2/2 (02-01 + 02-02 complete) |
 | 3 | Visual harness + documentation + attribution commit | Complete | CFG-05, CFG-06 | 2/2 (03-01 + 03-02) |
-| 4 | Conductor schema + docs refresh + mandate clarification | Plan 04-01 complete; 04-02 pending | CFG-08, CFG-09, CFG-10, CFG-11 | 1/2 (04-01 complete, 04-02 pending) |
+| 4 | Conductor schema + docs refresh + mandate clarification | Complete | CFG-08, CFG-09, CFG-10, CFG-11 | 2/2 (04-01 + 04-02 complete) |
 
 ## Phase 01 commits (since base 3e402e2)
 
@@ -81,6 +81,10 @@ Stopped at: Completed 04-01-PLAN.md
 | 41c9b8e | test | test(04): add conductor config regression tests (RED, CFG-11) |
 | f0cf791 | feat | feat(04): add [conductors.<name>.claude] schema (CFG-08 partial) |
 | 6fdac26 | feat | feat(04): wire conductor-block loader + four callsites (CFG-08) |
+| 917c111 | docs | docs(04-01): complete conductor schema + loader + tests plan |
+| c230c77 | docs | docs(04): document [conductors.<name>.claude] schema in README (CFG-09) |
+| 0ac0efe | docs | docs(04): record SKILL.md external-file updates (CFG-09 audit artifact) |
+| 95f382d | docs | docs(04): add --no-verify ban + scope clarification to CLAUDE.md (CFG-10) |
 
 ## Decisions — Plan 04-01
 
