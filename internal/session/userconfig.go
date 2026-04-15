@@ -67,6 +67,16 @@ type UserConfig struct {
 	// config_dir = "~/.claude-my-group"
 	Groups map[string]GroupSettings `toml:"groups"`
 
+	// Conductors defines optional per-conductor overrides.
+	// Keyed by conductor name (matches Instance.Title minus "conductor-" prefix).
+	// Mirrors Groups — see ConductorOverrides for the sub-table shape.
+	// Closes issue #602.
+	// Example:
+	// [conductors.gsd-v154.claude]
+	// config_dir = "~/.claude-work"
+	// env_file   = "~/git/work/.envrc"
+	Conductors map[string]ConductorOverrides `toml:"conductors"`
+
 	// Gemini defines Gemini CLI integration settings
 	Gemini GeminiSettings `toml:"gemini"`
 
@@ -209,6 +219,33 @@ type GroupClaudeSettings struct {
 	ConfigDir string `toml:"config_dir"`
 
 	// EnvFile overrides [claude].env_file for sessions in this group.
+	EnvFile string `toml:"env_file"`
+}
+
+// ConductorOverrides defines per-conductor configuration overrides.
+// Mirrors GroupSettings — conductors are first-class entities keyed by
+// conductor name (derived from Instance.Title via strings.TrimPrefix at the
+// call site, same pattern as env.go getConductorEnv).
+//
+// Named ConductorOverrides (not ConductorSettings) to avoid collision with
+// the pre-existing global [conductor] meta-agent orchestration block
+// declared in conductor.go:49 (heartbeat, telegram, slack, discord).
+// Closes issue #602.
+type ConductorOverrides struct {
+	// Claude defines Claude Code overrides for a specific conductor.
+	Claude ConductorClaudeSettings `toml:"claude"`
+}
+
+// ConductorClaudeSettings defines conductor-specific Claude overrides.
+// Semantics mirror GroupClaudeSettings — ExpandPath is applied on read via
+// GetConductorClaudeConfigDir; env_file resolution is deferred to the spawn
+// builder (resolvePath handles path expansion at use).
+type ConductorClaudeSettings struct {
+	// ConfigDir overrides [claude].config_dir for this conductor only.
+	ConfigDir string `toml:"config_dir"`
+
+	// EnvFile is sourced before claude exec for this conductor.
+	// Matches CFG-03 semantics — missing file logs a warning, does not block.
 	EnvFile string `toml:"env_file"`
 }
 
@@ -623,6 +660,20 @@ func (c *UserConfig) GetGroupClaudeEnvFile(groupPath string) string {
 		return ""
 	}
 	return groupCfg.Claude.EnvFile
+}
+
+// GetConductorClaudeConfigDir is a RED-gate stub. Task 2 (GREEN step 1)
+// replaces this body with the real lookup. Returns "" so CFG-11 test 1
+// (SchemaParses) fails on its assertion, not at compile time.
+func (c *UserConfig) GetConductorClaudeConfigDir(name string) string {
+	_ = name
+	return ""
+}
+
+// GetConductorClaudeEnvFile is a RED-gate stub. Task 2 replaces the body.
+func (c *UserConfig) GetConductorClaudeEnvFile(name string) string {
+	_ = name
+	return ""
 }
 
 // GetDangerousMode returns whether dangerous mode is enabled, defaulting to true

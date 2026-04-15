@@ -325,6 +325,28 @@ func GetClaudeConfigDirSourceForGroup(groupPath string) (path, source string) {
 	return filepath.Join(home, ".claude"), "default"
 }
 
+// GetClaudeConfigDirForInstance is the Instance-aware loader stub that the
+// CFG-11 regression tests compile against. Task 3 replaces this body with
+// the full priority chain (env > conductor > group > profile > global > default).
+//
+// RED-gate stub only — returns "" so the CFG-11 tests fail with ASSERTION
+// errors (not compile errors). This is the true RED signal.
+func GetClaudeConfigDirForInstance(inst *Instance) string {
+	_ = inst
+	return ""
+}
+
+// GetClaudeConfigDirSourceForInstance is the Instance-aware source-label stub.
+// Task 3 replaces this body with the full priority chain returning one of
+// env|conductor|group|profile|global|default.
+//
+// RED-gate stub — returns ("", "") so the CFG-11 tests fail with ASSERTION
+// errors (not compile errors).
+func GetClaudeConfigDirSourceForInstance(inst *Instance) (path, source string) {
+	_ = inst
+	return "", ""
+}
+
 // GetClaudeCommand returns the configured Claude command/alias
 // Priority: 1) UserConfig setting, 2) Default "claude"
 // This allows users to configure an alias like "cdw" or "cdp" that sets
