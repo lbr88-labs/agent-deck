@@ -1323,3 +1323,132 @@ func TestPersistence_ExplicitOptOutHonoredOnLinux(t *testing.T) {
 		}
 	})
 }
+
+// TestPersistence_CustomCommandResumesFromLatestJSONL pins REQ-7 / TEST-09.
+// It models the 2026-04-15 conductor incident: an Instance launched via a
+// custom wrapper script (inst.Command != "") has never had a ClaudeSessionID
+// bound to it (agent-deck side), but Claude Code has written one or more
+// JSONL transcripts under ~/.claude/projects/<encoded>/. On Start(), the
+// latest JSONL by mtime MUST be discovered, its UUID MUST be written back
+// into inst.ClaudeSessionID before spawn, and the spawned claude argv MUST
+// contain --resume <that-uuid>. With two JSONLs of different mtimes, newer
+// wins. If no JSONL exists, Start() falls through to fresh-session (no
+// --resume, no error).
+//
+// RED today: Start()'s empty-ID claude-compatible branch at
+// internal/session/instance.go:1895-1901 calls buildClaudeCommand which
+// MINTS a new UUID. No disk scan happens. Phase 5 plan 05-02 adds a
+// discoverLatestClaudeJSONL helper in claude.go + wires the prelude into
+// Start() and StartWithMessage().
+// writeCustomWrapperScript stages a functional custom-wrapper shell script at
+// <home>/bin/my-wrapper.sh. The script writes a sentinel line to
+// AGENTDECK_TEST_ARGV_LOG so readCapturedClaudeArgv observes non-empty output
+// in the RED-state spawn path (where buildClaudeCommand(i.Command) returns the
+// wrapper path verbatim and the config.toml [claude] command override is NOT
+// consulted — see instance.go:485-597). Without this, the tmux pane would
+// exec a non-existent file, die immediately, and readCapturedClaudeArgv would
+// time out with a generic "stub claude was never spawned" message instead of
+// our targeted TEST-09 RED diagnostic.
+//
+// This is a deviation from plan 05-01's "the file need not exist" claim;
+// see 05-01-SUMMARY.md for rationale. The wrapper is only invoked in the RED
+// (pre-fix) dispatch path and in the no-JSONL sub-case; the GREEN path routes
+// through buildClaudeResumeCommand which uses GetClaudeCommand() directly.
+func writeCustomWrapperScript(t *testing.T, home string) string {
+	t.Helper()
+	binDir := filepath.Join(home, "bin")
+	if err := os.MkdirAll(binDir, 0o755); err != nil {
+		t.Fatalf("writeCustomWrapperScript: mkdir binDir: %v", err)
+	}
+	wrapperPath := filepath.Join(binDir, "my-wrapper.sh")
+	script := "#!/usr/bin/env bash\n" +
+		"printf 'wrapper_invoked\\n' >> \"${AGENTDECK_TEST_ARGV_LOG:-/dev/null}\"\n" +
+		"printf '%s\\n' \"$@\" >> \"${AGENTDECK_TEST_ARGV_LOG:-/dev/null}\"\n" +
+		"sleep 30\n"
+	if err := os.WriteFile(wrapperPath, []byte(script), 0o755); err != nil {
+		t.Fatalf("writeCustomWrapperScript: write: %v", err)
+	}
+	t.Cleanup(func() { _ = os.Remove(wrapperPath) })
+	return wrapperPath
+}
+
+func TestPersistence_CustomCommandResumesFromLatestJSONL(t *testing.T) {
+	requireTmux(t)
+	home := isolatedHomeDir(t)
+	argvLog := setupStubClaudeOnPATH(t, home)
+	inst := newClaudeInstanceForDispatch(t, home)
+
+	// REQ-7 / D-04 preconditions: custom Command (non-empty), empty ClaudeSessionID.
+	// The wrapper is a functional script that emits a sentinel to argvLog; see
+	// writeCustomWrapperScript for rationale (deviation from plan 05-01).
+	inst.Command = writeCustomWrapperScript(t, home)
+	inst.ClaudeSessionID = ""
+
+	const (
+		olderUUID = "11111111-1111-1111-1111-111111111111"
+		newerUUID = "22222222-2222-2222-2222-222222222222"
+	)
+	projectDir := filepath.Join(home, ".claude", "projects", ConvertToClaudeDirName(inst.ProjectPath))
+	if err := os.MkdirAll(projectDir, 0o755); err != nil {
+		t.Fatalf("mkdir projectDir: %v", err)
+	}
+	writeJSONL := func(uuid string, mtime time.Time) string {
+		p := filepath.Join(projectDir, uuid+".jsonl")
+		body := []byte(`{"sessionId":"` + uuid + `","role":"user","content":"hi"}` + "\n")
+		if err := os.WriteFile(p, body, 0o644); err != nil {
+			t.Fatalf("write %s: %v", p, err)
+		}
+		if err := os.Chtimes(p, mtime, mtime); err != nil {
+			t.Fatalf("chtimes %s: %v", p, err)
+		}
+		t.Cleanup(func() { _ = os.Remove(p) })
+		return p
+	}
+	now := time.Now()
+	writeJSONL(olderUUID, now.Add(-30*time.Second))
+	writeJSONL(newerUUID, now)
+
+	if err := inst.Start(); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+
+	// PERSIST-12 write-through check fires FIRST so the RED diagnostic is
+	// unambiguous even when the pre-fix dispatch never invokes the stub.
+	if inst.ClaudeSessionID != newerUUID {
+		t.Fatalf("TEST-09 PERSIST-12 RED: after Start() with Command=%q, empty ClaudeSessionID, and TWO JSONLs (%s older, %s newer) under %s, inst.ClaudeSessionID=%q, want %q (newer JSONL UUID). The Phase 5 helper must mutate i.ClaudeSessionID before spawn so subsequent Restart() takes the Phase 3 fast path. This is the 2026-04-15 incident REQ-7 root cause: Start()'s empty-ID branch at instance.go:1895-1901 dispatches through buildClaudeCommand (fresh UUID) instead of discovering the newest JSONL on disk.", inst.Command, olderUUID, newerUUID, projectDir, inst.ClaudeSessionID, newerUUID)
+	}
+
+	argv := readCapturedClaudeArgv(t, argvLog, 3*time.Second)
+	joined := strings.Join(argv, " ")
+
+	if !strings.Contains(joined, "--resume") || !strings.Contains(joined, newerUUID) {
+		t.Fatalf("TEST-09 RED: after inst.Start() captured claude argv MUST contain '--resume %s'. Got argv: %v. Phase 5 plan 05-02 must route empty-ID Claude-compatible Starts through buildClaudeResumeCommand (via discoverLatestClaudeJSONL write-through).", newerUUID, argv)
+	}
+	if strings.Contains(joined, olderUUID) {
+		t.Fatalf("TEST-09 RED: claude argv contains the OLDER JSONL uuid %s; newer %s must win on mtime. Argv: %v", olderUUID, newerUUID, argv)
+	}
+
+	// PERSIST-13 fresh-fallback: no JSONL → no --resume, no error. This sub-case
+	// exercises the graceful-fallback contract; the custom wrapper runs (no
+	// discovery hit → dispatch to buildClaudeCommand(i.Command)) and MUST NOT
+	// receive a --resume flag.
+	t.Run("no_jsonl_falls_through_to_fresh", func(t *testing.T) {
+		home2 := isolatedHomeDir(t)
+		argvLog2 := setupStubClaudeOnPATH(t, home2)
+		inst2 := newClaudeInstanceForDispatch(t, home2)
+		inst2.Command = writeCustomWrapperScript(t, home2)
+		inst2.ClaudeSessionID = ""
+		// Deliberately stage no JSONL.
+		if err := inst2.Start(); err != nil {
+			t.Fatalf("Start: %v", err)
+		}
+		argv2 := readCapturedClaudeArgv(t, argvLog2, 3*time.Second)
+		joined2 := strings.Join(argv2, " ")
+		if strings.Contains(joined2, "--resume") {
+			t.Fatalf("TEST-09 PERSIST-13: Start() with no JSONL must not pass --resume. Argv: %v", argv2)
+		}
+		if inst2.ClaudeSessionID != "" {
+			t.Fatalf("TEST-09 PERSIST-13: Start() with no JSONL must leave ClaudeSessionID empty. Got %q", inst2.ClaudeSessionID)
+		}
+	})
+}
