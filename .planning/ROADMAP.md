@@ -32,7 +32,7 @@ No `git push`, no tags, no PR create, no merge — this is local-only work for r
 
 - [x] **Phase 1: Custom-command injection + core regression tests** (~13 min actual) — DONE. Four TDD regression tests (CFG-04 tests 1, 2, 3, 6) added in `internal/session/pergroupconfig_test.go`. `buildBashExportPrefix()` now prepended to the custom-command return path at `instance.go:596` (+4/-2 lines). All 4 tests GREEN under `-race -count=1`; PR #578's `TestGetClaudeConfigDirForGroup_GroupWins`, `TestIsClaudeConfigDirExplicitForGroup`, `TestBuildClaudeCommand_CustomAlias`, and all `TestUserConfig_GroupClaude*` tests remain GREEN. Commits: `40f4f04` (RED test) + `b39bbf3` (GREEN fix, carries `Builds on PR #578 by @alec-pinson.`). [REQ mapping: CFG-01, CFG-02, CFG-04 (subset)]
 
-- [ ] **Phase 2: env_file source semantics + observability + conductor E2E** (~25–30 min) — Prove `env_file` is `source`d before `claude` exec in the spawn pipeline. Write two TDD regression tests (CFG-04 tests 4, 5). Add the observability log line (CFG-07). All Go tests green under `-race -count=1`. [REQ mapping: CFG-03, CFG-04 (remainder), CFG-07]
+- [ ] **Phase 2: env_file source semantics + observability + conductor E2E** (~25–30 min) — Prove `env_file` is `source`d before `claude` exec in the spawn pipeline for BOTH normal-claude and custom-command paths. Write three TDD regression tests (CFG-04 tests 4, 5 plus the CFG-07 log-format lock). Add the observability log line (CFG-07) via a `logClaudeConfigResolution` helper called from Start/StartWithMessage/Restart. All Go tests green under `-race -count=1`. [REQ mapping: CFG-03, CFG-04 (remainder), CFG-07]
 
 - [ ] **Phase 3: Visual harness + documentation + attribution commit** (~15–25 min) — Ship `scripts/verify-per-group-claude-config.sh` (CFG-05), the README / CLAUDE.md / CHANGELOG updates (CFG-06), and an attribution commit referencing @alec-pinson. Run the harness on the conductor host and capture its output. [REQ mapping: CFG-05, CFG-06]
 
@@ -76,31 +76,38 @@ Plans:
 
 ### Phase 2: env_file source semantics + observability + conductor E2E
 
-**Goal:** Prove `env_file` is sourced in the tmux spawn pipeline before `claude` exec, add the observability log line, and close the custom-command restart loop with an end-to-end test.
+**Goal:** Prove `env_file` is sourced in the tmux spawn pipeline before `claude` exec (for BOTH the normal-claude path and the custom-command/conductor path), add the observability log line emitted from every session-spawn entrypoint, and close the custom-command restart loop with an end-to-end test.
 
 **Requirements covered:**
-- CFG-03 — `env_file` sourced before `claude` exec
+- CFG-03 — `env_file` sourced before `claude` exec (on both normal-claude and custom-command paths)
 - CFG-04 (tests 4, 5) — `EnvFileSourcedInSpawn`, `ConductorRestartPreservesConfigDir`
-- CFG-07 — observability log line
+- CFG-07 — observability log line (emitted from Start, StartWithMessage, and Restart)
 
 **Approach (TDD, in order):**
-1. Add test 4 (`TestPerGroupConfig_EnvFileSourcedInSpawn`) — write a throwaway `/tmp/envrc-*` file in the test that exports a sentinel var; assert the built spawn prefix contains a `source "<path>"` line or the sentinel var appears in the environment yielded by the prefix pipeline.
-2. Add test 5 (`TestPerGroupConfig_ConductorRestartPreservesConfigDir`) — create a custom-command instance with a group override, build the spawn command, stop, rebuild the spawn command (simulated restart), assert the override is present in both.
-3. Run tests — confirm RED (expect `env_file` support may already exist in PR #578; if so, test 4 goes green immediately and we proceed to observability).
-4. If `env_file` isn't wired through to the prefix: add the source line in `internal/session/env.go` (the spec calls out 4 added lines in that file from PR #578 — extend minimally if needed). Missing file → warning log, not a spawn failure.
-5. Add the CFG-07 observability log line in the spawn path: `claude config resolution: session=<id> group=<g> resolved=<path> source=<env|group|profile|global|default>`. Emit at spawn, once per session.
-6. Re-run the full `TestPerGroupConfig_*` suite — all 6 GREEN under `go test ./internal/session/... -run TestPerGroupConfig_ -race -count=1`.
+1. Add test 4 (`TestPerGroupConfig_EnvFileSourcedInSpawn`) — write a throwaway envrc file under `t.TempDir()` that exports a sentinel var; assert the production spawn-command builder (`Instance.buildClaudeCommand`) emits a `source "<path>"` line for BOTH the normal-claude branch (instance.go:478) AND the custom-command branch (instance.go:598). Assertion C runs the built command under `bash -c` and proves the sentinel var is set.
+2. Add test 5 (`TestPerGroupConfig_ConductorRestartPreservesConfigDir`) — create a custom-command instance with a group override, build the spawn command, stop, rebuild the spawn command (simulated restart via `ClearUserConfigCache`), assert the override is present in both.
+3. Run tests — confirm RED (expect a CFG-03 wiring gap at `instance.go:598` where the custom-command return does not prepend `buildEnvSourceCommand()`; assertion B will fail).
+4. Fix the CFG-03 gap with a minimal one-line change at `instance.go:598`: prepend `i.buildEnvSourceCommand()` to the custom-command return so env_file is sourced before the wrapper exec's. Missing file → warning log, not a spawn failure.
+5. Add the CFG-07 observability log line. Factor the emission into a private helper `(i *Instance) logClaudeConfigResolution()` that owns the single `"claude config resolution"` slog literal. Call the helper from THREE session-spawn entrypoints — `Start()`, `StartWithMessage()`, `Restart()` — each gated on `IsClaudeCompatible(i.Tool)`. Fork path intentionally silent. Back the helper with a new `GetClaudeConfigDirSourceForGroup(groupPath) (path, source string)` in `claude.go` that returns the resolved path AND the priority-level label (`env|group|profile|global|default`).
+6. Add two CFG-07 unit tests alongside test 5: `TestPerGroupConfig_ClaudeConfigDirSourceLabel` (priority-chain label mapping, all 5 levels) and `TestPerGroupConfig_ClaudeConfigResolutionLogFormat` (swaps `sessionLog`'s handler for a `bytes.Buffer`-backed `slog.NewTextHandler` and regex-matches the rendered line against the spec format).
+7. Re-run the full `TestPerGroupConfig_*` suite — all 8 GREEN under `go test ./internal/session/... -run TestPerGroupConfig_ -race -count=1` (tests 1/2/3/4/5/6 from the ROADMAP numbering, plus `ClaudeConfigDirSourceLabel` + `ClaudeConfigResolutionLogFormat`).
 
-**Scope (files touched):** `internal/session/pergroupconfig_test.go` (extend), `internal/session/env.go` (env_file sourcing if needed; observability log). Possibly `internal/session/claude.go` or `internal/session/instance.go` for the log-line placement.
+**Scope (files touched):** `internal/session/pergroupconfig_test.go` (extend), `internal/session/instance.go` (CFG-03 one-line fix at L598 if gap confirmed + new `logClaudeConfigResolution` helper + 3 call sites in Start/StartWithMessage/Restart), `internal/session/claude.go` (new `GetClaudeConfigDirSourceForGroup` helper). `internal/session/env.go` touched only if CFG-03 diagnosis reveals a deeper gap than the L598 wiring.
 
 **Success criteria:**
-1. All 6 `TestPerGroupConfig_*` tests GREEN under `-race -count=1`.
-2. `env_file` with `.envrc` or flat `KEY=VALUE` format has its exports visible in the spawn env. Missing file logs a warning and does not block.
-3. Observability log line is emitted on every session spawn with the correct `source=` attribution.
-4. Atomic commits per logical change, signed "Committed by Ashesh Goplani".
+1. All 8 `TestPerGroupConfig_*` tests GREEN under `-race -count=1` (six ROADMAP-numbered tests 1/2/3/4/5/6 + two CFG-07 helper tests: `ClaudeConfigDirSourceLabel` + `ClaudeConfigResolutionLogFormat`).
+2. `env_file` with `.envrc` or flat `KEY=VALUE` format has its exports visible in the spawn env on BOTH the normal-claude path and the custom-command (conductor) path. Missing file logs a warning and does not block.
+3. Observability log line is emitted on every session spawn (Start, StartWithMessage, AND Restart) with the correct `source=` attribution, owned by a single private helper so the `"claude config resolution"` literal appears exactly once in the package.
+4. Atomic commits per logical change, signed "Committed by Ashesh Goplani". Fix commits carry `Base implementation by @alec-pinson in PR #578.`
 5. `make ci` passes.
 
 **Dependencies:** Phase 1 complete (shared test file; Phase 2 extends it).
+
+**Plans:** 2 plans
+
+Plans:
+- [ ] 02-01-PLAN.md — CFG-03 + CFG-04 test 4: RED-first TDD for env_file sourcing in the production spawn-command builder for BOTH normal-claude and custom-command paths; pre-authorized one-line fix at `instance.go:598` to prepend `buildEnvSourceCommand()` to the custom-command return.
+- [ ] 02-02-PLAN.md — CFG-04 test 5 + CFG-07: conductor-restart regression test + source-label helper (`GetClaudeConfigDirSourceForGroup`) in claude.go + private `logClaudeConfigResolution` helper in instance.go emitted from THREE sites (Start, StartWithMessage, Restart). Two CFG-07 unit tests (`ClaudeConfigDirSourceLabel` priority-chain, `ClaudeConfigResolutionLogFormat` slog text-handler format lock).
 
 ---
 
@@ -146,7 +153,7 @@ Plans:
 Recap of the six success criteria from the spec — the audit step will confirm all six:
 
 1. PR #578 unit tests remain GREEN.
-2. `go test ./internal/session/... -run TestPerGroupConfig_ -race -count=1` — all 6 GREEN.
+2. `go test ./internal/session/... -run TestPerGroupConfig_ -race -count=1` — all 8 GREEN (six ROADMAP-numbered tests 1/2/3/4/5/6 + two CFG-07 helper tests).
 3. `bash scripts/verify-per-group-claude-config.sh` exits 0 on conductor host.
 4. Manual conductor proof: `ps -p <pane_pid>` env shows the overridden `CLAUDE_CONFIG_DIR` after restart.
 5. Commit log includes README + CHANGELOG + CLAUDE.md commits and at least one `@alec-pinson` attribution commit.
@@ -164,4 +171,4 @@ Recap of the six success criteria from the spec — the audit step will confirm 
 ---
 
 *Roadmap created: 2026-04-15*
-*Last updated: 2026-04-15 — initial v1.5.4 creation*
+*Last updated: 2026-04-15 — Phase 2 revision (iteration 1/3): env_file wiring fix for custom-command path at instance.go:598; CFG-07 factored into logClaudeConfigResolution helper called from Start/StartWithMessage/Restart; added TestPerGroupConfig_ClaudeConfigResolutionLogFormat automated format lock*
