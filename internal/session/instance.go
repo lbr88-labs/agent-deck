@@ -1869,6 +1869,49 @@ func (i *Instance) buildTmuxOptionOverrides() map[string]string {
 	return overrides
 }
 
+// ensureClaudeSessionIDFromDisk is the Phase 5 / REQ-7 prelude invoked by
+// Start() and StartWithMessage() when an IsClaudeCompatible Instance has an
+// empty ClaudeSessionID. It attempts to discover the latest UUID-named
+// JSONL under Claude's projects dir for i.ProjectPath and, on success,
+// mutates i.ClaudeSessionID to that UUID IN PLACE so the very next check
+// (`if i.ClaudeSessionID != ""`) naturally routes through
+// buildClaudeResumeCommand, reusing the Phase 3 resume contract verbatim.
+//
+// PERSIST-11: runs uniformly on every empty-ID Claude-compatible start —
+// no branch on i.Command (custom wrapper vs default wrapper), matching
+// spec REQ-7 acceptance item 7 and CONTEXT D-04.
+//
+// PERSIST-12: the write-through onto i.ClaudeSessionID is in-memory; the
+// external storage layer (TUI main loop / CLI save cycle / storage
+// watcher at internal/session/storage.go) picks up the mutation on its
+// next save — identical to how Phase 3's buildClaudeCommand at
+// instance.go:567 mutates i.ClaudeSessionID without an inline save.
+//
+// PERSIST-13: returns quietly (no error, no log) when no JSONL is found.
+// Start() then falls through to its existing fresh-session branch.
+//
+// D-07: emits exactly ONE `resume: id=<uuid> reason=jsonl_discovery`
+// sessionLog.Info line on discovery success. buildClaudeResumeCommand
+// downstream will emit its OWN `resume: id=<uuid> reason=...` line with
+// reason=conversation_data_present or reason=session_id_flag_no_jsonl —
+// two grep-stable lines for a Phase 5 discovery start, distinguishable
+// by the `reason=` attr.
+func (i *Instance) ensureClaudeSessionIDFromDisk() {
+	if i.ClaudeSessionID != "" {
+		return
+	}
+	uuid, found := discoverLatestClaudeJSONL(i.ProjectPath)
+	if !found {
+		return
+	}
+	i.ClaudeSessionID = uuid
+	sessionLog.Info("resume: id="+uuid+" reason=jsonl_discovery",
+		slog.String("instance_id", i.ID),
+		slog.String("claude_session_id", uuid),
+		slog.String("path", i.ProjectPath),
+		slog.String("reason", "jsonl_discovery"))
+}
+
 // Start starts the session in tmux
 func (i *Instance) Start() error {
 	if i.tmuxSession == nil {
@@ -1890,6 +1933,13 @@ func (i *Instance) Start() error {
 		// The fresh-session line is emitted here so every Claude start
 		// produces exactly one "resume: " record in the session log. See
 		// CONTEXT Decision 2.
+		//
+		// REQ-7 / PERSIST-11..13 prelude (Phase 5): if ClaudeSessionID is
+		// empty, attempt to discover the latest JSONL on disk and populate
+		// the field before the existing resume/fresh branch below decides.
+		// If discovery finds nothing, the field stays empty and the
+		// else-branch fires as today (fresh session).
+		i.ensureClaudeSessionIDFromDisk()
 		if i.ClaudeSessionID != "" {
 			command = i.buildClaudeResumeCommand()
 		} else {
@@ -2029,6 +2079,11 @@ func (i *Instance) StartWithMessage(message string) error {
 		// itself; the fresh-session line is emitted here so StartWithMessage
 		// produces exactly one "resume: " record per call (matching Start()).
 		// See CONTEXT Decision 2.
+		//
+		// REQ-7 / PERSIST-11..13 prelude (Phase 5): same disk-scan prelude
+		// as Start() above, so the `agent-deck session send --initial-message`
+		// path resumes custom-command sessions uniformly.
+		i.ensureClaudeSessionIDFromDisk()
 		if i.ClaudeSessionID != "" {
 			command = i.buildClaudeResumeCommand()
 		} else {

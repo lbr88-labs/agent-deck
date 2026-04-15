@@ -400,6 +400,95 @@ func findActiveSessionIDExcluding(configDir, projectPath string, excludeIDs map[
 	return ""
 }
 
+// discoverLatestClaudeJSONL resolves the newest UUID-named JSONL transcript
+// (by mtime) under Claude Code's canonical projects directory for the given
+// projectPath. Returns (uuid, true) on a hit — where uuid is the JSONL
+// basename stripped of the ".jsonl" suffix — and ("", false) when the
+// project dir is absent, empty, or contains zero UUID-named JSONLs.
+//
+// This helper is PURE: no side effects, no Instance mutation, no logging.
+// Phase 5 (REQ-7 / PERSIST-11..13) call site in Instance.Start() /
+// Instance.StartWithMessage() is responsible for write-through persistence
+// of the discovered UUID into i.ClaudeSessionID BEFORE spawn, and for
+// emitting the D-07 `resume: id=<uuid> reason=jsonl_discovery` log line.
+//
+// Semantic differences vs findActiveSessionID (claude.go:332):
+//   - NO 5-minute recency cap. findActiveSessionID detects a CURRENTLY
+//     running session for session-id reconciliation at instance.go:2602-2660;
+//     the cap is intentional there. Phase 5 picks a resume target at
+//     cold-boot/start time, where any JSONL however old is a legitimate
+//     candidate — a cap would silently break every cold resume.
+//   - No exclude-ID plumbing. Discovery at start time has no notion of
+//     "another agent-deck instance's session id to avoid".
+//
+// Path encoding mirrors sessionHasConversationData at instance.go:4845-4926
+// and findActiveSessionID at claude.go:340-344: EvalSymlinks on projectPath
+// first (resolves macOS /tmp → /private/tmp), then ConvertToClaudeDirName,
+// then join under GetClaudeConfigDir() + "/projects/" (falling back to
+// $HOME/.claude when GetClaudeConfigDir returns "").
+//
+// Errors are swallowed (returns "", false) — PERSIST-13 guarantees that an
+// absent / unreadable / empty project dir is NOT an error; the caller falls
+// through to the existing fresh-session branch.
+func discoverLatestClaudeJSONL(projectPath string) (string, bool) {
+	if projectPath == "" {
+		return "", false
+	}
+
+	configDir := GetClaudeConfigDir()
+	if configDir == "" {
+		configDir = filepath.Join(os.Getenv("HOME"), ".claude")
+	}
+
+	resolvedPath := projectPath
+	if resolved, err := filepath.EvalSymlinks(projectPath); err == nil {
+		resolvedPath = resolved
+	}
+
+	encoded := ConvertToClaudeDirName(resolvedPath)
+	if encoded == "" {
+		encoded = "-"
+	}
+
+	projectDir := filepath.Join(configDir, "projects", encoded)
+	if _, err := os.Stat(projectDir); os.IsNotExist(err) {
+		return "", false
+	}
+
+	entries, err := os.ReadDir(projectDir)
+	if err != nil || len(entries) == 0 {
+		return "", false
+	}
+
+	var bestUUID string
+	var bestMTime time.Time
+	for _, e := range entries {
+		if e.IsDir() {
+			continue
+		}
+		base := e.Name()
+		if strings.HasPrefix(base, "agent-") {
+			continue
+		}
+		if !uuidSessionFileRegex.MatchString(base) {
+			continue
+		}
+		info, ierr := e.Info()
+		if ierr != nil {
+			continue
+		}
+		if info.ModTime().After(bestMTime) {
+			bestMTime = info.ModTime()
+			bestUUID = strings.TrimSuffix(base, ".jsonl")
+		}
+	}
+
+	if bestUUID == "" {
+		return "", false
+	}
+	return bestUUID, true
+}
+
 // getProjectSettingsPath returns the path to .claude/settings.local.json for a project
 func getProjectSettingsPath(projectPath string) string {
 	return filepath.Join(projectPath, ".claude", "settings.local.json")
