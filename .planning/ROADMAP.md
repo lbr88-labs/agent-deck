@@ -146,6 +146,12 @@ Plans:
 
 **Dependencies:** Phases 1 and 2 complete (tests and implementation must exist before the harness can prove end-to-end behavior and before CLAUDE.md can claim `TestPerGroupConfig_*` enforcement).
 
+**Plans:** 2 plans
+
+Plans:
+- [ ] 03-01-PLAN.md — CFG-05 visual harness: ship `scripts/verify-per-group-claude-config.sh` with preflight + config isolation + trap cleanup + TTY-aware pass/fail table; run on conductor host; commit with @alec-pinson attribution trailer.
+- [ ] 03-02-PLAN.md — CFG-06 docs: README `### Per-group Claude config` subsection under §Features, repo-root CLAUDE.md resurrection (Path A from `5013940^`) + TestPerGroupConfig_* one-liner, CHANGELOG `[Unreleased] > Added` bullet with PR #578 reference, phase-wide hard-rule audit (attribution ≥ 2, no Claude attribution, all commits signed).
+
 ---
 
 ## Milestone Verification (runs at `/gsd-complete-milestone`)
