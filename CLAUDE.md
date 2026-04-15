@@ -54,8 +54,32 @@ The 2026-04-14 incident destroyed 33 live Claude conversations across in-flight 
 - **Never `rm`** — use `trash`.
 - **Never commit with Claude attribution** — no "🤖 Generated with Claude Code" or "Co-Authored-By: Claude" lines.
 - **Never `git push`, `git tag`, `gh release`, `gh pr create/merge`** without explicit user approval.
+- **No `--no-verify`** — every commit goes through pre-commit hooks. EXCEPTION: metadata-only commits — see `### --no-verify scope clarification` below.
 - **TDD always** — the regression test for a bug lands BEFORE the fix.
 - **Simplicity first** — every change minimal, targeted, no speculative refactoring.
+
+### --no-verify scope clarification (v1.5.4+)
+
+The `--no-verify` ban above applies to **source-modifying commits only**. Commits that touch ONLY metadata paths MAY use `--no-verify` iff the pre-commit hook would no-op. This clarification prevents paying 10–30s of hook latency on commits that provably don't require verification.
+
+**Metadata-only paths (exempt from the ban):**
+
+- `.planning/**` — phase plans, summaries, state, requirements
+- `docs/**` — specs, design docs, architecture notes
+- `*.md` outside `internal/`, `cmd/`, `pkg/`, and other source dirs
+- `CHANGELOG.md` during milestone-prep phases
+
+**Source-modifying commits (ban still applies):**
+
+- Any commit that modifies `internal/**/*.go`, `cmd/**/*.go`, `pkg/**/*.go`, `scripts/**`, or any file under `internal/tmux/**`
+- Any commit that modifies `go.mod`, `go.sum`, or CI config
+- Repo-root `CLAUDE.md` and `README.md` (these affect development workflow and deployment)
+
+**Negative example.** A commit staging `.planning/STATE.md` AND `internal/session/instance.go` is a SOURCE-modifying commit (source files present in the staged set). Hooks MUST run. You cannot bypass hooks by arguing the metadata file is the "primary" change.
+
+**Positive example.** A commit staging ONLY `.planning/phases/04-*/04-01-SUMMARY.md` and `.planning/STATE.md` is metadata-only. Hooks would no-op (no Go source changed, no lint-relevant files). `--no-verify` is acceptable here.
+
+Rationale: preserves the v1.5.3 test-gate for source changes while freeing metadata commits from hook latency. Phase 4 (v1.5.4) of this milestone established both the `--no-verify` ban and this clarification (see issue #602 for the conductor block that drove the Phase 4 volume of metadata commits).
 
 ## Current milestone
 
