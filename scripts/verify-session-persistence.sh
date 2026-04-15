@@ -120,6 +120,21 @@ print_cgroup_for_pid() {
   fi
 }
 
+tmux_pane_start_command_for_session() {
+  # Returns the pane_start_command of the first pane in the agent-deck
+  # session $1. This is the authoritative argv that tmux launched claude
+  # with (quoted exactly as agent-deck constructed it). Preferred over
+  # `ps -ef | grep claude` which is ambiguous on hosts with many live
+  # claude processes sharing the same tmux daemon.
+  local name="$1"
+  local tsess
+  tsess=$(agent-deck session show --json "${name}" 2>/dev/null | jq -r '.tmux_session // empty' 2>/dev/null)
+  if [[ -z "${tsess}" || "${tsess}" == "null" ]]; then
+    return 1
+  fi
+  tmux list-panes -t "${tsess}" -F '#{pane_start_command}' 2>/dev/null | head -1 || true
+}
+
 want_scenario() {
   local n="$1"
   if [[ -z "${SCENARIO:-}" ]]; then return 0; fi
@@ -230,12 +245,20 @@ scenario_3_restart_resume() {
   log "restarting session: agent-deck session start ${name}"
   agent-deck session start "${name}" >/dev/null || true
   sleep 2
-  # Read captured argv from the stub (or ps if real claude).
+  # Read captured argv. Preferred order:
+  #  1) stub tempfile (AGENT_DECK_VERIFY_USE_STUB=1 path)
+  #  2) tmux pane_start_command for the session's tmux_session (authoritative:
+  #     this is exactly what agent-deck handed to tmux new-session)
+  #  3) ps -ef grep fallback (last-resort; ambiguous on hosts with many
+  #     concurrent claude processes)
   local argv=""
   if [[ -s "${ARGV_OUT}" ]]; then
     argv="$(cat "${ARGV_OUT}")"
   else
-    argv="$(ps -ef | grep -E '[c]laude' | head -1 || true)"
+    argv="$(tmux_pane_start_command_for_session "${name}" || true)"
+    if [[ -z "${argv}" ]]; then
+      argv="$(ps -ef | grep -E '[c]laude' | head -1 || true)"
+    fi
   fi
   log "captured claude argv: ${argv}"
   if echo "${argv}" | grep -qE -- '--resume|--session-id'; then
@@ -258,7 +281,10 @@ scenario_4_fresh_session_shape() {
   if [[ -s "${ARGV_OUT}" ]]; then
     argv="$(cat "${ARGV_OUT}")"
   else
-    argv="$(ps -ef | grep -E '[c]laude' | head -1 || true)"
+    argv="$(tmux_pane_start_command_for_session "${name}" || true)"
+    if [[ -z "${argv}" ]]; then
+      argv="$(ps -ef | grep -E '[c]laude' | head -1 || true)"
+    fi
   fi
   log "captured claude argv: ${argv}"
   if echo "${argv}" | grep -qE -- '--session-id' && ! echo "${argv}" | grep -qE -- '--resume'; then
