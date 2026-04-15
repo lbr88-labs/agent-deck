@@ -22,7 +22,7 @@ Every requirement below is in scope. Mapping: REQ-ID in this file == CFG-NN in P
 
 ### env_file source semantics
 
-- [ ] **CFG-03** (P0): `[groups."<name>".claude] env_file = "/path/to/.envrc"` causes the tmux pane to `source "/path/to/.envrc"` before exec'ing claude or the custom command. Path expansion matches `config_dir` (`~`, env vars). Supports both shell-style `.envrc` and flat `KEY=VALUE` `.env` (bash `source` handles both). Missing file logs a warning and continues — does not block session start. Acceptance: `/tmp/envrc-test` exporting `TEST_ENVFILE_VAR=hello` wired into a group; session launched; `echo $TEST_ENVFILE_VAR` prints `hello`. Non-goal: no direnv layer (hashing, auto-reload).
+- [x] **CFG-03** (P0): `[groups."<name>".claude] env_file = "/path/to/.envrc"` causes the tmux pane to `source "/path/to/.envrc"` before exec'ing claude or the custom command. Path expansion matches `config_dir` (`~`, env vars). Supports both shell-style `.envrc` and flat `KEY=VALUE` `.env` (bash `source` handles both). Missing file logs a warning and continues — does not block session start. Acceptance: `/tmp/envrc-test` exporting `TEST_ENVFILE_VAR=hello` wired into a group; session launched; `echo $TEST_ENVFILE_VAR` prints `hello`. Non-goal: no direnv layer (hashing, auto-reload). **Completed in plan 02-01 (38a2af3 RED test + e608480 L599 hardening); runtime proof via bash -c harness in TestPerGroupConfig_EnvFileSourcedInSpawn assertion C.**
 
 ### Regression tests
 
@@ -30,7 +30,7 @@ Every requirement below is in scope. Mapping: REQ-ID in this file == CFG-NN in P
   1. `TestPerGroupConfig_CustomCommandGetsGroupConfigDir` — instance with non-empty `Command`, group `foo` has `config_dir` override; built env/exports include `CLAUDE_CONFIG_DIR=<foo's dir>`.
   2. `TestPerGroupConfig_GroupOverrideBeatsProfile` — both set; group wins.
   3. `TestPerGroupConfig_UnknownGroupFallsThroughToProfile` — instance in non-existent group; falls through to profile override.
-  4. `TestPerGroupConfig_EnvFileSourcedInSpawn` — `env_file` set; its exported vars visible in spawn env (via `buildBashExportPrefix` or the prefix pipeline equivalent).
+  4. `TestPerGroupConfig_EnvFileSourcedInSpawn` — `env_file` set; its exported vars visible in spawn env (via `buildBashExportPrefix` or the prefix pipeline equivalent). **[DONE — plan 02-01, commit 38a2af3]**
   5. `TestPerGroupConfig_ConductorRestartPreservesConfigDir` — end-to-end: create custom-command session, stop, restart; assert `CLAUDE_CONFIG_DIR` in new spawn matches group's override. Links REQ-2 to v1.5.2's REQ-7 (custom-command resume path).
   6. `TestPerGroupConfig_CacheInvalidation` — add override, resolve; remove override, `ClearUserConfigCache()`, resolve returns new value.
   All six green under `go test ./internal/session/... -run TestPerGroupConfig_ -race -count=1`.
@@ -93,9 +93,10 @@ Every active REQ maps to exactly one phase.
 | CFG-01 | Phase 1 | Complete (01-01) |
 | CFG-02 | Phase 1 | Complete (01-01) |
 | CFG-04 (tests 1, 2, 3, 6) | Phase 1 | Complete (01-01) |
-| CFG-03 | Phase 2 | Pending |
-| CFG-04 (tests 4, 5) | Phase 2 | Pending |
-| CFG-07 | Phase 2 | Pending |
+| CFG-03 | Phase 2 | Complete (02-01) |
+| CFG-04 (test 4) | Phase 2 | Complete (02-01) |
+| CFG-04 (test 5) | Phase 2 | Pending (02-02) |
+| CFG-07 | Phase 2 | Pending (02-02) |
 | CFG-05 | Phase 3 | Pending |
 | CFG-06 | Phase 3 | Pending |
 

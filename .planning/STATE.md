@@ -3,14 +3,14 @@ gsd_state_version: 1.0
 milestone: v1.5.4
 milestone_name: milestone
 status: executing
-last_updated: "2026-04-15T13:28:28.277Z"
-last_activity: 2026-04-15 -- Phase 2 planning complete
+last_updated: "2026-04-15T13:38:00.000Z"
+last_activity: 2026-04-15 -- Phase 02 plan 01 (CFG-03 + CFG-04 test 4) COMPLETE
 progress:
   total_phases: 3
   completed_phases: 1
-  total_plans: 3
-  completed_plans: 1
-  percent: 33
+  total_plans: 4
+  completed_plans: 2
+  percent: 50
 ---
 
 # Project State — v1.5.4
@@ -38,17 +38,17 @@ See `docs/PER-GROUP-CLAUDE-CONFIG-SPEC.md` for the source spec.
 
 ## Current Position
 
-Phase: 2
-Plan: Not started
-Status: Ready to execute
-Last activity: 2026-04-15 -- Phase 2 planning complete
+Phase: 02 (env-file-source-semantics-observability-conductor-e2e) — EXECUTING
+Plan: 1 of 2 — **COMPLETE**; next: 02-02 (CFG-07 observability + conductor E2E + CFG-04 test 5)
+Status: Executing Phase 02
+Last activity: 2026-04-15 -- Plan 02-01 complete (CFG-03 locked + CFG-04 test 4 GREEN)
 
 ## Phase Progress
 
 | # | Phase | Status | Requirements | Plans |
 |---|-------|--------|--------------|-------|
 | 1 | Custom-command injection + core regression tests | Complete | CFG-01, CFG-02, CFG-04 (tests 1, 2, 3, 6) | 1/1 (01-01) |
-| 2 | env_file source semantics + observability + conductor E2E | Pending | CFG-03, CFG-04 (tests 4, 5), CFG-07 | — |
+| 2 | env_file source semantics + observability + conductor E2E | In progress | CFG-03, CFG-04 (tests 4, 5), CFG-07 | 1/2 (02-01 complete) |
 | 3 | Visual harness + documentation + attribution commit | Pending | CFG-05, CFG-06 | — |
 
 ## Phase 01 commits (since base 3e402e2)
@@ -58,6 +58,21 @@ Last activity: 2026-04-15 -- Phase 2 planning complete
 | 4730aa5 | docs | docs(planning): plan phase 01 — custom-command injection + core regression tests |
 | 40f4f04 | test | test(session): add per-group Claude config regression tests (CFG-04 tests 1/2/3/6) |
 | b39bbf3 | fix | fix(session): export CLAUDE_CONFIG_DIR for custom-command sessions (CFG-02) |
+
+## Phase 02 commits
+
+| Hash | Type | Subject |
+|------|------|---------|
+| 6830838 | docs | docs(02): scaffold phase 2 context from spec (CFG-03, CFG-04 tests 4/5, CFG-07) |
+| 6a0205d | docs | docs(planning): plan phase 02 — env_file source + observability + conductor E2E |
+| 38a2af3 | test | test(session): add env_file spawn-source regression test (CFG-04 test 4) |
+| e608480 | fix  | fix(session): source group env_file on custom-command spawn path (CFG-03) |
+
+## Decisions — Plan 02-01
+
+- Pre-authorized instance.go:598→599 one-line fix applied per plan directive despite first-run GREEN on assertion B. Diagnosis: buildClaudeCommand at L477-480 already prepends envPrefix unconditionally, so the CFG-03 guarantee was being delivered by the outer wrapper for production callers. The L599 hardening is defense-in-depth against any future callsite that invokes buildClaudeCommandWithMessage directly (bypassing buildClaudeCommand).
+- Three new pre-existing StatusEventWatcher fsnotify-timeout failures confirmed unrelated to Phase 02 changes via `git stash`. Logged to Phase 02 deferred-items.md. Not a regression.
+- Fix commit (e608480) carries `Base implementation by @alec-pinson in PR #578.` per milestone must_have #6.
 
 ## Hard rules in force (carried from CLAUDE.md + spec)
 
