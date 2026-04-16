@@ -123,3 +123,40 @@ tests:
     command: go test ./internal/session/ -run TestResumeCommandAppendsChannels -count=1
       -v
     expected: pass
+- id: fix-544-544-fd-preservation
+  added: '2026-04-16'
+  task: fix-544
+  file: internal/ui/keyboard_compat_mechanism_test.go
+  test_name: TestCSIuReader_PreservesFdForRawMode
+  purpose: "CSIuFileReader must preserve *os.File Fd() for Bubble Tea raw-mode setup\
+    \ \u2014 prevents #544 regression"
+  source: gh#544,#607,phase-02-01-retrospective
+  manual: false
+  run:
+    command: go test ./internal/ui/ -run TestCSIuReader_PreservesFdForRawMode -count=1
+      -v
+    expected: pass
+- id: fix-544-544-non-file-fallback
+  added: '2026-04-16'
+  task: fix-544
+  file: internal/ui/keyboard_compat_mechanism_test.go
+  test_name: TestCSIuReader_NonFileFallsBackToPlainReader
+  purpose: NewCSIuReader must not synthesize fake Fd() for non-File inputs
+  source: gh#544,#607,phase-02-01-retrospective
+  manual: false
+  run:
+    command: go test ./internal/ui/ -run TestCSIuReader_NonFileFallsBackToPlainReader
+      -count=1 -v
+    expected: pass
+- id: fix-544-544-underscore-csiu
+  added: '2026-04-16'
+  task: fix-544
+  file: internal/ui/keyboard_compat_mechanism_test.go
+  test_name: TestCSIuReader_UnderscorePreserved
+  purpose: CSI u sequence for Shift+hyphen must translate to '_' byte (02-01 fix preserved)
+  source: gh#544,#607,phase-02-01-retrospective
+  manual: false
+  run:
+    command: go test ./internal/ui/ -run TestCSIuReader_UnderscorePreserved -count=1
+      -v
+    expected: pass
