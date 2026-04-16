@@ -161,3 +161,49 @@ func TestChannelsRestartPersist(t *testing.T) {
 		)
 	}
 }
+
+// TestResumeCommandAppendsChannels is the phase 5 LOOPBACK regression guard.
+//
+// Bug (conductor E2E, v1.5.x): `agent-deck session restart <id>` regenerated
+// the pane_start_command WITHOUT --channels, even though the Instance had
+// Channels set and `agent-deck session start` correctly emitted --channels.
+//
+// Root cause: Instance.Restart() dispatches to buildClaudeResumeCommand,
+// which hand-rolled its own dangerous-mode flag assembly and never called
+// buildClaudeExtraFlags — so every flag emitted by that helper (--channels,
+// --add-dir, etc.) was silently dropped on restart. TestChannelsRestartPersist
+// only covers JSON round-trip + buildClaudeCommand (the START path), so it
+// missed this.
+//
+// This test asserts the restart-path command builder preserves --channels
+// whenever Instance.Channels is non-empty. Failing this test MUST be fixed
+// by routing buildClaudeResumeCommand through buildClaudeExtraFlags; any
+// other fix is a symptom patch.
+func TestResumeCommandAppendsChannels(t *testing.T) {
+	channelsTestEnv(t)
+
+	inst := NewInstanceWithTool("ch-resume", t.TempDir(), "claude")
+	// Force the --session-id branch (no on-disk JSONL for this fresh UUID).
+	inst.ClaudeSessionID = "00000000-0000-0000-0000-000000000000"
+	setChannelsField(t, inst, []string{
+		"plugin:telegram@acme/bot",
+		"plugin:discord@acme/bot",
+	})
+
+	cmd := inst.buildClaudeResumeCommand()
+
+	if !strings.Contains(cmd, "--channels") {
+		t.Fatalf(
+			"buildClaudeResumeCommand dropped --channels on restart path; "+
+				"this is the phase-5 loopback bug. got:\n%s",
+			cmd,
+		)
+	}
+	expected := "--channels plugin:telegram@acme/bot,plugin:discord@acme/bot"
+	if !strings.Contains(cmd, expected) {
+		t.Errorf(
+			"expected resume command to contain %q, got:\n%s",
+			expected, cmd,
+		)
+	}
+}
