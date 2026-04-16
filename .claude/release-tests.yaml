@@ -159,4 +159,16 @@ tests:
   run:
     command: go test ./internal/ui/ -run TestCSIuReader_UnderscorePreserved -count=1
       -v
+- id: fix-615-session-show-channels
+  added: '2026-04-16'
+  task: fix-615
+  file: cmd/agent-deck/channels_cmd_test.go
+  test_name: TestSessionShowJSONIncludesChannels
+  purpose: "session show --json must include channels field when set \u2014 guards\
+    \ parallel-paths regression where list --json and show --json emitters drift."
+  source: gh#615
+  manual: false
+  run:
+    command: go test ./cmd/agent-deck/ -run TestSessionShowJSONIncludesChannels -count=1
+      -timeout 90s -v
     expected: pass
