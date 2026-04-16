@@ -4302,9 +4302,6 @@ func (i *Instance) buildClaudeResumeCommand() string {
 		userConfig, _ := LoadUserConfig()
 		opts = NewClaudeOptions(userConfig)
 	}
-	dangerousMode := opts.SkipPermissions
-	autoMode := opts.AutoMode
-	allowDangerousMode := opts.AllowSkipPermissions
 
 	// Check if session has actual conversation data
 	// If not, use --session-id instead of --resume to avoid "No conversation found" error
@@ -4334,26 +4331,24 @@ func (i *Instance) buildClaudeResumeCommand() string {
 			slog.String("reason", "session_id_flag_no_jsonl"))
 	}
 
-	// Build permission flag (--dangerously-skip-permissions wins over --permission-mode auto wins over --allow-...)
-	dangerousFlag := ""
-	if dangerousMode {
-		dangerousFlag = " --dangerously-skip-permissions"
-	} else if autoMode {
-		dangerousFlag = " --permission-mode auto"
-	} else if allowDangerousMode {
-		dangerousFlag = " --allow-dangerously-skip-permissions"
-	}
+	// Delegate flag assembly to buildClaudeExtraFlags so restart stays in
+	// lockstep with the start path. Handles permission modes (dangerous /
+	// auto / allow), --add-dir for parented sessions, and --channels for
+	// plugin channel subscriptions. Without this, any flag added to
+	// buildClaudeExtraFlags silently disappears on session restart — the
+	// phase-5 loopback regression (TestResumeCommandAppendsChannels).
+	extraFlags := i.buildClaudeExtraFlags(opts)
 
 	// CLAUDE_SESSION_ID is propagated via host-side SetEnvironment (SyncSessionIDsToTmux)
 	// after the tmux session is restarted. No inline tmux set-environment in the shell string
 	// (which silently fails inside Docker sandbox containers).
 	if useResume {
 		return fmt.Sprintf("%s%s%s --resume %s%s",
-			envPrefix, configDirPrefix, claudeCmd, i.ClaudeSessionID, dangerousFlag)
+			envPrefix, configDirPrefix, claudeCmd, i.ClaudeSessionID, extraFlags)
 	}
 	// Session was never interacted with - use --session-id to create fresh session.
 	return fmt.Sprintf("%s%s%s --session-id %s%s",
-		envPrefix, configDirPrefix, claudeCmd, i.ClaudeSessionID, dangerousFlag)
+		envPrefix, configDirPrefix, claudeCmd, i.ClaudeSessionID, extraFlags)
 }
 
 // SetGeminiModel sets the Gemini model for this session and triggers a restart if running.
