@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"gopkg.in/yaml.v3"
 
@@ -541,4 +542,84 @@ func containsSubstr(s, sub string) bool {
 		}
 	}
 	return false
+}
+
+func TestWatcherList_JSON_ExposesStateFields(t *testing.T) {
+	tmp := t.TempDir()
+	t.Setenv("HOME", tmp)
+
+	seedState := func(name string, s *watcher.WatcherState) {
+		t.Helper()
+		if err := watcher.SaveState(name, s); err != nil {
+			t.Fatalf("SaveState %s: %v", name, err)
+		}
+	}
+
+	now := time.Now().UTC().Truncate(time.Second)
+	seedState("healthy-w", &watcher.WatcherState{LastEventTS: now, ErrorCount: 0, AdapterHealthy: true})
+	seedState("warning-w", &watcher.WatcherState{LastEventTS: now, ErrorCount: 5, AdapterHealthy: true})
+	seedState("error-w", &watcher.WatcherState{LastEventTS: now, ErrorCount: 12, AdapterHealthy: true})
+	// fresh-w intentionally has no state.json seeded.
+
+	t.Run("healthy", func(t *testing.T) {
+		e := watcherListEntry{Name: "healthy-w"}
+		populateStateFields(&e)
+		if e.LastEventTS == nil {
+			t.Fatal("LastEventTS must not be nil for healthy-w")
+		}
+		if delta := e.LastEventTS.Sub(now); delta < -time.Second || delta > time.Second {
+			t.Errorf("LastEventTS want within 1s of %v, got %v (delta %v)", now, *e.LastEventTS, delta)
+		}
+		if e.ErrorCount != 0 {
+			t.Errorf("ErrorCount want 0, got %d", e.ErrorCount)
+		}
+		if e.HealthStatus != "healthy" {
+			t.Errorf("HealthStatus want %q, got %q", "healthy", e.HealthStatus)
+		}
+	})
+
+	t.Run("warning", func(t *testing.T) {
+		e := watcherListEntry{Name: "warning-w"}
+		populateStateFields(&e)
+		if e.LastEventTS == nil {
+			t.Fatal("LastEventTS must not be nil for warning-w")
+		}
+		if e.ErrorCount != 5 {
+			t.Errorf("ErrorCount want 5, got %d", e.ErrorCount)
+		}
+		if e.HealthStatus != "warning" {
+			t.Errorf("HealthStatus want %q, got %q (threshold per health.go:171 is >=3)", "warning", e.HealthStatus)
+		}
+	})
+
+	t.Run("error", func(t *testing.T) {
+		e := watcherListEntry{Name: "error-w"}
+		populateStateFields(&e)
+		if e.LastEventTS == nil {
+			t.Fatal("LastEventTS must not be nil for error-w")
+		}
+		if e.ErrorCount != 12 {
+			t.Errorf("ErrorCount want 12, got %d", e.ErrorCount)
+		}
+		if e.HealthStatus != "error" {
+			t.Errorf("HealthStatus want %q, got %q (threshold per health.go:164 is >=10)", "error", e.HealthStatus)
+		}
+	})
+
+	t.Run("fresh", func(t *testing.T) {
+		e := watcherListEntry{Name: "fresh-w"}
+		populateStateFields(&e)
+		if e.LastEventTS != nil {
+			t.Errorf("LastEventTS must be nil for fresh-w (no state.json), got %v", *e.LastEventTS)
+		}
+		if e.ErrorCount != 0 {
+			t.Errorf("ErrorCount want 0 for fresh-w, got %d", e.ErrorCount)
+		}
+		// "unknown" is locked by CONTEXT.md line 59 ("emit `null` / `0` / `"unknown"` respectively").
+		// It is NOT one of HealthTracker's Check() values (healthy/warning/error) — this is a
+		// CLI-specific "no data yet" marker.
+		if e.HealthStatus != "unknown" {
+			t.Errorf("HealthStatus want %q (locked by CONTEXT.md for missing state.json), got %q", "unknown", e.HealthStatus)
+		}
+	})
 }
