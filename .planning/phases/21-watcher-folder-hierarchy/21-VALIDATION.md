@@ -1,10 +1,11 @@
 ---
 phase: 21
 slug: watcher-folder-hierarchy
-status: draft
-nyquist_compliant: false
+status: approved
+nyquist_compliant: true
 wave_0_complete: false
 created: 2026-04-16
+approved: 2026-04-16
 ---
 
 # Phase 21 — Validation Strategy
@@ -92,4 +93,4 @@ created: 2026-04-16
 - [ ] Feedback latency < 90s
 - [ ] `nyquist_compliant: true` set in frontmatter (flip after checker passes)
 
-**Approval:** pending (set after plan-checker pass)
+**Approval:** approved 2026-04-16 (plan-checker VERIFICATION PASSED on iteration 2/3)
