@@ -23,7 +23,7 @@ func TestWatcherMetaRoundTrip(t *testing.T) {
 	}
 
 	// Verify file was created at expected path
-	expectedPath := filepath.Join(tmpDir, ".agent-deck", "watchers", "test-watcher", "meta.json")
+	expectedPath := filepath.Join(tmpDir, ".agent-deck", "watcher", "test-watcher", "meta.json")
 	if _, err := os.Stat(expectedPath); os.IsNotExist(err) {
 		t.Fatalf("meta.json not created at expected path: %s", expectedPath)
 	}
@@ -74,7 +74,7 @@ func TestWatcherMetaLoadBackfillsName(t *testing.T) {
 	}
 
 	// Overwrite with JSON missing the name field
-	metaPath := filepath.Join(tmpDir, ".agent-deck", "watchers", "backfill-test", "meta.json")
+	metaPath := filepath.Join(tmpDir, ".agent-deck", "watcher", "backfill-test", "meta.json")
 	if err := os.WriteFile(metaPath, []byte(`{"type":"ntfy","created_at":"2026-04-10T12:00:00Z"}`), 0o644); err != nil {
 		t.Fatalf("overwrite meta.json: %v", err)
 	}
@@ -154,7 +154,7 @@ func TestSaveWatcherMeta_AtomicWrite(t *testing.T) {
 		t.Fatalf("SaveWatcherMeta: %v", err)
 	}
 
-	dir := filepath.Join(tmpDir, ".agent-deck", "watchers", "atomic-test")
+	dir := filepath.Join(tmpDir, ".agent-deck", "watcher", "atomic-test")
 	finalPath := filepath.Join(dir, "meta.json")
 	tmpPath := finalPath + ".tmp"
 
@@ -197,7 +197,7 @@ func TestWatcherDirHelpers(t *testing.T) {
 	if err != nil {
 		t.Fatalf("WatcherDir: %v", err)
 	}
-	expected := filepath.Join(tmpDir, ".agent-deck", "watchers")
+	expected := filepath.Join(tmpDir, ".agent-deck", "watcher")
 	if dir != expected {
 		t.Errorf("WatcherDir() = %q, want %q", dir, expected)
 	}
@@ -206,7 +206,7 @@ func TestWatcherDirHelpers(t *testing.T) {
 	if err != nil {
 		t.Fatalf("WatcherNameDir: %v", err)
 	}
-	expectedName := filepath.Join(tmpDir, ".agent-deck", "watchers", "my-watcher")
+	expectedName := filepath.Join(tmpDir, ".agent-deck", "watcher", "my-watcher")
 	if nameDir != expectedName {
 		t.Errorf("WatcherNameDir() = %q, want %q", nameDir, expectedName)
 	}

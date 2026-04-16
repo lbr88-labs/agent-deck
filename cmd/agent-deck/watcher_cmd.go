@@ -25,6 +25,48 @@ type channelConfig struct {
 	Prefix      string `json:"prefix"`
 }
 
+// watcherListEntry is the JSON schema for `agent-deck watcher list --json`.
+// Phase 21 (REQ-WF-6) adds last_event_ts, error_count, health_status.
+type watcherListEntry struct {
+	Name          string  `json:"name"`
+	Type          string  `json:"type"`
+	Status        string  `json:"status"`
+	EventsPerHour float64 `json:"events_per_hour"`
+	Health        string  `json:"health"`
+	// Phase 21 (REQ-WF-6) additions:
+	LastEventTS  *time.Time `json:"last_event_ts"`
+	ErrorCount   int        `json:"error_count"`
+	HealthStatus string     `json:"health_status"` // "healthy"|"warning"|"error"|"unknown"
+}
+
+// populateStateFields reads <name>/state.json and fills Phase 21 fields on e.
+// Mirrors internal/watcher/health.go HealthTracker.Check() thresholds. Keep in lockstep.
+func populateStateFields(e *watcherListEntry) {
+	state, serr := watcher.LoadState(e.Name)
+	if serr != nil || state == nil {
+		e.LastEventTS = nil
+		e.ErrorCount = 0
+		e.HealthStatus = "unknown"
+		return
+	}
+	ts := state.LastEventTS
+	e.LastEventTS = &ts
+	e.ErrorCount = state.ErrorCount
+	e.HealthStatus = classifyFromState(state)
+}
+
+// classifyFromState mirrors HealthTracker.Check() thresholds at internal/watcher/health.go:163-178.
+// Keep in lockstep: if health.go thresholds change, update here too.
+func classifyFromState(s *watcher.WatcherState) string {
+	if !s.AdapterHealthy || s.ErrorCount >= 10 {
+		return "error"
+	}
+	if s.ErrorCount >= 3 {
+		return "warning"
+	}
+	return "healthy"
+}
+
 // handleWatcher dispatches watcher subcommands.
 func handleWatcher(profile string, args []string) {
 	if len(args) == 0 {
@@ -307,14 +349,6 @@ func handleWatcherList(profile string, args []string) {
 		os.Exit(1)
 	}
 
-	type watcherListEntry struct {
-		Name          string  `json:"name"`
-		Type          string  `json:"type"`
-		Status        string  `json:"status"`
-		EventsPerHour float64 `json:"events_per_hour"`
-		Health        string  `json:"health"`
-	}
-
 	cutoff := time.Now().Add(-time.Hour)
 	entries := make([]watcherListEntry, 0, len(watchers))
 	for _, w := range watchers {
@@ -336,13 +370,15 @@ func handleWatcherList(profile string, args []string) {
 			health = "unknown"
 		}
 
-		entries = append(entries, watcherListEntry{
+		entry := watcherListEntry{
 			Name:          w.Name,
 			Type:          w.Type,
 			Status:        w.Status,
 			EventsPerHour: float64(eventsLastHour),
 			Health:        health,
-		})
+		}
+		populateStateFields(&entry)
+		entries = append(entries, entry)
 	}
 
 	if *jsonOutput {
@@ -521,7 +557,7 @@ func handleWatcherTest(profile string, args []string) {
 	router, err := watcher.LoadFromWatcherDir()
 	if err != nil {
 		fmt.Printf("Routing config: not available (%v)\n", err)
-		fmt.Println("  Create ~/.agent-deck/watchers/clients.json to enable routing.")
+		fmt.Println("  Create ~/.agent-deck/watcher/clients.json to enable routing.")
 		return
 	}
 

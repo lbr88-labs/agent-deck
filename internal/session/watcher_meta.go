@@ -8,7 +8,7 @@ import (
 )
 
 // WatcherMeta holds metadata for a named watcher instance.
-// Persisted as meta.json in ~/.agent-deck/watchers/<name>/.
+// Persisted as meta.json in ~/.agent-deck/watcher/<name>/.
 type WatcherMeta struct {
 	Name           string `json:"name"`
 	Type           string `json:"type"`                       // adapter type: "webhook", "ntfy", "github", "slack", "gmail"
@@ -17,16 +17,16 @@ type WatcherMeta struct {
 	WatchHistoryID string `json:"watch_history_id,omitempty"` // uint64 as string (gmail only) — last processed Gmail history ID
 }
 
-// WatcherDir returns the base directory for all watchers (~/.agent-deck/watchers).
+// WatcherDir returns the base directory for all watchers (~/.agent-deck/watcher).
 func WatcherDir() (string, error) {
 	dir, err := GetAgentDeckDir()
 	if err != nil {
 		return "", err
 	}
-	return filepath.Join(dir, "watchers"), nil
+	return filepath.Join(dir, "watcher"), nil
 }
 
-// WatcherNameDir returns the directory for a named watcher (~/.agent-deck/watchers/<name>).
+// WatcherNameDir returns the directory for a named watcher (~/.agent-deck/watcher/<name>).
 func WatcherNameDir(name string) (string, error) {
 	base, err := WatcherDir()
 	if err != nil {
