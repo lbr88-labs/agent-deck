@@ -2157,6 +2157,9 @@ type WatcherSettings struct {
 
 	// HealthCheckIntervalSeconds is the interval between health checks in seconds (default: 30)
 	HealthCheckIntervalSeconds int `toml:"health_check_interval_seconds"`
+
+	// Alerts configures the health alerts bridge (opt-in). See WatcherAlertsSettings.
+	Alerts WatcherAlertsSettings `toml:"alerts"`
 }
 
 // GetMaxEventsPerWatcher returns the max events per watcher (default: 500).
@@ -2181,4 +2184,27 @@ func (w WatcherSettings) GetHealthCheckIntervalSeconds() int {
 		return w.HealthCheckIntervalSeconds
 	}
 	return 30
+}
+
+// WatcherAlertsSettings configures the health alerts bridge (REQ-WF-3).
+// Opt-in via [watcher.alerts] in config.toml.
+type WatcherAlertsSettings struct {
+	// Enabled turns the bridge on. Default: false (no alerts emitted).
+	Enabled bool `toml:"enabled"`
+
+	// Channels lists notification channel names the bridge's notifier should fan out to
+	// (e.g. "telegram", "slack", "discord"). Semantics are owned by the Notifier
+	// implementation; the bridge only passes the list to the notifier.
+	Channels []string `toml:"channels"`
+
+	// DebounceMinutes is the per-(watcher x trigger) debounce window. Default: 15.
+	DebounceMinutes int `toml:"debounce_minutes"`
+}
+
+// GetDebounceMinutes returns the debounce window in minutes (default: 15).
+func (a WatcherAlertsSettings) GetDebounceMinutes() int {
+	if a.DebounceMinutes > 0 {
+		return a.DebounceMinutes
+	}
+	return 15
 }
