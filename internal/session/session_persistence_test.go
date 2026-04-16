@@ -1383,6 +1383,10 @@ func TestPersistence_CustomCommandResumesFromLatestJSONL(t *testing.T) {
 	// writeCustomWrapperScript for rationale (deviation from plan 05-01).
 	inst.Command = writeCustomWrapperScript(t, home)
 	inst.ClaudeSessionID = ""
+	// Simulate a restart scenario: session was previously started (non-zero
+	// ClaudeDetectedAt) but lost its session ID. Without this, the #608 fix
+	// would skip JSONL discovery for what is actually a restart-recovery case.
+	inst.ClaudeDetectedAt = time.Now().Add(-1 * time.Hour)
 
 	const (
 		olderUUID = "11111111-1111-1111-1111-111111111111"
@@ -1558,4 +1562,88 @@ func TestPersistence_DiscoverLatestClaudeJSONL_Unit(t *testing.T) {
 			t.Fatalf("no_recency_cap: got %q, want ffffffff-...", got)
 		}
 	})
+}
+
+// TestEnsureClaudeSessionIDFromDisk_NewSessionSkipsDiscovery verifies that a
+// brand-new session (ClaudeDetectedAt is zero) does NOT inherit another
+// session's JSONL via disk discovery. This is the regression test for
+// https://github.com/asheshgoplani/agent-deck/issues/608
+//
+// Scenario: directory already has a JSONL from session A. User creates session
+// B in the same directory. Session B should start fresh, not resume A's
+// conversation.
+func TestEnsureClaudeSessionIDFromDisk_NewSessionSkipsDiscovery(t *testing.T) {
+	const projectPath = "/fake/project/issue-608"
+	const existingUUID = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
+
+	home := isolatedHomeDir(t)
+	t.Setenv("CLAUDE_CONFIG_DIR", "")
+
+	// Stage a JSONL from an existing session in this directory.
+	dir := filepath.Join(home, ".claude", "projects", ConvertToClaudeDirName(projectPath))
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	p := filepath.Join(dir, existingUUID+".jsonl")
+	if err := os.WriteFile(p, []byte(`{"sessionId":"`+existingUUID+`"}`+"\n"), 0o644); err != nil {
+		t.Fatalf("write jsonl: %v", err)
+	}
+
+	// Create a brand-new instance: empty ClaudeSessionID, zero ClaudeDetectedAt.
+	inst := &Instance{
+		ID:               "test-new-session",
+		ProjectPath:      projectPath,
+		Tool:             "claude",
+		ClaudeSessionID:  "",
+		ClaudeDetectedAt: time.Time{}, // zero = never started before
+	}
+
+	inst.ensureClaudeSessionIDFromDisk()
+
+	if inst.ClaudeSessionID != "" {
+		t.Fatalf("Issue #608: brand-new session (ClaudeDetectedAt=zero) got "+
+			"ClaudeSessionID=%q from disk discovery. Want empty string. "+
+			"New sessions must NOT inherit another session's conversation.",
+			inst.ClaudeSessionID)
+	}
+}
+
+// TestEnsureClaudeSessionIDFromDisk_RestartDoesDiscovery verifies that a
+// restarting session (ClaudeDetectedAt is non-zero, but ClaudeSessionID was
+// lost) DOES discover the JSONL from disk. This is the restart-recovery case
+// that REQ-7 / v1.5.2 fixed — must not regress.
+func TestEnsureClaudeSessionIDFromDisk_RestartDoesDiscovery(t *testing.T) {
+	const projectPath = "/fake/project/restart-recovery"
+	const existingUUID = "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"
+
+	home := isolatedHomeDir(t)
+	t.Setenv("CLAUDE_CONFIG_DIR", "")
+
+	// Stage a JSONL from this session's previous run.
+	dir := filepath.Join(home, ".claude", "projects", ConvertToClaudeDirName(projectPath))
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	p := filepath.Join(dir, existingUUID+".jsonl")
+	if err := os.WriteFile(p, []byte(`{"sessionId":"`+existingUUID+`"}`+"\n"), 0o644); err != nil {
+		t.Fatalf("write jsonl: %v", err)
+	}
+
+	// Create a restarting instance: empty ClaudeSessionID, but non-zero
+	// ClaudeDetectedAt (it previously had a conversation).
+	inst := &Instance{
+		ID:               "test-restart-session",
+		ProjectPath:      projectPath,
+		Tool:             "claude",
+		ClaudeSessionID:  "",
+		ClaudeDetectedAt: time.Now().Add(-1 * time.Hour), // was running before
+	}
+
+	inst.ensureClaudeSessionIDFromDisk()
+
+	if inst.ClaudeSessionID != existingUUID {
+		t.Fatalf("Restart recovery broken: session with ClaudeDetectedAt set "+
+			"should discover JSONL. Got ClaudeSessionID=%q, want %q.",
+			inst.ClaudeSessionID, existingUUID)
+	}
 }

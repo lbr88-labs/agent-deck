@@ -1924,6 +1924,15 @@ func (i *Instance) ensureClaudeSessionIDFromDisk() {
 	if i.ClaudeSessionID != "" {
 		return
 	}
+	// Fix for https://github.com/asheshgoplani/agent-deck/issues/608:
+	// Only attempt JSONL discovery for sessions that previously had a
+	// conversation (restart recovery). A zero ClaudeDetectedAt means this
+	// session has never been started before — it should get a fresh
+	// conversation, not resume another session's history from the same
+	// directory.
+	if i.ClaudeDetectedAt.IsZero() {
+		return
+	}
 	uuid, found := discoverLatestClaudeJSONL(i.ProjectPath)
 	if !found {
 		return
