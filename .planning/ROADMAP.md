@@ -105,7 +105,7 @@ The v1.5.4 CLAUDE.md mandate at repo root forbids `--no-verify` on source commit
 
 **Requirements:** REQ-WF-1 (Phase 14 verification doc), REQ-WF-2 (Phase 15 PLAN + SUMMARY + VERIFICATION).
 
-**Plans:** 2 plans
+**Plans:** 2/2 plans complete
 
 Plans:
 - [x] 19-01: Phase 14 verification doc (`14-VERIFICATION.md`) — COMPLETE 2026-04-16 (commit 2c19e3f). 10/10 observable truths, 25 `path:line` citations, 62-test pass banner reproduced live under `-race`.
