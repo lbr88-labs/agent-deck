@@ -143,6 +143,14 @@ type Instance struct {
 	// Used to detect pending MCPs (added after session start) and stale MCPs (removed but still running)
 	LoadedMCPNames []string `json:"loaded_mcp_names,omitempty"`
 
+	// Channels are Claude Code plugin-channel ids (e.g. "plugin:telegram@user/repo").
+	// When non-empty on a claude session, buildClaudeExtraFlags emits
+	// `--channels <csv>` so the session subscribes to inbound plugin messages.
+	// Without this flag the channel plugin runs as a plain MCP (tools only,
+	// no inbound delivery) which silently drops Telegram/Discord/Slack
+	// messages on conductor restart.
+	Channels []string `json:"channels,omitempty"`
+
 	// ToolOptions stores tool-specific launch options (Claude, Codex, Gemini, etc.)
 	// JSON structure: {"tool": "claude", "options": {...}}
 	ToolOptionsJSON json.RawMessage `json:"tool_options,omitempty"`
@@ -673,6 +681,13 @@ func (i *Instance) buildClaudeExtraFlags(opts *ClaudeOptions) string {
 		if opts.UseTeammateMode {
 			flags = append(flags, "--teammate-mode tmux")
 		}
+	}
+
+	// Plugin channels: subscribe the claude session to inbound messages from
+	// each listed plugin channel. Persisted on Instance.Channels and refreshed
+	// on every Start/Restart/resume because every command-build flows here.
+	if len(i.Channels) > 0 {
+		flags = append(flags, fmt.Sprintf("--channels %s", strings.Join(i.Channels, ",")))
 	}
 
 	if len(flags) == 0 {
