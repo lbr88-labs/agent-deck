@@ -1176,3 +1176,42 @@ func TestWatcherSettingsFromEmptyConfig(t *testing.T) {
 		t.Errorf("empty config: GetHealthCheckIntervalSeconds() = %d, want 30", got)
 	}
 }
+
+func TestWatcherAlertsSettingsDefaults(t *testing.T) {
+	ClearUserConfigCache()
+
+	// Zero-value WatcherAlertsSettings (as if no [watcher.alerts] section in config.toml)
+	var as WatcherAlertsSettings
+
+	if got := as.GetDebounceMinutes(); got != 15 {
+		t.Errorf("GetDebounceMinutes() default = %d, want 15", got)
+	}
+	if as.Enabled {
+		t.Error("Enabled default should be false")
+	}
+	if len(as.Channels) != 0 {
+		t.Errorf("Channels default should be empty, got %v", as.Channels)
+	}
+
+	// Explicit override values override defaults
+	as = WatcherAlertsSettings{
+		Enabled:         true,
+		DebounceMinutes: 30,
+		Channels:        []string{"telegram", "slack"},
+	}
+	if got := as.GetDebounceMinutes(); got != 30 {
+		t.Errorf("GetDebounceMinutes() override = %d, want 30", got)
+	}
+	if !as.Enabled {
+		t.Error("Enabled override should be true")
+	}
+	if len(as.Channels) != 2 || as.Channels[0] != "telegram" || as.Channels[1] != "slack" {
+		t.Errorf("Channels override = %v, want [telegram slack]", as.Channels)
+	}
+
+	// Empty-config path: accessing via a zero-value UserConfig
+	var cfg UserConfig
+	if got := cfg.Watcher.Alerts.GetDebounceMinutes(); got != 15 {
+		t.Errorf("empty config: cfg.Watcher.Alerts.GetDebounceMinutes() = %d, want 15", got)
+	}
+}
