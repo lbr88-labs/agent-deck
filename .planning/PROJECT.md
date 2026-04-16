@@ -77,7 +77,7 @@ Wave A scope (originally tracked as Active) has shipped as code; verification le
 
 - [x] **REQ-WF-1**: Phase 14 verification doc — webhook + ntfy + GitHub adapters, observable truths with `path:line` citations (Closed 2026-04-16 by Phase 19 plan 19-01, commit 2c19e3f)
 - [x] **REQ-WF-2**: Phase 15 backfill (PLAN, SUMMARY, VERIFICATION) — Slack adapter + `watcher import` (Closed 2026-04-16 by Phase 19 plan 19-02, commit e294ed1)
-- [ ] **REQ-WF-3**: Health alerts bridge (`internal/watcher/health_bridge.go`) — silence/error/teardown triggers, 15-min debounce, opt-in via `[watcher.alerts]` config, six unit tests + integration test
+- [x] **REQ-WF-3**: Health alerts bridge (`internal/watcher/health_bridge.go`) — silence/error/teardown triggers, 15-min debounce, opt-in via `[watcher.alerts]` config (Closed 2026-04-16 by Phase 20 plan 20-01, commit ab139b3)
 - [ ] **REQ-WF-6**: Watcher folder hierarchy mirroring `~/.agent-deck/conductor/` — singular `watcher/` dir with per-instance `meta.json`/`state.json`/`task-log.md`/`LEARNINGS.md`, atomic legacy migration with one-cycle symlink fallback
 - [ ] **REQ-WF-7**: Skills + docs sync — embedded `watcher-creator` SKILL.md, repo SKILL.md, README, design-spec addendum, CHANGELOG; new `TestSkillDriftCheck_WatcherCreator` to lock against future drift
 - [ ] **REQ-WF-5**: `scripts/verify-watcher-framework.sh` end-to-end harness — boots ephemeral webhook, posts synthetic event, asserts routing, exits non-zero on failure, runs in <60s on macOS/Linux
@@ -168,4 +168,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-04-16 after v1.6.0 Wave B Phase 19 (verification-docs-phases-14-15) completed. REQ-WF-1 and REQ-WF-2 closed via observable-truth docs with `path:line` citations in `14-VERIFICATION.md` + `15-VERIFICATION.md` + reconstructed `15-01-PLAN.md`/`15-01-SUMMARY.md`. Wave A ledger lag now resolved. Next: Phase 20 (Health Alerts Bridge, REQ-WF-3). v1.5.4 CLAUDE.md mandate applies (no `--no-verify` on source commits; metadata commits exempt when hooks no-op).*
+*Last updated: 2026-04-16 after v1.6.0 Wave B Phase 20 (health-alerts-bridge) completed. REQ-WF-3 closed: `internal/watcher/health_bridge.go` subscribes to `Engine.HealthCh()`, maps to three triggers (`silence_detected`, `error_threshold_exceeded`, `adapter_teardown_unexpected`), applies 15-min per-(watcher × trigger) debounce, fans out via `Notifier` interface; opt-in `[watcher.alerts]` settings on `WatcherSettings`; strict RED→GREEN→DOCS TDD (commits 8c45428 → ab139b3 → f096986), 7 HealthBridge tests + `TestWatcherAlertsSettingsDefaults` pass under `-race`, `engine.go` untouched per locked scope. Next: Phase 21 (Watcher Folder Hierarchy, REQ-WF-6). v1.5.4 CLAUDE.md mandate applies (no `--no-verify` on source commits; metadata commits exempt when hooks no-op).*
