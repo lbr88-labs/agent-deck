@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **Watcher health alerts bridge** — new opt-in `[watcher.alerts]` config block wires engine health state to a notification sink (Telegram/Slack/Discord) with per-(watcher x trigger) 15-minute debounce. See `internal/watcher/health_bridge.go`. Closes REQ-WF-3.
+
 ## [1.5.1] - 2026-04-13
 
 Patch release fixing 7 bugs reported by users and merging 3 community PRs.
