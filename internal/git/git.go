@@ -257,8 +257,11 @@ func parseWorktreeList(output string) []Worktree {
 	return worktrees
 }
 
-// RemoveWorktree removes a worktree from the repository
-// If force is true, it will remove even if there are uncommitted changes
+// RemoveWorktree removes a worktree from the repository.
+// If force is true, it will remove even if there are uncommitted changes.
+// When force is true and git fails (e.g. "Directory not empty" due to
+// untracked files like node_modules), falls back to removing the directory
+// directly and pruning stale worktree references.
 func RemoveWorktree(repoDir, worktreePath string, force bool) error {
 	if !IsGitRepo(repoDir) {
 		return errors.New("not a git repository")
@@ -273,7 +276,16 @@ func RemoveWorktree(repoDir, worktreePath string, force bool) error {
 	cmd := exec.Command("git", args...)
 	output, err := cmd.CombinedOutput()
 	if err != nil {
-		return fmt.Errorf("failed to remove worktree: %s: %w", strings.TrimSpace(string(output)), err)
+		if !force {
+			return fmt.Errorf("failed to remove worktree: %s: %w", strings.TrimSpace(string(output)), err)
+		}
+		// Force mode: git worktree remove --force can still fail when the
+		// directory contains untracked content. Fall back to deleting the
+		// directory and pruning the stale worktree reference.
+		if rmErr := os.RemoveAll(worktreePath); rmErr != nil {
+			return fmt.Errorf("failed to remove worktree directory: %w (git error: %s)", rmErr, strings.TrimSpace(string(output)))
+		}
+		return PruneWorktrees(repoDir)
 	}
 
 	return nil
