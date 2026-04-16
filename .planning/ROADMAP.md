@@ -74,7 +74,7 @@ The v1.5.4 CLAUDE.md mandate at repo root forbids `--no-verify` on source commit
 ## Wave B — Phases 19–23 (THIS MILESTONE)
 
 - [x] **Phase 19: Verification Docs (Phases 14 + 15)** — COMPLETE. Plan 19-01 closed REQ-WF-1 via `14-VERIFICATION.md` (commit 2c19e3f). Plan 19-02 closed REQ-WF-2 via `15-01-PLAN.md` + `15-01-SUMMARY.md` + `15-VERIFICATION.md` (commit e294ed1, 2026-04-16).
-- [ ] **Phase 20: Health Alerts Bridge** — Subscribe to engine health signal, fan out to Telegram/Slack/Discord via conductor notification bridge with 15-min debounce (REQ-WF-3)
+- [x] **Phase 20: Health Alerts Bridge** — Subscribe to engine health signal, fan out to Telegram/Slack/Discord via conductor notification bridge with 15-min debounce (REQ-WF-3) (completed 2026-04-16)
 - [ ] **Phase 21: Watcher Folder Hierarchy** — Reorganize `~/.agent-deck/watchers/` → singular `watcher/` with conductor-style per-instance dirs and atomic legacy migration (REQ-WF-6)
 - [ ] **Phase 22: Skills + Docs Sync** — Update embedded watcher-creator SKILL.md, repo README, design-spec addendum, CHANGELOG to new layout; add drift-check test (REQ-WF-7)
 - [ ] **Phase 23: Integration Harness + CLAUDE.md Mandate** — `scripts/verify-watcher-framework.sh` end-to-end + CLAUDE.md "Watcher framework: mandatory test coverage" section (REQ-WF-5, REQ-WF-4)
@@ -128,10 +128,10 @@ Plans:
 
 **Requirements:** REQ-WF-3.
 
-**Plans:** 1 plan with explicit RED → GREEN tasks.
+**Plans:** 1/1 plans complete
 
 Plans:
-- [ ] 20-01: Health alerts bridge — Task A (RED) writes six failing unit tests in `internal/watcher/health_bridge_test.go` (silence-triggers-one-alert, error-threshold-triggers-one-alert, debounce-within-15-min, disabled-config-zero-alerts, downstream-failure-noncrash, teardown-cancels-pending) + one integration test wiring a mock adapter with forced silence; Task B (GREEN) implements `health_bridge.go`, wires `[watcher.alerts]` opt-in config, threads health signal from engine, applies 15-min per-(watcher×trigger) debounce; Task C verifies `grep "watcher.alerts" CHANGELOG.md` matches
+- [x] 20-01: Health alerts bridge — Task A (RED) writes six failing unit tests in `internal/watcher/health_bridge_test.go` (silence-triggers-one-alert, error-threshold-triggers-one-alert, debounce-within-15-min, disabled-config-zero-alerts, downstream-failure-noncrash, teardown-cancels-pending) + one integration test wiring a mock adapter with forced silence; Task B (GREEN) implements `health_bridge.go`, wires `[watcher.alerts]` opt-in config, threads health signal from engine, applies 15-min per-(watcher×trigger) debounce; Task C verifies `grep "watcher.alerts" CHANGELOG.md` matches
 
 **Success Criteria** (what must be TRUE):
 1. `internal/watcher/health_bridge.go` exists; subscribes to engine health signal (existing `HealthCh()` or newly added)

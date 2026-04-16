@@ -4,8 +4,8 @@ milestone: v1.6.0
 milestone_name: milestone
 status: executing
 stopped_at: "Phase 19 CLOSED — Plan 19-02 complete, REQ-WF-2 closed with three Phase 15 backfill docs in signed commit e294ed1. Both REQ-WF-1 (plan 19-01, commit 2c19e3f) and REQ-WF-2 (plan 19-02, commit e294ed1) ledger entries closed; Phase 19 is done. Next: Phase 20 Health Alerts Bridge (REQ-WF-3)."
-last_updated: "2026-04-16T00:24:24.502Z"
-last_activity: 2026-04-16 -- Phase 20 planning complete
+last_updated: "2026-04-16T00:31:49.625Z"
+last_activity: 2026-04-16 -- Phase 20 execution started
 progress:
   total_phases: 12
   completed_phases: 3
@@ -43,10 +43,10 @@ See `.planning/REQUIREMENTS.md` for requirements and phase mappings.
 
 ## Current Position
 
-Phase: 20
-Plan: Not started
-Status: Ready to execute
-Last activity: 2026-04-16 -- Phase 20 planning complete
+Phase: 20 (health-alerts-bridge) — EXECUTING
+Plan: 1 of 1
+Status: Executing Phase 20
+Last activity: 2026-04-16 -- Phase 20 execution started
 
 ## Phase Progress
 
