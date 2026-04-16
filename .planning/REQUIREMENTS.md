@@ -1,143 +1,77 @@
-# Requirements: Agent-Deck v1.5.2 Session-Persistence Hotfix
+# Requirements: Agent Deck — v1.5.3 Feedback Closeout
 
-**Defined:** 2026-04-14
-**Core Value:** After v1.5.2, SSH logout on a Linux+systemd host must not kill any agent-deck tmux server, and restarting any dead session must resume the prior Claude conversation — both behaviors permanently test-gated.
+**Defined:** 2026-04-15
+**Core Value:** Reliable session management for AI coding agents.
+**Source spec:** `docs/FEEDBACK-CLOSEOUT-SPEC.md`
 
-## v1 Requirements
+## Milestone v1.5.3 Requirements
 
-All requirements below are in scope for the v1.5.2 hotfix milestone. Each is atomic, testable, and maps to spec REQ-1..REQ-6 in `docs/SESSION-PERSISTENCE-SPEC.md`.
+Closeout scope for the in-product feedback feature. No new features. Four requirements, each maps to exactly one phase.
 
-### Runtime Persistence (PERSIST) — spec REQ-1, REQ-2
+### Feedback Closeout
 
-- [ ] **PERSIST-01**: On Linux hosts where `systemd-run --user --version` succeeds, `launch_in_user_scope` defaults to `true` without user configuration.
-- [ ] **PERSIST-02**: On hosts without `systemd-run` (macOS, BSD, Linux lacking user manager), `launch_in_user_scope` silently defaults to `false` and emits no error.
-- [ ] **PERSIST-03**: An explicit `launch_in_user_scope = false` in `~/.agent-deck/config.toml` is always honored, overriding the Linux+systemd default.
-- [ ] **PERSIST-04**: On a Linux+systemd host, a fresh install spawns tmux under `user@UID.service`, verifiable via `systemctl status user@UID.service` showing an `agentdeck-tmux-*.scope` child.
-- [ ] **PERSIST-05**: An SSH logout that spawned the agent-deck command does not kill the tmux server; `tmux list-sessions` from a new SSH login returns the same server.
-- [ ] **PERSIST-06**: If `systemd-run` exists but its invocation fails (e.g., no user manager), agent-deck falls back to direct tmux spawn, logs a warning, and never blocks session creation.
-- [ ] **PERSIST-07**: Any code path that starts a Claude session for an Instance with non-empty `ClaudeSessionID` launches `claude --resume <id>` when `sessionHasConversationData()` returns true, else `claude --session-id <id>`. Applies to `session start`, `session restart`, automatic error-recovery, and conductor-driven restart after tmux teardown.
-- [ ] **PERSIST-08**: `Instance.ClaudeSessionID` is preserved through any transition to `stopped` or `error` state, cleared only on explicit delete or user-initiated `fork`.
-- [ ] **PERSIST-09**: Resume works even when the hook sidecar at `~/.agent-deck/hooks/<instance>.sid` has been deleted — `ClaudeSessionID` is read from instance JSON storage as the authoritative source.
-- [ ] **PERSIST-10**: The `docs/session-id-lifecycle.md` invariants (no disk-scan authoritative binding) remain honored.
-- [ ] **PERSIST-11**: Any `IsClaudeCompatible` Instance whose stored `ClaudeSessionID` is empty AND whose `ProjectPath` has at least one UUID-named JSONL under `~/.claude/projects/<encoded-path>/` MUST resolve the latest JSONL by mtime and route through the existing resume builder — emitting `claude --resume <uuid>` (where UUID is the JSONL basename). Applies uniformly to the `Command` field being empty (default wrapper) or non-empty (custom wrapper / `--command ./script.sh`). No code path branches on "custom command ⇒ skip discovery".
-- [ ] **PERSIST-12**: On successful latest-JSONL discovery at start time, `Instance.ClaudeSessionID` is populated to the discovered UUID and persisted to instance JSON storage BEFORE spawn, so every subsequent restart takes the fast path (Phase 3 resume) without re-scanning the projects directory.
-- [ ] **PERSIST-13**: If the project directory is absent, empty, or contains zero UUID-named JSONLs, the spawn proceeds fresh (no `--resume`, no `--session-id` against a non-existent ID), no error is raised, and `Instance.ClaudeSessionID` stays empty until the hook sidecar binds it — matching today's fresh-session contract.
+- [ ] **REQ-FB-1** (P0): Real GitHub Discussion node ID replaces `D_PLACEHOLDER` in `internal/feedback/sender.go:18`. Resolution path: run `gh api graphql -f query='{ repository(owner: "asheshgoplani", name: "agent-deck") { discussions(first: 10) { nodes { id title } } } }'` (or the category-scoped variant) and paste the correct `id`.
 
-### Regression Tests (TEST) — spec REQ-3
+  **Acceptance:**
+  - `DiscussionNodeID != "D_PLACEHOLDER"` — verified by REQ-FB-2 test.
+  - Manual end-to-end test: one `agent-deck feedback 4 "closeout smoke"` invocation from a non-headless host successfully creates a comment in the target Discussion (verify via `gh api` or browser).
+  - The node ID appears in exactly one place (the const). No duplicate literal.
 
-All eight tests live in `internal/session/session_persistence_test.go`. Each is independently runnable via `go test -run TestPersistence_<name> ./internal/session/...`, requires no external network, cleans up all tmux servers and transcripts it creates, and skips cleanly (not vacuously) on hosts lacking systemd-run.
+- [ ] **REQ-FB-2** (P0): Format regression test `TestSender_DiscussionNodeID_IsReal` exists in `internal/feedback/sender_test.go` and asserts:
+  1. `DiscussionNodeID != "D_PLACEHOLDER"`.
+  2. `DiscussionNodeID` matches regex `^D_[A-Za-z0-9_-]{10,}$` (GitHub GraphQL node ID shape — conservative pattern accepting the current encoding).
 
-- [ ] **TEST-01**: `TestPersistence_TmuxSurvivesLoginSessionRemoval` — with `LaunchInUserScope=true`, simulate a login-session teardown and verify agent-deck tmux server PID is still alive. Skips on non-systemd hosts with a clear reason.
-- [ ] **TEST-02**: `TestPersistence_TmuxDiesWithoutUserScope` — inverse: with `LaunchInUserScope=false` and simulated teardown, the tmux server does die. Pins the failure mode so we don't "fix" by changing scope and leave opt-outs vulnerable.
-- [ ] **TEST-03**: `TestPersistence_LinuxDefaultIsUserScope` — on a Linux host with `systemd-run` available, `TmuxSettings{}.GetLaunchInUserScope()` returns `true` with no config file.
-- [ ] **TEST-04**: `TestPersistence_MacOSDefaultIsDirect` — on a host without `systemd-run`, `TmuxSettings{}.GetLaunchInUserScope()` returns `false` and no error is logged.
-- [ ] **TEST-05**: `TestPersistence_RestartResumesConversation` — start a session, write a synthetic JSONL transcript to `~/.claude/projects/<hash>/`, stop, restart, and verify the spawned command line contains `--resume <claudeSessionID>` and the JSONL path exists.
-- [ ] **TEST-06**: `TestPersistence_StartAfterSIGKILLResumesConversation` — same as TEST-05 but the session is marked `error` after a simulated SIGKILL of its tmux server, and recovery is via `session start` (not `session restart`).
-- [ ] **TEST-07**: `TestPersistence_ClaudeSessionIDSurvivesHookSidecarDeletion` — delete `~/.agent-deck/hooks/<instance>.sid`, start the session, assert `ClaudeSessionID` is still read from instance JSON storage and applied.
-- [ ] **TEST-08**: `TestPersistence_FreshSessionUsesSessionIDNotResume` — first start (no prior conversation) uses `--session-id <uuid>` only, not `--resume`. Guards against accidentally passing `--resume` with a non-existent ID.
-- [ ] **TEST-09**: `TestPersistence_CustomCommandResumesFromLatestJSONL` — Instance with a non-empty `Command` (custom wrapper script) and empty `ClaudeSessionID`, but a JSONL transcript present in `~/.claude/projects/<cwd-encoded>/`. Start the session; assert the spawned command line contains `--resume <uuid>` where the UUID matches the JSONL basename, AND assert `Instance.ClaudeSessionID` is populated to that UUID after spawn AND persisted in instance JSON storage. With two JSONLs of different mtimes, assert the newer one wins. Skips cleanly on hosts lacking `systemd-run` only when tmux spawn is attempted; pure discovery+build assertions run everywhere.
+  **Acceptance:**
+  - Test exists and is RED against current `D_PLACEHOLDER`, then GREEN after REQ-FB-1.
+  - Test would fail if anyone reintroduces `D_PLACEHOLDER` or a typoed constant.
+  - Independently runnable: `go test -run TestSender_DiscussionNodeID_IsReal ./internal/feedback/`.
 
-### Documentation (DOC) — spec REQ-4
+- [ ] **REQ-FB-3** (P1): README has a top-level "Feedback" section (or inside an existing Features section) that states:
+  - User can press `Ctrl+E` in the TUI, or run `agent-deck feedback`, to send feedback.
+  - Feedback posts to a public GitHub Discussion (link the Discussion URL).
 
-- [ ] **DOC-01**: Repo `CLAUDE.md` contains a section titled "Session persistence: mandatory test coverage" listing the eight TEST-01..TEST-08 names verbatim.
-- [ ] **DOC-02**: That CLAUDE.md section declares that any PR modifying `internal/tmux/**`, `internal/session/instance.go`, `internal/session/userconfig.go`, or the session start/restart command handlers MUST run the full `TestPersistence_*` suite and include the output (or a CI run link) in the PR description.
-- [ ] **DOC-03**: That CLAUDE.md section names the 2026-04-14 incident as the reason.
-- [ ] **DOC-04**: That CLAUDE.md section states that the `launch_in_user_scope` default may not be flipped back to `false` on Linux without an RFC.
-- [ ] **DOC-05**: The top-level `README.md` or `CHANGELOG.md` mentions the v1.5.2 hotfix in one line.
+  **Acceptance:**
+  - `grep -i "ctrl+e" README.md` returns a match.
+  - `grep -i "agent-deck feedback" README.md` returns a match.
+  - `agent-deck --help` still shows the `feedback` subcommand (no regression).
 
-### Verification Script (SCRIPT) — spec REQ-5
+- [ ] **REQ-FB-4** (P0): CLAUDE.md gains a "Feedback feature: mandatory test coverage" section that:
+  - Names the 22 existing tests at suite granularity: `internal/feedback` (11), `internal/ui` FeedbackDialog (9), `cmd/agent-deck` feedback handler (2), plus the new `TestSender_DiscussionNodeID_IsReal`.
+  - Declares that any PR modifying files in `internal/feedback/**`, `internal/ui/feedback_dialog.go`, `cmd/agent-deck/feedback_cmd.go`, or `internal/platform/headless.go` must include output of `go test ./internal/feedback/... ./internal/ui/... ./cmd/agent-deck/... -run "Feedback|Sender_" -race -count=1` in the PR description.
+  - Declares that reintroducing a placeholder node ID is a blocker, not a warning.
 
-- [ ] **SCRIPT-01**: `scripts/verify-session-persistence.sh` exists, is executable, and prints a numbered checklist of scenarios it will test.
-- [ ] **SCRIPT-02**: The script launches a real agent-deck session (real Claude, or a stub claude binary on CI) in a real tmux server — no mocking.
-- [ ] **SCRIPT-03**: The script prints the tmux server PID and its cgroup path from `/proc/<pid>/cgroup`, so a human can confirm it is under `user@UID.service` and not a login-session scope.
-- [ ] **SCRIPT-04**: On Linux+systemd, the script forces a simulated SSH-session teardown (throwaway `systemd-run --user --scope` unit terminated) and verifies the agent-deck tmux PID is still alive. On macOS/non-systemd, it skips with a clear "skipped: no systemd-run" message.
-- [ ] **SCRIPT-05**: The script stops the session, restarts it, prints the exact claude command line spawned, and highlights whether it contains `--resume` or `--session-id`.
-- [ ] **SCRIPT-06**: Each scenario ends with a green `[PASS]` or red `[FAIL]` banner; the script exits non-zero on any failure.
-- [ ] **SCRIPT-07**: The script is invoked in CI and referenced from the CLAUDE.md DOC section. CI failure on this script blocks the PR.
+  **Acceptance:** Section is present and references files by path. `grep "Feedback feature: mandatory test coverage" CLAUDE.md` matches.
 
-### Observability (OBS) — spec REQ-6
+## v1.6.0 Requirements (Paused — Resumes After v1.5.3)
 
-- [ ] **OBS-01**: On startup, agent-deck emits one structured log line describing the cgroup isolation decision: `tmux cgroup isolation: enabled (systemd-run detected)` OR `tmux cgroup isolation: disabled (systemd-run not available)` OR `tmux cgroup isolation: disabled (config override)`.
-- [ ] **OBS-02**: On every `session start` / `restart`, agent-deck emits one structured log line stating whether the resume path was taken: `resume: id=<x> reason=conversation_data_present` or `resume: none reason=fresh_session`.
-- [ ] **OBS-03**: `grep 'tmux cgroup isolation' ~/.agent-deck/logs/*.log` and `grep 'resume:' ~/.agent-deck/logs/*.log` each return rows after normal operation. (Surface in logs only, not TUI.)
+The full v1.6.0 Watcher Framework requirement catalog is preserved in `.planning/PROJECT.md` under "Paused Milestone: v1.6.0 — Watcher Framework" and resumes after v1.5.3 ships. Not scoped for this milestone.
 
-## v2 Requirements
-
-<!-- Deferred. Not in this milestone. Re-evaluate after v1.5.2 ships. -->
-
-### UI Affordances
-
-- **UI-01**: Show a `↻` glyph in the session list indicating sessions with resumable conversation data. (P2 per spec; only if phase bandwidth allows — otherwise v2.)
-
-## Out of Scope
+## Out of Scope (v1.5.3)
 
 | Feature | Reason |
 |---------|--------|
-| Migrating the 33 error / 39 stopped sessions on the conductor host | Recovery of existing dead sessions is a separate manual operator task, not a code change. |
-| Modifying `KillUserProcesses` in `/etc/systemd/logind.conf` | Host-level systemd config is outside agent-deck's scope; a runtime cgroup fix is sufficient. |
-| Setup wizard prompt for new `launch_in_user_scope` default | Silent default change is the intended UX; a prompt would add friction for zero benefit. |
-| Config auto-upgrade that rewrites `~/.agent-deck/config.toml` | Too invasive; risks breaking user customizations. Runtime-only default is sufficient. |
-| Changes to MCP attach/detach flow | Unrelated to the incident class; would expand scope. |
-| Changes to session-sharing export/import | Unrelated to the incident class; would expand scope. |
-| Changes to `fork` semantics | Unrelated to the incident class; `fork` intentionally clears `ClaudeSessionID`. |
-| Resuming legacy v15 roadmap (stalled at phase 11 release-plan) | Hotfix is scoped small and standalone per spec; legacy roadmap archived in `.planning.legacy-v15/`. |
+| Changing the Sender three-tier fallback logic | Already works; changing it expands blast radius beyond closeout. |
+| Changing the FeedbackDialog UI | Feature is UX-complete; out of scope for closeout. |
+| Touching `internal/platform/headless.go` beyond maintaining existing `IsHeadless()` behavior | Not a closeout concern. |
+| Adding new feedback categories | No new features in a closeout milestone. |
+| Any `git push`, `git tag`, `gh pr create`, `gh pr merge` | Hard rule from spec — branch stays local. |
 
 ## Traceability
 
-Every v1 requirement maps to exactly one phase. Mapping reflects WHERE the requirement is FIRST introduced or committed; tests authored in Phase 1 are re-validated as they turn green during Phases 2–3.
+Populated during roadmap creation.
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| PERSIST-01 | Phase 2 | Pending |
-| PERSIST-02 | Phase 2 | Pending |
-| PERSIST-03 | Phase 2 | Pending |
-| PERSIST-04 | Phase 2 | Pending |
-| PERSIST-05 | Phase 2 | Pending |
-| PERSIST-06 | Phase 2 | Pending |
-| PERSIST-07 | Phase 3 | Pending |
-| PERSIST-08 | Phase 3 | Pending |
-| PERSIST-09 | Phase 3 | Pending |
-| PERSIST-10 | Phase 3 | Pending |
-| TEST-01 | Phase 1 | Pending |
-| TEST-02 | Phase 1 | Pending |
-| TEST-03 | Phase 1 | Pending |
-| TEST-04 | Phase 1 | Pending |
-| TEST-05 | Phase 1 | Pending |
-| TEST-06 | Phase 1 | Pending |
-| TEST-07 | Phase 1 | Pending |
-| TEST-08 | Phase 1 | Pending |
-| DOC-01 | Phase 4 | Pending |
-| DOC-02 | Phase 4 | Pending |
-| DOC-03 | Phase 4 | Pending |
-| DOC-04 | Phase 4 | Pending |
-| DOC-05 | Phase 4 | Pending |
-| SCRIPT-01 | Phase 4 | Pending |
-| SCRIPT-02 | Phase 4 | Pending |
-| SCRIPT-03 | Phase 4 | Pending |
-| SCRIPT-04 | Phase 4 | Pending |
-| SCRIPT-05 | Phase 4 | Pending |
-| SCRIPT-06 | Phase 4 | Pending |
-| SCRIPT-07 | Phase 4 | Pending |
-| OBS-01 | Phase 2 | Pending |
-| OBS-02 | Phase 3 | Pending |
-| OBS-03 | Phase 3 | Pending |
-| PERSIST-11 | Phase 5 | Pending |
-| PERSIST-12 | Phase 5 | Pending |
-| PERSIST-13 | Phase 5 | Pending |
-| TEST-09 | Phase 5 | Pending |
+| REQ-FB-1 | Phase 2 (Real Discussion Node ID) | Pending |
+| REQ-FB-2 | Phase 1 (RED Format Regression Test) | Pending |
+| REQ-FB-3 | Phase 3 (Docs and Mandate) | Complete |
+| REQ-FB-4 | Phase 3 (Docs and Mandate) | Complete |
 
 **Coverage:**
-- v1 requirements: 37 total
-- Mapped to phases: 37 (100%)
-- Unmapped: 0
-
-**Per-phase distribution:**
-- Phase 1 (Persistence test scaffolding RED): 8 requirements (TEST-01..TEST-08)
-- Phase 2 (Cgroup isolation default — REQ-1 fix): 7 requirements (PERSIST-01..PERSIST-06, OBS-01)
-- Phase 3 (Resume-on-start and error-recovery — REQ-2 fix): 6 requirements (PERSIST-07..PERSIST-10, OBS-02, OBS-03)
-- Phase 4 (Verification harness, docs, and CI wiring): 12 requirements (DOC-01..DOC-05, SCRIPT-01..SCRIPT-07)
-- Phase 5 (Custom-command JSONL resume — REQ-7 fix): 4 requirements (PERSIST-11..PERSIST-13, TEST-09)
+- v1.5.3 requirements: 4 total
+- Mapped to phases: 4
+- Unmapped: 0 ✓
 
 ---
-*Requirements defined: 2026-04-14*
-*Last updated: 2026-04-14 — traceability populated by roadmapper, 33/33 mapped*
+*Requirements defined: 2026-04-15*
+*Last updated: 2026-04-15 after milestone v1.5.3 initialization*

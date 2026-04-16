@@ -331,6 +331,16 @@ weekly_limit = 200.00
 "custom-model" = { input_per_mtok = 1.0, output_per_mtok = 5.0 }
 ```
 
+### Feedback
+
+Found a bug or have an idea? Send feedback without leaving your terminal. Press `Ctrl+E` in the TUI to open the FeedbackDialog, or run `agent-deck feedback` from the shell to submit a rating and a short note.
+
+Feedback posts to a public GitHub Discussion at [Feedback Hub](https://github.com/asheshgoplani/agent-deck/discussions/600) so other users can read along, comment, and upvote. The submit path uses `gh api graphql` when GitHub CLI is authenticated and falls back to clipboard + browser otherwise — no telemetry, no third-party services.
+
+- Press `Ctrl+E` from the main TUI to open the dialog
+- Or run `agent-deck feedback <rating> "<message>"` (rating 1-5) from the CLI
+- Headless hosts (no display, no `gh` auth) print a copy-pasteable comment instead of opening a browser
+
 ## Installation
 
 **Works on:** macOS, Linux, Windows (WSL)

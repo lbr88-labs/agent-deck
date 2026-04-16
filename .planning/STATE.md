@@ -1,16 +1,15 @@
 ---
 gsd_state_version: 1.0
-milestone: v1.5.2
+milestone: v1.5.3
 milestone_name: milestone
 status: executing
-stopped_at: "Phase 05 fully landed (REQ-7 custom-command JSONL resume). TEST-09 GREEN + new portable unit test. Visual verify-session-persistence.sh still OVERALL PASS. v1.5.2 milestone complete. Next step: user sign-off + manual SSH-logout verification per milestone criterion #2."
-last_updated: "2026-04-15T20:00:00.000Z"
-last_activity: 2026-04-15 -- Phase 5 executed (waves 1-3) on post-update GSD v1.36.0
+last_updated: "2026-04-15T11:42:11.198Z"
+last_activity: 2026-04-15
 progress:
-  total_phases: 5
-  completed_phases: 5
-  total_plans: 23
-  completed_plans: 23
+  total_phases: 3
+  completed_phases: 3
+  total_plans: 4
+  completed_plans: 4
   percent: 100
 ---
 
@@ -18,71 +17,57 @@ progress:
 
 ## Project Reference
 
-See: .planning/PROJECT.md (updated 2026-04-14)
+**Project:** Agent Deck
+**Repository:** /home/ashesh-goplani/agent-deck
+**Branch:** fix/feedback-closeout
+**Current version:** v1.5.2
+**Target version:** v1.5.3
 
-**Core value:** After v1.5.2, SSH logout on Linux+systemd must not kill any agent-deck tmux server, and restarting any dead session must resume the prior Claude conversation — both permanently test-gated.
-**Current focus:** v1.5.2 milestone complete on branch fix/session-persistence — awaiting user sign-off (no push/tag/PR allowed).
+See `/home/ashesh-goplani/agent-deck/.planning/PROJECT.md` for full project context.
+See `/home/ashesh-goplani/agent-deck/.planning/ROADMAP.md` for the v1.5.3 roadmap (pending).
+See `/home/ashesh-goplani/agent-deck/.planning/REQUIREMENTS.md` for requirements and phase mappings.
+
+**Core value:** Reliable session management for AI coding agents.
+**Current focus:** Phase 03 — docs-and-mandate
+
+## Milestone: v1.5.3 — Feedback Closeout
+
+**Goal:** Replace the `D_PLACEHOLDER` GitHub Discussion node ID in `internal/feedback/sender.go:18`, add a format regression test, document the feature in README, and lock mandatory test coverage via CLAUDE.md.
+
+**Source spec:** `docs/FEEDBACK-CLOSEOUT-SPEC.md`
+**Starting point:** v1.5.2 (top commit `9c0295d` on `fix/session-persistence` — REQ-7 custom-command JSONL resume fix)
+**Branch:** `fix/feedback-closeout`
 
 ## Current Position
 
-Phase: 05 (custom-command-jsonl-resume) — COMPLETE
-Plan: 3 of 3
-Status: Milestone v1.5.2 complete; awaiting user sign-off
-Last activity: 2026-04-15 -- Phase 5 waves 1-3 executed, TEST-09 GREEN, portable unit test added
-
-Progress: [██████████] 100%
-
-## Performance Metrics
-
-**Velocity:**
-
-- Total plans completed: 0
-- Average duration: — min
-- Total execution time: 0.0 hours
-
-**By Phase:**
-
-| Phase | Plans | Total | Avg/Plan |
-|-------|-------|-------|----------|
-| 1. Persistence test scaffolding (RED) | 2/2 | — | — |
-| 2. Cgroup isolation default (REQ-1 fix) | 6/6 | — | — |
-| 3. Resume-on-start and error-recovery (REQ-2 fix) | 5/5 | — | — |
-| 4. Verification harness, docs, and CI wiring | 4/4 | — | — |
-| 5. Custom-command JSONL resume (REQ-7 fix) | 3/3 | — | — |
-
-**Recent Trend:**
-
-- Last 5 plans: —
-- Trend: —
-
-*Updated after each plan completion*
+Phase: 03
+Plan: Not started
+Status: Executing Phase 03
+Last activity: 2026-04-15
 
 ## Accumulated Context
 
-### Decisions
+### v1.5.3 Milestone Init (2026-04-15)
 
-Decisions are logged in PROJECT.md Key Decisions table.
-Recent decisions affecting current work:
+- Previous milestone (v1.5.2) shipped the REQ-7 custom-command JSONL resume fix (top commit `9c0295d`).
+- v1.5.3 is a hotfix closeout branch off `main` after v1.5.2, not a feature milestone.
+- Feedback feature is 95% complete on `main`: CLI (`agent-deck feedback`) + `Ctrl+E` TUI shortcut + FeedbackDialog landed across phases 01-01, 01-02, 02-01, 03-01. Current branch top commits: `775ec29` (docs SKILL.md update), `848539e` (feedbackSender wiring), `691a74c` (CLI subcommand), `82c8cf2` (RED tests), `e190efb` (FeedbackDialog wire).
+- 22 feedback tests currently green: 11 in `internal/feedback`, 9 in `internal/ui` FeedbackDialog, 2 in `cmd/agent-deck` feedback handler.
+- Sole release blocker: `internal/feedback/sender.go:18` holds `const DiscussionNodeID = "D_PLACEHOLDER"`. GraphQL tier silently fails against this value; fallback tiers (gh clipboard+browser, clipboard-only) work, so no user-visible regression — but the intended path is dead.
+- v1.6.0 Watcher Framework work is paused. Old phase directories (13-watcher-engine-core, 14-simple-adapters-webhook-ntfy-github, 15-slack-adapter-and-import) belong to the paused milestone and will be cleared as part of this milestone init.
 
-- Default `launch_in_user_scope=true` on Linux+systemd without a wizard prompt — silent runtime default, explicit opt-out still honored.
-- No config auto-upgrade rewriting `~/.agent-deck/config.toml` — runtime-only default is sufficient.
-- Gate every PR on the eight `TestPersistence_*` tests + `scripts/verify-session-persistence.sh` via the CLAUDE.md mandate — third recurrence of the same incident class, per-PR hard gate is the only prevention.
-- Do not migrate the 33 error / 39 stopped sessions on the conductor host — separate manual operator task.
-- Do not resume the legacy v15 roadmap in `.planning.legacy-v15/` — out of scope per PROJECT.md.
-- Phase 03: routed Start() and StartWithMessage() through buildClaudeResumeCommand when ClaudeSessionID != "" — closed the 2026-04-14 f1e103df/b9403638 divergence. OBS-02 per-call audit line landed. docs/session-id-lifecycle.md gained a Start / Restart Dispatch subsection (PERSIST-10).
-- Phase 05: added `discoverLatestClaudeJSONL` pure helper in claude.go + `ensureClaudeSessionIDFromDisk` prelude on Instance at two dispatch sites (Start / StartWithMessage). Empty-ID Claude-compatible starts now write-through the newest UUID JSONL before spawn — retires the 2026-04-15 conductor `start-conductor.sh` wrapper hack. TEST-09 GREEN + host-portable unit test covers PERSIST-11..13 / D-04 no-branch-on-Command / D-05 no-5-minute-cap.
+### Hard rules for v1.5.3
 
-### Pending Todos
+- No `git push`, `git tag`, `gh pr create`, `gh pr merge`.
+- No `rm` — use `trash`.
+- TDD is non-negotiable: `TestSender_DiscussionNodeID_IsReal` lands RED first, then const change flips it GREEN.
+- Sign commits "Committed by Ashesh Goplani". No Claude attribution.
+- No `--no-verify`.
+- No scope creep beyond the files listed in REQ-FB-4's mandate block.
 
-None yet.
+### Success criteria
 
-### Blockers/Concerns
-
-None yet. Spec is authoritative; requirements are atomic and testable; CLAUDE.md mandate section already exists at commit a262c6d and will be audited in Phase 4.
-
-## Session Continuity
-
-Last session: 2026-04-15 — Phase 05 execution complete (waves 1-3)
-Stopped at: Phase 05 fully landed (REQ-7 custom-command JSONL resume). TEST-09 GREEN + portable unit test added. scripts/verify-session-persistence.sh still OVERALL PASS. v1.5.2 milestone complete end-to-end. Next step: user sign-off + manual SSH-logout verification per milestone criterion #2.
-Resume file: None
-Commits (Phase 05): 7f2ff35 (05-01 RED), d1590d6 (05-02 GREEN), 108132a (05-03 portable unit test)
+1. `go test ./internal/feedback/... ./internal/ui/... ./cmd/agent-deck/... -run "Feedback|Sender_" -race -count=1` returns 23 passing tests (22 existing + 1 new).
+2. Manual end-to-end feedback submit creates a Discussion comment in the right repo.
+3. `grep -i "feedback" README.md` and `grep "Feedback feature: mandatory test coverage" CLAUDE.md` both match.
+4. No push/tag/PR on this branch.
