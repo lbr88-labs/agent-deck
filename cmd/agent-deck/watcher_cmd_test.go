@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -622,4 +623,33 @@ func TestWatcherList_JSON_ExposesStateFields(t *testing.T) {
 			t.Errorf("HealthStatus want %q (locked by CONTEXT.md for missing state.json), got %q", "unknown", e.HealthStatus)
 		}
 	})
+}
+
+// TestSkillDriftCheck_WatcherCreator reads the embedded SKILL.md and asserts
+// that no occurrence of the old plural "watchers/" data-dir path remains.
+// This prevents the embedded skill from silently drifting back to pre-v1.6.0
+// paths after Phase 21 renamed the directory to singular "watcher/".
+// Matches in explicitly marked "// legacy migration" comments are exempt.
+func TestSkillDriftCheck_WatcherCreator(t *testing.T) {
+	skillPath := filepath.Join("assets", "skills", "watcher-creator", "SKILL.md")
+	data, err := os.ReadFile(skillPath)
+	if err != nil {
+		t.Fatalf("read SKILL.md: %v", err)
+	}
+
+	lines := strings.Split(string(data), "\n")
+	var violations []string
+	for i, line := range lines {
+		if strings.Contains(line, "watchers/") {
+			// Allow lines that are explicitly about legacy migration
+			if strings.Contains(line, "legacy") || strings.Contains(line, "migration") || strings.Contains(line, "renamed") || strings.Contains(line, "symlink") {
+				continue
+			}
+			violations = append(violations, fmt.Sprintf("  line %d: %s", i+1, strings.TrimSpace(line)))
+		}
+	}
+	if len(violations) > 0 {
+		t.Errorf("SKILL.md contains stale 'watchers/' (plural) references that should be 'watcher/' (singular):\n%s",
+			strings.Join(violations, "\n"))
+	}
 }

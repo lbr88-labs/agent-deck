@@ -157,7 +157,7 @@ func newFakePubSub(t *testing.T) (*pstest.Server, *pubsub.Client, *pubsub.Topic,
 }
 
 // seedFakeOAuth points HOME at a t.TempDir() and writes the credentials.json +
-// token.json fixtures into ~/.agent-deck/watchers/<name>/. Returns the
+// token.json fixtures into ~/.agent-deck/watcher/<name>/. Returns the
 // watcher's on-disk directory (with meta.json later written there).
 func seedFakeOAuth(t *testing.T, watcherName string) string {
 	t.Helper()
