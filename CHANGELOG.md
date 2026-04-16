@@ -7,8 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- Per-group Claude config overrides (`[groups."<name>".claude]`). (Base implementation by @alec-pinson in [PR #578](https://github.com/asheshgoplani/agent-deck/pull/578))
+- In-product feedback feature: CLI `agent-deck feedback`, TUI `Ctrl+E`, three-tier submit (GraphQL, clipboard, browser).
+
 ### Fixed
 - Session persistence: tmux servers now survive SSH logout on Linux+systemd hosts via `launch_in_user_scope` default (v1.5.2 hotfix). ([docs/SESSION-PERSISTENCE-SPEC.md](docs/SESSION-PERSISTENCE-SPEC.md))
+- Custom-command Claude sessions (conductors) now resume from latest JSONL on restart.
 
 ## [1.5.1] - 2026-04-13
 

@@ -49,57 +49,27 @@ The 2026-04-14 incident destroyed 33 live Claude conversations across in-flight 
 
 ## Feedback feature: mandatory test coverage
 
-The in-product feedback feature (CLI `agent-deck feedback` + TUI `Ctrl+E` + `FeedbackDialog` + `Sender.Send()` three-tier submit) is covered by 23 tests across three packages. These tests are LOAD-BEARING — they gate the GraphQL primary tier, the clipboard/browser fallback tiers, the headless detection path, and the dialog UX. All 23 must pass before any PR that touches the feedback surface is merged.
+The in-product feedback feature is covered by 23 tests across three packages. All 23 must pass before any PR that touches the feedback surface is merged.
 
-### Test inventory (23 total)
-
-| Package / Location | Count | Notes |
-|--------------------|-------|-------|
-| `internal/feedback` | 11 | Pre-existing suite: `ShouldShow_*` (4), `RecordRating_*` / `RecordOptOut` / `RecordShown` (3), `FormatComment` (1), `RatingEmoji` (1), `Send_GhAuthFailure` (1), `Send_Headless` (1). |
-| `internal/ui` FeedbackDialog | 9 | All `FeedbackDialog_*` tests in `internal/ui/feedback_dialog_test.go`. |
-| `cmd/agent-deck` feedback handler | 2 | `HandleFeedback_ValidRating`, `HandleFeedback_OptOut`. |
-| `TestSender_DiscussionNodeID_IsReal` | 1 | Locks the shape of `feedback.DiscussionNodeID` and blocks `D_PLACEHOLDER` regressions. |
-
-Total: **23 tests.** No test may be deleted, skipped, or renamed without updating this inventory in the same PR.
-
-### Mandatory PR command
-
-Any PR whose diff touches any of the following paths MUST include the full stdout of the command below in the PR description:
-
-- `internal/feedback/**`
-- `internal/ui/feedback_dialog.go`
-- `cmd/agent-deck/feedback_cmd.go`
-- `internal/platform/headless.go`
+### Mandatory PR command for feedback paths
 
 ```
 go test ./internal/feedback/... ./internal/ui/... ./cmd/agent-deck/... -run "Feedback|Sender_" -race -count=1
 ```
 
-### Placeholder-reintroduction rule: BLOCKER, not warning
+### Placeholder-reintroduction rule: BLOCKER
 
-Reintroducing `D_PLACEHOLDER` as the value of `feedback.DiscussionNodeID` in `internal/feedback/sender.go` is a **blocker**. The format regression test `TestSender_DiscussionNodeID_IsReal` catches this automatically.
+Reintroducing `D_PLACEHOLDER` as the value of `feedback.DiscussionNodeID` is a **blocker**. `TestSender_DiscussionNodeID_IsReal` catches this automatically.
+
+## Per-group config: mandatory test coverage
+
+Per-group config dir applies to custom-command sessions too; `TestPerGroupConfig_*` suite enforces this.
 
 ## --no-verify mandate
 
-**`git commit --no-verify` is FORBIDDEN on this repository.** The rule applies to every commit on every branch.
+**`git commit --no-verify` is FORBIDDEN on source-modifying commits.** Metadata-only commits (`.planning/**`, `docs/**`, non-source `*.md`) MAY use `--no-verify` when hooks would no-op.
 
-### Why the hooks are load-bearing
-
-The pre-commit hook chain runs `gofmt`, `go vet`, and conventional-commit message lint. Every check is cheap (sub-second) and catches real defects.
-
-### Incident evidence
-
-Two commits demonstrate exactly what goes wrong when hooks are skipped:
-
-1. **`6785da6`** — bypassed pre-commit hooks, required follow-up work that hooks would have caught.
-2. **`0d4f5b1`** — landed with `gofmt` debt, requiring a separate cleanup commit (`a2b2f27`).
-
-### The remedy when a hook fails
-
-1. Read the hook output.
-2. Fix the root cause (`gofmt -w`, fix `vet` diagnostic, correct commit subject).
-3. Re-stage: `git add <fixed-files>`.
-4. Create a NEW commit. **Never `git commit --amend` past a failed hook. Never `git commit --no-verify`.**
+Incident evidence: commits `6785da6` and `0d4f5b1` demonstrate the cost of skipping hooks.
 
 ## General rules
 

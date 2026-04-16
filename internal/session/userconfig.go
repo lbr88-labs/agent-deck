@@ -65,6 +65,22 @@ type UserConfig struct {
 	// config_dir = "~/.claude-work"
 	Profiles map[string]ProfileSettings `toml:"profiles"`
 
+	// Groups defines optional per-group overrides.
+	// Example:
+	// [groups."my-group".claude]
+	// config_dir = "~/.claude-my-group"
+	Groups map[string]GroupSettings `toml:"groups"`
+
+	// Conductors defines optional per-conductor overrides.
+	// Keyed by conductor name (matches Instance.Title minus "conductor-" prefix).
+	// Mirrors Groups — see ConductorOverrides for the sub-table shape.
+	// Closes issue #602.
+	// Example:
+	// [conductors.gsd-v154.claude]
+	// config_dir = "~/.claude-work"
+	// env_file   = "~/git/work/.envrc"
+	Conductors map[string]ConductorOverrides `toml:"conductors"`
+
 	// Gemini defines Gemini CLI integration settings
 	Gemini GeminiSettings `toml:"gemini"`
 
@@ -193,6 +209,48 @@ type ProfileSettings struct {
 type ProfileClaudeSettings struct {
 	// ConfigDir overrides [claude].config_dir for this profile only.
 	ConfigDir string `toml:"config_dir"`
+}
+
+// GroupSettings defines per-group configuration overrides.
+type GroupSettings struct {
+	// Claude defines Claude Code overrides for a specific group.
+	Claude GroupClaudeSettings `toml:"claude"`
+}
+
+// GroupClaudeSettings defines group-specific Claude overrides.
+type GroupClaudeSettings struct {
+	// ConfigDir overrides [claude].config_dir for sessions in this group.
+	ConfigDir string `toml:"config_dir"`
+
+	// EnvFile overrides [claude].env_file for sessions in this group.
+	EnvFile string `toml:"env_file"`
+}
+
+// ConductorOverrides defines per-conductor configuration overrides.
+// Mirrors GroupSettings — conductors are first-class entities keyed by
+// conductor name (derived from Instance.Title via strings.TrimPrefix at the
+// call site, same pattern as env.go getConductorEnv).
+//
+// Named ConductorOverrides (not ConductorSettings) to avoid collision with
+// the pre-existing global [conductor] meta-agent orchestration block
+// declared in conductor.go:49 (heartbeat, telegram, slack, discord).
+// Closes issue #602.
+type ConductorOverrides struct {
+	// Claude defines Claude Code overrides for a specific conductor.
+	Claude ConductorClaudeSettings `toml:"claude"`
+}
+
+// ConductorClaudeSettings defines conductor-specific Claude overrides.
+// Semantics mirror GroupClaudeSettings — ExpandPath is applied on read via
+// GetConductorClaudeConfigDir; env_file resolution is deferred to the spawn
+// builder (resolvePath handles path expansion at use).
+type ConductorClaudeSettings struct {
+	// ConfigDir overrides [claude].config_dir for this conductor only.
+	ConfigDir string `toml:"config_dir"`
+
+	// EnvFile is sourced before claude exec for this conductor.
+	// Matches CFG-03 semantics — missing file logs a warning, does not block.
+	EnvFile string `toml:"env_file"`
 }
 
 // MCPPoolSettings defines HTTP MCP pool configuration
@@ -582,6 +640,61 @@ func (c *UserConfig) GetProfileClaudeConfigDir(profile string) string {
 		return ""
 	}
 	return ExpandPath(profileCfg.Claude.ConfigDir)
+}
+
+// GetGroupClaudeConfigDir returns the group-specific Claude config directory, if configured.
+func (c *UserConfig) GetGroupClaudeConfigDir(groupPath string) string {
+	if c == nil || groupPath == "" || c.Groups == nil {
+		return ""
+	}
+	groupCfg, ok := c.Groups[groupPath]
+	if !ok || groupCfg.Claude.ConfigDir == "" {
+		return ""
+	}
+	return ExpandPath(groupCfg.Claude.ConfigDir)
+}
+
+// GetGroupClaudeEnvFile returns the group-specific Claude env file, if configured.
+func (c *UserConfig) GetGroupClaudeEnvFile(groupPath string) string {
+	if c == nil || groupPath == "" || c.Groups == nil {
+		return ""
+	}
+	groupCfg, ok := c.Groups[groupPath]
+	if !ok || groupCfg.Claude.EnvFile == "" {
+		return ""
+	}
+	return groupCfg.Claude.EnvFile
+}
+
+// GetConductorClaudeConfigDir returns the conductor-specific Claude config
+// directory, if configured. Keyed by conductor name (Instance.Title minus
+// "conductor-" prefix — single source of truth is conductorNameFromInstance
+// in claude.go). Path expansion matches GetGroupClaudeConfigDir. Returns ""
+// when the conductor has no block or no config_dir — callers fall through
+// to the group/profile/global chain.
+func (c *UserConfig) GetConductorClaudeConfigDir(name string) string {
+	if c == nil || name == "" || c.Conductors == nil {
+		return ""
+	}
+	conductorCfg, ok := c.Conductors[name]
+	if !ok || conductorCfg.Claude.ConfigDir == "" {
+		return ""
+	}
+	return ExpandPath(conductorCfg.Claude.ConfigDir)
+}
+
+// GetConductorClaudeEnvFile returns the conductor-specific Claude env_file,
+// if configured. Mirrors GetGroupClaudeEnvFile — no expansion here;
+// resolvePath handles it at the spawn-command build site (env.go).
+func (c *UserConfig) GetConductorClaudeEnvFile(name string) string {
+	if c == nil || name == "" || c.Conductors == nil {
+		return ""
+	}
+	conductorCfg, ok := c.Conductors[name]
+	if !ok || conductorCfg.Claude.EnvFile == "" {
+		return ""
+	}
+	return conductorCfg.Claude.EnvFile
 }
 
 // GetDangerousMode returns whether dangerous mode is enabled, defaulting to true

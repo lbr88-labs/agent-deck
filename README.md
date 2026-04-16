@@ -95,6 +95,49 @@ Attach/detach Claude skills per project with a managed pool workflow.
 - Apply writes project state to `.agent-deck/skills.toml` and materializes into `.claude/skills`
 - Type-to-jump is supported in the dialog (same pattern as MCP Manager)
 
+### Per-group Claude config
+
+Agent Deck supports per-group `CLAUDE_CONFIG_DIR` and `env_file` overrides. Useful when a single profile hosts groups that should authenticate against different Claude accounts — for example, a personal profile hosting a `conductor` group pinned to `~/.claude-work` while other groups stay on `~/.claude`.
+
+Override any group by adding a `[groups."<name>".claude]` table to `~/.agent-deck/config.toml`:
+
+```toml
+[groups."conductor".claude]
+config_dir = "~/.claude-work"
+env_file = "~/git/work/.envrc"
+```
+
+Lookup priority: `env > group > profile > global > default`. The `env_file` is `source`d into the tmux pane before `claude` (or the custom command) execs, so any exports it contains become part of the session environment.
+
+Human-watchable verification: `bash scripts/verify-per-group-claude-config.sh`. The harness creates two throwaway groups, launches one normal and one custom-command session, and prints a pass/fail table.
+
+#### Per-conductor Claude config (v1.5.4)
+
+Conductors are first-class agent-deck entities (see `agent-deck conductor setup`). Each conductor can carry its own Claude `config_dir` and `env_file` via a top-level `[conductors.<name>.claude]` block:
+
+```toml
+[conductors.gsd-v154.claude]
+config_dir = "~/.claude-work"
+env_file = "~/git/work/.envrc"
+```
+
+The conductor name is the string you passed to `agent-deck conductor setup <name>` — it's the same name that appears in session titles (`conductor-<name>`).
+
+**Precedence chain** (most-specific → least-specific):
+
+1. `CLAUDE_CONFIG_DIR` env var
+2. `[conductors.<name>.claude]` (when the session is a conductor session, i.e. Title starts with `conductor-`)
+3. `[groups."<group>".claude]` (PR #578)
+4. `[profiles.<profile>.claude]`
+5. `[claude]` (global)
+6. `~/.claude` (default)
+
+This means a single `[conductors.gsd-v154.claude]` line replaces the need to duplicate the config into `[groups."conductor".claude]` — the conductor block scopes to exactly that conductor, not to every conductor that shares the `conductor` group.
+
+Backward compat: sessions in the `conductor` group with NO matching `[conductors.<name>.claude]` block continue to resolve via `[groups."conductor".claude]` as they did in v1.5.4 Phase 1–3.
+
+Closes [issue #602](https://github.com/asheshgoplani/agent-deck/issues/602).
+
 ### MCP Socket Pool
 
 Running many sessions? Socket pooling shares MCP processes across all sessions via Unix sockets, reducing MCP memory usage by 85-90%. Connections auto-recover from MCP crashes in ~3 seconds via a reconnecting proxy. Enable with `pool_all = true` in [config.toml](skills/agent-deck/references/config-reference.md).

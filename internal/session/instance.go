@@ -498,8 +498,8 @@ func (i *Instance) buildClaudeCommandWithMessage(baseCommand, message string) st
 	// set in their .bashrc/.zshrc - we should NOT override that with a default path.
 	// Also skip if using a custom command (alias handles config dir)
 	configDirPrefix := ""
-	if !hasCustomCommand && IsClaudeConfigDirExplicit() {
-		configDir := GetClaudeConfigDir()
+	if !hasCustomCommand && IsClaudeConfigDirExplicitForInstance(i) {
+		configDir := GetClaudeConfigDirForInstance(i)
 		configDirPrefix = fmt.Sprintf("CLAUDE_CONFIG_DIR=%s ", configDir)
 	}
 
@@ -592,18 +592,42 @@ func (i *Instance) buildClaudeCommandWithMessage(baseCommand, message string) st
 		return baseCmd
 	}
 
-	// For custom commands (e.g., fork commands), return as-is
-	return baseCommand
+	// For custom commands (e.g., fork commands or conductor wrappers), prepend
+	// the env-source prefix (CFG-03) and the bash export prefix (CFG-02) so
+	// group env_file exports AND CLAUDE_CONFIG_DIR both land in the spawn env
+	// before exec'ing the wrapper.
+	return i.buildEnvSourceCommand() + i.buildBashExportPrefix() + baseCommand
 }
 
 // buildBashExportPrefix builds the export prefix used in bash -c commands.
 // It always exports AGENTDECK_INSTANCE_ID, and conditionally adds CLAUDE_CONFIG_DIR.
 func (i *Instance) buildBashExportPrefix() string {
 	prefix := fmt.Sprintf("export AGENTDECK_INSTANCE_ID=%s; ", i.ID)
-	if IsClaudeConfigDirExplicit() {
-		prefix += fmt.Sprintf("export CLAUDE_CONFIG_DIR=%s; ", GetClaudeConfigDir())
+	if IsClaudeConfigDirExplicitForInstance(i) {
+		prefix += fmt.Sprintf("export CLAUDE_CONFIG_DIR=%s; ", GetClaudeConfigDirForInstance(i))
 	}
 	return prefix
+}
+
+// logClaudeConfigResolution emits the CFG-07 observability line documenting
+// which priority level resolved CLAUDE_CONFIG_DIR for this session.
+// Owns the single CFG-07 slog message literal for this package.
+//
+// Callers MUST gate on IsClaudeCompatible(i.Tool). The helper does not
+// re-gate — keeping the guard at each call site makes the three emission
+// sites grep-auditable.
+//
+// Called from: Start, StartWithMessage, Restart.
+// NOT called from: Fork (Fork may trigger a subsequent Start() on the
+// forked instance which will log), or from any builder function.
+func (i *Instance) logClaudeConfigResolution() {
+	resolvedPath, source := GetClaudeConfigDirSourceForInstance(i)
+	sessionLog.Info("claude config resolution",
+		slog.String("session", i.ID),
+		slog.String("group", i.GroupPath),
+		slog.String("resolved", resolvedPath),
+		slog.String("source", source),
+	)
 }
 
 // buildClaudeExtraFlags builds extra command-line flags string from ClaudeOptions
@@ -1992,6 +2016,13 @@ func (i *Instance) Start() error {
 		return fmt.Errorf("failed to start tmux session: %w", err)
 	}
 
+	// CFG-07: emit a single-shot log line documenting which priority level
+	// resolved CLAUDE_CONFIG_DIR for this session. Claude-compatible tools
+	// only; Fork inherits from its parent and does not log here.
+	if IsClaudeCompatible(i.Tool) {
+		i.logClaudeConfigResolution()
+	}
+
 	// Set AGENTDECK_INSTANCE_ID for Claude hooks to identify this session
 	// This enables real-time status updates via Stop/SessionStart hooks
 	if err := i.tmuxSession.SetEnvironment("AGENTDECK_INSTANCE_ID", i.ID); err != nil {
@@ -2132,6 +2163,13 @@ func (i *Instance) StartWithMessage(message string) error {
 	// Start the tmux session
 	if err := i.tmuxSession.Start(command); err != nil {
 		return fmt.Errorf("failed to start tmux session: %w", err)
+	}
+
+	// CFG-07: emit a single-shot log line documenting which priority level
+	// resolved CLAUDE_CONFIG_DIR for this session. Claude-compatible tools
+	// only; sister path to Start().
+	if IsClaudeCompatible(i.Tool) {
+		i.logClaudeConfigResolution()
 	}
 
 	// Set AGENTDECK_INSTANCE_ID for Claude hooks to identify this session
@@ -4167,6 +4205,12 @@ func (i *Instance) Restart() error {
 
 	mcpLog.Debug("restart_start_succeeded")
 
+	// CFG-07: emit the config-resolution log on restart too — triage must not
+	// go dark on the exact scenario most likely to need debugging.
+	if IsClaudeCompatible(i.Tool) {
+		i.logClaudeConfigResolution()
+	}
+
 	// Set AGENTDECK_INSTANCE_ID for Claude hooks to identify this session
 	// This enables real-time status updates via Stop/SessionStart hooks
 	if err := i.tmuxSession.SetEnvironment("AGENTDECK_INSTANCE_ID", i.ID); err != nil {
@@ -4218,8 +4262,8 @@ func (i *Instance) buildClaudeResumeCommand() string {
 	// If NOT explicit, don't set it - let the shell's environment handle it
 	// Also skip if using a custom command (alias handles config dir)
 	configDirPrefix := ""
-	if !hasCustomCommand && IsClaudeConfigDirExplicit() {
-		configDir := GetClaudeConfigDir()
+	if !hasCustomCommand && IsClaudeConfigDirExplicitForInstance(i) {
+		configDir := GetClaudeConfigDirForInstance(i)
 		configDirPrefix = fmt.Sprintf("CLAUDE_CONFIG_DIR=%s ", configDir)
 	}
 

@@ -224,20 +224,35 @@ func getMCPInfoUncached(projectPath string) *MCPInfo {
 }
 
 // GetClaudeConfigDir returns the Claude config directory for the active profile.
+// Delegates to GetClaudeConfigDirForGroup with no group context.
+func GetClaudeConfigDir() string {
+	return GetClaudeConfigDirForGroup("")
+}
+
+// IsClaudeConfigDirExplicit returns true if the Claude config directory is
+// explicitly configured (via CLAUDE_CONFIG_DIR env var, profile override, or global config.toml setting).
+// Delegates to IsClaudeConfigDirExplicitForGroup with no group context.
+func IsClaudeConfigDirExplicit() bool {
+	return IsClaudeConfigDirExplicitForGroup("")
+}
+
+// GetClaudeConfigDirForGroup returns the Claude config directory, checking group overrides first.
 // Priority:
 // 1. CLAUDE_CONFIG_DIR env var
-// 2. profile-specific override: [profiles.<profile>.claude].config_dir
-// 3. global setting: [claude].config_dir
-// 4. default: ~/.claude
-func GetClaudeConfigDir() string {
-	// 1. Check env var (highest priority)
+// 2. group-specific override: [groups."<group>".claude].config_dir
+// 3. profile-specific override: [profiles.<profile>.claude].config_dir
+// 4. global setting: [claude].config_dir
+// 5. default: ~/.claude
+func GetClaudeConfigDirForGroup(groupPath string) string {
 	if envDir := os.Getenv("CLAUDE_CONFIG_DIR"); envDir != "" {
 		return ExpandPath(envDir)
 	}
 
-	// 2. Check user config (profile-specific first, then global)
 	userConfig, _ := LoadUserConfig()
 	if userConfig != nil {
+		if groupDir := userConfig.GetGroupClaudeConfigDir(groupPath); groupDir != "" {
+			return groupDir
+		}
 		profile := GetEffectiveProfile("")
 		if profileDir := userConfig.GetProfileClaudeConfigDir(profile); profileDir != "" {
 			return profileDir
@@ -247,28 +262,22 @@ func GetClaudeConfigDir() string {
 		}
 	}
 
-	// 3. Default to ~/.claude
 	home, _ := os.UserHomeDir()
 	return filepath.Join(home, ".claude")
 }
 
-// IsClaudeConfigDirExplicit returns true if the Claude config directory is
-// explicitly configured (via CLAUDE_CONFIG_DIR env var, profile override, or global config.toml setting).
-// When false, the user is using the default path and we should NOT override
-// CLAUDE_CONFIG_DIR in commands, allowing the shell's environment to be respected.
-//
-// This is critical for WSL and other environments where users may have
-// CLAUDE_CONFIG_DIR set in their .bashrc/.zshrc - agent-deck should not
-// override that with a hardcoded default path.
-func IsClaudeConfigDirExplicit() bool {
-	// Check env var
+// IsClaudeConfigDirExplicitForGroup returns true if the Claude config directory is
+// explicitly configured at any level (env var, group override, profile override, or global).
+func IsClaudeConfigDirExplicitForGroup(groupPath string) bool {
 	if os.Getenv("CLAUDE_CONFIG_DIR") != "" {
 		return true
 	}
 
-	// Check user config (profile-specific first, then global)
 	userConfig, _ := LoadUserConfig()
 	if userConfig != nil {
+		if userConfig.GetGroupClaudeConfigDir(groupPath) != "" {
+			return true
+		}
 		profile := GetEffectiveProfile("")
 		if userConfig.GetProfileClaudeConfigDir(profile) != "" {
 			return true
@@ -278,6 +287,174 @@ func IsClaudeConfigDirExplicit() bool {
 		}
 	}
 
+	return false
+}
+
+// GetClaudeConfigDirSourceForGroup returns the resolved Claude config dir
+// and the priority level that set it. Source is one of:
+//
+//	"env"     — CLAUDE_CONFIG_DIR env var
+//	"group"   — [groups."<groupPath>".claude].config_dir
+//	"profile" — [profiles.<profile>.claude].config_dir
+//	"global"  — top-level [claude].config_dir
+//	"default" — ~/.claude
+//
+// The priority chain matches GetClaudeConfigDirForGroup at L246 exactly;
+// keep the two functions in sync if the chain ever changes. Used by
+// (*Instance).logClaudeConfigResolution in instance.go.
+func GetClaudeConfigDirSourceForGroup(groupPath string) (path, source string) {
+	if envDir := os.Getenv("CLAUDE_CONFIG_DIR"); envDir != "" {
+		return ExpandPath(envDir), "env"
+	}
+
+	userConfig, _ := LoadUserConfig()
+	if userConfig != nil {
+		if groupDir := userConfig.GetGroupClaudeConfigDir(groupPath); groupDir != "" {
+			return groupDir, "group"
+		}
+		profile := GetEffectiveProfile("")
+		if profileDir := userConfig.GetProfileClaudeConfigDir(profile); profileDir != "" {
+			return profileDir, "profile"
+		}
+		if userConfig.Claude.ConfigDir != "" {
+			return ExpandPath(userConfig.Claude.ConfigDir), "global"
+		}
+	}
+
+	home, _ := os.UserHomeDir()
+	return filepath.Join(home, ".claude"), "default"
+}
+
+// conductorNameFromInstance extracts the conductor name from an Instance's
+// Title. Returns "" for non-conductor sessions. Mirrors the canonical pattern
+// used in env.go getConductorEnv (line 267) — single source of truth for
+// conductor name derivation from a session.
+func conductorNameFromInstance(inst *Instance) string {
+	if inst == nil {
+		return ""
+	}
+	name := strings.TrimPrefix(inst.Title, "conductor-")
+	if name == "" || name == inst.Title {
+		return ""
+	}
+	return name
+}
+
+// GetClaudeConfigDirForInstance returns the Claude config directory,
+// extending GetClaudeConfigDirForGroup with a [conductors.<name>] branch
+// that sits between the env-var check and the group check.
+//
+// Priority (most-specific → least-specific):
+//
+//  1. CLAUDE_CONFIG_DIR env var
+//  2. [conductors.<name>.claude].config_dir — NEW (CFG-08), consulted only when
+//     Instance.Title starts with "conductor-"
+//  3. [groups."<group>".claude].config_dir   — PR #578 (CFG-01)
+//  4. [profiles.<profile>.claude].config_dir
+//  5. [claude].config_dir
+//  6. ~/.claude
+//
+// Callers pass the *Instance; conductor name is derived via
+// conductorNameFromInstance. Backward compat: non-conductor sessions
+// (Title without "conductor-" prefix) resolve identically to
+// GetClaudeConfigDirForGroup(inst.GroupPath).
+func GetClaudeConfigDirForInstance(inst *Instance) string {
+	if envDir := os.Getenv("CLAUDE_CONFIG_DIR"); envDir != "" {
+		return ExpandPath(envDir)
+	}
+
+	userConfig, _ := LoadUserConfig()
+	if userConfig != nil {
+		if name := conductorNameFromInstance(inst); name != "" {
+			if conductorDir := userConfig.GetConductorClaudeConfigDir(name); conductorDir != "" {
+				return conductorDir
+			}
+		}
+		groupPath := ""
+		if inst != nil {
+			groupPath = inst.GroupPath
+		}
+		if groupDir := userConfig.GetGroupClaudeConfigDir(groupPath); groupDir != "" {
+			return groupDir
+		}
+		profile := GetEffectiveProfile("")
+		if profileDir := userConfig.GetProfileClaudeConfigDir(profile); profileDir != "" {
+			return profileDir
+		}
+		if userConfig.Claude.ConfigDir != "" {
+			return ExpandPath(userConfig.Claude.ConfigDir)
+		}
+	}
+
+	home, _ := os.UserHomeDir()
+	return filepath.Join(home, ".claude")
+}
+
+// GetClaudeConfigDirSourceForInstance returns the resolved path and the
+// priority-level label. Extends GetClaudeConfigDirSourceForGroup with a
+// "conductor" branch. Keep in sync with GetClaudeConfigDirForInstance —
+// both functions must change together if the priority chain ever changes.
+func GetClaudeConfigDirSourceForInstance(inst *Instance) (path, source string) {
+	if envDir := os.Getenv("CLAUDE_CONFIG_DIR"); envDir != "" {
+		return ExpandPath(envDir), "env"
+	}
+
+	userConfig, _ := LoadUserConfig()
+	if userConfig != nil {
+		if name := conductorNameFromInstance(inst); name != "" {
+			if conductorDir := userConfig.GetConductorClaudeConfigDir(name); conductorDir != "" {
+				return conductorDir, "conductor"
+			}
+		}
+		groupPath := ""
+		if inst != nil {
+			groupPath = inst.GroupPath
+		}
+		if groupDir := userConfig.GetGroupClaudeConfigDir(groupPath); groupDir != "" {
+			return groupDir, "group"
+		}
+		profile := GetEffectiveProfile("")
+		if profileDir := userConfig.GetProfileClaudeConfigDir(profile); profileDir != "" {
+			return profileDir, "profile"
+		}
+		if userConfig.Claude.ConfigDir != "" {
+			return ExpandPath(userConfig.Claude.ConfigDir), "global"
+		}
+	}
+
+	home, _ := os.UserHomeDir()
+	return filepath.Join(home, ".claude"), "default"
+}
+
+// IsClaudeConfigDirExplicitForInstance mirrors IsClaudeConfigDirExplicitForGroup
+// with the conductor-block branch. Returns true if ANY priority level sets a
+// config dir for this Instance.
+func IsClaudeConfigDirExplicitForInstance(inst *Instance) bool {
+	if os.Getenv("CLAUDE_CONFIG_DIR") != "" {
+		return true
+	}
+	userConfig, _ := LoadUserConfig()
+	if userConfig != nil {
+		if name := conductorNameFromInstance(inst); name != "" {
+			if userConfig.GetConductorClaudeConfigDir(name) != "" {
+				return true
+			}
+		}
+		groupPath := ""
+		if inst != nil {
+			groupPath = inst.GroupPath
+		}
+		if userConfig.GetGroupClaudeConfigDir(groupPath) != "" {
+			return true
+		}
+		profile := GetEffectiveProfile("")
+		if userConfig.GetProfileClaudeConfigDir(profile) != "" {
+			return true
+		}
+		if userConfig.Claude.ConfigDir != "" {
+			return true
+		}
+	}
 	return false
 }
 
