@@ -2,6 +2,7 @@ package watcher
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -43,7 +44,7 @@ type EngineConfig struct {
 	TriageDir string
 
 	// ClientsPath is the path to clients.json for triage hot-reload.
-	// Defaults to $HOME/.agent-deck/watchers/clients.json when empty.
+	// Defaults to $HOME/.agent-deck/watcher/clients.json when empty.
 	ClientsPath string
 
 	// Profile is the agent-deck profile flag passed to spawned triage sessions.
@@ -131,7 +132,8 @@ func NewEngine(cfg EngineConfig) *Engine {
 	}
 	if cfg.ClientsPath == "" {
 		if home, err := os.UserHomeDir(); err == nil {
-			cfg.ClientsPath = filepath.Join(home, ".agent-deck", "watchers", "clients.json")
+			// Singular "watcher" per REQ-WF-6. Legacy "watchers/" is served via compatibility symlink created by MigrateLegacyWatchersDir.
+			cfg.ClientsPath = filepath.Join(home, ".agent-deck", "watcher", "clients.json")
 		}
 	}
 	if cfg.Profile == "" {
@@ -179,6 +181,15 @@ func (e *Engine) RegisterAdapter(watcherID string, adapter WatcherAdapter, confi
 // then launches an adapter goroutine. It also starts the single-writer goroutine
 // and optionally the health check loop.
 func (e *Engine) Start() error {
+	// Migrate legacy watchers/ dir and scaffold watcher/ layout on every boot.
+	// Non-fatal: log and continue so a filesystem error never prevents event processing.
+	if err := MigrateLegacyWatchersDir(); err != nil {
+		e.log.Warn("watcher_migration_failed", slog.String("error", err.Error()))
+	}
+	if err := ScaffoldWatcherLayout(); err != nil {
+		e.log.Warn("watcher_scaffold_failed", slog.String("error", err.Error()))
+	}
+
 	for i := range e.adapters {
 		entry := &e.adapters[i]
 
@@ -346,6 +357,39 @@ func (e *Engine) writerLoop() {
 			if inserted {
 				// New event: update health tracker and forward to TUI (D-14).
 				env.tracker.RecordEvent()
+
+				// Persist per-watcher event log + state snapshot. Failures MUST NOT drop the event — log and continue.
+				// Snapshot current health via the existing public Check() method. Check() returns a
+				// read-locked HealthState copy: we pull ConsecutiveErrors directly and derive
+				// AdapterHealthy from Status != HealthStatusError (the classifier sets Status=Error
+				// when !adapterHealthy OR consecutiveErrors >= 10; since we record ConsecutiveErrors
+				// separately, Status==Error here uniquely implies adapterHealthy==false for the
+				// purposes of the persisted snapshot's AdapterHealthy bool).
+				hs := env.tracker.Check()
+				watcherName := hs.WatcherName
+				summary := env.event.Subject
+				if len(summary) > 400 {
+					summary = summary[:400]
+				}
+				logEntry := fmt.Sprintf("## %s - %s: %s",
+					e.clock.Now().UTC().Format(time.RFC3339),
+					env.event.Sender,
+					summary)
+				if err := AppendEventLog(watcherName, logEntry); err != nil {
+					e.log.Warn("event_log_append_failed",
+						slog.String("watcher", watcherName),
+						slog.String("error", err.Error()))
+				}
+				snapshot := &WatcherState{
+					LastEventTS:    e.clock.Now().UTC(),
+					ErrorCount:     hs.ConsecutiveErrors,
+					AdapterHealthy: hs.Status != HealthStatusError,
+				}
+				if err := SaveState(watcherName, snapshot); err != nil {
+					e.log.Warn("state_save_failed",
+						slog.String("watcher", watcherName),
+						slog.String("error", err.Error()))
+				}
 
 				// Set thread session ID for downstream routing (D-07).
 				if threadSessionID != "" {

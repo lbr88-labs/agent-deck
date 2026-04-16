@@ -521,7 +521,7 @@ func handleWatcherTest(profile string, args []string) {
 	router, err := watcher.LoadFromWatcherDir()
 	if err != nil {
 		fmt.Printf("Routing config: not available (%v)\n", err)
-		fmt.Println("  Create ~/.agent-deck/watchers/clients.json to enable routing.")
+		fmt.Println("  Create ~/.agent-deck/watcher/clients.json to enable routing.")
 		return
 	}
 
