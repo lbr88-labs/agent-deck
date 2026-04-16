@@ -165,6 +165,84 @@ func TestAddChannelFlag(t *testing.T) {
 	}
 }
 
+// TestSessionShowJSONIncludesChannels asserts that
+// `agent-deck session show --json <id>` includes the `channels` field when
+// the session has channels set. Without this, the `show` JSON is
+// inconsistent with `list --json` (which does include the field).
+//
+// Failure mode on main pre-fix: `session show --json` omits the "channels"
+// key entirely even when set. Data persists fine (list shows it) — only
+// the show serializer is blind to it.
+//
+// Root cause: two separate JSON emitters. handleList threads Channels;
+// handleSessionShow (session_cmd.go:645) builds its own jsonData map and
+// never included the field.
+//
+// See gh#615.
+func TestSessionShowJSONIncludesChannels(t *testing.T) {
+	if testing.Short() {
+		t.Skip("subprocess CLI test skipped in short mode")
+	}
+	home := t.TempDir()
+	projectDir := filepath.Join(home, "proj")
+	if err := os.MkdirAll(projectDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	// Step 1: create claude session with --channel.
+	stdout, stderr, code := runAgentDeck(t, home,
+		"add",
+		"-t", "ch-show-test",
+		"-c", "claude",
+		"--channel", "plugin:telegram@user/repo",
+		"--no-parent",
+		"--json",
+		projectDir,
+	)
+	if code != 0 {
+		t.Fatalf("agent-deck add --channel failed (exit %d)\nstdout: %s\nstderr: %s", code, stdout, stderr)
+	}
+	var addResp struct {
+		ID string `json:"id"`
+	}
+	if err := json.Unmarshal([]byte(stdout), &addResp); err != nil {
+		t.Fatalf("parse add response: %v\nstdout: %s", err, stdout)
+	}
+
+	// Step 2: session show --json MUST include the channels field.
+	stdout, stderr, code = runAgentDeck(t, home,
+		"session", "show", addResp.ID, "--json",
+	)
+	if code != 0 {
+		t.Fatalf("agent-deck session show --json failed (exit %d)\nstdout: %s\nstderr: %s", code, stdout, stderr)
+	}
+
+	var showResp map[string]interface{}
+	if err := json.Unmarshal([]byte(stdout), &showResp); err != nil {
+		t.Fatalf("parse show response: %v\nstdout: %s", err, stdout)
+	}
+
+	// The assertion — pre-fix this fails because the key is absent.
+	channels, ok := showResp["channels"]
+	if !ok {
+		t.Fatalf(
+			"session show --json must include 'channels' field when set, but key is absent.\n"+
+				"list --json includes it; show --json should too (consistency).\n"+
+				"See gh#615.\nResponse: %s",
+			stdout,
+		)
+	}
+
+	// Must be a list with our channel id.
+	chList, ok := channels.([]interface{})
+	if !ok {
+		t.Fatalf("channels field should be a list, got %T: %v", channels, channels)
+	}
+	if len(chList) != 1 || chList[0] != "plugin:telegram@user/repo" {
+		t.Errorf("expected channels == [plugin:telegram@user/repo], got %v", chList)
+	}
+}
+
 // TestSessionSetChannels asserts that
 // `agent-deck session set <id> channels <csv>` updates the field.
 //

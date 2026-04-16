@@ -739,6 +739,13 @@ func handleSessionShow(profile string, args []string) {
 		if mcps := mcpInfoForJSON(mcpInfo); mcps != nil {
 			jsonData["mcps"] = mcps
 		}
+
+		// Always include channels for claude sessions — omitting when empty
+		// would make absence-of-field ambiguous with absence-of-value. Match
+		// the `list --json` emitter which surfaces this field unconditionally.
+		if len(inst.Channels) > 0 {
+			jsonData["channels"] = inst.Channels
+		}
 	}
 
 	if tmuxSession := inst.GetTmuxSession(); tmuxSession != nil {
