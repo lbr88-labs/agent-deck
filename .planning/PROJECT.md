@@ -75,8 +75,8 @@ Detailed requirements in `.planning/REQUIREMENTS.md` § "v1.6.0 Wave B Completio
 
 Wave A scope (originally tracked as Active) has shipped as code; verification ledger is closed by Wave B Phase 19. Wave A items are listed under Validated below.
 
-- [ ] **REQ-WF-1**: Phase 14 verification doc — webhook + ntfy + GitHub adapters, observable truths with `path:line` citations
-- [ ] **REQ-WF-2**: Phase 15 backfill (PLAN, SUMMARY, VERIFICATION) — Slack adapter + `watcher import`
+- [x] **REQ-WF-1**: Phase 14 verification doc — webhook + ntfy + GitHub adapters, observable truths with `path:line` citations (Closed 2026-04-16 by Phase 19 plan 19-01, commit 2c19e3f)
+- [x] **REQ-WF-2**: Phase 15 backfill (PLAN, SUMMARY, VERIFICATION) — Slack adapter + `watcher import` (Closed 2026-04-16 by Phase 19 plan 19-02, commit e294ed1)
 - [ ] **REQ-WF-3**: Health alerts bridge (`internal/watcher/health_bridge.go`) — silence/error/teardown triggers, 15-min debounce, opt-in via `[watcher.alerts]` config, six unit tests + integration test
 - [ ] **REQ-WF-6**: Watcher folder hierarchy mirroring `~/.agent-deck/conductor/` — singular `watcher/` dir with per-instance `meta.json`/`state.json`/`task-log.md`/`LEARNINGS.md`, atomic legacy migration with one-cycle symlink fallback
 - [ ] **REQ-WF-7**: Skills + docs sync — embedded `watcher-creator` SKILL.md, repo SKILL.md, README, design-spec addendum, CHANGELOG; new `TestSkillDriftCheck_WatcherCreator` to lock against future drift
@@ -168,4 +168,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-04-16 after v1.6.0 Wave B (Watcher Framework Completion) milestone bootstrap. Wave A (phases 12–18) shipped 2026-04-10 → 2026-04-11 with code complete and partial verification ledger. Wave B scope defined from `docs/WATCHER-COMPLETION-SPEC.md`: 7 REQ-WF requirements across 5 new phases (19–23). v1.5.4 CLAUDE.md mandate applies (no `--no-verify` on source commits; metadata commits exempt when hooks no-op).*
+*Last updated: 2026-04-16 after v1.6.0 Wave B Phase 19 (verification-docs-phases-14-15) completed. REQ-WF-1 and REQ-WF-2 closed via observable-truth docs with `path:line` citations in `14-VERIFICATION.md` + `15-VERIFICATION.md` + reconstructed `15-01-PLAN.md`/`15-01-SUMMARY.md`. Wave A ledger lag now resolved. Next: Phase 20 (Health Alerts Bridge, REQ-WF-3). v1.5.4 CLAUDE.md mandate applies (no `--no-verify` on source commits; metadata commits exempt when hooks no-op).*
