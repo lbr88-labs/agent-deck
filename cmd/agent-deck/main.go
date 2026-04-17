@@ -2374,8 +2374,9 @@ func handleUpdateToSpecificVersion(requested string, checkOnly bool) {
 	}
 
 	drainStdin()
+	defaultYes := cmp <= 0
 	prompt := fmt.Sprintf("\nInstall v%s now? [Y/n] ", targetVersion)
-	if cmp > 0 {
+	if !defaultYes {
 		prompt = fmt.Sprintf("\nDowngrade to v%s now? [y/N] ", targetVersion)
 	}
 	fmt.Print(prompt)
@@ -2383,12 +2384,7 @@ func handleUpdateToSpecificVersion(requested string, checkOnly bool) {
 	response, _ := reader.ReadString('\n')
 	response = strings.TrimSpace(strings.ToLower(response))
 
-	confirmed := false
-	if cmp > 0 {
-		confirmed = response == "y" || response == "yes"
-	} else {
-		confirmed = response == "" || response == "y" || response == "yes"
-	}
+	confirmed := response == "y" || response == "yes" || (defaultYes && response == "")
 	if !confirmed {
 		fmt.Println("Update cancelled.")
 		return

@@ -177,12 +177,9 @@ func FetchLatestRelease() (*Release, error) {
 // NormalizeReleaseTag ensures a version string is prefixed with "v" so it matches
 // GitHub release tags (e.g., "1.7.4" -> "v1.7.4", "v1.7.4" -> "v1.7.4").
 func NormalizeReleaseTag(version string) string {
-	trimmed := strings.TrimSpace(version)
+	trimmed := strings.TrimLeft(strings.TrimSpace(version), "vV")
 	if trimmed == "" {
 		return ""
-	}
-	if strings.HasPrefix(trimmed, "v") || strings.HasPrefix(trimmed, "V") {
-		return "v" + strings.TrimPrefix(strings.TrimPrefix(trimmed, "v"), "V")
 	}
 	return "v" + trimmed
 }

@@ -213,44 +213,27 @@ func TestNormalizeReleaseTag(t *testing.T) {
 }
 
 func TestFetchReleaseByTag(t *testing.T) {
+	rel := Release{
+		TagName: "v1.7.4",
+		Name:    "v1.7.4",
+		HTMLURL: "https://example/releases/v1.7.4",
+		Assets: []Asset{{
+			Name:               "agent-deck_1.7.4_darwin_arm64.tar.gz",
+			BrowserDownloadURL: "https://example/download/agent-deck_1.7.4_darwin_arm64.tar.gz",
+			Size:               123,
+		}},
+	}
 	mux := http.NewServeMux()
-	mux.HandleFunc("/repos/", func(w http.ResponseWriter, r *http.Request) {
-		// path shape: /repos/{owner}/{repo}/releases/tags/{tag}
-		parts := strings.Split(strings.Trim(r.URL.Path, "/"), "/")
-		if len(parts) != 5 || parts[3] != "tags" {
-			http.NotFound(w, r)
-			return
-		}
-		tag := parts[4]
-		if tag != "v1.7.4" {
-			http.NotFound(w, r)
-			return
-		}
-		rel := Release{
-			TagName: "v1.7.4",
-			Name:    "v1.7.4",
-			HTMLURL: "https://example/releases/v1.7.4",
-			Assets: []Asset{
-				{
-					Name:               "agent-deck_1.7.4_darwin_arm64.tar.gz",
-					BrowserDownloadURL: "https://example/download/agent-deck_1.7.4_darwin_arm64.tar.gz",
-					Size:               123,
-				},
-			},
-		}
+	mux.HandleFunc("GET /repos/"+GitHubRepo+"/releases/tags/v1.7.4", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(rel)
 	})
 	srv := httptest.NewServer(mux)
 	defer srv.Close()
 
-	origRepo := GitHubRepo
 	origURL := apiBaseURL
 	apiBaseURL = srv.URL
-	t.Cleanup(func() {
-		apiBaseURL = origURL
-		_ = origRepo
-	})
+	t.Cleanup(func() { apiBaseURL = origURL })
 
 	t.Run("accepts plain semver", func(t *testing.T) {
 		rel, err := FetchReleaseByTag("1.7.4")
