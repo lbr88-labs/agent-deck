@@ -5,6 +5,11 @@ All notable changes to Agent Deck will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.7.10] - 2026-04-17
+
+### Fixed
+- **`session send --no-wait` reliability on freshly-launched Claude sessions** (issue [#616](https://github.com/asheshgoplani/agent-deck/issues/616)): the pre-v1.7.10 code skipped all readiness detection in `--no-wait` mode, then ran a 1.2-second verification loop. On cold Claude launches (where TUI mount takes 5-40s with MCPs), the loop counted startup-animation "active" status as submission success and returned before the composer rendered — leaving the pasted message typed-but-not-submitted. The 30-50% failure rate users reported is now 0% in 10 consecutive live-boundary runs. Fix has three layers: a 5s preflight barrier waiting for the Claude composer `❯` to render, a 500ms post-composer settle for React mount, and an extended 6s verification budget (from 1.2s). `maxFullResends=-1` is preserved — the #479 regression (double-send) still passes. Non-Claude tools skip the preflight (their prompt shapes differ). Tests: `TestSendNoWait_ReEntersWhenComposerRendersLate`, `TestAwaitComposerReadyBestEffort_*`, `TestSendWithRetryTarget_NoWait_BudgetSpansRealisticClaudeStartup` in `cmd/agent-deck/session_send_test.go`.
+
 ## [1.7.6] - 2026-04-17
 
 ### Fixed

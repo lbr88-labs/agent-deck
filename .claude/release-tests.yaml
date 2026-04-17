@@ -375,3 +375,78 @@ tests:
     command: go test ./internal/session/ -run TestUpdateStatus_CLIvsTUIParity_SameTmuxState
       -race -count=1 -v
     expected: pass
+- id: issue-616-send-no-wait-late-composer
+  added: '2026-04-17'
+  task: fix-issue-616
+  file: cmd/agent-deck/session_send_test.go
+  test_name: TestSendNoWait_ReEntersWhenComposerRendersLate
+  purpose: Regression guard for #616 — sendNoWait must keep detecting the unsent
+    composer prompt and re-firing SendEnter even when the Claude composer renders
+    late (after 5 iterations of status=active/pane=""). Also asserts that only one
+    SendKeysAndEnter fires (preserves the #479 no-double-send guarantee).
+  source: .planning/fix-issue-616/PLAN.md
+  manual: false
+  run:
+    command: go test ./cmd/agent-deck/ -run TestSendNoWait_ReEntersWhenComposerRendersLate
+      -race -count=1 -v
+    expected: pass
+- id: issue-616-no-wait-budget-sizing
+  added: '2026-04-17'
+  task: fix-issue-616
+  file: cmd/agent-deck/session_send_test.go
+  test_name: TestSendWithRetryTarget_NoWait_BudgetSpansRealisticClaudeStartup
+  purpose: Locks in that noWaitSendOptions() has ≥4s total verification budget so
+    future refactors cannot silently shrink it back to the pre-v1.7.10 1.2s window
+    that caused #616. Also pins maxFullResends=-1 (preserves #479 double-send fix).
+  source: .planning/fix-issue-616/PLAN.md
+  manual: false
+  run:
+    command: go test ./cmd/agent-deck/ -run TestSendWithRetryTarget_NoWait_BudgetSpansRealisticClaudeStartup
+      -race -count=1 -v
+    expected: pass
+- id: issue-616-preflight-barrier-correctness
+  added: '2026-04-17'
+  task: fix-issue-616
+  file: cmd/agent-deck/session_send_test.go
+  test_name: TestAwaitComposerReadyBestEffort_ReturnsTrueWhenComposerAppears
+  purpose: Preflight barrier must detect Claude composer `❯` appearing within the
+    cap window. Without this, --no-wait sends before Claude's TUI mounts and the
+    keystrokes are discarded by pre-mount handlers (#616 root cause layer 1).
+  source: .planning/fix-issue-616/PLAN.md
+  manual: false
+  run:
+    command: go test ./cmd/agent-deck/ -run TestAwaitComposerReadyBestEffort_ReturnsTrueWhenComposerAppears
+      -race -count=1 -v
+    expected: pass
+- id: issue-616-preflight-barrier-cap-respected
+  added: '2026-04-17'
+  task: fix-issue-616
+  file: cmd/agent-deck/session_send_test.go
+  test_name: TestAwaitComposerReadyBestEffort_CappedAtMaxWait
+  purpose: Preflight barrier must NOT block --no-wait indefinitely on broken
+    sessions where the composer never renders. Returns at maxWait with false.
+    Protects --no-wait spirit (fast, bounded).
+  source: .planning/fix-issue-616/PLAN.md
+  manual: false
+  run:
+    command: go test ./cmd/agent-deck/ -run TestAwaitComposerReadyBestEffort_CappedAtMaxWait
+      -race -count=1 -v
+    expected: pass
+- id: issue-616-live-boundary-fresh-session
+  added: '2026-04-17'
+  task: fix-issue-616
+  file: manual-live-test
+  test_name: 10x-fresh-session-no-wait-submits
+  purpose: Live-boundary regression — launch 10 fresh Claude sessions, fire
+    `session send --no-wait` immediately, verify message was submitted and Claude
+    processed it. Pre-v1.7.10 baseline: 3-5/10 failures (typed-but-not-submitted).
+    v1.7.10 target -- 10/10 pass. Shown passing in the release verification run
+    2026-04-17.
+  source: .planning/fix-issue-616/PLAN.md
+  manual: true
+  run:
+    command: "for i in 1..10; do agent-deck add /tmp/t616-$i -t t-$i -c claude; agent-deck
+      session start t-$i; agent-deck session send t-$i 'Say OK_$i' --no-wait;
+      sleep 30; tmux capture-pane -t agentdeck_t-$i* -p | grep -q '● OK_$i' &&
+      echo PASS_$i || echo FAIL_$i; agent-deck remove t-$i; done"
+    expected: 10 PASS lines

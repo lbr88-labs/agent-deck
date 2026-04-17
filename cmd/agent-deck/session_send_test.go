@@ -721,6 +721,20 @@ func TestSendWithRetry_DelayedInputHandler_Integration(t *testing.T) {
 // See TestSend_CodexReadiness in internal/integration/send_reliability_test.go
 // (Plan 02) for integration test coverage of Codex prompt gating.
 
+// NOTE: Issue #616 is verified via:
+//   - Mock-level tests above (deterministic, always run):
+//     TestSendNoWait_ReEntersWhenComposerRendersLate,
+//     TestSendWithRetryTarget_NoWait_BudgetSpansRealisticClaudeStartup,
+//     TestAwaitComposerReadyBestEffort_*
+//   - Live-boundary verification against a real Claude session (Phase 7
+//     of the release process, scripted in .claude/release-tests.yaml).
+//
+// A bash-based integration simulator was attempted but bash `read` is not
+// a faithful model of Claude's Ink TUI (no bracketed-paste handling, no
+// Unicode line editing), so it produced false negatives unrelated to the
+// fix. The existing TestSendWithRetry_DelayedInputHandler_Integration
+// covers the non-no-wait path via sendWithRetry's full retry budget.
+
 // TestWaitOutputRetrieval_StaleSessionID verifies that --wait correctly
 // retrieves output even when the initially-loaded ClaudeSessionID is stale.
 // This simulates the bug where inst.GetLastResponse() fails because the

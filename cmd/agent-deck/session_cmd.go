@@ -1561,20 +1561,35 @@ func awaitComposerReadyBestEffort(target sendRetryTarget, maxWait, pollInterval 
 	}
 }
 
-// sendNoWait implements `session send --no-wait` semantics: a capped
-// preflight barrier (waits up to 2s for Claude's composer to render)
-// followed by sendWithRetryTarget with the --no-wait verification budget.
+// sendNoWait implements `session send --no-wait` semantics for the CLI.
 //
-// Non-Claude tools skip the preflight — the send package composer
-// detector is Claude-specific, and Codex/Gemini have their own readiness
-// gating upstream.
+// Issue #616 fix has three layers, applied in order:
 //
-// Issue #616 fix: eliminates the race where session send --no-wait would
-// return success on activeChecks>=2 (Claude startup animations) before
-// the composer had rendered, leaving the message typed-but-not-submitted.
+//  1. Preflight readiness barrier (capped at 5s): polls the pane for a
+//     visible Claude composer `❯`. Without this, the initial paste
+//     lands in the TTY before Claude's Ink TUI has rendered the input
+//     surface — the keystrokes are discarded by pre-mount handlers.
+//
+//  2. Post-composer settle delay (500ms): Claude's composer glyph can
+//     render BEFORE React completes mounting the input handler. Without
+//     this delay, the paste can still be partially swallowed by the
+//     mount transition (observed live: message vanished entirely, no
+//     unsent prompt to retry on). 500ms is empirically enough.
+//
+//  3. Extended verification budget via noWaitSendOptions() (6s, 30×200ms):
+//     after the initial send, keeps detecting unsent-prompt markers and
+//     re-firing SendEnter if the composer still holds our message.
+//
+// maxFullResends=-1 is load-bearing for the #479 regression (never
+// double-send). Non-Claude tools skip the preflight — they have their
+// own readiness shapes and upstream gating.
 func sendNoWait(target sendRetryTarget, tool, message string) error {
 	if session.IsClaudeCompatible(tool) {
-		awaitComposerReadyBestEffort(target, 2*time.Second, 100*time.Millisecond)
+		if awaitComposerReadyBestEffort(target, 5*time.Second, 100*time.Millisecond) {
+			// Post-composer settle: React mount can lag behind the
+			// composer glyph by a few hundred ms on cold starts.
+			time.Sleep(500 * time.Millisecond)
+		}
 	}
 	return sendWithRetryTarget(target, message, false, noWaitSendOptions())
 }
