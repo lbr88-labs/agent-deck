@@ -924,6 +924,9 @@ func handleConductorStatus(_ string, args []string) {
 		if err == nil {
 			instances, _, err := storage.LoadWithGroups()
 			if err == nil {
+				// Warm tmux + hook caches before UpdateStatus so we match
+				// what the TUI and /api/menu show (issue #610).
+				session.RefreshInstancesForCLIStatus(instances)
 				for _, inst := range instances {
 					if inst.Title == sessionTitle {
 						cs.SessionID = inst.ID
@@ -1079,6 +1082,9 @@ func handleConductorList(profile string, args []string) {
 		if err == nil {
 			instances, _, err := storage.LoadWithGroups()
 			if err == nil {
+				// Warm tmux + hook caches before UpdateStatus so conductor
+				// list matches the TUI and /api/menu view (issue #610).
+				session.RefreshInstancesForCLIStatus(instances)
 				found := false
 				for _, inst := range instances {
 					if inst.Title == sessionTitle {

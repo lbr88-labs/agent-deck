@@ -345,3 +345,33 @@ tests:
     command: go test ./cmd/agent-deck/ -run TestRevive_CLI_AllFlag_TriggersReviver
       -race -count=1 -v
     expected: pass
+- id: issue-610-cli-parity-spinner
+  added: '2026-04-17'
+  task: fix-issue-610
+  file: internal/session/instance_cli_parity_test.go
+  test_name: TestUpdateStatus_CLIParity_SpinnerTitle_StaleHook
+  purpose: CLI cold path with a 3-minute-old hook file and a braille-spinner pane
+    title must report StatusRunning. Regression guard for #610 — without
+    RefreshInstancesForCLIStatus the title fast-path cache is never populated so
+    the CLI fell back to idle/waiting while TUI/web said running.
+  source: .planning/fix-issue-610/PLAN.md
+  manual: false
+  run:
+    command: go test ./internal/session/ -run TestUpdateStatus_CLIParity_SpinnerTitle_StaleHook
+      -race -count=1 -v
+    expected: pass
+- id: issue-610-cli-vs-tui-parity
+  added: '2026-04-17'
+  task: fix-issue-610
+  file: internal/session/instance_cli_parity_test.go
+  test_name: TestUpdateStatus_CLIvsTUIParity_SameTmuxState
+  purpose: Direct parity assertion — CLI path (RefreshInstancesForCLIStatus +
+    UpdateStatus) and TUI path (RefreshPaneInfoCache + UpdateHookStatus +
+    UpdateStatus) must produce identical Status for the same underlying tmux
+    session. Script automation via list --json sees what the TUI shows.
+  source: .planning/fix-issue-610/PLAN.md
+  manual: false
+  run:
+    command: go test ./internal/session/ -run TestUpdateStatus_CLIvsTUIParity_SameTmuxState
+      -race -count=1 -v
+    expected: pass
