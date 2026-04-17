@@ -1431,15 +1431,13 @@ func handleSessionSend(profile string, args []string) {
 	sentAt := time.Now()
 
 	// Send message atomically (text + Enter in single tmux invocation).
-	// --no-wait: skip readiness waiting, but still do a short retry/verification
-	// loop to avoid silent "pasted but not submitted" races.
+	// --no-wait: skip full readiness waiting, but run a capped preflight
+	// barrier + extended verification loop to avoid the #616 race where
+	// Claude's composer renders after the loop has already returned
+	// success on startup "active" status, leaving the message unsubmitted.
 	// default mode: full retry budget after readiness check.
 	if *noWait {
-		if err := sendWithRetryTarget(tmuxSess, message, false, sendRetryOptions{
-			maxRetries:     8,
-			checkDelay:     150 * time.Millisecond,
-			maxFullResends: -1, // no-wait: message already delivered, never re-send
-		}); err != nil {
+		if err := sendNoWait(tmuxSess, inst.Tool, message); err != nil {
 			out.Error(fmt.Sprintf("failed to send message: %v", err), ErrCodeInvalidOperation)
 			os.Exit(1)
 		}
@@ -1514,26 +1512,71 @@ func sendWithRetry(tmuxSess *tmux.Session, message string, skipVerify bool) erro
 // noWaitSendOptions returns the verification-loop options used by the
 // `session send --no-wait` path.
 //
-// STUB (issue #616 RED): returns the pre-fix behavior so the regression
-// tests for issue #616 fail on main. Real values land in the Phase 5 fix.
+// Budget sizing (issue #616): a fresh Claude session with MCPs can take
+// 5-40s before its TUI input handler is interactive. If verification
+// returns on `activeChecks>=2` (from startup animations) before the
+// composer renders, a swallowed Enter leaves the message typed-but-not-
+// submitted. Budget must be long enough to see the composer either
+// accept or reject the submission.
+//
+// maxFullResends=-1 is load-bearing: it disables the Ctrl+C-then-resend
+// path (issue #479 — would otherwise double-send).
 func noWaitSendOptions() sendRetryOptions {
 	return sendRetryOptions{
-		maxRetries:     8,
-		checkDelay:     150 * time.Millisecond,
+		maxRetries:     30,
+		checkDelay:     200 * time.Millisecond,
 		maxFullResends: -1,
 	}
 }
 
 // awaitComposerReadyBestEffort polls the pane until the Claude composer
-// prompt appears, or returns false after maxWait.
+// prompt (`❯`) appears, returning true. If the composer never appears
+// within maxWait, returns false without blocking longer — preserving the
+// `--no-wait` spirit when the session is slow or broken.
 //
-// STUB (issue #616 RED): returns false immediately without polling. Real
-// implementation lands in the Phase 5 fix.
+// Added for issue #616: eliminates the race where `session send --no-wait`
+// fires before Claude's TUI input handler is mounted.
 func awaitComposerReadyBestEffort(target sendRetryTarget, maxWait, pollInterval time.Duration) bool {
-	_ = target
-	_ = maxWait
-	_ = pollInterval
-	return false
+	if pollInterval <= 0 {
+		pollInterval = 100 * time.Millisecond
+	}
+	deadline := time.Now().Add(maxWait)
+	for {
+		if rawContent, err := target.CapturePaneFresh(); err == nil {
+			if send.HasCurrentComposerPrompt(tmux.StripANSI(rawContent)) {
+				return true
+			}
+		}
+		if time.Now().After(deadline) {
+			return false
+		}
+		remaining := time.Until(deadline)
+		sleep := pollInterval
+		if remaining < sleep {
+			sleep = remaining
+		}
+		if sleep > 0 {
+			time.Sleep(sleep)
+		}
+	}
+}
+
+// sendNoWait implements `session send --no-wait` semantics: a capped
+// preflight barrier (waits up to 2s for Claude's composer to render)
+// followed by sendWithRetryTarget with the --no-wait verification budget.
+//
+// Non-Claude tools skip the preflight — the send package composer
+// detector is Claude-specific, and Codex/Gemini have their own readiness
+// gating upstream.
+//
+// Issue #616 fix: eliminates the race where session send --no-wait would
+// return success on activeChecks>=2 (Claude startup animations) before
+// the composer had rendered, leaving the message typed-but-not-submitted.
+func sendNoWait(target sendRetryTarget, tool, message string) error {
+	if session.IsClaudeCompatible(tool) {
+		awaitComposerReadyBestEffort(target, 2*time.Second, 100*time.Millisecond)
+	}
+	return sendWithRetryTarget(target, message, false, noWaitSendOptions())
 }
 
 type sendRetryTarget interface {

@@ -472,26 +472,29 @@ func TestSendWithRetryTarget_FullResendMaxLimit(t *testing.T) {
 // budget in `noWaitSendOptions`. Tests verify both.
 // -----------------------------------------------------------------------
 
-// TestSendWithRetryTarget_NoWait_ReEntersWhenComposerRendersLate simulates
-// the #616 race: Claude reports "active" (loading) while the composer is
-// blank, then the composer renders with the unsent message once loading
-// finishes. The current --no-wait options (maxRetries=8) return success
-// on `activeChecks>=2` well before the composer renders.
+// TestSendNoWait_ReEntersWhenComposerRendersLate simulates the #616 race:
+// Claude reports "active" (loading) while the composer is blank, then the
+// composer renders with the unsent message. On main, the --no-wait
+// verification loop exits on `activeChecks>=2` before the composer
+// renders, so no re-Enter fires.
 //
 // RED on main (v1.7.9): SendEnter fires 0 times.
-// GREEN after fix (v1.7.10): SendEnter fires ≥1 time because
-// `noWaitSendOptions()` has a large enough retry budget to reach the
-// iterations where the composer is visible.
-func TestSendWithRetryTarget_NoWait_ReEntersWhenComposerRendersLate(t *testing.T) {
-	// 5 iterations of (status=active, pane="") simulate Claude TUI startup.
-	// After that, composer renders with the unsent message at status="waiting".
+// GREEN after fix (v1.7.10): the preflight barrier waits for the composer
+// to render, then the verification loop detects the unsent prompt and
+// fires SendEnter.
+func TestSendNoWait_ReEntersWhenComposerRendersLate(t *testing.T) {
+	// Preflight barrier polls the pane; then verification loop polls again.
+	// Build a pane/status track where composer renders at iteration 5 with
+	// the unsent message, simulating Claude TUI mount completing late.
+	// After composer renders, status is "waiting" with the message typed
+	// at the prompt.
 	const lateRenderAt = 5
-	n := 12
+	n := 40 // generous so both preflight + verification have fuel
 	statuses := make([]string, n)
 	panes := make([]string, n)
 	for i := 0; i < lateRenderAt; i++ {
 		statuses[i] = "active"
-		panes[i] = ""
+		panes[i] = "" // no composer yet
 	}
 	for i := lateRenderAt; i < n; i++ {
 		statuses[i] = "waiting"
@@ -499,18 +502,21 @@ func TestSendWithRetryTarget_NoWait_ReEntersWhenComposerRendersLate(t *testing.T
 	}
 	mock := &mockSendRetryTarget{statuses: statuses, panes: panes}
 
-	// Use production --no-wait options (with checkDelay=0 for fast tests).
-	opts := noWaitSendOptions()
-	opts.checkDelay = 0
-	err := sendWithRetryTarget(mock, "TEST_MSG_616", false, opts)
+	err := sendNoWait(mock, "claude", "TEST_MSG_616")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
 	if got := atomic.LoadInt32(&mock.sendEnterCalls); got == 0 {
-		t.Fatalf("issue #616 regression: --no-wait verification window too "+
-			"short — returned before the composer rendered with the unsent "+
-			"message, so no re-Enter fired (SendEnter calls = %d, expected ≥1)", got)
+		t.Fatalf("issue #616 regression: sendNoWait returned without firing "+
+			"SendEnter when the composer showed the unsent message after a "+
+			"late render (SendEnter calls = %d, expected ≥1)", got)
+	}
+	// Belt-and-suspenders: message must not have been re-sent (would
+	// regress #479). Only one initial SendKeysAndEnter is allowed.
+	if got := atomic.LoadInt32(&mock.sendKeysCalls); got != 1 {
+		t.Fatalf("expected exactly 1 SendKeysAndEnter (initial send), got %d "+
+			"— #479 regression: --no-wait must never re-paste the payload", got)
 	}
 }
 
