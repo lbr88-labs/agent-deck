@@ -191,6 +191,35 @@ func TestHomeUpdateResize(t *testing.T) {
 	}
 }
 
+// TestHomeUpdateStatusUpdateMsgBatchesKeyboardRestore is a regression guard for
+// PR #613 (Bug 2 from issue #472). After the user detaches from a tmux attach,
+// statusUpdateMsg's non-reload path must return a tea.Batch that includes the
+// RestoreLegacyKeyboardCmd helper alongside tea.EnableMouseCellMotion. If a
+// future refactor drops the keyboard-restore command, capitals silently break
+// on Ghostty after the first tmux attach/detach cycle, and this test catches
+// that regression.
+func TestHomeUpdateStatusUpdateMsgBatchesKeyboardRestore(t *testing.T) {
+	home := NewHome()
+
+	_, cmd := home.Update(statusUpdateMsg{})
+	if cmd == nil {
+		t.Fatal("statusUpdateMsg returned nil cmd; keyboard-restore batch removed?")
+	}
+
+	msg := cmd()
+	batch, ok := msg.(tea.BatchMsg)
+	if !ok {
+		t.Fatalf(
+			"expected statusUpdateMsg to return a tea.BatchMsg (mouse + keyboard restore); got %T. "+
+				"RestoreLegacyKeyboardCmd was likely dropped from the handler, which will regress capitals on Ghostty after tmux detach.",
+			msg,
+		)
+	}
+	if len(batch) < 2 {
+		t.Fatalf("expected batch of >= 2 commands (EnableMouseCellMotion + RestoreLegacyKeyboardCmd); got %d", len(batch))
+	}
+}
+
 func TestHomeUpdateSearch(t *testing.T) {
 	home := NewHome()
 	home.width = 100
