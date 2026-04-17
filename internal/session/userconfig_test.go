@@ -4,9 +4,79 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/BurntSushi/toml"
 )
+
+// TestLoadUserConfig_PicksUpExternalEdits is a regression test for the
+// stale-cache bug that caused the innotrade conductor to ignore
+// [conductors.<name>.claude].config_dir added to config.toml after the TUI
+// process was already running.
+//
+// Root cause: LoadUserConfig cached UserConfig for process lifetime with no
+// invalidation. A long-running TUI (started before the conductor block was
+// appended) kept serving the pre-edit snapshot, so every session spawn
+// resolved to ~/.claude instead of the per-conductor override.
+//
+// The fix: track config.toml's mtime in the cache and reload on change.
+func TestLoadUserConfig_PicksUpExternalEdits(t *testing.T) {
+	tempDir := t.TempDir()
+	originalHome := os.Getenv("HOME")
+	os.Setenv("HOME", tempDir)
+	defer os.Setenv("HOME", originalHome)
+	ClearUserConfigCache()
+	defer ClearUserConfigCache()
+
+	agentDeckDir := filepath.Join(tempDir, ".agent-deck")
+	if err := os.MkdirAll(agentDeckDir, 0o700); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	configPath := filepath.Join(agentDeckDir, "config.toml")
+
+	initial := `[conductors.innotrade.claude]
+config_dir = "~/.claude-old"
+`
+	if err := os.WriteFile(configPath, []byte(initial), 0o600); err != nil {
+		t.Fatalf("write initial: %v", err)
+	}
+
+	// First load populates the cache.
+	cfg1, err := LoadUserConfig()
+	if err != nil {
+		t.Fatalf("first load: %v", err)
+	}
+	if got := cfg1.GetConductorClaudeConfigDir("innotrade"); got != filepath.Join(tempDir, ".claude-old") {
+		t.Fatalf("first load: got %q, want %q", got, filepath.Join(tempDir, ".claude-old"))
+	}
+
+	// Rewrite config.toml externally (simulates user editing the file while
+	// the TUI/web daemon is still running). Advance mtime to ensure the
+	// stat-based invalidation can detect the change on filesystems with
+	// 1-second mtime resolution.
+	edited := `[conductors.innotrade.claude]
+config_dir = "~/.claude-work"
+`
+	if err := os.WriteFile(configPath, []byte(edited), 0o600); err != nil {
+		t.Fatalf("rewrite: %v", err)
+	}
+	future := time.Now().Add(2 * time.Second)
+	if err := os.Chtimes(configPath, future, future); err != nil {
+		t.Fatalf("chtimes: %v", err)
+	}
+
+	// Second load — WITHOUT manual ClearUserConfigCache — must see the new
+	// value. Stale-cache bug makes this return the old ~/.claude-old.
+	cfg2, err := LoadUserConfig()
+	if err != nil {
+		t.Fatalf("second load: %v", err)
+	}
+	got := cfg2.GetConductorClaudeConfigDir("innotrade")
+	want := filepath.Join(tempDir, ".claude-work")
+	if got != want {
+		t.Fatalf("second load after external edit: got %q, want %q (stale-cache bug — LoadUserConfig must invalidate on mtime change)", got, want)
+	}
+}
 
 func TestUserConfig_ClaudeConfigDir(t *testing.T) {
 	// Create temp config file
@@ -554,10 +624,10 @@ func TestWorktreeSettings_ApplyBranchPrefix(t *testing.T) {
 	strPtr := func(s string) *string { return &s }
 
 	tests := []struct {
-		name     string
-		prefix   *string
-		branch   string
-		want     string
+		name   string
+		prefix *string
+		branch string
+		want   string
 	}{
 		{
 			name:   "default prefix applied",

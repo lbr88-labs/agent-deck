@@ -11,6 +11,7 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"github.com/BurntSushi/toml"
 
@@ -1269,10 +1270,14 @@ var defaultUserConfig = UserConfig{
 	MCPs:  make(map[string]MCPDef),
 }
 
-// Cache for user config (loaded once per session)
+// Cache for user config. Invalidated when config.toml's mtime advances past
+// the snapshot taken at cache time, so long-running processes (TUI, web,
+// notify-daemon) pick up external edits without requiring a full restart.
+// Regression: TestLoadUserConfig_PicksUpExternalEdits.
 var (
-	userConfigCache   *UserConfig
-	userConfigCacheMu sync.RWMutex
+	userConfigCache      *UserConfig
+	userConfigCacheMtime time.Time
+	userConfigCacheMu    sync.RWMutex
 )
 
 // GetUserConfigPath returns the path to the user config file
@@ -1284,47 +1289,61 @@ func GetUserConfigPath() (string, error) {
 	return filepath.Join(dir, UserConfigFileName), nil
 }
 
-// LoadUserConfig loads the user configuration from TOML file
-// Returns cached config after first load
+// LoadUserConfig loads the user configuration from TOML file.
+// After the first load the result is cached; the cache is invalidated when
+// config.toml's mtime advances, so external edits to the file (e.g. the user
+// editing ~/.agent-deck/config.toml by hand while the TUI is running) are
+// picked up on the next call without a manual ClearUserConfigCache.
 func LoadUserConfig() (*UserConfig, error) {
+	configPath, pathErr := GetUserConfigPath()
+
+	// Stat the file once up front so both the fast-path and the slow-path
+	// agree on the same mtime. A missing file is not an error — we fall
+	// through to the default config branch below.
+	var currentMtime time.Time
+	if pathErr == nil {
+		if st, err := os.Stat(configPath); err == nil {
+			currentMtime = st.ModTime()
+		}
+	}
+
 	userConfigCacheMu.RLock()
-	if userConfigCache != nil {
+	if userConfigCache != nil && currentMtime.Equal(userConfigCacheMtime) {
 		defer userConfigCacheMu.RUnlock()
 		return userConfigCache, nil
 	}
 	userConfigCacheMu.RUnlock()
 
-	// Load config (only happens once)
 	userConfigCacheMu.Lock()
 	defer userConfigCacheMu.Unlock()
 
-	// Double-check after acquiring write lock
-	if userConfigCache != nil {
+	// Re-check under write lock: another goroutine may have refreshed the
+	// cache to match currentMtime between our RLock drop and Lock acquire.
+	if userConfigCache != nil && currentMtime.Equal(userConfigCacheMtime) {
 		return userConfigCache, nil
 	}
 
-	configPath, err := GetUserConfigPath()
-	if err != nil {
+	if pathErr != nil {
 		userConfigCache = &defaultUserConfig
+		userConfigCacheMtime = time.Time{}
 		return userConfigCache, nil
 	}
 
-	// Check if config exists
 	if _, err := os.Stat(configPath); os.IsNotExist(err) {
-		// Return default config (no file exists yet)
 		userConfigCache = &defaultUserConfig
+		userConfigCacheMtime = time.Time{}
 		return userConfigCache, nil
 	}
 
 	var config UserConfig
 	if _, err := toml.DecodeFile(configPath, &config); err != nil {
-		// Return error so caller can display it to user
-		// Still cache default to prevent repeated parse attempts
+		// Cache default to prevent hot-looping on a broken file, but still
+		// return the error so the caller can surface it.
 		userConfigCache = &defaultUserConfig
+		userConfigCacheMtime = currentMtime
 		return userConfigCache, fmt.Errorf("config.toml parse error: %w", err)
 	}
 
-	// Initialize maps if nil
 	if config.Tools == nil {
 		config.Tools = make(map[string]ToolDef)
 	}
@@ -1333,6 +1352,7 @@ func LoadUserConfig() (*UserConfig, error) {
 	}
 
 	userConfigCache = &config
+	userConfigCacheMtime = currentMtime
 	return userConfigCache, nil
 }
 
@@ -1419,11 +1439,14 @@ func syncConfigFile(path string) error {
 	return f.Sync()
 }
 
-// ClearUserConfigCache clears the cached user config, allowing tests to reset state
-// This does NOT reload - the next LoadUserConfig() call will read fresh from disk
+// ClearUserConfigCache clears the cached user config, allowing tests to reset state.
+// This does NOT reload - the next LoadUserConfig() call will read fresh from disk.
+// Resets both the cache pointer AND the tracked mtime so the invalidation state
+// machine starts clean.
 func ClearUserConfigCache() {
 	userConfigCacheMu.Lock()
 	userConfigCache = nil
+	userConfigCacheMtime = time.Time{}
 	userConfigCacheMu.Unlock()
 }
 

@@ -5,6 +5,8 @@ import (
 	"testing"
 
 	"go.uber.org/goleak"
+
+	"github.com/asheshgoplani/agent-deck/internal/testutil"
 )
 
 // TestMain wraps the watcher package tests with goleak verification.
@@ -53,6 +55,13 @@ import (
 // in RESEARCH.md §Pitfall 1 and will fire as soon as a real pubsub.Subscription
 // is Receive()-d in Plan 17-02.
 func TestMain(m *testing.M) {
+	// Isolate the tmux socket. goleak.VerifyTestMain calls os.Exit internally,
+	// so the cleanup func cannot run here — that's acceptable because the temp
+	// directory is harmless and will be reaped by the OS. What matters is that
+	// TMUX_TMPDIR is set BEFORE any test in this package spawns a tmux process.
+	// See internal/testutil/tmuxenv.go for the 2026-04-17 postmortem.
+	_ = testutil.IsolateTmuxSocket()
+
 	os.Setenv("AGENTDECK_PROFILE", "_test")
 	goleak.VerifyTestMain(m,
 		goleak.IgnoreTopFunction("go.opencensus.io/stats/view.(*worker).start"),

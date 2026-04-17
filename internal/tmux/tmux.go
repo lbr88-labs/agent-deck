@@ -1388,6 +1388,10 @@ func isSocketAcceptingConnections(socketPath string) bool {
 // When RunCommandAsInitialProcess is true, command is passed directly to tmux
 // new-session and becomes the pane's initial process.
 func (s *Session) Start(command string) error {
+	// Defense in depth against the 2026-04-17 three-cascade bug.
+	// See assertTestTmuxIsolation for the full rationale.
+	assertTestTmuxIsolation()
+
 	s.Command = command
 	s.invalidateCache()
 	s.Created = time.Now()
