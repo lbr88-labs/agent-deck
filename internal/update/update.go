@@ -374,8 +374,23 @@ func PerformUpdate(downloadURL string) error {
 	// Remove old binary
 	os.Remove(oldBinaryPath)
 
+	// Invalidate update cache so the banner dismisses in any running TUI
+	InvalidateCache()
+
 	fmt.Println("✓ Update complete!")
 	return nil
+}
+
+// InvalidateCache removes the update cache file so the next check
+// fetches fresh data from GitHub. This should be called after a
+// successful update to prevent stale "update available" banners.
+func InvalidateCache() {
+	cacheDir, err := getCacheDir()
+	if err != nil {
+		return
+	}
+	cachePath := filepath.Join(cacheDir, CacheFileName)
+	os.Remove(cachePath)
 }
 
 // HomebrewUpgradeHint returns the recommended Homebrew upgrade command when the

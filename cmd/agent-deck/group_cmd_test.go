@@ -53,89 +53,89 @@ func reloadGroupPaths(t *testing.T, storage *session.Storage) []string {
 func TestGroupReorderUp(t *testing.T) {
 	storage := setupGroupsForReorder(t, "Alpha", "Beta", "Gamma")
 
-	// Move beta up — should swap with alpha
-	handleGroupReorder("_test", []string{"beta", "--up"})
+	// Move Beta up — should swap with Alpha
+	handleGroupReorder("_test", []string{"Beta", "--up"})
 
 	paths := reloadGroupPaths(t, storage)
 	if len(paths) < 3 {
 		t.Fatalf("expected 3 groups, got %d", len(paths))
 	}
-	if paths[0] != "beta" || paths[1] != "alpha" || paths[2] != "gamma" {
-		t.Errorf("expected [beta alpha gamma], got %v", paths)
+	if paths[0] != "Beta" || paths[1] != "Alpha" || paths[2] != "Gamma" {
+		t.Errorf("expected [Beta Alpha Gamma], got %v", paths)
 	}
 }
 
 func TestGroupReorderDown(t *testing.T) {
 	storage := setupGroupsForReorder(t, "Alpha", "Beta", "Gamma")
 
-	// Move beta down — should swap with gamma
-	handleGroupReorder("_test", []string{"beta", "--down"})
+	// Move Beta down — should swap with Gamma
+	handleGroupReorder("_test", []string{"Beta", "--down"})
 
 	paths := reloadGroupPaths(t, storage)
 	if len(paths) < 3 {
 		t.Fatalf("expected 3 groups, got %d", len(paths))
 	}
-	if paths[0] != "alpha" || paths[1] != "gamma" || paths[2] != "beta" {
-		t.Errorf("expected [alpha gamma beta], got %v", paths)
+	if paths[0] != "Alpha" || paths[1] != "Gamma" || paths[2] != "Beta" {
+		t.Errorf("expected [Alpha Gamma Beta], got %v", paths)
 	}
 }
 
 func TestGroupReorderPosition(t *testing.T) {
 	storage := setupGroupsForReorder(t, "Alpha", "Beta", "Gamma")
 
-	// Move gamma to position 0
-	handleGroupReorder("_test", []string{"gamma", "--position", "0"})
+	// Move Gamma to position 0
+	handleGroupReorder("_test", []string{"Gamma", "--position", "0"})
 
 	paths := reloadGroupPaths(t, storage)
 	if len(paths) < 3 {
 		t.Fatalf("expected 3 groups, got %d", len(paths))
 	}
-	if paths[0] != "gamma" || paths[1] != "alpha" || paths[2] != "beta" {
-		t.Errorf("expected [gamma alpha beta], got %v", paths)
+	if paths[0] != "Gamma" || paths[1] != "Alpha" || paths[2] != "Beta" {
+		t.Errorf("expected [Gamma Alpha Beta], got %v", paths)
 	}
 }
 
 func TestGroupReorderAlreadyAtTop(t *testing.T) {
 	storage := setupGroupsForReorder(t, "Alpha", "Beta", "Gamma")
 
-	// Move alpha up — already first, should be no-op
-	handleGroupReorder("_test", []string{"alpha", "--up"})
+	// Move Alpha up — already first, should be no-op
+	handleGroupReorder("_test", []string{"Alpha", "--up"})
 
 	paths := reloadGroupPaths(t, storage)
 	if len(paths) < 3 {
 		t.Fatalf("expected 3 groups, got %d", len(paths))
 	}
-	if paths[0] != "alpha" || paths[1] != "beta" || paths[2] != "gamma" {
-		t.Errorf("expected [alpha beta gamma], got %v", paths)
+	if paths[0] != "Alpha" || paths[1] != "Beta" || paths[2] != "Gamma" {
+		t.Errorf("expected [Alpha Beta Gamma], got %v", paths)
 	}
 }
 
 func TestGroupReorderAlreadyAtBottom(t *testing.T) {
 	storage := setupGroupsForReorder(t, "Alpha", "Beta", "Gamma")
 
-	// Move gamma down — already last, should be no-op
-	handleGroupReorder("_test", []string{"gamma", "--down"})
+	// Move Gamma down — already last, should be no-op
+	handleGroupReorder("_test", []string{"Gamma", "--down"})
 
 	paths := reloadGroupPaths(t, storage)
 	if len(paths) < 3 {
 		t.Fatalf("expected 3 groups, got %d", len(paths))
 	}
-	if paths[0] != "alpha" || paths[1] != "beta" || paths[2] != "gamma" {
-		t.Errorf("expected [alpha beta gamma], got %v", paths)
+	if paths[0] != "Alpha" || paths[1] != "Beta" || paths[2] != "Gamma" {
+		t.Errorf("expected [Alpha Beta Gamma], got %v", paths)
 	}
 }
 
 func TestGroupReorderPositionClamp(t *testing.T) {
 	storage := setupGroupsForReorder(t, "Alpha", "Beta", "Gamma")
 
-	// Move alpha to position 99 (should clamp to last)
-	handleGroupReorder("_test", []string{"alpha", "--position", "99"})
+	// Move Alpha to position 99 (should clamp to last)
+	handleGroupReorder("_test", []string{"Alpha", "--position", "99"})
 
 	paths := reloadGroupPaths(t, storage)
 	if len(paths) < 3 {
 		t.Fatalf("expected 3 groups, got %d", len(paths))
 	}
-	if paths[0] != "beta" || paths[1] != "gamma" || paths[2] != "alpha" {
-		t.Errorf("expected [beta gamma alpha], got %v", paths)
+	if paths[0] != "Beta" || paths[1] != "Gamma" || paths[2] != "Alpha" {
+		t.Errorf("expected [Beta Gamma Alpha], got %v", paths)
 	}
 }

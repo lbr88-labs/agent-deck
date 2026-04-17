@@ -669,7 +669,7 @@ func sanitizeGroupName(name string) string {
 func (t *GroupTree) CreateGroup(name string) *Group {
 	// Sanitize name to prevent path traversal and security issues
 	sanitizedName := sanitizeGroupName(name)
-	path := strings.ToLower(strings.ReplaceAll(sanitizedName, " ", "-"))
+	path := strings.ReplaceAll(sanitizedName, " ", "-")
 	if _, exists := t.Groups[path]; exists {
 		return t.Groups[path]
 	}
@@ -699,7 +699,7 @@ func (t *GroupTree) CreateGroup(name string) *Group {
 func (t *GroupTree) CreateSubgroup(parentPath, name string) *Group {
 	// Sanitize name to prevent path traversal and security issues
 	sanitizedName := sanitizeGroupName(name)
-	childPath := strings.ToLower(strings.ReplaceAll(sanitizedName, " ", "-"))
+	childPath := strings.ReplaceAll(sanitizedName, " ", "-")
 	fullPath := parentPath + "/" + childPath
 
 	if _, exists := t.Groups[fullPath]; exists {
@@ -736,7 +736,7 @@ func (t *GroupTree) RenameGroup(oldPath, newName string) {
 
 	// Sanitize name to prevent path traversal and security issues
 	sanitizedName := sanitizeGroupName(newName)
-	newBasePath := strings.ToLower(strings.ReplaceAll(sanitizedName, " ", "-"))
+	newBasePath := strings.ReplaceAll(sanitizedName, " ", "-")
 
 	// Preserve parent path for subgroups
 	parentPath := getParentPath(oldPath)
