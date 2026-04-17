@@ -102,6 +102,12 @@ func handleGroupList(profile string, args []string) {
 		os.Exit(1)
 	}
 
+	// Warm tmux pane-title cache + load hook statuses once up-front so
+	// the per-status counts below match the TUI and /api/menu view
+	// (issue #610). Without this the nested UpdateStatus calls each run
+	// with a cold cache and miss the Claude "working" spinner.
+	session.RefreshInstancesForCLIStatus(instances)
+
 	// Build group tree
 	groupTree := session.NewGroupTreeWithGroups(instances, groups)
 

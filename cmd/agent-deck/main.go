@@ -1502,6 +1502,9 @@ func handleList(profile string, args []string) {
 			SSHRemotePath string    `json:"ssh_remote_path,omitempty"`
 			Channels      []string  `json:"channels,omitempty"`
 		}
+		// Warm tmux pane-title cache + load hook statuses so the CLI
+		// reports the same Status the TUI and /api/menu do (issue #610).
+		session.RefreshInstancesForCLIStatus(instances)
 		sessions := make([]sessionJSON, len(instances))
 		for i, inst := range instances {
 			_ = inst.UpdateStatus()
@@ -1858,6 +1861,9 @@ type statusCounts struct {
 
 // countByStatus counts sessions by their status
 func countByStatus(instances []*session.Instance) statusCounts {
+	// Warm tmux pane-title cache + load hook statuses so `status`/`status --json`
+	// reports the same counts the TUI and /api/menu do (issue #610).
+	session.RefreshInstancesForCLIStatus(instances)
 	var counts statusCounts
 	for _, inst := range instances {
 		_ = inst.UpdateStatus() // Refresh status from tmux

@@ -710,6 +710,9 @@ func handleSessionShow(profile string, args []string) {
 		}
 	}
 
+	// Warm tmux pane-title cache + load hook status so `session show --json`
+	// reports the same Status the TUI and /api/menu do (issue #610).
+	session.RefreshInstancesForCLIStatus([]*session.Instance{inst})
 	// Update status
 	_ = inst.UpdateStatus()
 
