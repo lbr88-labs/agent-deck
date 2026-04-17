@@ -541,6 +541,82 @@ func TestGetWorktreeSettings_BranchPrefix(t *testing.T) {
 	}
 }
 
+func TestWorktreeSettings_Prefix_ExpandsEnvVars(t *testing.T) {
+	strPtr := func(s string) *string { return &s }
+	t.Setenv("USER", "testuser")
+	settings := WorktreeSettings{BranchPrefix: strPtr("$USER/")}
+	if got := settings.Prefix(); got != "testuser/" {
+		t.Errorf("Prefix() with $USER: got %q, want %q", got, "testuser/")
+	}
+}
+
+func TestWorktreeSettings_ApplyBranchPrefix(t *testing.T) {
+	strPtr := func(s string) *string { return &s }
+
+	tests := []struct {
+		name     string
+		prefix   *string
+		branch   string
+		want     string
+	}{
+		{
+			name:   "default prefix applied",
+			prefix: nil,
+			branch: "my-feature",
+			want:   "feature/my-feature",
+		},
+		{
+			name:   "custom prefix applied",
+			prefix: strPtr("dev/"),
+			branch: "my-feature",
+			want:   "dev/my-feature",
+		},
+		{
+			name:   "empty prefix means no prefix",
+			prefix: strPtr(""),
+			branch: "my-feature",
+			want:   "my-feature",
+		},
+		{
+			name:   "no double prefix when already present",
+			prefix: strPtr("dev/"),
+			branch: "dev/my-feature",
+			want:   "dev/my-feature",
+		},
+		{
+			name:   "no double prefix with default",
+			prefix: nil,
+			branch: "feature/my-feature",
+			want:   "feature/my-feature",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			settings := WorktreeSettings{BranchPrefix: tt.prefix}
+			if got := settings.ApplyBranchPrefix(tt.branch); got != tt.want {
+				t.Errorf("ApplyBranchPrefix(%q) = %q, want %q", tt.branch, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestWorktreeSettings_ApplyBranchPrefix_ExpandsEnvVars(t *testing.T) {
+	strPtr := func(s string) *string { return &s }
+	t.Setenv("USER", "dani.fernandez")
+	settings := WorktreeSettings{BranchPrefix: strPtr("$USER/")}
+
+	// Applies expanded prefix
+	if got := settings.ApplyBranchPrefix("my-feature"); got != "dani.fernandez/my-feature" {
+		t.Errorf("ApplyBranchPrefix with $USER: got %q, want %q", got, "dani.fernandez/my-feature")
+	}
+
+	// No double prefix when already present (with expanded value)
+	if got := settings.ApplyBranchPrefix("dani.fernandez/my-feature"); got != "dani.fernandez/my-feature" {
+		t.Errorf("ApplyBranchPrefix already prefixed: got %q, want %q", got, "dani.fernandez/my-feature")
+	}
+}
+
 // ============================================================================
 // Preview Settings Tests
 // ============================================================================

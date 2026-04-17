@@ -793,11 +793,22 @@ func (w *WorktreeSettings) Template() string {
 }
 
 // Prefix returns the branch prefix if set, or "feature/" if nil.
+// Environment variables (e.g., $USER) in the prefix are expanded.
 func (w *WorktreeSettings) Prefix() string {
 	if w.BranchPrefix == nil {
 		return "feature/"
 	}
-	return *w.BranchPrefix
+	return os.ExpandEnv(*w.BranchPrefix)
+}
+
+// ApplyBranchPrefix prepends the configured prefix to a branch name.
+// If the branch name already starts with the expanded prefix, it is returned unchanged.
+func (w *WorktreeSettings) ApplyBranchPrefix(branch string) string {
+	prefix := w.Prefix()
+	if prefix == "" || strings.HasPrefix(branch, prefix) {
+		return branch
+	}
+	return prefix + branch
 }
 
 // GlobalSearchSettings defines global conversation search configuration

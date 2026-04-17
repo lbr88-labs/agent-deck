@@ -1129,6 +1129,11 @@ func handleAdd(profile string, args []string) {
 			os.Exit(1)
 		}
 
+		// Determine worktree settings and apply configured branch prefix
+		// (e.g., "$USER/" -> "dani.fernandez/") before validation/existence checks
+		wtSettings := session.GetWorktreeSettings()
+		wtBranch = wtSettings.ApplyBranchPrefix(wtBranch)
+
 		// Pre-validate branch name for better error messages
 		if err := git.ValidateBranchName(wtBranch); err != nil {
 			fmt.Fprintf(os.Stderr, "Error: invalid branch name: %v\n", err)
@@ -1146,8 +1151,6 @@ func handleAdd(profile string, args []string) {
 			os.Exit(1)
 		}
 
-		// Determine worktree location: CLI flag overrides config
-		wtSettings := session.GetWorktreeSettings()
 		location := wtSettings.DefaultLocation
 		if *worktreeLocation != "" {
 			location = *worktreeLocation

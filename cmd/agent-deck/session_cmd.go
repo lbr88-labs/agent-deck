@@ -487,12 +487,15 @@ func handleSessionFork(profile string, args []string) {
 			os.Exit(1)
 		}
 
+		// Apply configured branch prefix before validation/existence checks
+		wtSettings := session.GetWorktreeSettings()
+		wtBranch = wtSettings.ApplyBranchPrefix(wtBranch)
+
 		if !createNewBranch && !git.BranchExists(repoRoot, wtBranch) {
 			out.Error(fmt.Sprintf("branch '%s' does not exist (use -b to create)", wtBranch), ErrCodeInvalidOperation)
 			os.Exit(1)
 		}
 
-		wtSettings := session.GetWorktreeSettings()
 		worktreePath := git.WorktreePath(git.WorktreePathOptions{
 			Branch:    wtBranch,
 			Location:  wtSettings.DefaultLocation,
