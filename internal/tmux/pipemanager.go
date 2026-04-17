@@ -427,6 +427,9 @@ func (pm *PipeManager) watchPipe(sessionName string, pipe *ControlPipe) {
 // are not owned by the current process. These accumulate when the TUI is killed
 // without clean shutdown and restarted — the old `tmux -C attach-session`
 // processes survive because they run in their own process group (#595).
+//
+// Expected to find stale clients after: agent-deck crash/SIGKILL, OOM kill,
+// or any exit that bypasses PipeManager.Close() (which normally tears them down).
 func killStaleControlClients(sessionName string) {
 	myPID := os.Getpid()
 
