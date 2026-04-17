@@ -712,3 +712,86 @@ tests:
     command: go test ./internal/tmux/ -run TestCleanupAttach_EmitsITermClearScrollback
       -race -count=1 -v
     expected: pass
+- id: issue-601-prepare-command-applies-wrapper-before-bash-wrap
+  added: '2026-04-17'
+  task: fix-issue-601
+  file: internal/session/instance_test.go
+  test_name: TestPrepareCommand_AppliesWrapperBeforeBashWrap
+  purpose: prepareCommand must apply the user wrapper BEFORE the bash -c wrap
+    so trailing args in a "{command} --flag1 --flag2" template land INSIDE the
+    bash -c single-quoted payload. The reversed order dropped flags by turning
+    them into bash positional parameters ($0, $1, ...).
+  source: .planning/fix-issue-601/PLAN.md
+  manual: false
+  run:
+    command: go test ./internal/session/ -run TestPrepareCommand_AppliesWrapperBeforeBashWrap
+      -race -count=1 -v
+    expected: pass
+- id: issue-601-prepare-command-reporter-repro
+  added: '2026-04-17'
+  task: fix-issue-601
+  file: internal/session/instance_test.go
+  test_name: TestPrepareCommand_Issue601_ReporterRepro
+  purpose: Mirrors the reporter's exact scenario — claude-compatible wrapper +
+    --session-id + --dangerously-skip-permissions. Asserts flags survive the
+    wrap/substitute chain to the tmux.Start boundary.
+  source: .planning/fix-issue-601/PLAN.md
+  manual: false
+  run:
+    command: go test ./internal/session/ -run TestPrepareCommand_Issue601_ReporterRepro
+      -race -count=1 -v
+    expected: pass
+- id: issue-601-prepare-command-quoting-safe
+  added: '2026-04-17'
+  task: fix-issue-601
+  file: internal/session/instance_test.go
+  test_name: TestPrepareCommand_WrapperWithSingleQuoteInCmd_QuotesSafely
+  purpose: "After the reorder, a single quote inside the fully-substituted wrapped string must still be escaped via the POSIX close/dq/open (close-quote, double-quoted-squote, reopen-quote) pattern used by prepareCommand."
+  source: .planning/fix-issue-601/PLAN.md
+  manual: false
+  run:
+    command: go test ./internal/session/ -run TestPrepareCommand_WrapperWithSingleQuoteInCmd_QuotesSafely
+      -race -count=1 -v
+    expected: pass
+- id: issue-601-prepare-command-no-wrapper-unchanged
+  added: '2026-04-17'
+  task: fix-issue-601
+  file: internal/session/instance_test.go
+  test_name: TestPrepareCommand_NoWrapper_Unchanged
+  purpose: Guard against the reorder breaking the no-wrapper path — when no
+    wrapper is configured, prepareCommand must return cmd unchanged.
+  source: .planning/fix-issue-601/PLAN.md
+  manual: false
+  run:
+    command: go test ./internal/session/ -run TestPrepareCommand_NoWrapper_Unchanged
+      -race -count=1 -v
+    expected: pass
+- id: issue-601-cli-folds-extras-into-wrapper
+  added: '2026-04-17'
+  task: fix-issue-601
+  file: cmd/agent-deck/launch_cmd_test.go
+  test_name: TestLaunch_ToolWithFlags_FoldsExtrasIntoWrapper
+  purpose: CLI-parse boundary regression — resolveSessionCommand must fold EVERY
+    extra arg of a recognized tool into the wrapper template as "{command} <extras>".
+    Paired with the session-layer TestPrepareCommand_Issue601_ReporterRepro,
+    this pins both ends of the #601 data flow.
+  source: .planning/fix-issue-601/PLAN.md
+  manual: false
+  run:
+    command: go test ./cmd/agent-deck/ -run TestLaunch_ToolWithFlags_FoldsExtrasIntoWrapper
+      -race -count=1 -v
+    expected: pass
+- id: issue-601-cli-session-id-preserved
+  added: '2026-04-17'
+  task: fix-issue-601
+  file: cmd/agent-deck/launch_cmd_test.go
+  test_name: TestLaunch_ToolWithSessionIdFlag_IsPreserved
+  purpose: Narrower #601 symptom — --session-id must survive CLI parse for
+    claude-compatible wrappers, unblocking deterministic session IDs and JSONL
+    file resolution.
+  source: .planning/fix-issue-601/PLAN.md
+  manual: false
+  run:
+    command: go test ./cmd/agent-deck/ -run TestLaunch_ToolWithSessionIdFlag_IsPreserved
+      -race -count=1 -v
+    expected: pass
