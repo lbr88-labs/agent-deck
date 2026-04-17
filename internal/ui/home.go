@@ -12599,15 +12599,36 @@ func (h *Home) getOtherActiveSessions(excludeID string) []*session.Instance {
 }
 
 // getSessionContent retrieves displayable content from a session.
-// Tries GetLastResponse first, falls back to CaptureFullHistory.
+//
+// Refreshes tool session IDs from the live tmux env BEFORE reading, so that
+// a stale ClaudeSessionID (e.g. from a prior resumed conversation) cannot
+// surface old JSONL content as "the last response". Fix for issue #598
+// (cross-session `x` transferred unpredictable content).
+//
+// Falls back to tmux scrollback capture when structured response lookup
+// returns no content.
 func getSessionContent(inst *session.Instance) (string, error) {
-	// Try AI response first
-	resp, err := inst.GetLastResponse()
-	if err == nil && resp.Content != "" {
+	var live string
+	if session.IsClaudeCompatible(inst.Tool) {
+		live = inst.GetSessionIDFromTmux()
+	}
+	return getSessionContentWithLive(inst, live)
+}
+
+// getSessionContentWithLive is the testable core: given a live Claude session
+// ID (may be empty), prefer it over any stored ID before reading the last
+// response, then fall back to tmux scrollback.
+func getSessionContentWithLive(inst *session.Instance, liveClaudeID string) (string, error) {
+	if session.IsClaudeCompatible(inst.Tool) && liveClaudeID != "" && liveClaudeID != inst.ClaudeSessionID {
+		inst.ClaudeSessionID = liveClaudeID
+	}
+
+	// Use best-effort: richer recovery than GetLastResponse if the refreshed
+	// ID still doesn't resolve to a readable JSONL.
+	if resp, err := inst.GetLastResponseBestEffort(); err == nil && resp != nil && resp.Content != "" {
 		return resp.Content, nil
 	}
 
-	// Fall back to tmux pane capture
 	tmuxSession := inst.GetTmuxSession()
 	if tmuxSession == nil {
 		return "", fmt.Errorf("no output available for this session")

@@ -4894,6 +4894,29 @@ func (i *Instance) GetSessionIDFromTmux() string {
 	return sessionID
 }
 
+// RefreshLiveSessionIDs re-reads tool-specific session identifiers from the
+// live tmux environment and updates the instance's stored IDs when a newer
+// non-empty value is found. Safe no-op when tmuxSession is nil or the tool
+// has no live-env handle.
+//
+// Call this before reads that must reflect the CURRENT conversation (e.g.
+// TUI cross-session send-output, issue #598). Reads that tolerate stale data
+// (status polling) don't need it.
+func (i *Instance) RefreshLiveSessionIDs() {
+	if i.tmuxSession == nil {
+		return
+	}
+	if IsClaudeCompatible(i.Tool) {
+		if id := i.GetSessionIDFromTmux(); id != "" && id != i.ClaudeSessionID {
+			i.ClaudeSessionID = id
+			i.ClaudeDetectedAt = time.Now()
+		}
+	}
+	if i.Tool == "gemini" {
+		i.syncGeminiSessionFromTmux()
+	}
+}
+
 // GetMCPInfo returns MCP server information for this session
 // Returns nil if not a Claude or Gemini session
 func (i *Instance) GetMCPInfo() *MCPInfo {
