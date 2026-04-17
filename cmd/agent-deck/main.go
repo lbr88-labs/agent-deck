@@ -2206,6 +2206,7 @@ func handleProfileSetDefault(out *CLIOutput, name string) {
 func handleUpdate(args []string) {
 	fs := flag.NewFlagSet("update", flag.ExitOnError)
 	checkOnly := fs.Bool("check", false, "Only check for updates, don't install")
+	targetVersion := fs.String("version", "", "Install a specific released version (e.g. 1.7.3); may be a downgrade")
 
 	fs.Usage = func() {
 		fmt.Println("Usage: agent-deck update [options]")
@@ -2216,12 +2217,18 @@ func handleUpdate(args []string) {
 		fs.PrintDefaults()
 		fmt.Println()
 		fmt.Println("Examples:")
-		fmt.Println("  agent-deck update           # Check and install if available")
-		fmt.Println("  agent-deck update --check   # Only check, don't install")
+		fmt.Println("  agent-deck update              # Check and install latest if available")
+		fmt.Println("  agent-deck update --check      # Only check, don't install")
+		fmt.Println("  agent-deck update --version 1.7.3  # Install a specific version (may downgrade)")
 	}
 
 	if err := fs.Parse(normalizeArgs(fs, args)); err != nil {
 		os.Exit(1)
+	}
+
+	if strings.TrimSpace(*targetVersion) != "" {
+		handleUpdateToSpecificVersion(*targetVersion, *checkOnly)
+		return
 	}
 
 	fmt.Printf("Agent Deck v%s\n", Version)
@@ -2311,6 +2318,95 @@ func handleUpdate(args []string) {
 
 	// Offer to update remotes
 	updateRemotesAfterLocalUpdate(info.LatestVersion)
+}
+
+// handleUpdateToSpecificVersion installs a user-specified release version.
+// Unlike the default update flow, this bypasses the "is this newer?" check so
+// callers can reinstall or downgrade to a prior release on purpose.
+func handleUpdateToSpecificVersion(requested string, checkOnly bool) {
+	fmt.Printf("Agent Deck v%s\n", Version)
+
+	normalized := update.NormalizeReleaseTag(requested)
+	if normalized == "" {
+		fmt.Println("Error: --version requires a non-empty version (e.g. 1.7.3)")
+		os.Exit(1)
+	}
+	targetVersion := strings.TrimPrefix(normalized, "v")
+
+	installPath, homebrewUpgradeCmd, homebrewManaged, hbErr := update.DetectHomebrewManagedInstall()
+	if hbErr != nil {
+		homebrewManaged = false
+	}
+	if homebrewManaged {
+		fmt.Printf("\nHomebrew-managed install detected at %s\n", installPath)
+		fmt.Printf("Pinning to a specific version is not supported via this command.\n")
+		fmt.Printf("Use Homebrew directly, or run `%s` for the latest.\n", homebrewUpgradeCmd)
+		os.Exit(1)
+	}
+
+	fmt.Printf("Fetching release %s...\n", normalized)
+	release, err := update.FetchReleaseByTag(normalized)
+	if err != nil {
+		fmt.Printf("Error: %v\n", err)
+		os.Exit(1)
+	}
+
+	downloadURL := update.GetAssetURLForPlatform(release, runtime.GOOS, runtime.GOARCH)
+	if downloadURL == "" {
+		fmt.Printf("Error: release %s has no binary for %s/%s\n", normalized, runtime.GOOS, runtime.GOARCH)
+		os.Exit(1)
+	}
+
+	cmp := update.CompareVersions(Version, targetVersion)
+	switch {
+	case cmp == 0:
+		fmt.Printf("\n↻ Reinstalling v%s (current = requested)\n", targetVersion)
+	case cmp < 0:
+		fmt.Printf("\n⬆ Installing v%s → v%s\n", Version, targetVersion)
+	default:
+		fmt.Printf("\n⬇ Downgrading v%s → v%s\n", Version, targetVersion)
+	}
+	fmt.Printf("  Release: %s\n", release.HTMLURL)
+
+	if checkOnly {
+		fmt.Println("\nRun without --check to install.")
+		return
+	}
+
+	drainStdin()
+	prompt := fmt.Sprintf("\nInstall v%s now? [Y/n] ", targetVersion)
+	if cmp > 0 {
+		prompt = fmt.Sprintf("\nDowngrade to v%s now? [y/N] ", targetVersion)
+	}
+	fmt.Print(prompt)
+	reader := bufio.NewReader(os.Stdin)
+	response, _ := reader.ReadString('\n')
+	response = strings.TrimSpace(strings.ToLower(response))
+
+	confirmed := false
+	if cmp > 0 {
+		confirmed = response == "y" || response == "yes"
+	} else {
+		confirmed = response == "" || response == "y" || response == "yes"
+	}
+	if !confirmed {
+		fmt.Println("Update cancelled.")
+		return
+	}
+
+	fmt.Println()
+	if err := update.PerformUpdate(downloadURL); err != nil {
+		fmt.Printf("Error installing v%s: %v\n", targetVersion, err)
+		os.Exit(1)
+	}
+
+	if err := update.UpdateBridgePy(); err != nil {
+		fmt.Printf("Warning: Failed to update bridge.py: %v\n", err)
+		fmt.Println("  You can manually refresh it with: agent-deck conductor setup <name>")
+	}
+
+	fmt.Printf("\n✓ Installed v%s\n", targetVersion)
+	fmt.Println("  Restart agent-deck to use this version.")
 }
 
 func runHomebrewUpgradeWithRefresh(homebrewUpgradeCmd string) error {
