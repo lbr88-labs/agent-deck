@@ -3046,8 +3046,37 @@ func (h *Home) processStatusUpdate(req statusUpdateRequest) {
 	h.refreshSessionRenderSnapshot(instancesCopy)
 }
 
-// Update handles messages
+// Update implements tea.Model. It delegates to updateInner and, when
+// fullRepaint is enabled, appends tea.ClearScreen on KeyMsg and mouse-wheel
+// MouseMsg events to prevent incremental-redraw drift between the tick-based
+// clears (issue #607). Under the default (full_repaint = false) this wrapper
+// is a pass-through — no regression for users who never opt in.
 func (h *Home) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	model, cmd := h.updateInner(msg)
+	if !h.fullRepaint {
+		return model, cmd
+	}
+	switch m := msg.(type) {
+	case tea.KeyMsg:
+		_ = m
+		return model, appendClearScreen(cmd)
+	case tea.MouseMsg:
+		if m.Button == tea.MouseButtonWheelUp || m.Button == tea.MouseButtonWheelDown {
+			return model, appendClearScreen(cmd)
+		}
+	}
+	return model, cmd
+}
+
+// appendClearScreen batches tea.ClearScreen onto cmd, preserving nil-safety.
+func appendClearScreen(cmd tea.Cmd) tea.Cmd {
+	if cmd == nil {
+		return tea.ClearScreen
+	}
+	return tea.Batch(cmd, tea.ClearScreen)
+}
+
+func (h *Home) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 	var cmds []tea.Cmd
 
 	switch msg := msg.(type) {
