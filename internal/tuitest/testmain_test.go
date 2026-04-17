@@ -5,12 +5,21 @@ import (
 	"os/exec"
 	"strings"
 	"testing"
+
+	"github.com/asheshgoplani/agent-deck/internal/testutil"
 )
 
 // TestMain ensures all tuitest smoke tests use the _test profile to prevent
 // accidental modification of production session data.
 // See CLAUDE.md: "Never delete these TestMain files."
 func TestMain(m *testing.M) {
+	// Isolate the tmux socket. Smoke tests drive real tmux sessions; without
+	// isolation they hit the user's default socket and destabilize live
+	// agent-deck sessions (2026-04-17 incident).
+	// See internal/testutil/tmuxenv.go for the full postmortem.
+	cleanupTmux := testutil.IsolateTmuxSocket()
+	defer cleanupTmux()
+
 	os.Setenv("AGENTDECK_PROFILE", "_test")
 
 	code := m.Run()

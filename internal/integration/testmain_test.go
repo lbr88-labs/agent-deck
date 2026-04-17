@@ -14,6 +14,13 @@ func TestMain(m *testing.M) {
 	// commands operate on their temp repos instead of the real repository.
 	testutil.UnsetGitRepoEnv()
 
+	// Isolate the tmux socket. This package directly drives session lifecycle
+	// code and was the package whose test run killed every user session during
+	// the 2026-04-17 incident when go test ./... touched it without isolation.
+	// See internal/testutil/tmuxenv.go for the full postmortem.
+	cleanupTmux := testutil.IsolateTmuxSocket()
+	defer cleanupTmux()
+
 	// Force test profile to prevent production data corruption.
 	os.Setenv("AGENTDECK_PROFILE", "_test")
 

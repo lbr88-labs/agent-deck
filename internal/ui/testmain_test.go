@@ -5,12 +5,21 @@ import (
 	"os/exec"
 	"strings"
 	"testing"
+
+	"github.com/asheshgoplani/agent-deck/internal/testutil"
 )
 
 // TestMain ensures all UI tests use the _test profile to prevent
 // accidental modification of production data.
 // CRITICAL: This was missing and caused test data to overwrite production sessions!
 func TestMain(m *testing.M) {
+	// Isolate the tmux socket. UI tests drive session-lifecycle flows end-to-end;
+	// without isolation they spawn tmux on the user's default socket and
+	// destabilize live agent-deck sessions (2026-04-17 incident).
+	// See internal/testutil/tmuxenv.go for the full postmortem.
+	cleanupTmux := testutil.IsolateTmuxSocket()
+	defer cleanupTmux()
+
 	// Force _test profile for all tests in this package
 	os.Setenv("AGENTDECK_PROFILE", "_test")
 
