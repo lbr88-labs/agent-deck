@@ -115,11 +115,15 @@ func currentTmuxThemeStyle() tmuxThemeStyle {
 }
 
 func (s *Session) themedStatusRight(themeStyle tmuxThemeStyle) string {
+	return fmt.Sprintf("#[fg=%s]ctrl+q detach#[default] │ 📁 %s | %s ", themeStyle.hintColor, s.DisplayName, s.projectDisplayName())
+}
+
+func (s *Session) projectDisplayName() string {
 	folderName := filepath.Base(s.WorkDir)
 	if folderName == "" || folderName == "." {
 		folderName = "~"
 	}
-	return fmt.Sprintf("#[fg=%s]ctrl+q detach#[default] │ 📁 %s | %s ", themeStyle.hintColor, s.DisplayName, folderName)
+	return folderName
 }
 
 // ErrCaptureTimeout is returned when CapturePane exceeds its timeout.
@@ -807,7 +811,7 @@ func sanitizeSystemdUnitComponent(raw string) string {
 	return out
 }
 
-// bashCWrap returns the given command wrapped in `bash -c '…'` with
+// bashCWrap returns the given command wrapped in `bash -c '...'` with
 // single quotes safely escaped using the POSIX shell quote-break pattern. The result
 // is a single shell word that can be passed to any `sh -c` invocation
 // (e.g. tmux's default shell-command delivery) and will always be
@@ -1037,6 +1041,7 @@ func ReconnectSession(tmuxName, displayName, workDir, command string) *Session {
 	// Configure existing sessions
 	if sess.Exists() {
 		sess.ConfigureStatusBar()
+		sess.ConfigureTerminalTitle()
 		sess.configured = true
 	}
 
@@ -1142,6 +1147,7 @@ func (s *Session) EnsureConfigured() {
 
 	// Run deferred configuration
 	s.ConfigureStatusBar()
+	s.ConfigureTerminalTitle()
 	_ = s.EnableMouseMode()
 
 	s.configured = true
@@ -1537,6 +1543,7 @@ func (s *Session) Start(command string) error {
 	// Configure status bar with session info for easy identification
 	// Shows: session title on left, project folder on right
 	s.ConfigureStatusBar()
+	s.ConfigureTerminalTitle()
 
 	// Wait for the pane shell to be ready before sending the command via send-keys.
 	// On WSL/Linux non-interactive contexts, pane initialisation can take 100-500ms and
@@ -1661,6 +1668,46 @@ func (s *Session) buildStatusBarArgs() []string {
 		return nil
 	}
 	return args
+}
+
+// buildTerminalTitleArgs returns the tmux command args for configuring the outer
+// terminal title shown by clients such as iTerm2. Session metadata user options
+// are always refreshed so custom title formats can reuse them.
+func (s *Session) buildTerminalTitleArgs() []string {
+	type option struct {
+		key   string
+		value string
+	}
+
+	defaults := []option{
+		{"@agentdeck_project_name", s.projectDisplayName()},
+		{"@agentdeck_display_name", s.DisplayName},
+	}
+	if _, overridden := s.OptionOverrides["set-titles"]; !overridden {
+		defaults = append(defaults, option{key: "set-titles", value: "on"})
+	}
+	if _, overridden := s.OptionOverrides["set-titles-string"]; !overridden {
+		defaults = append(defaults, option{key: "set-titles-string", value: "[#{@agentdeck_project_name}] #{@agentdeck_display_name}"})
+	}
+
+	args := make([]string, 0, len(defaults)*6)
+	for i, opt := range defaults {
+		if i > 0 {
+			args = append(args, ";")
+		}
+		args = append(args, "set-option", "-t", s.Name, opt.key, opt.value)
+	}
+	return args
+}
+
+// ConfigureTerminalTitle sets tmux options that drive the outer terminal tab or
+// window title for this session.
+func (s *Session) ConfigureTerminalTitle() {
+	args := s.buildTerminalTitleArgs()
+	if len(args) == 0 {
+		return
+	}
+	_ = exec.Command("tmux", args...).Run()
 }
 
 // ConfigureStatusBar sets up the tmux status bar with session info.
