@@ -59,6 +59,8 @@ const (
 	codexBootstrapScanInterval     = 2 * time.Second
 	codexRotationScanInterval      = 30 * time.Second
 	opencodeRotationScanInterval   = 15 * time.Second
+	opencodeRotationActivityWindow = 30 * time.Second
+	opencodeStartupTimeSkew        = 5 * time.Second
 	// codexProbeScanInterval rate-limits process-file probing to avoid
 	// repeated /proc and lsof scans on every status tick.
 	codexProbeScanInterval    = 2 * time.Second
@@ -960,6 +962,7 @@ func (i *Instance) watchForOpenCodeSession() {
 func (i *Instance) setOpenCodeSession(sessionID string) {
 	i.OpenCodeSessionID = sessionID
 	i.OpenCodeDetectedAt = time.Now()
+	i.OpenCodeStartedAt = 0
 
 	if i.tmuxSession != nil {
 		if err := i.tmuxSession.SetEnvironment("OPENCODE_SESSION_ID", sessionID); err != nil {
@@ -977,12 +980,23 @@ type openCodeSessionMetadata struct {
 }
 
 // findBestOpenCodeSession keeps an existing binding if that session still exists
-// for the project. Otherwise it falls back to the most recently updated match.
-func findBestOpenCodeSession(sessions []openCodeSessionMetadata, projectPath, currentID string) string {
+// for the project. Fresh launches stay unbound until OpenCode persists a session
+// created during the current startup, which prevents adopting older same-project
+// sessions before the new conversation has an ID. Already-bound sessions only
+// rotate to a newer sibling when there was very recent local pane activity,
+// which approximates an intentional in-pane `/new` without stealing sessions
+// from other tabs in the same project.
+func findBestOpenCodeSession(sessions []openCodeSessionMetadata, projectPath, currentID string, startedAt, activityAt int64) string {
 	normalizedProjectPath := normalizePath(projectPath)
 
 	var bestMatch string
 	var bestMatchTime int64
+	var currentMatchTime int64
+	var currentExists bool
+	var localRotationMatch string
+	var localRotationTime int64
+	startupThreshold := startedAt - opencodeStartupTimeSkew.Milliseconds()
+	activityThreshold := activityAt - opencodeStartupTimeSkew.Milliseconds()
 
 	for _, sess := range sessions {
 		sessDir := sess.Directory
@@ -996,19 +1010,43 @@ func findBestOpenCodeSession(sessions []openCodeSessionMetadata, projectPath, cu
 
 		// Multiple OpenCode tabs can share a project path. A newer sibling session
 		// is not enough evidence to steal this instance's existing binding.
-		if currentID != "" && sess.ID == currentID {
-			return currentID
-		}
-
 		updatedAt := sess.Updated
 		if updatedAt == 0 {
 			updatedAt = sess.Created
+		}
+
+		if currentID != "" && sess.ID == currentID {
+			currentExists = true
+			currentMatchTime = updatedAt
+			if bestMatch == "" || updatedAt > bestMatchTime {
+				bestMatch = sess.ID
+				bestMatchTime = updatedAt
+			}
+			continue
+		}
+
+		if currentID == "" && startedAt > 0 && updatedAt < startupThreshold && sess.Created < startupThreshold {
+			continue
+		}
+
+		if currentID != "" && activityAt > 0 && (updatedAt >= activityThreshold || sess.Created >= activityThreshold) {
+			if localRotationMatch == "" || updatedAt > localRotationTime {
+				localRotationMatch = sess.ID
+				localRotationTime = updatedAt
+			}
 		}
 
 		if bestMatch == "" || updatedAt > bestMatchTime {
 			bestMatch = sess.ID
 			bestMatchTime = updatedAt
 		}
+	}
+
+	if currentID != "" && currentExists {
+		if localRotationMatch != "" && localRotationTime > currentMatchTime {
+			return localRotationMatch
+		}
+		return currentID
 	}
 
 	return bestMatch
@@ -1043,7 +1081,15 @@ func (i *Instance) queryOpenCodeSession() string {
 
 	sessionLog.Debug("opencode_parsed_sessions", slog.Int("count", len(sessions)))
 
-	bestMatch := findBestOpenCodeSession(sessions, i.ProjectPath, i.OpenCodeSessionID)
+	var activityAt int64
+	if currentID := i.OpenCodeSessionID; currentID != "" {
+		lastActivity := i.GetLastActivityTime()
+		if !lastActivity.IsZero() && time.Since(lastActivity) <= opencodeRotationActivityWindow {
+			activityAt = lastActivity.UnixMilli()
+		}
+	}
+
+	bestMatch := findBestOpenCodeSession(sessions, i.ProjectPath, i.OpenCodeSessionID, i.OpenCodeStartedAt, activityAt)
 	sessionLog.Debug(
 		"opencode_best_match",
 		slog.String("session_id", bestMatch),
@@ -2956,6 +3002,18 @@ func (i *Instance) applyOpenCodeSessionCandidate(candidate string) bool {
 			i.OpenCodeDetectedAt = time.Now()
 		}
 		return false
+	}
+
+	if i.OpenCodeSessionID != "" {
+		lastActivity := i.GetLastActivityTime()
+		if !lastActivity.IsZero() && time.Since(lastActivity) <= opencodeRotationActivityWindow {
+			sessionLog.Debug(
+				"opencode_session_rebind_recent_activity",
+				slog.String("old_id", i.OpenCodeSessionID),
+				slog.String("new_id", candidate),
+				slog.Time("last_activity", lastActivity),
+			)
+		}
 	}
 
 	sessionLog.Debug(
