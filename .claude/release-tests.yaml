@@ -784,3 +784,47 @@ tests:
   run:
     command: go test ./internal/ui/ -run TestPreviewScroll_ClampsToContentRange -race -count=1 -v
     expected: pass
+- id: issue-579-strips-erase-in-line
+  added: '2026-04-17'
+  task: fix-issue-579
+  file: internal/ui/preview_clip_test.go
+  test_name: TestRenderPreviewPane_StripsEraseInLine_Issue579
+  purpose: 'Preview pane must not pass CSI K (Erase in Line) through to the outer terminal. Captured content like Neovim mini.statusline ends a row with an active bg SGR plus CSI K; without the sanitizer, the outer terminal paints the rest of that physical row with the active bg, bleeding past the preview boundary into adjacent panels. See issue 579.'
+  source: .planning/fix-issue-579/PLAN.md
+  manual: false
+  run:
+    command: go test ./internal/ui/ -run TestRenderPreviewPane_StripsEraseInLine_Issue579 -count=1 -v
+    expected: pass
+- id: issue-579-strips-erase-in-display
+  added: '2026-04-17'
+  task: fix-issue-579
+  file: internal/ui/preview_clip_test.go
+  test_name: TestRenderPreviewPane_StripsEraseInDisplay_Issue579
+  purpose: 'Parallel-paths guard: the same sanitizer must also strip CSI J (Erase in Display). ED has the same bleed mechanism as EL but targets the rest of the screen, not just the line.'
+  source: .planning/fix-issue-579/PLAN.md
+  manual: false
+  run:
+    command: go test ./internal/ui/ -run TestRenderPreviewPane_StripsEraseInDisplay_Issue579 -count=1 -v
+    expected: pass
+- id: issue-579-every-line-fits-width
+  added: '2026-04-17'
+  task: fix-issue-579
+  file: internal/ui/preview_clip_test.go
+  test_name: TestRenderPreviewPane_EveryLineFitsWidth_Issue579
+  purpose: Core clip guarantee. Every rendered preview line must have visible width less than or equal to the pane width. Without this the issue 579 regression is back.
+  source: .planning/fix-issue-579/PLAN.md
+  manual: false
+  run:
+    command: go test ./internal/ui/ -run TestRenderPreviewPane_EveryLineFitsWidth_Issue579 -count=1 -v
+    expected: pass
+- id: issue-579-nvim-statusline-fixture
+  added: '2026-04-17'
+  task: fix-issue-579
+  file: internal/ui/preview_clip_test.go
+  test_name: TestRenderPreviewPane_NvimStatusline_NoBleedEscapes_Issue579
+  purpose: End-to-end reporter-pattern fixture. A Neovim mini.statusline capture (label plus filename plus trailing bg padding plus CSI K) must render with no bleed escapes AND every line fitting the pane width. Combined assertion so the fix stays anchored to the reporter scenario.
+  source: .planning/fix-issue-579/PLAN.md
+  manual: false
+  run:
+    command: go test ./internal/ui/ -run TestRenderPreviewPane_NvimStatusline_NoBleedEscapes_Issue579 -count=1 -v
+    expected: pass
