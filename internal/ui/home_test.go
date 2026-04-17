@@ -1423,6 +1423,27 @@ func TestRenderHelpBarMinimalWithSession(t *testing.T) {
 	}
 }
 
+func TestRenderHelpBarMinimalWithFreshRestartableSession(t *testing.T) {
+	home := NewHome()
+	home.width = 55
+	home.height = 30
+
+	testSession := &session.Instance{
+		ID:              "test-456",
+		Title:           "Fresh Restart Session",
+		Tool:            "claude",
+		ClaudeSessionID: "session-xyz",
+	}
+	home.flatItems = []session.Item{{Type: session.ItemTypeSession, Session: testSession}}
+	home.cursor = 0
+
+	result := home.renderHelpBar()
+
+	if !strings.Contains(result, "T") {
+		t.Error("Minimal help bar should contain T key for fresh restart")
+	}
+}
+
 func TestRenderHelpBarCompact(t *testing.T) {
 	home := NewHome()
 	home.width = 85 // Compact mode (70-99)
@@ -2151,6 +2172,28 @@ func TestRestartSessionCmdSessionMissingReturnsError(t *testing.T) {
 
 	// Build command with a valid instance, then simulate reload/delete before cmd runs.
 	cmd := home.restartSession(inst)
+	home.instancesMu.Lock()
+	delete(home.instanceByID, inst.ID)
+	home.instancesMu.Unlock()
+
+	msg := cmd()
+	restarted, ok := msg.(sessionRestartedMsg)
+	if !ok {
+		t.Fatalf("expected sessionRestartedMsg, got %T", msg)
+	}
+	if restarted.err == nil {
+		t.Fatal("expected error when session no longer exists")
+	}
+	if !strings.Contains(restarted.err.Error(), "session no longer exists") {
+		t.Fatalf("unexpected error: %v", restarted.err)
+	}
+}
+
+func TestRestartSessionFreshCmdSessionMissingReturnsError(t *testing.T) {
+	home := NewHome()
+	inst := session.NewInstance("restart-fresh-test", "/tmp/project")
+
+	cmd := home.restartSessionFresh(inst)
 	home.instancesMu.Lock()
 	delete(home.instanceByID, inst.ID)
 	home.instancesMu.Unlock()

@@ -3264,6 +3264,56 @@ func (i *Instance) SyncSessionIDsToTmux() {
 	}
 }
 
+func (i *Instance) clearSessionBindingForFreshStart() {
+	if IsClaudeCompatible(i.Tool) {
+		i.ClaudeSessionID = ""
+		i.ClaudeDetectedAt = time.Time{}
+	}
+
+	if i.Tool == "gemini" {
+		i.GeminiSessionID = ""
+		i.GeminiDetectedAt = time.Time{}
+	}
+
+	if i.Tool == "opencode" {
+		i.OpenCodeSessionID = ""
+		i.OpenCodeDetectedAt = time.Time{}
+		i.OpenCodeStartedAt = 0
+		i.lastOpenCodeScanAt = time.Time{}
+	}
+
+	if i.Tool == "codex" {
+		i.CodexSessionID = ""
+		i.CodexDetectedAt = time.Time{}
+		i.CodexStartedAt = 0
+		i.lastCodexScanAt = time.Time{}
+		i.mu.Lock()
+		i.pendingCodexRestartWarning = ""
+		i.mu.Unlock()
+	}
+}
+
+func (i *Instance) recreateTmuxSession() {
+	i.tmuxSession = tmux.NewSession(i.Title, i.ProjectPath)
+	i.tmuxSession.InstanceID = i.ID
+	i.tmuxSession.SetInjectStatusLine(GetTmuxSettings().GetInjectStatusLine())
+	i.tmuxSession.SetClearOnRestart(GetTmuxSettings().ClearOnRestart)
+}
+
+func (i *Instance) prepareRestartMCPConfig() {
+	// Clear flag immediately to prevent it staying set if restart fails.
+	skipRegen := i.SkipMCPRegenerate
+	i.SkipMCPRegenerate = false
+
+	if IsClaudeCompatible(i.Tool) && !skipRegen {
+		if err := i.regenerateMCPConfig(); err != nil {
+			mcpLog.Warn("mcp_config_regen_failed", slog.String("error", err.Error()))
+		}
+	} else if skipRegen {
+		mcpLog.Debug("mcp_regen_skipped", slog.String("reason", "flag_set_by_apply"))
+	}
+}
+
 // SyncSessionIDsFromTmux reads tool session IDs from the tmux environment
 // into the Instance struct. This is the reverse of SyncSessionIDsToTmux.
 // Used in the stop path to capture IDs that may not have been saved during
@@ -3985,20 +4035,9 @@ func (i *Instance) Restart() error {
 		slog.Bool("tmux_exists", i.tmuxSession != nil && i.tmuxSession.Exists()),
 	)
 
-	// Clear flag immediately to prevent it staying set if restart fails
-	skipRegen := i.SkipMCPRegenerate
-	i.SkipMCPRegenerate = false
-
-	// Regenerate .mcp.json before restart to use socket pool if available
-	// Skip if MCP dialog just wrote the config (avoids race condition)
-	if IsClaudeCompatible(i.Tool) && !skipRegen {
-		if err := i.regenerateMCPConfig(); err != nil {
-			mcpLog.Warn("mcp_config_regen_failed", slog.String("error", err.Error()))
-			// Continue with restart - Claude will use existing .mcp.json or defaults
-		}
-	} else if skipRegen {
-		mcpLog.Debug("mcp_regen_skipped", slog.String("reason", "flag_set_by_apply"))
-	}
+	// Regenerate .mcp.json before restart to use socket pool if available.
+	// Skip if MCP dialog just wrote the config (avoids race condition).
+	i.prepareRestartMCPConfig()
 
 	// If Claude session with known ID AND tmux session exists, use respawn-pane.
 	if IsClaudeCompatible(i.Tool) && i.ClaudeSessionID != "" && i.tmuxSession != nil && i.tmuxSession.Exists() {
@@ -4225,10 +4264,7 @@ func (i *Instance) Restart() error {
 	}
 
 	// Fallback: recreate tmux session (for dead sessions or unknown ID)
-	i.tmuxSession = tmux.NewSession(i.Title, i.ProjectPath)
-	i.tmuxSession.InstanceID = i.ID // Pass instance ID for activity hooks
-	i.tmuxSession.SetInjectStatusLine(GetTmuxSettings().GetInjectStatusLine())
-	i.tmuxSession.SetClearOnRestart(GetTmuxSettings().ClearOnRestart)
+	i.recreateTmuxSession()
 
 	var command string
 	if IsClaudeCompatible(i.Tool) && i.ClaudeSessionID != "" {
@@ -4331,6 +4367,30 @@ func (i *Instance) Restart() error {
 		i.Status = StatusWaiting
 	} else {
 		i.Status = StatusIdle
+	}
+
+	return nil
+}
+
+// RestartFresh restarts the current tool without resuming the existing tool session.
+// This recreates the tmux session and clears the stored tool session binding first,
+// so the next start gets a brand-new tool session ID.
+func (i *Instance) RestartFresh() error {
+	i.prepareRestartMCPConfig()
+
+	i.clearSessionBindingForFreshStart()
+
+	if i.tmuxSession != nil && i.tmuxSession.Exists() {
+		if killErr := i.tmuxSession.Kill(); killErr != nil {
+			mcpLog.Warn("restart_fresh_kill_old_session_failed", slog.String("error", killErr.Error()))
+		}
+	}
+
+	i.recreateTmuxSession()
+
+	if err := i.Start(); err != nil {
+		i.Status = StatusError
+		return fmt.Errorf("failed to restart session fresh: %w", err)
 	}
 
 	return nil
@@ -4482,6 +4542,24 @@ func (i *Instance) CanRestart() bool {
 
 	// Other sessions: only if dead or error
 	return i.Status == StatusError || i.tmuxSession == nil || !i.tmuxSession.Exists()
+}
+
+// CanRestartFresh returns true when the session has a known tool session binding
+// that can be intentionally discarded to start with a new session ID.
+func (i *Instance) CanRestartFresh() bool {
+	if IsClaudeCompatible(i.Tool) {
+		return i.ClaudeSessionID != ""
+	}
+	if i.Tool == "gemini" {
+		return i.GeminiSessionID != ""
+	}
+	if i.Tool == "opencode" {
+		return i.OpenCodeSessionID != ""
+	}
+	if i.Tool == "codex" {
+		return i.CodexSessionID != ""
+	}
+	return i.CanRestartGeneric()
 }
 
 // CanFork returns true if this session can be forked

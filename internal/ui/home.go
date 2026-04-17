@@ -3687,7 +3687,11 @@ func (h *Home) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.err != nil {
 			// Restart failed - clear resuming animation immediately so user can retry.
 			delete(h.resumingSessions, msg.sessionID)
-			h.setError(fmt.Errorf("failed to restart session: %w", msg.err))
+			if msg.fresh {
+				h.setError(fmt.Errorf("failed to restart session fresh: %w", msg.err))
+			} else {
+				h.setError(fmt.Errorf("failed to restart session: %w", msg.err))
+			}
 		} else {
 			// Find the instance and refresh its MCP state (O(1) lookup)
 			if inst := h.getInstanceByID(msg.sessionID); inst != nil {
@@ -5946,6 +5950,23 @@ func (h *Home) handleMainKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		return h, nil
 
+	case "T":
+		// Restart session fresh (discard current tool session binding first)
+		if h.cursor < len(h.flatItems) {
+			item := h.flatItems[h.cursor]
+			if item.Type == session.ItemTypeSession && item.Session != nil {
+				if h.hasActiveAnimation(item.Session.ID) {
+					h.setError(fmt.Errorf("session is starting, please wait..."))
+					return h, nil
+				}
+				if item.Session.CanRestartFresh() {
+					h.resumingSessions[item.Session.ID] = time.Now()
+					return h, h.restartSessionFresh(item.Session)
+				}
+			}
+		}
+		return h, nil
+
 	case "c":
 		// Copy last AI response to system clipboard
 		if h.cursor < len(h.flatItems) {
@@ -7649,6 +7670,7 @@ type sessionRestartedMsg struct {
 	sessionID string
 	err       error
 	warning   string
+	fresh     bool
 }
 
 // mcpRestartedMsg signals that an MCP-triggered restart completed and should auto-attach
@@ -7686,6 +7708,38 @@ func (h *Home) restartSession(inst *session.Instance) tea.Cmd {
 			sessionID: id,
 			err:       err,
 			warning:   current.ConsumeCodexRestartWarning(),
+		}
+	}
+}
+
+// restartSessionFresh restarts a session without resuming the previous tool session.
+func (h *Home) restartSessionFresh(inst *session.Instance) tea.Cmd {
+	id := inst.ID
+	mcpUILog.Debug(
+		"restart_session_fresh_called",
+		slog.String("id", inst.ID),
+		slog.String("title", inst.Title),
+		slog.String("tool", inst.Tool),
+	)
+	return func() tea.Msg {
+		mcpUILog.Debug("restart_session_fresh_executing", slog.String("id", id))
+
+		h.instancesMu.RLock()
+		current := h.instanceByID[id]
+		h.instancesMu.RUnlock()
+		if current == nil {
+			err := fmt.Errorf("session no longer exists")
+			mcpUILog.Debug("restart_session_fresh_result", slog.String("id", id), slog.Any("error", err))
+			return sessionRestartedMsg{sessionID: id, err: err, fresh: true}
+		}
+
+		err := current.RestartFresh()
+		mcpUILog.Debug("restart_session_fresh_result", slog.String("id", id), slog.Any("error", err))
+		return sessionRestartedMsg{
+			sessionID: id,
+			err:       err,
+			warning:   current.ConsumeCodexRestartWarning(),
+			fresh:     true,
 		}
 	}
 }
@@ -9340,6 +9394,7 @@ func (h *Home) renderHelpBarMinimal() string {
 	importKey := h.actionKey(hotkeyImport)
 	groupKey := h.actionKey(hotkeyCreateGroup)
 	restartKey := h.actionKey(hotkeyRestart)
+	restartFreshKey := h.actionKey(hotkeyRestartFresh)
 	forkKey := h.actionKey(hotkeyQuickFork)
 	mcpKey := h.actionKey(hotkeyMCPManager)
 	skillsKey := h.actionKey(hotkeySkillsManager)
@@ -9361,6 +9416,12 @@ func (h *Home) renderHelpBarMinimal() string {
 			contextKeys = renderKeys("⏎", newKey, quickKey, groupKey)
 		} else {
 			contextKeys = renderKeys("⏎", newKey, quickKey, restartKey)
+			if item.Session != nil && item.Session.CanRestartFresh() {
+				freshRendered := renderKeys(restartFreshKey)
+				if freshRendered != "" {
+					contextKeys += " " + freshRendered
+				}
+			}
 			if item.Session != nil && item.Session.CanFork() {
 				forkRendered := renderKeys(forkKey)
 				if forkRendered != "" {
@@ -9433,6 +9494,7 @@ func (h *Home) renderHelpBarCompact() string {
 	sepStyle := lipgloss.NewStyle().Foreground(ColorBorder)
 	sep := sepStyle.Render(" │ ")
 	newQuickKey := joinHotkeyLabels(h.actionKey(hotkeyNewSession), h.actionKey(hotkeyQuickCreate))
+	restartFreshKey := h.actionKey(hotkeyRestartFresh)
 
 	// Abbreviated key+short desc
 	var contextHints []string
@@ -9457,6 +9519,9 @@ func (h *Home) renderHelpBarCompact() string {
 			}
 			if key := h.actionKey(hotkeyRestart); key != "" {
 				contextHints = append(contextHints, h.helpKeyShort(key, "Restart"))
+			}
+			if item.Session != nil && item.Session.CanRestartFresh() && restartFreshKey != "" {
+				contextHints = append(contextHints, h.helpKeyShort(restartFreshKey, "Fresh"))
 			}
 			if item.Session != nil && item.Session.CanFork() {
 				if key := h.actionKey(hotkeyQuickFork); key != "" {
@@ -9569,6 +9634,7 @@ func (h *Home) renderHelpBarFull() string {
 	newQuickKey := joinHotkeyLabels(h.actionKey(hotkeyNewSession), h.actionKey(hotkeyQuickCreate))
 	renameKey := h.actionKey(hotkeyRename)
 	restartKey := h.actionKey(hotkeyRestart)
+	restartFreshKey := h.actionKey(hotkeyRestartFresh)
 	deleteKey := h.actionKey(hotkeyDelete)
 	closeKey := h.actionKey(hotkeyCloseSession)
 	groupKey := h.actionKey(hotkeyCreateGroup)
@@ -9630,6 +9696,9 @@ func (h *Home) renderHelpBarFull() string {
 			}
 			if restartKey != "" {
 				primaryHints = append(primaryHints, h.helpKey(restartKey, "Restart"))
+			}
+			if item.Session != nil && item.Session.CanRestartFresh() && restartFreshKey != "" {
+				primaryHints = append(primaryHints, h.helpKey(restartFreshKey, "Restart Fresh"))
 			}
 			// Only show fork hints if session has a valid Claude session ID
 			if item.Session != nil && item.Session.CanFork() {
@@ -11505,6 +11574,16 @@ func (h *Home) renderPreviewPane(width, height int) string {
 					b.WriteString("\n")
 				}
 			}
+			if selected.CanRestartFresh() {
+				if restartFreshKey := h.actionKey(hotkeyRestartFresh); restartFreshKey != "" {
+					hintStyle := lipgloss.NewStyle().Foreground(ColorText).Italic(true)
+					keyStyle := lipgloss.NewStyle().Foreground(ColorAccent).Bold(true)
+					b.WriteString(hintStyle.Render("Fresh:   "))
+					b.WriteString(keyStyle.Render(restartFreshKey))
+					b.WriteString(hintStyle.Render(" restart with a new session ID"))
+					b.WriteString("\n")
+				}
+			}
 		}
 	}
 
@@ -11555,6 +11634,14 @@ func (h *Home) renderPreviewPane(width, height int) string {
 			b.WriteString(keyStyle.Render(restartKey))
 			b.WriteString(dimStyle.Render(" Resume  - restart with session resume"))
 			b.WriteString("\n")
+		}
+		if selected.CanRestartFresh() {
+			if restartFreshKey := h.actionKey(hotkeyRestartFresh); restartFreshKey != "" {
+				b.WriteString("  ")
+				b.WriteString(keyStyle.Render(restartFreshKey))
+				b.WriteString(dimStyle.Render(" Fresh   - restart with a new session ID"))
+				b.WriteString("\n")
+			}
 		}
 		if deleteKey := h.actionKey(hotkeyDelete); deleteKey != "" {
 			b.WriteString("  ")
@@ -11612,6 +11699,14 @@ func (h *Home) renderPreviewPane(width, height int) string {
 			b.WriteString(keyStyle.Render(restartKey))
 			b.WriteString(dimStyle.Render(" Start   - create and start tmux session"))
 			b.WriteString("\n")
+		}
+		if selected.CanRestartFresh() {
+			if restartFreshKey := h.actionKey(hotkeyRestartFresh); restartFreshKey != "" {
+				b.WriteString("  ")
+				b.WriteString(keyStyle.Render(restartFreshKey))
+				b.WriteString(dimStyle.Render(" Fresh   - start without resuming the prior session"))
+				b.WriteString("\n")
+			}
 		}
 		if deleteKey := h.actionKey(hotkeyDelete); deleteKey != "" {
 			b.WriteString("  ")

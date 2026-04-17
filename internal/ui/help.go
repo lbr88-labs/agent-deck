@@ -136,6 +136,7 @@ func (h *HelpOverlay) View() string {
 	deleteKey := h.key(hotkeyDelete, "d")
 	closeKey := h.key(hotkeyCloseSession, "D")
 	restartKey := h.key(hotkeyRestart, "Shift+R")
+	restartFreshKey := h.key(hotkeyRestartFresh, "Shift+T")
 	renameKey := h.key(hotkeyRename, "r")
 	moveKey := h.key(hotkeyMoveToGroup, "M")
 	mcpKey := h.key(hotkeyMCPManager, "m")
@@ -179,6 +180,7 @@ func (h *HelpOverlay) View() string {
 				{newKeys, "New / quick create"},
 				{renameKey, "Rename session"},
 				{restartKey, "Restart session"},
+				{restartFreshKey, "Restart with new session ID"},
 				{deleteKey, "Delete session"},
 				{closeKey, "Close session process"},
 				{undoKey, "Undo delete"},
