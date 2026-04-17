@@ -900,6 +900,42 @@ func TestSettingsPanel_PreviewSettings_GetConfigPreservesHiddenFields(t *testing
 	}
 }
 
+func TestSettingsPanel_Worktree_GetConfigPreservesHiddenFields(t *testing.T) {
+	panel := NewSettingsPanel()
+
+	branchPrefix := "dev/"
+	pathTemplate := "~/worktrees/{repo-name}/{branch}"
+	original := &session.UserConfig{
+		Worktree: session.WorktreeSettings{
+			AutoCleanup:     true,
+			DefaultEnabled:  true,
+			DefaultLocation: "sibling",
+			PathTemplate:    &pathTemplate,
+			BranchPrefix:    &branchPrefix,
+		},
+	}
+	panel.LoadConfig(original)
+	panel.originalConfig = original
+
+	config := panel.GetConfig()
+
+	if !config.Worktree.AutoCleanup {
+		t.Fatal("Worktree.AutoCleanup should be preserved")
+	}
+	if !config.Worktree.DefaultEnabled {
+		t.Fatal("Worktree.DefaultEnabled should be preserved")
+	}
+	if config.Worktree.DefaultLocation != "sibling" {
+		t.Fatalf("Worktree.DefaultLocation = %q, want %q", config.Worktree.DefaultLocation, "sibling")
+	}
+	if config.Worktree.PathTemplate == nil || *config.Worktree.PathTemplate != pathTemplate {
+		t.Fatalf("Worktree.PathTemplate should be preserved, got %v", config.Worktree.PathTemplate)
+	}
+	if config.Worktree.BranchPrefix == nil || *config.Worktree.BranchPrefix != branchPrefix {
+		t.Fatalf("Worktree.BranchPrefix should be preserved, got %v", config.Worktree.BranchPrefix)
+	}
+}
+
 func TestSettingsPanel_PreviewSettings_ViewContains(t *testing.T) {
 	panel := NewSettingsPanel()
 	panel.SetSize(80, 50)
