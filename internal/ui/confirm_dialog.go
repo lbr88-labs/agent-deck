@@ -33,6 +33,7 @@ type ConfirmDialog struct {
 	height      int
 	mcpCount    int  // Number of running MCPs (for quit confirmation)
 	sandboxed   bool // Whether the session uses a Docker sandbox.
+	worktree    bool // Whether the session has an associated git worktree.
 
 	remoteName string // Remote name for remote session confirmations.
 
@@ -59,12 +60,13 @@ func NewConfirmDialog() *ConfirmDialog {
 }
 
 // ShowDeleteSession shows confirmation for session deletion.
-func (c *ConfirmDialog) ShowDeleteSession(sessionID string, sessionName string, sandboxed bool) {
+func (c *ConfirmDialog) ShowDeleteSession(sessionID string, sessionName string, sandboxed, worktree bool) {
 	c.visible = true
 	c.confirmType = ConfirmDeleteSession
 	c.targetID = sessionID
 	c.targetName = sessionName
 	c.sandboxed = sandboxed
+	c.worktree = worktree
 	c.buttonCount = 2
 	c.focusedButton = 1 // default to Cancel
 }
@@ -258,6 +260,9 @@ func (c *ConfirmDialog) View() string {
 		title = "⚠  Delete Session?"
 		warning = fmt.Sprintf("This will permanently delete the session:\n\n  \"%s\"", c.targetName)
 		details = "• The tmux session will be terminated\n• Any running processes will be killed\n• Terminal history will be lost"
+		if c.worktree {
+			details += "\n• The git worktree directory will be removed"
+		}
 		if c.sandboxed {
 			details += "\n• The Docker container will be removed"
 		}

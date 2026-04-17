@@ -5721,7 +5721,7 @@ func (h *Home) handleMainKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if h.cursor < len(h.flatItems) {
 			item := h.flatItems[h.cursor]
 			if item.Type == session.ItemTypeSession && item.Session != nil {
-				h.confirmDialog.ShowDeleteSession(item.Session.ID, item.Session.Title, item.Session.IsSandboxed())
+				h.confirmDialog.ShowDeleteSession(item.Session.ID, item.Session.Title, item.Session.IsSandboxed(), item.Session.IsWorktree())
 			} else if item.Type == session.ItemTypeRemoteSession && item.RemoteSession != nil {
 				h.confirmDialog.ShowDeleteRemoteSession(item.RemoteName, item.RemoteSession.ID, item.RemoteSession.Title)
 			} else if item.Type == session.ItemTypeGroup && item.Path != session.DefaultGroupPath && item.Path != h.groupScope {
@@ -7519,8 +7519,12 @@ func (h *Home) deleteSession(inst *session.Instance) tea.Cmd {
 	return func() tea.Msg {
 		killErr := inst.Kill()
 		if isWorktree {
-			_ = git.RemoveWorktree(worktreeRepoRoot, worktreePath, false)
-			_ = git.PruneWorktrees(worktreeRepoRoot)
+			if err := git.RemoveWorktree(worktreeRepoRoot, worktreePath, true); err != nil {
+				uiLog.Warn("worktree_remove_err", slog.String("path", worktreePath), slog.String("err", err.Error()))
+			}
+			if err := git.PruneWorktrees(worktreeRepoRoot); err != nil {
+				uiLog.Warn("worktree_prune_err", slog.String("repo", worktreeRepoRoot), slog.String("err", err.Error()))
+			}
 		}
 		if isMultiRepo {
 			// Clean up multi-repo temp directory
@@ -7529,8 +7533,12 @@ func (h *Home) deleteSession(inst *session.Instance) tea.Cmd {
 			}
 			// Clean up per-repo worktrees
 			for _, wt := range multiRepoWorktrees {
-				_ = git.RemoveWorktree(wt.RepoRoot, wt.WorktreePath, false)
-				_ = git.PruneWorktrees(wt.RepoRoot)
+				if err := git.RemoveWorktree(wt.RepoRoot, wt.WorktreePath, true); err != nil {
+					uiLog.Warn("worktree_remove_err", slog.String("path", wt.WorktreePath), slog.String("err", err.Error()))
+				}
+				if err := git.PruneWorktrees(wt.RepoRoot); err != nil {
+					uiLog.Warn("worktree_prune_err", slog.String("repo", wt.RepoRoot), slog.String("err", err.Error()))
+				}
 			}
 		}
 		return sessionDeletedMsg{deletedID: id, killErr: killErr}
