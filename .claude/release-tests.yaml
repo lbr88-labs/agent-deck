@@ -536,3 +536,93 @@ tests:
     command: go test ./internal/tmux/ -run TestCleanupAttach_EmitsITermClearScrollback
       -race -count=1 -v
     expected: pass
+- id: issue-607-clear-on-mouse-wheel-down
+  added: '2026-04-17'
+  task: fix-issue-607
+  file: internal/ui/home_repaint_test.go
+  test_name: TestFullRepaint_ClearsOnMouseWheelDown_Issue607
+  purpose: full_repaint=true must emit tea.ClearScreen when the user scrolls
+    wheel-down so drift does not accumulate between tick-based clears.
+  source: .planning/fix-issue-607/PLAN.md
+  manual: false
+  run:
+    command: go test ./internal/ui/ -run TestFullRepaint_ClearsOnMouseWheelDown_Issue607
+      -count=1 -v
+    expected: pass
+- id: issue-607-clear-on-mouse-wheel-up
+  added: '2026-04-17'
+  task: fix-issue-607
+  file: internal/ui/home_repaint_test.go
+  test_name: TestFullRepaint_ClearsOnMouseWheelUp_Issue607
+  purpose: full_repaint=true must emit tea.ClearScreen on wheel-up scroll.
+  source: .planning/fix-issue-607/PLAN.md
+  manual: false
+  run:
+    command: go test ./internal/ui/ -run TestFullRepaint_ClearsOnMouseWheelUp_Issue607
+      -count=1 -v
+    expected: pass
+- id: issue-607-clear-on-key-navigation
+  added: '2026-04-17'
+  task: fix-issue-607
+  file: internal/ui/home_repaint_test.go
+  test_name: TestFullRepaint_ClearsOnKeyNavigation_Issue607
+  purpose: full_repaint=true must emit tea.ClearScreen on key-driven navigation
+    (j).
+  source: .planning/fix-issue-607/PLAN.md
+  manual: false
+  run:
+    command: go test ./internal/ui/ -run TestFullRepaint_ClearsOnKeyNavigation_Issue607
+      -count=1 -v
+    expected: pass
+- id: issue-607-clear-on-any-key
+  added: '2026-04-17'
+  task: fix-issue-607
+  file: internal/ui/home_repaint_test.go
+  test_name: TestFullRepaint_NonNavKeyStillClears_Issue607
+  purpose: Single-rule contract — under full_repaint ANY KeyMsg clears,
+    not just j/k. Catches regressions that narrow the rule to specific keys.
+  source: .planning/fix-issue-607/PLAN.md
+  manual: false
+  run:
+    command: go test ./internal/ui/ -run TestFullRepaint_NonNavKeyStillClears_Issue607
+      -count=1 -v
+    expected: pass
+- id: issue-607-default-no-clear-on-scroll
+  added: '2026-04-17'
+  task: fix-issue-607
+  file: internal/ui/home_repaint_test.go
+  test_name: TestFullRepaint_Disabled_NoClearOnScroll_Issue607
+  purpose: Regression guard for default users — full_repaint=false must NOT
+    emit ClearScreen on scroll (would flicker every default install).
+  source: .planning/fix-issue-607/PLAN.md
+  manual: false
+  run:
+    command: go test ./internal/ui/ -run TestFullRepaint_Disabled_NoClearOnScroll_Issue607
+      -count=1 -v
+    expected: pass
+- id: issue-607-default-no-clear-on-key
+  added: '2026-04-17'
+  task: fix-issue-607
+  file: internal/ui/home_repaint_test.go
+  test_name: TestFullRepaint_Disabled_NoClearOnKey_Issue607
+  purpose: Regression guard for default users — full_repaint=false must NOT
+    emit ClearScreen on KeyMsg.
+  source: .planning/fix-issue-607/PLAN.md
+  manual: false
+  run:
+    command: go test ./internal/ui/ -run TestFullRepaint_Disabled_NoClearOnKey_Issue607
+      -count=1 -v
+    expected: pass
+- id: issue-607-non-wheel-mouse-no-clear
+  added: '2026-04-17'
+  task: fix-issue-607
+  file: internal/ui/home_repaint_test.go
+  test_name: TestFullRepaint_NonWheelMouseDoesNotClear_Issue607
+  purpose: Non-wheel mouse events (clicks, drags) under full_repaint must NOT
+    clear — would cause click-flicker. Pins the wheel-only scope of the fix.
+  source: .planning/fix-issue-607/PLAN.md
+  manual: false
+  run:
+    command: go test ./internal/ui/ -run TestFullRepaint_NonWheelMouseDoesNotClear_Issue607
+      -count=1 -v
+    expected: pass
