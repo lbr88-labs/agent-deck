@@ -82,7 +82,9 @@ func setPaneTitle(t *testing.T, tmuxSession, title string) {
 //	hook files from disk) so the subsequent UpdateStatus sees the spinner
 //	via the title fast-path — identical to what the TUI and web already do.
 func TestUpdateStatus_CLIParity_SpinnerTitle_StaleHook(t *testing.T) {
-	skipIfNoTmuxServer(t)
+	// Requires only a live tmux server; TestMain bootstraps one, so skip
+	// only when tmux is entirely missing. This was the F3 silent-skip trap.
+	skipIfNoTmuxBinary(t)
 
 	tmpHome := t.TempDir()
 	t.Setenv("HOME", tmpHome)
@@ -137,7 +139,8 @@ func TestUpdateStatus_CLIParity_SpinnerTitle_StaleHook(t *testing.T) {
 // once the helper exists the two must produce identical output for the
 // same pane state. The fix lands green only when CLI output == TUI output.
 func TestUpdateStatus_CLIvsTUIParity_SameTmuxState(t *testing.T) {
-	skipIfNoTmuxServer(t)
+	// See TestUpdateStatus_CLIParity_SpinnerTitle_StaleHook for rationale.
+	skipIfNoTmuxBinary(t)
 
 	tmpHome := t.TempDir()
 	t.Setenv("HOME", tmpHome)

@@ -30,13 +30,44 @@ func skipIfNoTmuxBinary(t *testing.T) {
 	}
 }
 
-// skipIfNoTmuxServer is kept as a thin alias for skipIfNoTmuxBinary so that
-// historical test files still compile. New tests should call
-// skipIfNoTmuxBinary directly. The behavioural change is intentional and
-// tracked by TestPersistence_* + TestTmuxBootstrap_ServerIsRunning.
+// skipIfNoTmuxServer preserves the pre-bootstrap skip semantics for every
+// legacy test that depends on a "real" tmux server (one outside of our
+// TestMain bootstrap). Without this, adding the bootstrap would force
+// latent-broken tests that silently-skipped for months to actively run
+// and fail in CI. Specifically: tests that call inst.Start() with
+// Tool="claude" need a live claude pane, which CI cannot provide.
+//
+// Semantics:
+//
+//   - skip if tmux binary is missing;
+//   - skip if `tmux list-sessions` fails (cold socket);
+//   - skip if the ONLY session present is the bootstrap.
+//
+// New tests that want to leverage the bootstrap should call the more
+// precise skipIfNoTmuxBinary helper directly. The #610 CLI-parity and
+// #618 OSC tests are migrated to skipIfNoTmuxBinary so they actively run.
 func skipIfNoTmuxServer(t *testing.T) {
 	t.Helper()
-	skipIfNoTmuxBinary(t)
+	if _, err := exec.LookPath("tmux"); err != nil {
+		t.Skip("tmux not available")
+	}
+	out, err := exec.Command("tmux", "list-sessions", "-F", "#{session_name}").Output()
+	if err != nil {
+		t.Skip("tmux server not running")
+	}
+	// Check for any non-bootstrap session.
+	hasReal := false
+	for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" || line == bootstrapSessionName {
+			continue
+		}
+		hasReal = true
+		break
+	}
+	if !hasReal {
+		t.Skip("tmux server has only the bootstrap session; legacy test requires a real live session")
+	}
 }
 
 // skipIfClaudePaneUnreliable skips when a claude pane launched via

@@ -27,12 +27,31 @@ func skipIfNoTmuxBinary(t *testing.T) {
 	}
 }
 
-// skipIfNoTmuxServer is a compatibility alias. Existing tests call this
-// name; it now delegates to skipIfNoTmuxBinary. New tests should call
-// skipIfNoTmuxBinary directly.
+// skipIfNoTmuxServer preserves pre-bootstrap semantics for legacy tests
+// (see the session package's testmain_test.go for full rationale). Skips
+// when only the bootstrap session is present so tests that need a real
+// external live session still silent-skip as before.
 func skipIfNoTmuxServer(t *testing.T) {
 	t.Helper()
-	skipIfNoTmuxBinary(t)
+	if _, err := exec.LookPath("tmux"); err != nil {
+		t.Skip("tmux not available")
+	}
+	out, err := exec.Command("tmux", "list-sessions", "-F", "#{session_name}").Output()
+	if err != nil {
+		t.Skip("tmux server not running")
+	}
+	hasReal := false
+	for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" || line == bootstrapSessionName {
+			continue
+		}
+		hasReal = true
+		break
+	}
+	if !hasReal {
+		t.Skip("tmux server has only the bootstrap session; legacy test requires a real live session")
+	}
 }
 
 // TestMain ensures all tmux tests use the _test profile to prevent

@@ -370,7 +370,10 @@ func TestEmitScrollbackClear_IncludesBothEscapes(t *testing.T) {
 // TestCleanupAttach_EmitsITermClearScrollback verifies that cleanupAttach()
 // emits the iTerm2-specific OSC 1337 ClearScrollback escape on detach (#618).
 func TestCleanupAttach_EmitsITermClearScrollback(t *testing.T) {
-	skipIfNoTmuxServer(t)
+	// #618 regression: TestMain bootstraps a tmux server, so skip only
+	// when tmux itself is missing. Legacy skipIfNoTmuxServer would
+	// now silent-skip whenever the only session is the bootstrap.
+	skipIfNoTmuxBinary(t)
 	if !term.IsTerminal(int(os.Stdin.Fd())) {
 		t.Skip("stdin is not a terminal (CI/pipe environment); skipping PTY attach test")
 	}
