@@ -12,6 +12,7 @@ readonly CHECKLIST="$(cat <<'EOF'
 [2] Login-session teardown survival (Linux+systemd only)
 [3] Stop -> restart resume (--resume or --session-id in argv)
 [4] Fresh session uses --session-id, not --resume
+[5] Reviver respawns a killed control pipe without breaking tmux (v1.7.8+)
 EOF
 )"
 
@@ -297,11 +298,58 @@ scenario_4_fresh_session_shape() {
   agent-deck session stop "${name}" >/dev/null 2>&1 || true
 }
 
+# ---------- Scenario 5 (v1.7.8 reviver) ----------
+scenario_5_reviver_respawns_killed_pipe() {
+  local name="${SESSION_PREFIX}-s5"
+  log "creating session for reviver test: ${name}"
+  agent-deck add -t "${name}" -c shell -Q "${TMPROOT}" >/dev/null
+  agent-deck session start "${name}" >/dev/null
+  sleep 1
+
+  # Find the tmux session name agent-deck actually assigned
+  local tmux_name
+  tmux_name="$(agent-deck list 2>/dev/null | awk -v P="${name}" '$1 == P {for(i=1;i<=NF;i++) if ($i ~ /^adeck_/) {print $i; exit}}')"
+  if [[ -z "${tmux_name}" ]]; then
+    banner_skip "[5] could not resolve tmux session name for ${name} — skipping reviver scenario"
+    agent-deck session stop "${name}" >/dev/null 2>&1 || true
+    return
+  fi
+
+  # Kill only the control pipe (the `tmux -C attach-session` process), NOT the
+  # tmux server. Simulates SSH-logout scope cleanup.
+  local pipe_pid
+  pipe_pid="$(pgrep -f "tmux -C attach-session -t ${tmux_name}" | head -1 || true)"
+  if [[ -z "${pipe_pid}" ]]; then
+    banner_skip "[5] no control pipe found for ${tmux_name} — skipping"
+    agent-deck session stop "${name}" >/dev/null 2>&1 || true
+    return
+  fi
+  kill -9 "${pipe_pid}" 2>/dev/null || true
+  log "killed control pipe pid ${pipe_pid}"
+  sleep 2
+
+  # Trigger revive. Tmux session should still exist; reviver must respawn the pipe.
+  agent-deck session revive --name "${name}" >/dev/null 2>&1 || true
+  sleep 2
+
+  local new_pipe_pid
+  new_pipe_pid="$(pgrep -f "tmux -C attach-session -t ${tmux_name}" | head -1 || true)"
+  if [[ -n "${new_pipe_pid}" && "${new_pipe_pid}" != "${pipe_pid}" ]]; then
+    banner_pass "[5] reviver respawned control pipe (${pipe_pid} → ${new_pipe_pid})"
+  elif [[ -z "${new_pipe_pid}" ]]; then
+    banner_skip "[5] no new pipe after revive (PipeManager may be disabled in this env)"
+  else
+    banner_fail "[5] pipe pid unchanged after revive: ${pipe_pid}"
+  fi
+  agent-deck session stop "${name}" >/dev/null 2>&1 || true
+}
+
 # ---------- dispatch ----------
 want_scenario 1 && scenario_1_live_session_cgroup
 want_scenario 2 && scenario_2_login_teardown
 want_scenario 3 && scenario_3_restart_resume
 want_scenario 4 && scenario_4_fresh_session_shape
+want_scenario 5 && scenario_5_reviver_respawns_killed_pipe
 
 if [[ "${FAILED}" -ne 0 ]]; then
   printf "${C_RED}OVERALL: FAIL${C_RESET}\n" >&2

@@ -544,8 +544,9 @@ type updateCheckMsg struct {
 }
 
 type (
-	tickMsg time.Time
-	quitMsg bool
+	tickMsg        time.Time
+	quitMsg        bool
+	reviverTickMsg struct{}
 )
 
 // previewFetchedMsg is sent when async preview content is ready
@@ -1655,6 +1656,7 @@ func (h *Home) Init() tea.Cmd {
 		h.loadSessions,
 
 		h.tick(),
+		h.reviverTick(),
 		h.checkForUpdate(),
 		h.fetchRemoteSessions,
 	}
@@ -1906,6 +1908,15 @@ func (h *Home) loadSessions() tea.Msg {
 func (h *Home) tick() tea.Cmd {
 	return tea.Tick(tickInterval, func(t time.Time) tea.Msg {
 		return tickMsg(t)
+	})
+}
+
+// reviverTick fires every 60s to sweep the session list for instances whose
+// tmux server survived an SSH scope cleanup but whose control pipe got
+// reaped. See .planning/v178-ssh-reviver/PLAN.md (REPORT-D).
+func (h *Home) reviverTick() tea.Cmd {
+	return tea.Tick(60*time.Second, func(_ time.Time) tea.Msg {
+		return reviverTickMsg{}
 	})
 }
 
@@ -3736,6 +3747,16 @@ func (h *Home) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			})
 		}
 		return h, nil
+
+	case reviverTickMsg:
+		// Fire-and-forget reviver sweep for instances whose tmux server
+		// survived an SSH scope cleanup but whose pipe was reaped. Runs in
+		// a goroutine so it never blocks the Bubble Tea update loop.
+		go func(instances []*session.Instance) {
+			rev := session.NewReviver()
+			_ = rev.ReviveAll(instances)
+		}(append([]*session.Instance(nil), h.instances...))
+		return h, h.reviverTick()
 
 	case clearMaintenanceMsg:
 		h.maintenanceMsg = ""

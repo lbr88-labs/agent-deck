@@ -273,3 +273,75 @@ tests:
     command: go test ./internal/session/ -run TestBuildClaudeResumeCommand_UsesResumeWhenPerInstanceHistoryExists
       -count=1 -v
     expected: pass
+- id: v178-reviver-errored-alive-respawns
+  added: '2026-04-17'
+  task: v178-ssh-reviver
+  file: internal/session/reviver_test.go
+  test_name: TestReviver_ErroredSessionWithAliveServer_Respawns
+  purpose: Reviver core contract — an errored instance with a living tmux server
+    triggers ReviveAction exactly once and marks the outcome as Revived. This is
+    the seamless-SSH-reconnect fix; a regression here brings back the "27 sessions
+    stuck on error" pain.
+  source: REPORT-D-auto-revive.md
+  manual: false
+  run:
+    command: go test ./internal/session/ -run TestReviver_ErroredSessionWithAliveServer_Respawns
+      -race -count=1 -v
+    expected: pass
+- id: v178-reviver-dead-server-not-revived
+  added: '2026-04-17'
+  task: v178-ssh-reviver
+  file: internal/session/reviver_test.go
+  test_name: TestReviver_DeadServer_NotRevived
+  purpose: Negative control — when the tmux server is actually gone (OOM, reboot,
+    explicit kill), reviver must NOT auto-respawn. Prevents silent resurrection of
+    sessions the user intentionally killed.
+  source: REPORT-D-auto-revive.md
+  manual: false
+  run:
+    command: go test ./internal/session/ -run TestReviver_DeadServer_NotRevived
+      -race -count=1 -v
+    expected: pass
+- id: v178-reviver-tombstone-not-revived
+  added: '2026-04-17'
+  task: v178-ssh-reviver
+  file: internal/session/reviver_test.go
+  test_name: TestReviver_DeletedInstance_NotRevived
+  purpose: Tombstone semantics — deleted instances (absent from storage) produce
+    zero outcomes and zero ReviveAction calls. Guards the "I removed it, why is
+    it back?" UX bug.
+  source: REPORT-D-auto-revive.md
+  manual: false
+  run:
+    command: go test ./internal/session/ -run TestReviver_DeletedInstance_NotRevived
+      -race -count=1 -v
+    expected: pass
+- id: v178-reviver-stagger
+  added: '2026-04-17'
+  task: v178-ssh-reviver
+  file: internal/session/reviver_test.go
+  test_name: TestReviver_Stagger500ms_AcrossManyInstances
+  purpose: Stagger discipline — revive calls are serialized with the configured
+    stagger between actual revives (alive/dead entries don't consume slots). Protects
+    Anthropic API from cold-start thundering herd when 40+ sessions errored simultaneously.
+  source: REPORT-D-auto-revive.md
+  manual: false
+  run:
+    command: go test ./internal/session/ -run TestReviver_Stagger500ms_AcrossManyInstances
+      -race -count=1 -v
+    expected: pass
+- id: v178-revive-cli-dispatch
+  added: '2026-04-17'
+  task: v178-ssh-reviver
+  file: cmd/agent-deck/revive_cmd_test.go
+  test_name: TestRevive_CLI_AllFlag_TriggersReviver
+  purpose: CLI dispatch wiring — `agent-deck session revive --all` correctly
+    classifies a mixed fixture (errored/alive/dead) and emits the stable summary
+    string "revived=N errored=N alive=N dead=N". Guards the one-shot recovery path
+    used on conductor restart.
+  source: REPORT-D-auto-revive.md
+  manual: false
+  run:
+    command: go test ./cmd/agent-deck/ -run TestRevive_CLI_AllFlag_TriggersReviver
+      -race -count=1 -v
+    expected: pass

@@ -282,6 +282,16 @@ func RefreshExistingSessions() {
 	RefreshSessionCache()
 }
 
+// HasSession is a lightweight public probe for session presence.
+// Exported so packages outside internal/tmux (e.g., the reviver) can answer
+// "does this tmux session exist right now?" without reaching into unexported
+// helpers. Runs a direct `tmux has-session -t <name>` — skips the cache on
+// purpose because the reviver's purpose is to detect a mismatch between our
+// cached view and ground truth.
+func HasSession(name string) bool {
+	return tmuxSessionExists(name)
+}
+
 // sessionExistsFromCache checks if a session exists using the cached data
 // Returns (exists, cacheValid) - if cache is stale/empty, cacheValid is false
 func sessionExistsFromCache(name string) (bool, bool) {
