@@ -12,6 +12,7 @@ import (
 // environment is read into ClaudeSessionID and ClaudeDetectedAt is set.
 func TestSyncSessionIDsFromTmux_Claude(t *testing.T) {
 	skipIfNoTmuxServer(t)
+	skipIfNoClaudeBinary(t)
 
 	inst := NewInstanceWithTool("test-sync-claude", "/tmp", "claude")
 	err := inst.Start()
@@ -48,6 +49,7 @@ func TestSyncSessionIDsFromTmux_Claude(t *testing.T) {
 // into their respective fields.
 func TestSyncSessionIDsFromTmux_AllTools(t *testing.T) {
 	skipIfNoTmuxServer(t)
+	skipIfNoClaudeBinary(t)
 
 	inst := NewInstanceWithTool("test-sync-all-tools", "/tmp", "claude")
 	err := inst.Start()
@@ -123,6 +125,7 @@ func TestSyncSessionIDsFromTmux_NoOverwriteWithEmpty(t *testing.T) {
 // non-empty CLAUDE_SESSION_ID, it overwrites the existing value on the Instance.
 func TestSyncSessionIDsFromTmux_OverwriteWithNew(t *testing.T) {
 	skipIfNoTmuxServer(t)
+	skipIfNoClaudeBinary(t)
 
 	inst := NewInstanceWithTool("test-sync-overwrite", "/tmp", "claude")
 	err := inst.Start()

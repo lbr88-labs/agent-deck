@@ -619,6 +619,7 @@ func TestWaitForClaudeSession(t *testing.T) {
 
 func TestInstance_GetSessionIDFromTmux(t *testing.T) {
 	skipIfNoTmuxServer(t)
+	skipIfNoClaudeBinary(t)
 
 	// Create instance with tmux session
 	inst := NewInstanceWithTool("tmux-env-test", "/tmp", "claude")
@@ -655,6 +656,7 @@ func TestInstance_GetSessionIDFromTmux(t *testing.T) {
 
 func TestInstance_UpdateClaudeSession_TmuxFirst(t *testing.T) {
 	skipIfNoTmuxServer(t)
+	skipIfNoClaudeBinary(t)
 
 	// Create and start instance
 	inst := NewInstanceWithTool("update-test", "/tmp", "claude")
@@ -3216,5 +3218,40 @@ func TestPrepareCommand_Issue601_ReporterRepro(t *testing.T) {
 	}
 	if strings.Contains(got, `'my-claude-wrapper' --session-id`) {
 		t.Fatalf("issue #601 BAD SHAPE: flags leaked outside bash -c quotes:\n  got: %q", got)
+	}
+}
+
+// --- Issue #598 regression tests: RefreshLiveSessionIDs ---
+// Cross-session `x` in the TUI captured stale JSONL content because
+// Instance.ClaudeSessionID was never refreshed from the live tmux env before
+// reading. RefreshLiveSessionIDs is the designated refresh point; these tests
+// pin its safety contract.
+//
+// Restored on 2026-04-17 (v1.7.16 sprint-cleanup) after PR #640 (issue #601)
+// rebased on top of #598 and silently dropped these two functions during
+// conflict resolution. See .planning/verify-today-sprint/REPORT.md F1.
+
+func TestInstance_RefreshLiveSessionIDs_NoOpWhenTmuxSessionNil(t *testing.T) {
+	inst := NewInstance("sess-598-nil", t.TempDir())
+	inst.Tool = "claude"
+	inst.ClaudeSessionID = "stored-id"
+	// tmuxSession intentionally nil
+	inst.RefreshLiveSessionIDs() // must not panic
+	if inst.ClaudeSessionID != "stored-id" {
+		t.Errorf("ClaudeSessionID mutated with nil tmuxSession: got %q", inst.ClaudeSessionID)
+	}
+}
+
+func TestInstance_RefreshLiveSessionIDs_NoOpForNonAgenticTool(t *testing.T) {
+	inst := NewInstance("sess-598-shell", t.TempDir())
+	inst.Tool = "shell"
+	inst.ClaudeSessionID = "leftover-id"
+	inst.GeminiSessionID = "leftover-gemini"
+	inst.RefreshLiveSessionIDs()
+	if inst.ClaudeSessionID != "leftover-id" {
+		t.Errorf("ClaudeSessionID mutated for non-agentic tool: got %q", inst.ClaudeSessionID)
+	}
+	if inst.GeminiSessionID != "leftover-gemini" {
+		t.Errorf("GeminiSessionID mutated for non-agentic tool: got %q", inst.GeminiSessionID)
 	}
 }
