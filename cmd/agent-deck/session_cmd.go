@@ -1431,15 +1431,13 @@ func handleSessionSend(profile string, args []string) {
 	sentAt := time.Now()
 
 	// Send message atomically (text + Enter in single tmux invocation).
-	// --no-wait: skip readiness waiting, but still do a short retry/verification
-	// loop to avoid silent "pasted but not submitted" races.
+	// --no-wait: skip full readiness waiting, but run a capped preflight
+	// barrier + extended verification loop to avoid the #616 race where
+	// Claude's composer renders after the loop has already returned
+	// success on startup "active" status, leaving the message unsubmitted.
 	// default mode: full retry budget after readiness check.
 	if *noWait {
-		if err := sendWithRetryTarget(tmuxSess, message, false, sendRetryOptions{
-			maxRetries:     8,
-			checkDelay:     150 * time.Millisecond,
-			maxFullResends: -1, // no-wait: message already delivered, never re-send
-		}); err != nil {
+		if err := sendNoWait(tmuxSess, inst.Tool, message); err != nil {
 			out.Error(fmt.Sprintf("failed to send message: %v", err), ErrCodeInvalidOperation)
 			os.Exit(1)
 		}
@@ -1509,6 +1507,91 @@ func sendWithRetry(tmuxSess *tmux.Session, message string, skipVerify bool) erro
 		maxRetries: 50,
 		checkDelay: 300 * time.Millisecond,
 	})
+}
+
+// noWaitSendOptions returns the verification-loop options used by the
+// `session send --no-wait` path.
+//
+// Budget sizing (issue #616): a fresh Claude session with MCPs can take
+// 5-40s before its TUI input handler is interactive. If verification
+// returns on `activeChecks>=2` (from startup animations) before the
+// composer renders, a swallowed Enter leaves the message typed-but-not-
+// submitted. Budget must be long enough to see the composer either
+// accept or reject the submission.
+//
+// maxFullResends=-1 is load-bearing: it disables the Ctrl+C-then-resend
+// path (issue #479 — would otherwise double-send).
+func noWaitSendOptions() sendRetryOptions {
+	return sendRetryOptions{
+		maxRetries:     30,
+		checkDelay:     200 * time.Millisecond,
+		maxFullResends: -1,
+	}
+}
+
+// awaitComposerReadyBestEffort polls the pane until the Claude composer
+// prompt (`❯`) appears, returning true. If the composer never appears
+// within maxWait, returns false without blocking longer — preserving the
+// `--no-wait` spirit when the session is slow or broken.
+//
+// Added for issue #616: eliminates the race where `session send --no-wait`
+// fires before Claude's TUI input handler is mounted.
+func awaitComposerReadyBestEffort(target sendRetryTarget, maxWait, pollInterval time.Duration) bool {
+	if pollInterval <= 0 {
+		pollInterval = 100 * time.Millisecond
+	}
+	deadline := time.Now().Add(maxWait)
+	for {
+		if rawContent, err := target.CapturePaneFresh(); err == nil {
+			if send.HasCurrentComposerPrompt(tmux.StripANSI(rawContent)) {
+				return true
+			}
+		}
+		if time.Now().After(deadline) {
+			return false
+		}
+		remaining := time.Until(deadline)
+		sleep := pollInterval
+		if remaining < sleep {
+			sleep = remaining
+		}
+		if sleep > 0 {
+			time.Sleep(sleep)
+		}
+	}
+}
+
+// sendNoWait implements `session send --no-wait` semantics for the CLI.
+//
+// Issue #616 fix has three layers, applied in order:
+//
+//  1. Preflight readiness barrier (capped at 5s): polls the pane for a
+//     visible Claude composer `❯`. Without this, the initial paste
+//     lands in the TTY before Claude's Ink TUI has rendered the input
+//     surface — the keystrokes are discarded by pre-mount handlers.
+//
+//  2. Post-composer settle delay (500ms): Claude's composer glyph can
+//     render BEFORE React completes mounting the input handler. Without
+//     this delay, the paste can still be partially swallowed by the
+//     mount transition (observed live: message vanished entirely, no
+//     unsent prompt to retry on). 500ms is empirically enough.
+//
+//  3. Extended verification budget via noWaitSendOptions() (6s, 30×200ms):
+//     after the initial send, keeps detecting unsent-prompt markers and
+//     re-firing SendEnter if the composer still holds our message.
+//
+// maxFullResends=-1 is load-bearing for the #479 regression (never
+// double-send). Non-Claude tools skip the preflight — they have their
+// own readiness shapes and upstream gating.
+func sendNoWait(target sendRetryTarget, tool, message string) error {
+	if session.IsClaudeCompatible(tool) {
+		if awaitComposerReadyBestEffort(target, 5*time.Second, 100*time.Millisecond) {
+			// Post-composer settle: React mount can lag behind the
+			// composer glyph by a few hundred ms on cold starts.
+			time.Sleep(500 * time.Millisecond)
+		}
+	}
+	return sendWithRetryTarget(target, message, false, noWaitSendOptions())
 }
 
 type sendRetryTarget interface {
