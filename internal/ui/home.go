@@ -229,20 +229,21 @@ type Home struct {
 	analyticsCacheTime     map[string]time.Time                       // TTL cache: sessionID -> cache timestamp
 
 	// State
-	cursor         int            // Selected item index in flatItems
-	viewOffset     int            // First visible item index (for scrolling)
-	isAttaching    atomic.Bool    // Prevents View() output during attach (fixes Bubble Tea Issue #431) - atomic for thread safety
-	statusFilter   session.Status // Filter sessions by status ("" = all, or specific status)
-	groupScope     string         // Limit TUI to a specific group path ("" = all groups)
-	previewMode    PreviewMode    // What to show in preview pane (both, output-only, analytics-only)
-	err            error
-	errTime        time.Time  // When error occurred (for auto-dismiss)
-	isReloading    bool       // Visual feedback during auto-reload
-	initialLoading bool       // True until first loadSessionsMsg received (shows splash screen)
-	isQuitting     bool       // True when user pressed q, shows quitting splash
-	reloadVersion  uint64     // Incremented on each reload to prevent stale background saves
-	reloadMu       sync.Mutex // Protects reloadVersion, isReloading, and lastLoadMtime for thread-safe access
-	lastLoadMtime  time.Time  // File mtime when we last loaded (for external change detection)
+	cursor              int            // Selected item index in flatItems
+	viewOffset          int            // First visible item index (for scrolling)
+	previewScrollOffset int            // Lines scrolled up from tail in the preview pane (#574). 0 = tail (default). Reset on cursor move.
+	isAttaching         atomic.Bool    // Prevents View() output during attach (fixes Bubble Tea Issue #431) - atomic for thread safety
+	statusFilter        session.Status // Filter sessions by status ("" = all, or specific status)
+	groupScope          string         // Limit TUI to a specific group path ("" = all groups)
+	previewMode         PreviewMode    // What to show in preview pane (both, output-only, analytics-only)
+	err                 error
+	errTime             time.Time  // When error occurred (for auto-dismiss)
+	isReloading         bool       // Visual feedback during auto-reload
+	initialLoading      bool       // True until first loadSessionsMsg received (shows splash screen)
+	isQuitting          bool       // True when user pressed q, shows quitting splash
+	reloadVersion       uint64     // Incremented on each reload to prevent stale background saves
+	reloadMu            sync.Mutex // Protects reloadVersion, isReloading, and lastLoadMtime for thread-safe access
+	lastLoadMtime       time.Time  // File mtime when we last loaded (for external change detection)
 
 	// Preview cache (async fetching - View() must be pure, no blocking I/O)
 	previewCache      map[string]string    // sessionID -> cached preview content
@@ -3131,10 +3132,30 @@ func (h *Home) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if h.newDialog.IsVisible() || h.forkDialog.IsVisible() {
 				return h, nil
 			}
-			// Main session list scroll
+			// Preview pane scroll (#574): when the wheel event lands in the
+			// preview region of the dual layout, scroll preview content
+			// instead of moving the list cursor. Other layouts keep the
+			// legacy list-scroll behaviour because they have no dedicated
+			// preview click-target (single = no preview; stacked = same-
+			// width column where Y-based routing is ambiguous enough to
+			// leave as list-scroll).
+			if h.getLayoutMode() == LayoutModeDual {
+				leftWidth := int(float64(h.width) * 0.35)
+				if msg.X >= leftWidth {
+					if msg.Button == tea.MouseButtonWheelUp {
+						h.previewScrollOffset++
+					} else if h.previewScrollOffset > 0 {
+						h.previewScrollOffset--
+					}
+					return h, nil
+				}
+			}
+			// Main session list scroll (cursor movement also resets any
+			// stale preview offset so the new session starts at its tail).
 			if msg.Button == tea.MouseButtonWheelUp {
 				if h.cursor > 0 {
 					h.cursor--
+					h.previewScrollOffset = 0
 					h.syncViewport()
 					h.markNavigationActivity()
 					return h, h.fetchSelectedPreview()
@@ -3142,6 +3163,7 @@ func (h *Home) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 			} else {
 				if h.cursor < len(h.flatItems)-1 {
 					h.cursor++
+					h.previewScrollOffset = 0
 					h.syncViewport()
 					h.markNavigationActivity()
 					return h, h.fetchSelectedPreview()
@@ -5091,6 +5113,7 @@ func (h *Home) handleMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 
 		// Single click: select item
 		h.cursor = itemIndex
+		h.previewScrollOffset = 0
 		h.syncViewport()
 		return h, h.markNavigationAndFetchPreview()
 	}
@@ -5180,6 +5203,7 @@ func (h *Home) handleMainKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "up", "k":
 		if h.cursor > 0 {
 			h.cursor--
+			h.previewScrollOffset = 0
 			h.syncViewport()
 			h.markNavigationActivity()
 			// PERFORMANCE: Debounced preview fetch - waits 150ms for navigation to settle
@@ -5191,6 +5215,7 @@ func (h *Home) handleMainKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "down", "j":
 		if h.cursor < len(h.flatItems)-1 {
 			h.cursor++
+			h.previewScrollOffset = 0
 			h.syncViewport()
 			h.markNavigationActivity()
 			// PERFORMANCE: Debounced preview fetch - waits 150ms for navigation to settle
@@ -5209,6 +5234,7 @@ func (h *Home) handleMainKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if h.cursor < 0 {
 			h.cursor = 0
 		}
+		h.previewScrollOffset = 0
 		h.syncViewport()
 		h.markNavigationActivity()
 		return h, h.fetchSelectedPreview()
@@ -5225,6 +5251,7 @@ func (h *Home) handleMainKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if h.cursor < 0 {
 			h.cursor = 0
 		}
+		h.previewScrollOffset = 0
 		h.syncViewport()
 		h.markNavigationActivity()
 		return h, h.fetchSelectedPreview()
@@ -5238,6 +5265,7 @@ func (h *Home) handleMainKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if h.cursor < 0 {
 			h.cursor = 0
 		}
+		h.previewScrollOffset = 0
 		h.syncViewport()
 		h.markNavigationActivity()
 		return h, h.fetchSelectedPreview()
@@ -5254,6 +5282,7 @@ func (h *Home) handleMainKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if h.cursor < 0 {
 			h.cursor = 0
 		}
+		h.previewScrollOffset = 0
 		h.syncViewport()
 		h.markNavigationActivity()
 		return h, h.fetchSelectedPreview()
@@ -11850,15 +11879,40 @@ func (h *Home) renderPreviewPane(width, height int) string {
 		// Track if we're truncating from the top (for indicator)
 		truncatedFromTop := len(lines) > maxLines
 		truncatedCount := 0
+		scrolledBelow := 0
 		if truncatedFromTop {
-			// Reserve one line for the truncation indicator
+			// Reserve one line for the "⋮ N more above" indicator
 			maxLines--
 			if maxLines < 1 {
 				maxLines = 1
 			}
-			truncatedCount = len(lines) - maxLines
-			lines = lines[len(lines)-maxLines:]
+			// #574: slide the visible window up by previewScrollOffset lines
+			// so the user can see older output instead of the tail. Clamp
+			// the offset to the valid range so arbitrary values don't go
+			// out of bounds or below zero.
+			maxOffset := len(lines) - maxLines
+			if maxOffset < 0 {
+				maxOffset = 0
+			}
+			if h.previewScrollOffset > maxOffset {
+				h.previewScrollOffset = maxOffset
+			}
+			if h.previewScrollOffset < 0 {
+				h.previewScrollOffset = 0
+			}
+			endIdx := len(lines) - h.previewScrollOffset
+			startIdx := endIdx - maxLines
+			if startIdx < 0 {
+				startIdx = 0
+			}
+			truncatedCount = startIdx
+			scrolledBelow = len(lines) - endIdx
+			lines = lines[startIdx:endIdx]
+		} else {
+			// Content fits without truncation — offset has no effect, keep state consistent.
+			h.previewScrollOffset = 0
 		}
+		_ = scrolledBelow // reserved for a future "⋮ N below" indicator; offset clamp already prevents stale state
 
 		maxWidth := width - 4
 		if maxWidth < 10 {
