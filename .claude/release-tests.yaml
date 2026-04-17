@@ -729,3 +729,58 @@ tests:
   run:
     command: go test ./cmd/agent-deck/ -run TestOuterTmuxGuard -count=1 -v
     expected: pass
+- id: fix-574-mouse-wheel-scrolls-preview
+  added: '2026-04-17'
+  task: fix-574
+  file: internal/ui/preview_scroll_test.go
+  test_name: TestPreviewScroll_MouseWheel_OverPreviewPane_IncrementsOffset
+  purpose: Wheel events over the preview region in dual layout scroll preview content (previewScrollOffset++) and DO NOT move the session list cursor (#574).
+  source: gh-issue-574
+  manual: false
+  run:
+    command: go test ./internal/ui/ -run TestPreviewScroll_MouseWheel_OverPreviewPane_IncrementsOffset -race -count=1 -v
+    expected: pass
+- id: fix-574-wheel-over-list-resets-preview-offset
+  added: '2026-04-17'
+  task: fix-574
+  file: internal/ui/preview_scroll_test.go
+  test_name: TestPreviewScroll_MouseWheel_OverList_MovesCursor_ResetsOffset
+  purpose: Wheel events over the list region move the cursor AND reset any stale preview-scroll offset, so the new session opens at its tail (#574).
+  source: gh-issue-574
+  manual: false
+  run:
+    command: go test ./internal/ui/ -run TestPreviewScroll_MouseWheel_OverList_MovesCursor_ResetsOffset -race -count=1 -v
+    expected: pass
+- id: fix-574-render-applies-offset
+  added: '2026-04-17'
+  task: fix-574
+  file: internal/ui/preview_scroll_test.go
+  test_name: TestPreviewScroll_Render_AppliesOffset
+  purpose: renderPreviewPane slides the visible window up by previewScrollOffset lines so older output becomes visible (#574).
+  source: gh-issue-574
+  manual: false
+  run:
+    command: go test ./internal/ui/ -run TestPreviewScroll_Render_AppliesOffset -race -count=1 -v
+    expected: pass
+- id: fix-574-cursor-move-resets-offset
+  added: '2026-04-17'
+  task: fix-574
+  file: internal/ui/preview_scroll_test.go
+  test_name: TestPreviewScroll_CursorMove_ResetsOffset
+  purpose: Keyboard cursor movement (j/k/arrows/ctrl-u/d/b/f) resets the preview scroll offset so a newly-selected session opens at its tail (#574).
+  source: gh-issue-574
+  manual: false
+  run:
+    command: go test ./internal/ui/ -run TestPreviewScroll_CursorMove_ResetsOffset -race -count=1 -v
+    expected: pass
+- id: fix-574-clamps-offset-to-bounds
+  added: '2026-04-17'
+  task: fix-574
+  file: internal/ui/preview_scroll_test.go
+  test_name: TestPreviewScroll_ClampsToContentRange
+  purpose: Absurd previewScrollOffset values (huge, negative) are clamped to the valid range in renderPreviewPane so the state can never go out of bounds (#574).
+  source: gh-issue-574
+  manual: false
+  run:
+    command: go test ./internal/ui/ -run TestPreviewScroll_ClampsToContentRange -race -count=1 -v
+    expected: pass
