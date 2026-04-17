@@ -108,6 +108,62 @@ func TestNestedSessionAllowsCLICommands(t *testing.T) {
 	})
 }
 
+// TestOuterTmuxGuard verifies the generic-tmux TUI guard added for issue #560.
+// When a user runs the interactive TUI inside a non-agentdeck tmux session,
+// detach semantics get surprising (Ctrl+Q returns to the outer tmux). The
+// guard warns and exits unless the user opts in via AGENT_DECK_ALLOW_OUTER_TMUX=1.
+func TestOuterTmuxGuard(t *testing.T) {
+	// Setup: snapshot env, restore on exit
+	origTmux := os.Getenv("TMUX")
+	origOptIn := os.Getenv("AGENT_DECK_ALLOW_OUTER_TMUX")
+	t.Cleanup(func() {
+		if origTmux == "" {
+			os.Unsetenv("TMUX")
+		} else {
+			os.Setenv("TMUX", origTmux)
+		}
+		if origOptIn == "" {
+			os.Unsetenv("AGENT_DECK_ALLOW_OUTER_TMUX")
+		} else {
+			os.Setenv("AGENT_DECK_ALLOW_OUTER_TMUX", origOptIn)
+		}
+	})
+
+	t.Run("outer_tmux_no_optin_blocks", func(t *testing.T) {
+		os.Setenv("TMUX", "/tmp/tmux-501/default,12345,0")
+		os.Unsetenv("AGENT_DECK_ALLOW_OUTER_TMUX")
+		if !isOuterTmuxWithoutOptIn() {
+			t.Error("expected guard to fire when TMUX set and no opt-in")
+		}
+	})
+
+	t.Run("outer_tmux_with_optin_passes", func(t *testing.T) {
+		os.Setenv("TMUX", "/tmp/tmux-501/default,12345,0")
+		os.Setenv("AGENT_DECK_ALLOW_OUTER_TMUX", "1")
+		if isOuterTmuxWithoutOptIn() {
+			t.Error("expected guard NOT to fire when opt-in env is set")
+		}
+	})
+
+	t.Run("no_tmux_passes", func(t *testing.T) {
+		os.Unsetenv("TMUX")
+		os.Unsetenv("AGENT_DECK_ALLOW_OUTER_TMUX")
+		if isOuterTmuxWithoutOptIn() {
+			t.Error("expected guard NOT to fire when TMUX is unset")
+		}
+	})
+
+	t.Run("optin_non_1_value_still_blocks", func(t *testing.T) {
+		// Only "1" is the accepted opt-in value — defensively narrow so typos
+		// like "true"/"yes" don't silently bypass the guard.
+		os.Setenv("TMUX", "/tmp/tmux-501/default,12345,0")
+		os.Setenv("AGENT_DECK_ALLOW_OUTER_TMUX", "true")
+		if !isOuterTmuxWithoutOptIn() {
+			t.Error("expected guard to fire when opt-in is not exactly \"1\"")
+		}
+	})
+}
+
 func TestExtractGroupFlag(t *testing.T) {
 	tests := []struct {
 		name          string

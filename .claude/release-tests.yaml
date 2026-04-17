@@ -718,3 +718,14 @@ tests:
   run:
     command: go test ./internal/session/ -run TestLoadSkillSources_DiscoversSkillsViaDollarHome -count=1 -v
     expected: pass
+- id: fix-560-outer-tmux-guard
+  added: '2026-04-17'
+  task: fix-560-tmux-detach-guidance
+  file: cmd/agent-deck/main_test.go
+  test_name: TestOuterTmuxGuard
+  purpose: Guards issue-560 regressions — warns-and-exits when TUI is launched inside a non-agentdeck tmux session without AGENT_DECK_ALLOW_OUTER_TMUX=1. Covers three subcases (no-optin blocks, optin passes, no-tmux passes) + defensive narrow-match on opt-in value.
+  source: gh#560
+  manual: false
+  run:
+    command: go test ./cmd/agent-deck/ -run TestOuterTmuxGuard -count=1 -v
+    expected: pass

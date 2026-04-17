@@ -324,6 +324,27 @@ func main() {
 		os.Exit(1)
 	}
 
+	// Block TUI launch inside a *generic* (non-agentdeck) tmux session (#560).
+	// Detach semantics get confusing when nested: Ctrl+Q returns to the outer
+	// tmux instead of a clean shell. CLI subcommands still work inside tmux —
+	// this guard only fires on the interactive TUI path.
+	if isOuterTmuxWithoutOptIn() {
+		fmt.Fprintln(os.Stderr, "Error: The agent-deck TUI is designed to run OUTSIDE of tmux.")
+		fmt.Fprintln(os.Stderr, "You are inside a tmux session, so Ctrl+Q detach and nested")
+		fmt.Fprintln(os.Stderr, "tmux behavior will be surprising. agent-deck manages its own")
+		fmt.Fprintln(os.Stderr, "tmux sessions internally.")
+		fmt.Fprintln(os.Stderr, "")
+		fmt.Fprintln(os.Stderr, "Options:")
+		fmt.Fprintln(os.Stderr, "  • Detach from tmux (Ctrl+B d) and run agent-deck from a clean shell.")
+		fmt.Fprintln(os.Stderr, "  • Run CLI subcommands — they work fine inside tmux:")
+		fmt.Fprintln(os.Stderr, "      agent-deck list                    # List sessions")
+		fmt.Fprintln(os.Stderr, "      agent-deck add /path -t \"Title\"  # Add a new session")
+		fmt.Fprintln(os.Stderr, "      agent-deck session start <id>      # Start a session")
+		fmt.Fprintln(os.Stderr, "  • If you really want to run the TUI anyway, set:")
+		fmt.Fprintln(os.Stderr, "      AGENT_DECK_ALLOW_OUTER_TMUX=1 agent-deck")
+		os.Exit(1)
+	}
+
 	// Set version for UI update checking
 	ui.SetVersion(Version)
 
@@ -2977,6 +2998,25 @@ func handleUninstall(args []string) {
 // Uses GetCurrentSessionID() which checks if the current tmux session name matches agentdeck_*.
 func isNestedSession() bool {
 	return GetCurrentSessionID() != ""
+}
+
+// isOuterTmuxWithoutOptIn reports true when the user is launching the
+// interactive TUI from inside a NON-agentdeck tmux session without the
+// AGENT_DECK_ALLOW_OUTER_TMUX=1 opt-in. See issue #560: nesting the TUI
+// inside an outer tmux leads to confusing detach semantics (Ctrl+Q returns
+// to the outer tmux, not a clean shell). The guard fires only on the TUI
+// path — CLI subcommands remain usable inside tmux.
+func isOuterTmuxWithoutOptIn() bool {
+	if os.Getenv("TMUX") == "" {
+		return false
+	}
+	if isNestedSession() {
+		return false
+	}
+	if os.Getenv("AGENT_DECK_ALLOW_OUTER_TMUX") == "1" {
+		return false
+	}
+	return true
 }
 
 // ensureTmuxInPath checks that tmux is reachable. If exec.LookPath fails
