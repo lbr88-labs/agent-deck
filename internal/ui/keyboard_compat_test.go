@@ -656,3 +656,28 @@ func TestCSIuReader_Underscore(t *testing.T) {
 		t.Errorf("CSIuReader translated %q to %q, want %q", input, string(out), "_")
 	}
 }
+
+// TestRestoreLegacyKeyboardCmd verifies that the helper returned by
+// RestoreLegacyKeyboardCmd writes the Kitty pop sequence to the supplied
+// writer and returns a no-op message. This is a regression guard for the
+// tmux re-enter fix from PR #613: if a future refactor drops the
+// DisableKittyKeyboard call from the Update handler, the integration test
+// below fails; if a refactor changes the escape sequence, this test fails.
+func TestRestoreLegacyKeyboardCmd(t *testing.T) {
+	var buf bytes.Buffer
+	cmd := RestoreLegacyKeyboardCmd(&buf)
+	if cmd == nil {
+		t.Fatal("RestoreLegacyKeyboardCmd returned nil")
+	}
+
+	msg := cmd()
+	if msg != nil {
+		t.Errorf("cmd() returned non-nil msg: %v (want nil so the batch step is a side-effect-only no-op)", msg)
+	}
+
+	got := buf.String()
+	want := "\x1b[<u"
+	if got != want {
+		t.Errorf("cmd() wrote %q to writer, want %q (Kitty pop sequence)", got, want)
+	}
+}
