@@ -674,3 +674,47 @@ tests:
   run:
     command: go test ./internal/tmux/ -run TestTmuxBootstrap_ServerIsRunning -race -count=1 -v
     expected: pass
+- id: issue-617-dollar-home-expand
+  added: '2026-04-17'
+  task: fix-617
+  file: internal/session/skills_catalog_test.go
+  test_name: TestExpandSkillPath_DollarHome
+  purpose: Regression guard for issue-617 cross-machine portability. Pins that expandSkillPath expands $HOME so a sources.toml synced macOS-to-Linux (or across Linux hosts with different usernames) does not silently return "No skills found".
+  source: .planning/fix-617/PLAN.md
+  manual: false
+  run:
+    command: go test ./internal/session/ -run TestExpandSkillPath_DollarHome -count=1 -v
+    expected: pass
+- id: issue-617-braced-home-expand
+  added: '2026-04-17'
+  task: fix-617
+  file: internal/session/skills_catalog_test.go
+  test_name: TestExpandSkillPath_BracedDollarHome
+  purpose: Regression guard that ${HOME} (braced form) expands alongside $HOME. Protects against a partial fix that only handles one form.
+  source: .planning/fix-617/PLAN.md
+  manual: false
+  run:
+    command: go test ./internal/session/ -run TestExpandSkillPath_BracedDollarHome -count=1 -v
+    expected: pass
+- id: issue-617-unknown-envvar-preserved
+  added: '2026-04-17'
+  task: fix-617
+  file: internal/session/skills_catalog_test.go
+  test_name: TestExpandSkillPath_UnknownEnvVarPreserved
+  purpose: Scope guard — only $HOME is expanded. Prevents a future "simplify to os.ExpandEnv" regression from silently inheriting arbitrary process environment ($USER, $PATH, secrets) into config paths.
+  source: .planning/fix-617/PLAN.md
+  manual: false
+  run:
+    command: go test ./internal/session/ -run TestExpandSkillPath_UnknownEnvVarPreserved -count=1 -v
+    expected: pass
+- id: issue-617-discover-via-dollar-home
+  added: '2026-04-17'
+  task: fix-617
+  file: internal/session/skills_catalog_test.go
+  test_name: TestLoadSkillSources_DiscoversSkillsViaDollarHome
+  purpose: End-to-end guard covering the full load→discovery hop — writes a sources.toml with $HOME, populates a pool skill, and asserts ListAvailableSkills finds it. Covers the exact repro in issue-617.
+  source: .planning/fix-617/PLAN.md
+  manual: false
+  run:
+    command: go test ./internal/session/ -run TestLoadSkillSources_DiscoversSkillsViaDollarHome -count=1 -v
+    expected: pass
