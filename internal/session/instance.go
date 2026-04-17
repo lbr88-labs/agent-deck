@@ -5303,19 +5303,26 @@ func (i *Instance) wrapForSandbox(command string) (string, string, error) {
 // All code paths that launch or respawn a tmux pane should use this instead of calling
 // applyWrapper/wrapForSandbox/wrapIgnoreSuspend individually.
 func (i *Instance) prepareCommand(cmd string) (string, string, error) {
-	// Always pre-wrap in bash -c when a wrapper is configured. Wrappers use
-	// execvp() which cannot interpret shell syntax, so without this any
-	// metacharacter in cmd (inline env vars, &&, $(), etc.) would be passed
-	// as literal argv. Wrapping unconditionally is both safe and simpler than
-	// trying to detect which commands need it.
-	if i.hasEffectiveWrapper() {
-		escaped := strings.ReplaceAll(cmd, "'", "'\"'\"'")
-		cmd = fmt.Sprintf("bash -c '%s'", escaped)
-	}
-
+	// Apply the user wrapper FIRST so that extra args folded into a
+	// "{command} --flag1 --flag2" wrapper template become part of the string
+	// that the bash -c wrap protects. Previously the order was reversed
+	// (bash -c wrap then wrapper substitution), which produced
+	// "bash -c '<cmd>' --flag1 --flag2" — bash treated --flag1/--flag2 as
+	// positional parameters ($0, $1, …) and the child process never saw them.
+	// See issue #601.
 	wrapped, err := i.applyWrapper(cmd)
 	if err != nil {
 		return "", "", err
+	}
+
+	// Wrap the fully-substituted command under bash -c when a wrapper is
+	// configured. This keeps shell metacharacters (&&, $(), inline env) in the
+	// base command from leaking into the outer shell parse, and — critically —
+	// keeps trailing wrapper-suffix flags INSIDE a single quoted argv so they
+	// reach the child process intact.
+	if i.hasEffectiveWrapper() {
+		escaped := strings.ReplaceAll(wrapped, "'", "'\"'\"'")
+		wrapped = fmt.Sprintf("bash -c '%s'", escaped)
 	}
 	wrapped = i.wrapForSSH(wrapped)
 	wrapped, containerName, err := i.wrapForSandbox(wrapped)
