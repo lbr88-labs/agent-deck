@@ -668,3 +668,47 @@ tests:
     command: go test ./internal/session/ -run TestInstance_RefreshLiveSessionIDs_NoOpWhenTmuxSessionNil
       -race -count=1 -v
     expected: pass
+- id: issue-618-iterm-clearscrollback-constant
+  added: '2026-04-17'
+  task: fix-issue-618
+  file: internal/tmux/pty_test.go
+  test_name: TestITermClearScrollback_ConstantContents
+  purpose: Guard the iTerm2-specific OSC 1337 ClearScrollback constant. If the
+    constant drifts (typo, wrong terminator, accidental deletion), iTerm2 3.6.x
+    users regress to cross-session scrollback bleedover (#618 = regression of #419).
+  source: .planning/fix-issue-618/PLAN.md
+  manual: false
+  run:
+    command: go test ./internal/tmux/ -run TestITermClearScrollback_ConstantContents
+      -race -count=1 -v
+    expected: pass
+- id: issue-618-emit-scrollback-clear-both-escapes
+  added: '2026-04-17'
+  task: fix-issue-618
+  file: internal/tmux/pty_test.go
+  test_name: TestEmitScrollbackClear_IncludesBothEscapes
+  purpose: Parallel-paths guard. Both Attach() entry and cleanupAttach() on
+    detach route through emitScrollbackClear(); this test asserts the helper
+    emits BOTH the generic CSI 3 J escape AND the iTerm2-specific OSC 1337
+    ClearScrollback escape in the correct order (CSI first, OSC second).
+    Prevents silent drift between the two boundaries.
+  source: .planning/fix-issue-618/PLAN.md
+  manual: false
+  run:
+    command: go test ./internal/tmux/ -run TestEmitScrollbackClear_IncludesBothEscapes
+      -race -count=1 -v
+    expected: pass
+- id: issue-618-cleanup-attach-emits-iterm-osc1337
+  added: '2026-04-17'
+  task: fix-issue-618
+  file: internal/tmux/pty_test.go
+  test_name: TestCleanupAttach_EmitsITermClearScrollback
+  purpose: Live-boundary regression. Detach path (Ctrl+Q) must emit OSC 1337
+    ClearScrollback on stdout so iTerm2 3.6.x actually clears its scrollback
+    (#618). TTY-gated — skips on CI without a terminal.
+  source: .planning/fix-issue-618/PLAN.md
+  manual: false
+  run:
+    command: go test ./internal/tmux/ -run TestCleanupAttach_EmitsITermClearScrollback
+      -race -count=1 -v
+    expected: pass
