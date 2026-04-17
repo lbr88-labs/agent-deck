@@ -2942,3 +2942,41 @@ func TestResolvedAgentDeckTheme_ExplicitConfigOverridesCOLORFGBG(t *testing.T) {
 	got := resolvedAgentDeckTheme()
 	assert.Equal(t, "dark", got, "explicit config should override COLORFGBG")
 }
+
+func TestKillSessionsWithEnvValue(t *testing.T) {
+	skipIfNoTmuxServer(t)
+
+	// Create two sessions with the same CLAUDE_SESSION_ID env var
+	sess1 := createTestSession(t, "dedup-keep")
+	sess2 := createTestSession(t, "dedup-kill")
+
+	testID := "test-dedup-" + generateShortID()
+	require.NoError(t, exec.Command("tmux", "set-environment", "-t", sess1, "CLAUDE_SESSION_ID", testID).Run())
+	require.NoError(t, exec.Command("tmux", "set-environment", "-t", sess2, "CLAUDE_SESSION_ID", testID).Run())
+
+	// Kill duplicates, excluding sess1
+	KillSessionsWithEnvValue("CLAUDE_SESSION_ID", testID, sess1)
+
+	// sess1 should still exist
+	assert.NoError(t, exec.Command("tmux", "has-session", "-t", sess1).Run(), "kept session should still exist")
+
+	// sess2 should be killed
+	assert.Error(t, exec.Command("tmux", "has-session", "-t", sess2).Run(), "duplicate session should have been killed")
+}
+
+func TestKillSessionsWithEnvValue_EmptyID(t *testing.T) {
+	// Should be a no-op when envValue is empty
+	KillSessionsWithEnvValue("CLAUDE_SESSION_ID", "", "anything")
+}
+
+func TestKillSessionsWithEnvValue_NoMatch(t *testing.T) {
+	skipIfNoTmuxServer(t)
+
+	sess := createTestSession(t, "dedup-nomatch")
+	require.NoError(t, exec.Command("tmux", "set-environment", "-t", sess, "CLAUDE_SESSION_ID", "unique-id-xyz").Run())
+
+	// Should not kill anything when looking for a different ID
+	KillSessionsWithEnvValue("CLAUDE_SESSION_ID", "nonexistent-id", "")
+
+	assert.NoError(t, exec.Command("tmux", "has-session", "-t", sess).Run(), "session should not be killed")
+}

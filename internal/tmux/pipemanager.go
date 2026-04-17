@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 	"maps"
+	"os"
 	"os/exec"
 	"strings"
 	"sync"
@@ -79,6 +80,11 @@ func (pm *PipeManager) Connect(sessionName string) error {
 		delete(pm.reconnecting, sessionName)
 		pm.reconnectMu.Unlock()
 	}()
+
+	// Kill stale control-mode clients left over from previous TUI instances.
+	// Without this, each TUI reconnect accumulates orphan `tmux -C attach-session`
+	// processes that are never cleaned up (#595).
+	killStaleControlClients(sessionName)
 
 	// Create new pipe (outside lock since it spawns a process)
 	pipe, err := NewControlPipe(sessionName)
@@ -415,6 +421,49 @@ func (pm *PipeManager) watchPipe(sessionName string, pipe *ControlPipe) {
 	pm.mu.Lock()
 	delete(pm.pipes, sessionName)
 	pm.mu.Unlock()
+}
+
+// killStaleControlClients kills control-mode clients attached to a session that
+// are not owned by the current process. These accumulate when the TUI is killed
+// without clean shutdown and restarted — the old `tmux -C attach-session`
+// processes survive because they run in their own process group (#595).
+//
+// Expected to find stale clients after: agent-deck crash/SIGKILL, OOM kill,
+// or any exit that bypasses PipeManager.Close() (which normally tears them down).
+func killStaleControlClients(sessionName string) {
+	myPID := os.Getpid()
+
+	out, err := exec.Command(
+		"tmux", "list-clients", "-t", sessionName,
+		"-F", "#{client_control_mode} #{client_pid}",
+	).Output()
+	if err != nil {
+		return // session may not exist or no clients attached
+	}
+
+	for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+		if line == "" {
+			continue
+		}
+		parts := strings.SplitN(line, " ", 2)
+		if len(parts) != 2 || parts[0] != "1" {
+			continue // not a control-mode client
+		}
+		var pid int
+		if _, err := fmt.Sscanf(parts[1], "%d", &pid); err != nil || pid == 0 {
+			continue
+		}
+		if pid == myPID {
+			continue // don't kill our own process
+		}
+		// Kill the stale control-mode client process
+		if proc, err := os.FindProcess(pid); err == nil {
+			_ = proc.Kill()
+			pipeLog.Debug("killed_stale_control_client",
+				slog.String("session", sessionName),
+				slog.Int("pid", pid))
+		}
+	}
 }
 
 // tmuxSessionExists checks if a tmux session exists (lightweight subprocess).

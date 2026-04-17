@@ -2,6 +2,7 @@ package tmux
 
 import (
 	"context"
+	"fmt"
 	"os/exec"
 	"strings"
 	"sync"
@@ -275,6 +276,69 @@ func TestPipeManager_GlobalSingleton(t *testing.T) {
 
 	SetPipeManager(nil)
 	assert.Nil(t, GetPipeManager())
+}
+
+func TestKillStaleControlClients(t *testing.T) {
+	name := createTestSession(t, "stale-ctrl")
+
+	// Use NewControlPipe to create a proper control-mode client that we know works,
+	// then simulate it being "stale" by tracking its PID before killing it via our function.
+	stalePipe, err := NewControlPipe(name)
+	require.NoError(t, err)
+	stalePID := stalePipe.cmd.Process.Pid
+	t.Cleanup(func() { stalePipe.Close() })
+
+	// Verify the control client is registered
+	require.Eventually(t, func() bool {
+		out, _ := exec.Command("tmux", "list-clients", "-t", name, "-F", "#{client_control_mode} #{client_pid}").Output()
+		return strings.Contains(string(out), fmt.Sprintf("1 %d", stalePID))
+	}, 3*time.Second, 100*time.Millisecond, "control client should register")
+
+	// Kill stale clients — this should kill the pipe's process
+	killStaleControlClients(name)
+
+	// Verify the control client is no longer listed by tmux
+	require.Eventually(t, func() bool {
+		out, _ := exec.Command("tmux", "list-clients", "-t", name, "-F", "#{client_control_mode} #{client_pid}").Output()
+		return !strings.Contains(string(out), fmt.Sprintf("1 %d", stalePID))
+	}, 2*time.Second, 100*time.Millisecond, "stale control client should be gone from tmux client list")
+}
+
+func TestPipeManager_ConnectCleansStaleClients(t *testing.T) {
+	name := createTestSession(t, "pm-stale")
+
+	// Create a stale control pipe (simulates orphan from previous TUI)
+	stalePipe, err := NewControlPipe(name)
+	require.NoError(t, err)
+	stalePID := stalePipe.cmd.Process.Pid
+	t.Cleanup(func() { stalePipe.Close() })
+
+	// Verify stale client is registered
+	require.Eventually(t, func() bool {
+		out, _ := exec.Command("tmux", "list-clients", "-t", name, "-F", "#{client_control_mode} #{client_pid}").Output()
+		return strings.Contains(string(out), fmt.Sprintf("1 %d", stalePID))
+	}, 3*time.Second, 100*time.Millisecond)
+
+	// Connect via PipeManager — should kill stale client and create a new one
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	pm := NewPipeManager(ctx, nil)
+	defer pm.Close()
+
+	require.NoError(t, pm.Connect(name))
+	assert.True(t, pm.IsConnected(name))
+
+	// Stale client should be gone
+	out, _ := exec.Command("tmux", "list-clients", "-t", name, "-F", "#{client_control_mode} #{client_pid}").Output()
+	assert.NotContains(t, string(out), fmt.Sprintf("1 %d", stalePID), "stale client should have been killed by Connect")
+}
+
+func TestKillStaleControlClients_PreservesOwnProcess(t *testing.T) {
+	name := createTestSession(t, "own-proc")
+
+	// killStaleControlClients should not kill our own PID
+	// (this is mostly a safety check — our PID is never a tmux control client)
+	killStaleControlClients(name) // should not panic or kill us
 }
 
 // --- Helpers ---

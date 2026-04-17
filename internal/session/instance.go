@@ -2105,6 +2105,9 @@ func (i *Instance) Start() error {
 	// inside Docker sandbox containers that have no access to the host tmux socket.
 	if i.ClaudeSessionID != "" {
 		_ = i.tmuxSession.SetEnvironment("CLAUDE_SESSION_ID", i.ClaudeSessionID)
+		// Kill any other agentdeck tmux session with the same Claude session ID
+		// to prevent duplicates running `claude --resume` with the same conversation (#596).
+		tmux.KillSessionsWithEnvValue("CLAUDE_SESSION_ID", i.ClaudeSessionID, i.tmuxSession.Name)
 	}
 	if i.GeminiSessionID != "" {
 		_ = i.tmuxSession.SetEnvironment("GEMINI_SESSION_ID", i.GeminiSessionID)
@@ -4303,6 +4306,12 @@ func (i *Instance) Restart() error {
 	// This covers Restart() which uses buildClaudeResumeCommand() and similar
 	// builders that no longer embed "tmux set-environment" in the shell string.
 	i.SyncSessionIDsToTmux()
+
+	// Kill any other agentdeck tmux session with the same Claude session ID
+	// to prevent duplicates running `claude --resume` with the same conversation (#596).
+	if i.ClaudeSessionID != "" {
+		tmux.KillSessionsWithEnvValue("CLAUDE_SESSION_ID", i.ClaudeSessionID, i.tmuxSession.Name)
+	}
 
 	// Re-capture MCPs after restart
 	i.CaptureLoadedMCPs()

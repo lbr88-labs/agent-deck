@@ -1146,6 +1146,46 @@ func (s *Session) IsConfigured() bool {
 	return s.configured
 }
 
+// KillSessionsWithEnvValue kills agentdeck tmux sessions that have the given
+// environment variable set to the given value, excluding the session named
+// `excludeName`. This prevents duplicate tmux sessions running the same Claude
+// conversation (#596).
+func KillSessionsWithEnvValue(envKey, envValue, excludeName string) {
+	if envValue == "" {
+		return
+	}
+
+	out, err := exec.Command("tmux", "list-sessions", "-F", "#{session_name}").Output()
+	if err != nil {
+		return
+	}
+
+	for _, name := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+		if name == "" || name == excludeName {
+			continue
+		}
+		if !strings.HasPrefix(name, SessionPrefix) {
+			continue
+		}
+		val, err := exec.Command("tmux", "show-environment", "-t", name, envKey).Output()
+		if err != nil {
+			continue
+		}
+		// Output format: "KEY=value\n"
+		line := strings.TrimSpace(string(val))
+		if idx := strings.IndexByte(line, '='); idx >= 0 {
+			if line[idx+1:] == envValue {
+				statusLog.Warn("killing_duplicate_session",
+					slog.String("session", name),
+					slog.String("env_key", envKey),
+					slog.String("env_value", envValue),
+					slog.String("kept", excludeName))
+				_ = exec.Command("tmux", "kill-session", "-t", name).Run()
+			}
+		}
+	}
+}
+
 // generateShortID generates a short random ID for uniqueness
 func generateShortID() string {
 	b := make([]byte, 4)
