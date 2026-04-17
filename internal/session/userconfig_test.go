@@ -554,10 +554,10 @@ func TestWorktreeSettings_ApplyBranchPrefix(t *testing.T) {
 	strPtr := func(s string) *string { return &s }
 
 	tests := []struct {
-		name     string
-		prefix   *string
-		branch   string
-		want     string
+		name   string
+		prefix *string
+		branch string
+		want   string
 	}{
 		{
 			name:   "default prefix applied",
