@@ -72,6 +72,35 @@ func waitForAttachOutputDrain(outputDone <-chan struct{}, timeout time.Duration)
 	}
 }
 
+// Scrollback-clear escape sequences. See emitScrollbackClear below for the
+// full rationale on why iTerm2 3.6.x requires the OSC 1337 supplement (#618).
+const (
+	// clearScrollbackCSI is CSI 3 J — "Erase Saved Lines". Honored by Terminal.app,
+	// WezTerm, Alacritty, Ghostty, Kitty, xterm, and older iTerm2 builds.
+	clearScrollbackCSI = "\x1b[3J"
+	// itermClearScrollback is OSC 1337 ; ClearScrollback BEL — iTerm2-specific.
+	// Required by iTerm2 3.6.x when "Save lines to scrollback in alternate screen
+	// mode" is OFF (#618). Other terminals parse the OSC payload and discard it
+	// safely — adding this escape is strictly additive, no regression risk.
+	itermClearScrollback = "\x1b]1337;ClearScrollback\a"
+)
+
+// emitScrollbackClear writes escape sequences to clear the host terminal's
+// scrollback buffer. Both the generic CSI 3 J escape AND the iTerm2-specific
+// OSC 1337 ClearScrollback escape are emitted, in that order:
+//
+//   - CSI first — broadly-compatible, terminals that honor it short-circuit.
+//   - OSC second — belt-and-suspenders for iTerm2 3.6.x where CSI alone is
+//     insufficient when alt-screen-scrollback-save is disabled (#618 regression
+//     of #419).
+//
+// Both Attach() entry and cleanupAttach() (exit) route through this helper so
+// the two boundaries cannot silently drift apart (parallel-paths invariant).
+func emitScrollbackClear(w io.Writer) {
+	_, _ = io.WriteString(w, clearScrollbackCSI)
+	_, _ = io.WriteString(w, itermClearScrollback)
+}
+
 // Attach attaches to the tmux session with full PTY support.
 // The configured detach key (default Ctrl+Q) will detach and return to the caller.
 // Pass an optional detachByte to override the default (0x11 / Ctrl+Q).
@@ -87,14 +116,16 @@ func (s *Session) Attach(ctx context.Context, detachByte ...byte) error {
 
 	// Clear the outer terminal emulator's scrollback buffer to prevent
 	// stale content from a previously-attached session bleeding into the
-	// new one (#419). \033[3J is the "Erase Saved Lines" escape (ED param 3)
-	// supported by iTerm2, Terminal.app, Ghostty, and most modern emulators.
+	// new one (#419, #618). emitScrollbackClear writes both the generic
+	// CSI 3 J escape AND the iTerm2-specific OSC 1337 ClearScrollback escape —
+	// the latter is required for iTerm2 3.6.x where CSI alone is insufficient
+	// when alt-screen-scrollback-save is disabled (#618 regression of #419).
 	//
 	// Note: We intentionally do NOT call `tmux clear-history` here. tmux pane
 	// histories are per-pane, so session A's output never appears in session B's
 	// scrollback. Clearing pane history on attach destroys the user's scrollback
 	// and breaks mouse-wheel / copy-mode navigation (#531).
-	_, _ = os.Stdout.WriteString("\033[3J")
+	emitScrollbackClear(os.Stdout)
 
 	// Create context with cancel for detach
 	ctx, cancel := context.WithCancel(ctx)
@@ -175,7 +206,6 @@ func (s *Session) Attach(ctx context.Context, detachByte ...byte) error {
 
 	startTime := time.Now()
 	const terminalStyleReset = "\x1b]8;;\x1b\\\x1b[0m\x1b[24m\x1b[39m\x1b[49m"
-	const clearScrollback = "\033[3J"
 	outputDone := make(chan struct{})
 
 	// Goroutine 1: Copy PTY output to stdout
@@ -284,8 +314,10 @@ func (s *Session) Attach(ctx context.Context, detachByte ...byte) error {
 		}
 		// Clear host terminal scrollback before returning to TUI.
 		// The on-attach clear at the top of Attach() covers the "next attach" direction;
-		// this covers the "on detach" direction for belt-and-suspenders coverage (#419).
-		_, _ = os.Stdout.WriteString(clearScrollback)
+		// this covers the "on detach" direction for belt-and-suspenders coverage
+		// (#419, #618). emitScrollbackClear emits CSI 3 J + iTerm2-specific OSC 1337
+		// ClearScrollback — both boundaries route through one helper so they cannot drift.
+		emitScrollbackClear(os.Stdout)
 		// Reset OSC-8 hyperlink state + SGR attributes before Bubble Tea redraws.
 		_, _ = os.Stdout.WriteString(terminalStyleReset)
 	}

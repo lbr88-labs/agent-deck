@@ -340,3 +340,82 @@ func TestCleanupAttach_ScrollbackClearBeforeStyleReset(t *testing.T) {
 	require.Less(t, scrollIdx, styleIdx,
 		"\\033[3J (scrollback clear) must appear BEFORE terminalStyleReset (per D-04); captured: %q", captured)
 }
+
+// TestITermClearScrollback_ConstantContents asserts the iTerm2-specific OSC 1337
+// ClearScrollback escape constant is defined correctly (#618).
+func TestITermClearScrollback_ConstantContents(t *testing.T) {
+	require.Equal(t, "\x1b]1337;ClearScrollback\a", itermClearScrollback,
+		"itermClearScrollback constant must be the exact OSC 1337 ClearScrollback sequence with BEL terminator")
+}
+
+// TestEmitScrollbackClear_IncludesBothEscapes asserts the emitScrollbackClear
+// helper writes BOTH the generic CSI 3 J escape AND the iTerm2-specific
+// OSC 1337 ClearScrollback escape, in order (CSI first, OSC second).
+// Parallel-paths guarantee for #618 regression of #419.
+func TestEmitScrollbackClear_IncludesBothEscapes(t *testing.T) {
+	var buf bytes.Buffer
+	emitScrollbackClear(&buf)
+
+	csiIdx := bytes.Index(buf.Bytes(), []byte("\x1b[3J"))
+	oscIdx := bytes.Index(buf.Bytes(), []byte("\x1b]1337;ClearScrollback\a"))
+
+	require.NotEqual(t, -1, csiIdx,
+		"emitScrollbackClear must emit \\033[3J (CSI 3 J); captured: %q", buf.String())
+	require.NotEqual(t, -1, oscIdx,
+		"emitScrollbackClear must emit \\033]1337;ClearScrollback\\a (OSC 1337) for iTerm2 3.6.x (#618); captured: %q", buf.String())
+	require.Less(t, csiIdx, oscIdx,
+		"\\033[3J (CSI) must be emitted BEFORE \\033]1337;ClearScrollback\\a (OSC 1337); captured: %q", buf.String())
+}
+
+// TestCleanupAttach_EmitsITermClearScrollback verifies that cleanupAttach()
+// emits the iTerm2-specific OSC 1337 ClearScrollback escape on detach (#618).
+func TestCleanupAttach_EmitsITermClearScrollback(t *testing.T) {
+	skipIfNoTmuxServer(t)
+	if !term.IsTerminal(int(os.Stdin.Fd())) {
+		t.Skip("stdin is not a terminal (CI/pipe environment); skipping PTY attach test")
+	}
+
+	name := SessionPrefix + "ptytest-itermscroll-" + fmt.Sprintf("%d", time.Now().UnixNano()%100000)
+	require.NoError(t,
+		exec.Command("tmux", "new-session", "-d", "-s", name, "bash").Run(),
+		"failed to create test session %s", name,
+	)
+	t.Cleanup(func() { _ = exec.Command("tmux", "kill-session", "-t", name).Run() })
+
+	r, w, err := os.Pipe()
+	require.NoError(t, err)
+	oldStdout := os.Stdout
+	os.Stdout = w
+
+	sess := &Session{Name: name}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	attachDone := make(chan error, 1)
+	go func() { attachDone <- sess.Attach(ctx, 0x11) }()
+
+	time.Sleep(300 * time.Millisecond)
+	require.NoError(t,
+		exec.Command("tmux", "send-keys", "-t", name, "C-q", "").Run(),
+		"failed to send detach key",
+	)
+
+	select {
+	case attachErr := <-attachDone:
+		os.Stdout = oldStdout
+		w.Close()
+		require.NoError(t, attachErr, "Attach returned error after detach")
+	case <-time.After(4 * time.Second):
+		cancel()
+		os.Stdout = oldStdout
+		w.Close()
+		t.Fatal("Attach did not return after detach key was sent")
+	}
+
+	var buf bytes.Buffer
+	_, _ = io.Copy(&buf, r)
+
+	captured := buf.String()
+	require.Contains(t, captured, "\x1b]1337;ClearScrollback\a",
+		"cleanupAttach() must emit \\033]1337;ClearScrollback\\a (OSC 1337) to clear iTerm2 3.6.x scrollback on detach (#618)")
+}
