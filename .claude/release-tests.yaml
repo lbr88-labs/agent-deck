@@ -9,100 +9,84 @@ tests:
   source: telegram-incident-2026-04-15
   manual: false
   run:
-    command: go test ./internal/session/ -run TestStartCommandAppendsChannels -count=1
-      -v
+    command: go test ./internal/session/ -run TestStartCommandAppendsChannels -count=1 -v
     expected: pass
 - id: ch-support-omit-when-empty
   added: 2026-04-16
   task: ch-support
   file: internal/session/channels_test.go
   test_name: TestStartCommandOmitsChannelsWhenEmpty
-  purpose: "Negative control \u2014 empty Channels emits no --channels flag (prevents\
-    \ empty-csv bug)"
+  purpose: "Negative control \u2014 empty Channels emits no --channels flag (prevents empty-csv bug)"
   source: telegram-incident-2026-04-15
   manual: false
   run:
-    command: go test ./internal/session/ -run TestStartCommandOmitsChannelsWhenEmpty
-      -count=1 -v
+    command: go test ./internal/session/ -run TestStartCommandOmitsChannelsWhenEmpty -count=1 -v
     expected: pass
 - id: ch-support-restart-persist
   added: 2026-04-16
   task: ch-support
   file: internal/session/channels_test.go
   test_name: TestChannelsRestartPersist
-  purpose: Channels survive JSON round-trip; rebuilt command from revived instance
-    still has --channels (guards against restart-drops-channels bug)
+  purpose: Channels survive JSON round-trip; rebuilt command from revived instance still has --channels (guards against restart-drops-channels bug)
   source: telegram-incident-2026-04-15
   manual: false
   run:
-    command: go test ./internal/session/ -run TestChannelsRestartPersist -count=1
-      -v
+    command: go test ./internal/session/ -run TestChannelsRestartPersist -count=1 -v
     expected: pass
 - id: ch-support-add-flag
   added: 2026-04-16
   task: ch-support
   file: cmd/agent-deck/channels_cmd_test.go
   test_name: TestAddChannelFlag
-  purpose: 'CLI: ''agent-deck add --channel <id>'' (repeatable) persists channels
-    via SQLite round-trip'
+  purpose: 'CLI: ''agent-deck add --channel <id>'' (repeatable) persists channels via SQLite round-trip'
   source: telegram-incident-2026-04-15
   manual: false
   run:
-    command: go test ./cmd/agent-deck/ -run TestAddChannelFlag -count=1 -timeout 90s
-      -v
+    command: go test ./cmd/agent-deck/ -run TestAddChannelFlag -count=1 -timeout 90s -v
     expected: pass
 - id: ch-support-session-set
   added: 2026-04-16
   task: ch-support
   file: cmd/agent-deck/channels_cmd_test.go
   test_name: TestSessionSetChannels
-  purpose: 'CLI: ''agent-deck session set <id> channels <csv>'' persists via SQLite
-    round-trip'
+  purpose: 'CLI: ''agent-deck session set <id> channels <csv>'' persists via SQLite round-trip'
   source: telegram-incident-2026-04-15
   manual: false
   run:
-    command: go test ./cmd/agent-deck/ -run TestSessionSetChannels -count=1 -timeout
-      90s -v
+    command: go test ./cmd/agent-deck/ -run TestSessionSetChannels -count=1 -timeout 90s -v
     expected: pass
 - id: ch-support-only-for-claude
   added: 2026-04-16
   task: ch-support
   file: cmd/agent-deck/channels_cmd_test.go
   test_name: TestChannelsOnlyForClaude
-  purpose: "Channels is claude-only \u2014 bash/codex/gemini sessions reject the field\
-    \ with a tool-specific error"
+  purpose: "Channels is claude-only \u2014 bash/codex/gemini sessions reject the field with a tool-specific error"
   source: telegram-incident-2026-04-15
   manual: false
   run:
-    command: go test ./cmd/agent-deck/ -run TestChannelsOnlyForClaude -count=1 -timeout
-      90s -v
+    command: go test ./cmd/agent-deck/ -run TestChannelsOnlyForClaude -count=1 -timeout 90s -v
     expected: pass
 - id: ch-support-e2e-manual
   added: 2026-04-16
   task: ch-support
   file: "(manual \u2014 not in test harness)"
   test_name: e2e-channel-roundtrip
-  purpose: 'End-to-end: create a session with --channel, restart, verify claude is
-    launched with --channels by inspecting the pane command'
+  purpose: 'End-to-end: create a session with --channel, restart, verify claude is launched with --channels by inspecting the pane command'
   source: telegram-incident-2026-04-15
   manual: true
-  manual_steps: '1. agent-deck -p personal add --channel plugin:telegram@user/repo
-    -c claude -t chan-e2e --no-parent /tmp/chan-e2e
+  manual_steps: '1. agent-deck -p personal add --channel plugin:telegram@user/repo -c claude -t chan-e2e --no-parent /tmp/chan-e2e
 
     2. agent-deck -p personal session start chan-e2e
 
-    3. Wait for session to come online (ps -o args= <claude-pid> or tmux list-panes
-    of its tmux session)
+    3. Wait for session to come online (ps -o args= <claude-pid> or tmux list-panes of its tmux session)
 
     4. Verify the claude command line contains "--channels plugin:telegram@user/repo"
 
     5. agent-deck -p personal session restart chan-e2e
 
-    6. Re-verify the claude command line STILL contains --channels after restart (restart
-    must preserve)
+    6. Re-verify the claude command line STILL contains --channels after restart (restart must preserve)
 
-    7. Cleanup: agent-deck -p personal session stop chan-e2e && agent-deck -p personal
-    remove chan-e2e
+    7. Cleanup: agent-deck -p personal session stop chan-e2e && agent-deck -p personal remove chan-e2e
 
     '
   run:
@@ -113,28 +97,22 @@ tests:
   task: ch-support
   file: internal/session/channels_test.go
   test_name: TestResumeCommandAppendsChannels
-  purpose: 'Restart/resume path must also emit --channels. Phase 5 loopback regression:
-    before this test, buildClaudeResumeCommand hand-rolled its own flag assembly and
-    silently dropped --channels (and every other extra flag). Guards against flag-desync
-    between start/restart paths.'
+  purpose: 'Restart/resume path must also emit --channels. Phase 5 loopback regression: before this test, buildClaudeResumeCommand hand-rolled its own flag assembly and silently dropped --channels (and every other extra flag). Guards against flag-desync between start/restart paths.'
   source: phase-5-loopback-2026-04-16
   manual: false
   run:
-    command: go test ./internal/session/ -run TestResumeCommandAppendsChannels -count=1
-      -v
+    command: go test ./internal/session/ -run TestResumeCommandAppendsChannels -count=1 -v
     expected: pass
 - id: fix-544-544-fd-preservation
   added: '2026-04-16'
   task: fix-544
   file: internal/ui/keyboard_compat_mechanism_test.go
   test_name: TestCSIuReader_PreservesFdForRawMode
-  purpose: "CSIuFileReader must preserve *os.File Fd() for Bubble Tea raw-mode setup\
-    \ \u2014 prevents #544 regression"
+  purpose: "CSIuFileReader must preserve *os.File Fd() for Bubble Tea raw-mode setup \u2014 prevents [#544] regression"
   source: gh#544,#607,phase-02-01-retrospective
   manual: false
   run:
-    command: go test ./internal/ui/ -run TestCSIuReader_PreservesFdForRawMode -count=1
-      -v
+    command: go test ./internal/ui/ -run TestCSIuReader_PreservesFdForRawMode -count=1 -v
     expected: pass
 - id: fix-544-544-non-file-fallback
   added: '2026-04-16'
@@ -145,8 +123,7 @@ tests:
   source: gh#544,#607,phase-02-01-retrospective
   manual: false
   run:
-    command: go test ./internal/ui/ -run TestCSIuReader_NonFileFallsBackToPlainReader
-      -count=1 -v
+    command: go test ./internal/ui/ -run TestCSIuReader_NonFileFallsBackToPlainReader -count=1 -v
     expected: pass
 - id: fix-544-544-underscore-csiu
   added: '2026-04-16'
@@ -157,397 +134,303 @@ tests:
   source: gh#544,#607,phase-02-01-retrospective
   manual: false
   run:
-    command: go test ./internal/ui/ -run TestCSIuReader_UnderscorePreserved -count=1
-      -v
+    command: go test ./internal/ui/ -run TestCSIuReader_UnderscorePreserved -count=1 -v
 - id: fix-615-session-show-channels
   added: '2026-04-16'
   task: fix-615
   file: cmd/agent-deck/channels_cmd_test.go
   test_name: TestSessionShowJSONIncludesChannels
-  purpose: "session show --json must include channels field when set \u2014 guards\
-    \ parallel-paths regression where list --json and show --json emitters drift."
+  purpose: "session show --json must include channels field when set \u2014 guards parallel-paths regression where list --json and show --json emitters drift."
   source: gh#615
   manual: false
   run:
-    command: go test ./cmd/agent-deck/ -run TestSessionShowJSONIncludesChannels -count=1
-      -timeout 90s -v
+    command: go test ./cmd/agent-deck/ -run TestSessionShowJSONIncludesChannels -count=1 -timeout 90s -v
     expected: pass
 - id: fix-config-dir-priority-group-beats-env
   added: '2026-04-17'
   task: fix-config-dir-priority
   file: internal/session/conductorconfig_test.go
   test_name: TestConductorConfig_GroupBeatsEnv
-  purpose: "[groups.<g>.claude].config_dir wins over CLAUDE_CONFIG_DIR env var \u2014\
-    \ explicit TOML override is more specific than shell-wide default (2026-04-17\
-    \ priority-inversion fix)."
+  purpose: "[groups.<g>.claude].config_dir wins over CLAUDE_CONFIG_DIR env var \u2014 explicit TOML override is more specific than shell-wide default (2026-04-17 priority-inversion fix)."
   source: user-report-2026-04-17
   manual: false
   run:
-    command: go test ./internal/session/ -run TestConductorConfig_GroupBeatsEnv -count=1
-      -v
+    command: go test ./internal/session/ -run TestConductorConfig_GroupBeatsEnv -count=1 -v
     expected: pass
 - id: fix-config-dir-priority-conductor-beats-env
   added: '2026-04-17'
   task: fix-config-dir-priority
   file: internal/session/conductorconfig_test.go
   test_name: TestConductorConfig_PrecedenceConductorBeatsEnv
-  purpose: "[conductors.<n>.claude].config_dir wins over CLAUDE_CONFIG_DIR env var\
-    \ \u2014 flipped from old TestConductorConfig_PrecedenceEnvBeatsConductor which\
-    \ codified the buggy env-first order."
+  purpose: "[conductors.<n>.claude].config_dir wins over CLAUDE_CONFIG_DIR env var \u2014 flipped from old TestConductorConfig_PrecedenceEnvBeatsConductor which codified the buggy env-first order."
   source: user-report-2026-04-17
   manual: false
   run:
-    command: go test ./internal/session/ -run TestConductorConfig_PrecedenceConductorBeatsEnv
-      -count=1 -v
+    command: go test ./internal/session/ -run TestConductorConfig_PrecedenceConductorBeatsEnv -count=1 -v
     expected: pass
 - id: fix-config-dir-priority-env-still-beats-profile
   added: '2026-04-17'
   task: fix-config-dir-priority
   file: internal/session/conductorconfig_test.go
   test_name: TestConductorConfig_EnvBeatsProfile
-  purpose: "Regression guard: env var STILL beats [profiles.<p>.claude].config_dir.\
-    \ Profile is shell-wide-ish and less specific than env; must stay below env in\
-    \ the new priority order."
+  purpose: 'Regression guard: env var STILL beats [profiles.<p>.claude].config_dir. Profile is shell-wide-ish and less specific than env; must stay below env in the new priority order.'
   source: user-report-2026-04-17
   manual: false
   run:
-    command: go test ./internal/session/ -run TestConductorConfig_EnvBeatsProfile
-      -count=1 -v
+    command: go test ./internal/session/ -run TestConductorConfig_EnvBeatsProfile -count=1 -v
     expected: pass
 - id: fix-config-dir-priority-env-still-beats-global
   added: '2026-04-17'
   task: fix-config-dir-priority
   file: internal/session/conductorconfig_test.go
   test_name: TestConductorConfig_EnvBeatsGlobal
-  purpose: 'Regression guard: env var STILL beats [claude].config_dir top-level global.
-    Global is shell-wide fallback; env remains stronger.'
+  purpose: 'Regression guard: env var STILL beats [claude].config_dir top-level global. Global is shell-wide fallback; env remains stronger.'
   source: user-report-2026-04-17
   manual: false
   run:
-    command: go test ./internal/session/ -run TestConductorConfig_EnvBeatsGlobal -count=1
-      -v
+    command: go test ./internal/session/ -run TestConductorConfig_EnvBeatsGlobal -count=1 -v
     expected: pass
 - id: fix-config-dir-priority-source-label-group
   added: '2026-04-17'
   task: fix-config-dir-priority
   file: internal/session/conductorconfig_test.go
   test_name: TestConductorConfig_SourceLabelGroupWhenGroupBeatsEnv
-  purpose: "GetClaudeConfigDirSourceForInstance must return source=\"group\" when\
-    \ group TOML beats env \u2014 parallel-paths audit for the (path, source) getter\
-    \ alongside the primary resolver."
+  purpose: "GetClaudeConfigDirSourceForInstance must return source=\"group\" when group TOML beats env \u2014 parallel-paths audit for the (path, source) getter alongside the primary resolver."
   source: user-report-2026-04-17
   manual: false
   run:
-    command: go test ./internal/session/ -run TestConductorConfig_SourceLabelGroupWhenGroupBeatsEnv
-      -count=1 -v
+    command: go test ./internal/session/ -run TestConductorConfig_SourceLabelGroupWhenGroupBeatsEnv -count=1 -v
     expected: pass
 - id: fix-restart-custom-config-dir-respects-per-instance
   added: '2026-04-17'
   task: fix-restart-custom-config-dir
   file: internal/session/conductorconfig_test.go
   test_name: TestSessionHasConversationData_RespectsPerInstanceConfigDir
-  purpose: sessionHasConversationData must consult per-instance Claude config dir
-    (GetClaudeConfigDirForInstance) so conductors/groups with config_dir overrides
-    detect their own JSONL history on restart. Pre-fix, the global GetClaudeConfigDir()
-    was used, causing restart to mis-route to --session-id (Claude rejects as already-in-use)
-    and the tmux pane to die.
+  purpose: sessionHasConversationData must consult per-instance Claude config dir (GetClaudeConfigDirForInstance) so conductors/groups with config_dir overrides detect their own JSONL history on restart. Pre-fix, the global GetClaudeConfigDir() was used, causing restart to mis-route to --session-id (Claude rejects as already-in-use) and the tmux pane to die.
   source: user-report-2026-04-17-conductor-innotrade
   manual: false
   run:
-    command: go test ./internal/session/ -run TestSessionHasConversationData_RespectsPerInstanceConfigDir
-      -count=1 -v
+    command: go test ./internal/session/ -run TestSessionHasConversationData_RespectsPerInstanceConfigDir -count=1 -v
     expected: pass
 - id: fix-restart-custom-config-dir-resume-flag
   added: '2026-04-17'
   task: fix-restart-custom-config-dir
   file: internal/session/conductorconfig_test.go
   test_name: TestBuildClaudeResumeCommand_UsesResumeWhenPerInstanceHistoryExists
-  purpose: End-to-end live-boundary pin — when JSONL exists only under the per-instance
-    config dir, buildClaudeResumeCommand (output becomes tmux pane_start_command
-    verbatim) emits --resume <uuid>, NOT --session-id. Guards against the v1.7.6
-    regression where restart forked a fresh conversation because sessionHasConversationData
-    ignored conductor/group config_dir overrides.
+  purpose: "End-to-end live-boundary pin \u2014 when JSONL exists only under the per-instance config dir, buildClaudeResumeCommand (output becomes tmux pane_start_command verbatim) emits --resume <uuid>, NOT --session-id. Guards against the v1.7.6 regression where restart forked a fresh conversation because sessionHasConversationData ignored conductor/group config_dir overrides."
   source: user-report-2026-04-17-conductor-innotrade
   manual: false
   run:
-    command: go test ./internal/session/ -run TestBuildClaudeResumeCommand_UsesResumeWhenPerInstanceHistoryExists
-      -count=1 -v
+    command: go test ./internal/session/ -run TestBuildClaudeResumeCommand_UsesResumeWhenPerInstanceHistoryExists -count=1 -v
     expected: pass
 - id: v178-reviver-errored-alive-respawns
   added: '2026-04-17'
   task: v178-ssh-reviver
   file: internal/session/reviver_test.go
   test_name: TestReviver_ErroredSessionWithAliveServer_Respawns
-  purpose: Reviver core contract — an errored instance with a living tmux server
-    triggers ReviveAction exactly once and marks the outcome as Revived. This is
-    the seamless-SSH-reconnect fix; a regression here brings back the "27 sessions
-    stuck on error" pain.
+  purpose: "Reviver core contract \u2014 an errored instance with a living tmux server triggers ReviveAction exactly once and marks the outcome as Revived. This is the seamless-SSH-reconnect fix; a regression here brings back the \"27 sessions stuck on error\" pain."
   source: REPORT-D-auto-revive.md
   manual: false
   run:
-    command: go test ./internal/session/ -run TestReviver_ErroredSessionWithAliveServer_Respawns
-      -race -count=1 -v
+    command: go test ./internal/session/ -run TestReviver_ErroredSessionWithAliveServer_Respawns -race -count=1 -v
     expected: pass
 - id: v178-reviver-dead-server-not-revived
   added: '2026-04-17'
   task: v178-ssh-reviver
   file: internal/session/reviver_test.go
   test_name: TestReviver_DeadServer_NotRevived
-  purpose: Negative control — when the tmux server is actually gone (OOM, reboot,
-    explicit kill), reviver must NOT auto-respawn. Prevents silent resurrection of
-    sessions the user intentionally killed.
+  purpose: "Negative control \u2014 when the tmux server is actually gone (OOM, reboot, explicit kill), reviver must NOT auto-respawn. Prevents silent resurrection of sessions the user intentionally killed."
   source: REPORT-D-auto-revive.md
   manual: false
   run:
-    command: go test ./internal/session/ -run TestReviver_DeadServer_NotRevived
-      -race -count=1 -v
+    command: go test ./internal/session/ -run TestReviver_DeadServer_NotRevived -race -count=1 -v
     expected: pass
 - id: v178-reviver-tombstone-not-revived
   added: '2026-04-17'
   task: v178-ssh-reviver
   file: internal/session/reviver_test.go
   test_name: TestReviver_DeletedInstance_NotRevived
-  purpose: Tombstone semantics — deleted instances (absent from storage) produce
-    zero outcomes and zero ReviveAction calls. Guards the "I removed it, why is
-    it back?" UX bug.
+  purpose: "Tombstone semantics \u2014 deleted instances (absent from storage) produce zero outcomes and zero ReviveAction calls. Guards the \"I removed it, why is it back?\" UX bug."
   source: REPORT-D-auto-revive.md
   manual: false
   run:
-    command: go test ./internal/session/ -run TestReviver_DeletedInstance_NotRevived
-      -race -count=1 -v
+    command: go test ./internal/session/ -run TestReviver_DeletedInstance_NotRevived -race -count=1 -v
     expected: pass
 - id: v178-reviver-stagger
   added: '2026-04-17'
   task: v178-ssh-reviver
   file: internal/session/reviver_test.go
   test_name: TestReviver_Stagger500ms_AcrossManyInstances
-  purpose: Stagger discipline — revive calls are serialized with the configured
-    stagger between actual revives (alive/dead entries don't consume slots). Protects
-    Anthropic API from cold-start thundering herd when 40+ sessions errored simultaneously.
+  purpose: "Stagger discipline \u2014 revive calls are serialized with the configured stagger between actual revives (alive/dead entries don't consume slots). Protects Anthropic API from cold-start thundering herd when 40+ sessions errored simultaneously."
   source: REPORT-D-auto-revive.md
   manual: false
   run:
-    command: go test ./internal/session/ -run TestReviver_Stagger500ms_AcrossManyInstances
-      -race -count=1 -v
+    command: go test ./internal/session/ -run TestReviver_Stagger500ms_AcrossManyInstances -race -count=1 -v
     expected: pass
 - id: v178-revive-cli-dispatch
   added: '2026-04-17'
   task: v178-ssh-reviver
   file: cmd/agent-deck/revive_cmd_test.go
   test_name: TestRevive_CLI_AllFlag_TriggersReviver
-  purpose: CLI dispatch wiring — `agent-deck session revive --all` correctly
-    classifies a mixed fixture (errored/alive/dead) and emits the stable summary
-    string "revived=N errored=N alive=N dead=N". Guards the one-shot recovery path
-    used on conductor restart.
+  purpose: "CLI dispatch wiring \u2014 `agent-deck session revive --all` correctly classifies a mixed fixture (errored/alive/dead) and emits the stable summary string \"revived=N errored=N alive=N dead=N\". Guards the one-shot recovery path used on conductor restart."
   source: REPORT-D-auto-revive.md
   manual: false
   run:
-    command: go test ./cmd/agent-deck/ -run TestRevive_CLI_AllFlag_TriggersReviver
-      -race -count=1 -v
+    command: go test ./cmd/agent-deck/ -run TestRevive_CLI_AllFlag_TriggersReviver -race -count=1 -v
     expected: pass
 - id: issue-610-cli-parity-spinner
   added: '2026-04-17'
   task: fix-issue-610
   file: internal/session/instance_cli_parity_test.go
   test_name: TestUpdateStatus_CLIParity_SpinnerTitle_StaleHook
-  purpose: CLI cold path with a 3-minute-old hook file and a braille-spinner pane
-    title must report StatusRunning. Regression guard for #610 — without
-    RefreshInstancesForCLIStatus the title fast-path cache is never populated so
-    the CLI fell back to idle/waiting while TUI/web said running.
+  purpose: "CLI cold path with a 3-minute-old hook file and a braille-spinner pane title must report StatusRunning. Regression guard for [#610] \u2014 without RefreshInstancesForCLIStatus the title fast-path cache is never populated so the CLI fell back to idle/waiting while TUI/web said running."
   source: .planning/fix-issue-610/PLAN.md
   manual: false
   run:
-    command: go test ./internal/session/ -run TestUpdateStatus_CLIParity_SpinnerTitle_StaleHook
-      -race -count=1 -v
+    command: go test ./internal/session/ -run TestUpdateStatus_CLIParity_SpinnerTitle_StaleHook -race -count=1 -v
     expected: pass
 - id: issue-610-cli-vs-tui-parity
   added: '2026-04-17'
   task: fix-issue-610
   file: internal/session/instance_cli_parity_test.go
   test_name: TestUpdateStatus_CLIvsTUIParity_SameTmuxState
-  purpose: Direct parity assertion — CLI path (RefreshInstancesForCLIStatus +
-    UpdateStatus) and TUI path (RefreshPaneInfoCache + UpdateHookStatus +
-    UpdateStatus) must produce identical Status for the same underlying tmux
-    session. Script automation via list --json sees what the TUI shows.
+  purpose: "Direct parity assertion \u2014 CLI path (RefreshInstancesForCLIStatus + UpdateStatus) and TUI path (RefreshPaneInfoCache + UpdateHookStatus + UpdateStatus) must produce identical Status for the same underlying tmux session. Script automation via list --json sees what the TUI shows."
   source: .planning/fix-issue-610/PLAN.md
   manual: false
   run:
-    command: go test ./internal/session/ -run TestUpdateStatus_CLIvsTUIParity_SameTmuxState
-      -race -count=1 -v
+    command: go test ./internal/session/ -run TestUpdateStatus_CLIvsTUIParity_SameTmuxState -race -count=1 -v
     expected: pass
 - id: issue-616-send-no-wait-late-composer
   added: '2026-04-17'
   task: fix-issue-616
   file: cmd/agent-deck/session_send_test.go
   test_name: TestSendNoWait_ReEntersWhenComposerRendersLate
-  purpose: Regression guard for #616 — sendNoWait must keep detecting the unsent
-    composer prompt and re-firing SendEnter even when the Claude composer renders
-    late (after 5 iterations of status=active/pane=""). Also asserts that only one
-    SendKeysAndEnter fires (preserves the #479 no-double-send guarantee).
+  purpose: "Regression guard for [#616] \u2014 sendNoWait must keep detecting the unsent composer prompt and re-firing SendEnter even when the Claude composer renders late (after 5 iterations of status=active/pane=\"\"). Also asserts that only one SendKeysAndEnter fires (preserves the [#479] no-double-send guarantee)."
   source: .planning/fix-issue-616/PLAN.md
   manual: false
   run:
-    command: go test ./cmd/agent-deck/ -run TestSendNoWait_ReEntersWhenComposerRendersLate
-      -race -count=1 -v
+    command: go test ./cmd/agent-deck/ -run TestSendNoWait_ReEntersWhenComposerRendersLate -race -count=1 -v
     expected: pass
 - id: issue-616-no-wait-budget-sizing
   added: '2026-04-17'
   task: fix-issue-616
   file: cmd/agent-deck/session_send_test.go
   test_name: TestSendWithRetryTarget_NoWait_BudgetSpansRealisticClaudeStartup
-  purpose: Locks in that noWaitSendOptions() has ≥4s total verification budget so
-    future refactors cannot silently shrink it back to the pre-v1.7.10 1.2s window
-    that caused #616. Also pins maxFullResends=-1 (preserves #479 double-send fix).
+  purpose: "Locks in that noWaitSendOptions() has \u22654s total verification budget so future refactors cannot silently shrink it back to the pre-v1.7.10 1.2s window that caused [#616]. Also pins maxFullResends=-1 (preserves [#479] double-send fix)."
   source: .planning/fix-issue-616/PLAN.md
   manual: false
   run:
-    command: go test ./cmd/agent-deck/ -run TestSendWithRetryTarget_NoWait_BudgetSpansRealisticClaudeStartup
-      -race -count=1 -v
+    command: go test ./cmd/agent-deck/ -run TestSendWithRetryTarget_NoWait_BudgetSpansRealisticClaudeStartup -race -count=1 -v
     expected: pass
 - id: issue-616-preflight-barrier-correctness
   added: '2026-04-17'
   task: fix-issue-616
   file: cmd/agent-deck/session_send_test.go
   test_name: TestAwaitComposerReadyBestEffort_ReturnsTrueWhenComposerAppears
-  purpose: Preflight barrier must detect Claude composer `❯` appearing within the
-    cap window. Without this, --no-wait sends before Claude's TUI mounts and the
-    keystrokes are discarded by pre-mount handlers (#616 root cause layer 1).
+  purpose: "Preflight barrier must detect Claude composer `\u276F` appearing within the cap window. Without this, --no-wait sends before Claude's TUI mounts and the keystrokes are discarded by pre-mount handlers (#616 root cause layer 1)."
   source: .planning/fix-issue-616/PLAN.md
   manual: false
   run:
-    command: go test ./cmd/agent-deck/ -run TestAwaitComposerReadyBestEffort_ReturnsTrueWhenComposerAppears
-      -race -count=1 -v
+    command: go test ./cmd/agent-deck/ -run TestAwaitComposerReadyBestEffort_ReturnsTrueWhenComposerAppears -race -count=1 -v
     expected: pass
 - id: issue-616-preflight-barrier-cap-respected
   added: '2026-04-17'
   task: fix-issue-616
   file: cmd/agent-deck/session_send_test.go
   test_name: TestAwaitComposerReadyBestEffort_CappedAtMaxWait
-  purpose: Preflight barrier must NOT block --no-wait indefinitely on broken
-    sessions where the composer never renders. Returns at maxWait with false.
-    Protects --no-wait spirit (fast, bounded).
+  purpose: Preflight barrier must NOT block --no-wait indefinitely on broken sessions where the composer never renders. Returns at maxWait with false. Protects --no-wait spirit (fast, bounded).
   source: .planning/fix-issue-616/PLAN.md
   manual: false
   run:
-    command: go test ./cmd/agent-deck/ -run TestAwaitComposerReadyBestEffort_CappedAtMaxWait
-      -race -count=1 -v
+    command: go test ./cmd/agent-deck/ -run TestAwaitComposerReadyBestEffort_CappedAtMaxWait -race -count=1 -v
     expected: pass
 - id: issue-616-live-boundary-fresh-session
   added: '2026-04-17'
   task: fix-issue-616
   file: manual-live-test
   test_name: 10x-fresh-session-no-wait-submits
-  purpose: Live-boundary regression — launch 10 fresh Claude sessions, fire
-    `session send --no-wait` immediately, verify message was submitted and Claude
-    processed it. Pre-v1.7.10 baseline: 3-5/10 failures (typed-but-not-submitted).
-    v1.7.10 target -- 10/10 pass. Shown passing in the release verification run
-    2026-04-17.
+  purpose: "Live-boundary regression \u2014 launch 10 fresh Claude sessions, fire `session send --no-wait` immediately, verify message was submitted and Claude processed it. Pre-v1.7.10 baseline: 3-5/10 failures (typed-but-not-submitted). v1.7.10 target -- 10/10 pass. Shown passing in the release verification run 2026-04-17."
   source: .planning/fix-issue-616/PLAN.md
   manual: true
   run:
-    command: "for i in 1..10; do agent-deck add /tmp/t616-$i -t t-$i -c claude; agent-deck
-      session start t-$i; agent-deck session send t-$i 'Say OK_$i' --no-wait;
-      sleep 30; tmux capture-pane -t agentdeck_t-$i* -p | grep -q '● OK_$i' &&
-      echo PASS_$i || echo FAIL_$i; agent-deck remove t-$i; done"
+    command: "for i in 1..10; do agent-deck add /tmp/t616-$i -t t-$i -c claude; agent-deck session start t-$i; agent-deck session send t-$i 'Say OK_$i' --no-wait; sleep 30; tmux capture-pane -t agentdeck_t-$i* -p | grep -q '\u25CF OK_$i' && echo PASS_$i || echo FAIL_$i; agent-deck remove t-$i; done"
     expected: 10 PASS lines
 - id: issue-604-rename-session-cursor-at-end
   added: '2026-04-17'
   task: fix-issue-604
   file: internal/ui/group_dialog_test.go
   test_name: TestGroupDialog_ShowRenameSession_CursorAtEnd_Issue604
-  purpose: Regression test for #604 — opening the rename-session dialog must place
-    the cursor at the end of the pre-filled name. Before v1.7.11 the long-lived
-    textinput cursor bled between invocations, landing at min(prev_pos, new_len).
+  purpose: "Regression test for [#604] \u2014 opening the rename-session dialog must place the cursor at the end of the pre-filled name. Before v1.7.11 the long-lived textinput cursor bled between invocations, landing at min(prev_pos, new_len)."
   source: .planning/fix-issue-604/PLAN.md
   manual: false
   run:
-    command: go test ./internal/ui/ -run TestGroupDialog_ShowRenameSession_CursorAtEnd_Issue604
-      -race -count=1 -v
+    command: go test ./internal/ui/ -run TestGroupDialog_ShowRenameSession_CursorAtEnd_Issue604 -race -count=1 -v
     expected: pass
 - id: issue-604-rename-group-cursor-at-end
   added: '2026-04-17'
   task: fix-issue-604
   file: internal/ui/group_dialog_test.go
   test_name: TestGroupDialog_ShowRename_CursorAtEnd_Issue604
-  purpose: Same class of regression as #604 but for the group-rename entry point.
-    Cursor must land at end of pre-filled group name.
+  purpose: Same class of regression as [#604] but for the group-rename entry point. Cursor must land at end of pre-filled group name.
   source: .planning/fix-issue-604/PLAN.md
   manual: false
   run:
-    command: go test ./internal/ui/ -run TestGroupDialog_ShowRename_CursorAtEnd_Issue604
-      -race -count=1 -v
+    command: go test ./internal/ui/ -run TestGroupDialog_ShowRename_CursorAtEnd_Issue604 -race -count=1 -v
     expected: pass
 - id: issue-604-fresh-cursor-after-create-type
   added: '2026-04-17'
   task: fix-issue-604
   file: internal/ui/group_dialog_test.go
   test_name: TestGroupDialog_ShowRenameSession_FreshCursor_Issue604
-  purpose: After a Create-type cycle that advances the cursor, opening a rename
-    must reset the cursor to the end of the pre-filled name — not inherit the
-    typing cursor from Create mode.
+  purpose: "After a Create-type cycle that advances the cursor, opening a rename must reset the cursor to the end of the pre-filled name \u2014 not inherit the typing cursor from Create mode."
   source: .planning/fix-issue-604/PLAN.md
   manual: false
   run:
-    command: go test ./internal/ui/ -run TestGroupDialog_ShowRenameSession_FreshCursor_Issue604
-      -race -count=1 -v
+    command: go test ./internal/ui/ -run TestGroupDialog_ShowRenameSession_FreshCursor_Issue604 -race -count=1 -v
     expected: pass
 - id: issue-618-iterm-clearscrollback-constant
   added: '2026-04-17'
   task: fix-issue-618
   file: internal/tmux/pty_test.go
   test_name: TestITermClearScrollback_ConstantContents
-  purpose: Guard the iTerm2-specific OSC 1337 ClearScrollback constant. If the
-    constant drifts (typo, wrong terminator, accidental deletion), iTerm2 3.6.x
-    users regress to cross-session scrollback bleedover (#618 = regression of #419).
+  purpose: Guard the iTerm2-specific OSC 1337 ClearScrollback constant. If the constant drifts (typo, wrong terminator, accidental deletion), iTerm2 3.6.x users regress to cross-session scrollback bleedover (#618 = regression of [#419]).
   source: .planning/fix-issue-618/PLAN.md
   manual: false
   run:
-    command: go test ./internal/tmux/ -run TestITermClearScrollback_ConstantContents
-      -race -count=1 -v
+    command: go test ./internal/tmux/ -run TestITermClearScrollback_ConstantContents -race -count=1 -v
     expected: pass
 - id: issue-618-emit-scrollback-clear-both-escapes
   added: '2026-04-17'
   task: fix-issue-618
   file: internal/tmux/pty_test.go
   test_name: TestEmitScrollbackClear_IncludesBothEscapes
-  purpose: Parallel-paths guard. Both Attach() entry and cleanupAttach() on
-    detach route through emitScrollbackClear(); this test asserts the helper
-    emits BOTH the generic CSI 3 J escape AND the iTerm2-specific OSC 1337
-    ClearScrollback escape in the correct order (CSI first, OSC second).
-    Prevents silent drift between the two boundaries — the exact regression
-    pattern that bit #419.
+  purpose: "Parallel-paths guard. Both Attach() entry and cleanupAttach() on detach route through emitScrollbackClear(); this test asserts the helper emits BOTH the generic CSI 3 J escape AND the iTerm2-specific OSC 1337 ClearScrollback escape in the correct order (CSI first, OSC second). Prevents silent drift between the two boundaries \u2014 the exact regression pattern that bit [#419]."
   source: .planning/fix-issue-618/PLAN.md
   manual: false
   run:
-    command: go test ./internal/tmux/ -run TestEmitScrollbackClear_IncludesBothEscapes
-      -race -count=1 -v
+    command: go test ./internal/tmux/ -run TestEmitScrollbackClear_IncludesBothEscapes -race -count=1 -v
     expected: pass
 - id: issue-618-cleanup-attach-emits-iterm-osc1337
   added: '2026-04-17'
   task: fix-issue-618
   file: internal/tmux/pty_test.go
   test_name: TestCleanupAttach_EmitsITermClearScrollback
-  purpose: Live-boundary regression. Detach path (Ctrl+Q) must emit OSC 1337
-    ClearScrollback on stdout so iTerm2 3.6.x actually clears its scrollback
-    (#618). TTY-gated — skips on CI without a terminal.
+  purpose: "Live-boundary regression. Detach path (Ctrl+Q) must emit OSC 1337 ClearScrollback on stdout so iTerm2 3.6.x actually clears its scrollback (#618). TTY-gated \u2014 skips on CI without a terminal."
   source: .planning/fix-issue-618/PLAN.md
   manual: false
   run:
-    command: go test ./internal/tmux/ -run TestCleanupAttach_EmitsITermClearScrollback
-      -race -count=1 -v
+    command: go test ./internal/tmux/ -run TestCleanupAttach_EmitsITermClearScrollback -race -count=1 -v
     expected: pass
 - id: issue-607-clear-on-mouse-wheel-down
   added: '2026-04-17'
   task: fix-issue-607
   file: internal/ui/home_repaint_test.go
   test_name: TestFullRepaint_ClearsOnMouseWheelDown_Issue607
-  purpose: full_repaint=true must emit tea.ClearScreen when the user scrolls
-    wheel-down so drift does not accumulate between tick-based clears.
+  purpose: full_repaint=true must emit tea.ClearScreen when the user scrolls wheel-down so drift does not accumulate between tick-based clears.
   source: .planning/fix-issue-607/PLAN.md
   manual: false
   run:
-    command: go test ./internal/ui/ -run TestFullRepaint_ClearsOnMouseWheelDown_Issue607
-      -count=1 -v
+    command: go test ./internal/ui/ -run TestFullRepaint_ClearsOnMouseWheelDown_Issue607 -count=1 -v
     expected: pass
 - id: issue-607-clear-on-mouse-wheel-up
   added: '2026-04-17'
@@ -558,240 +441,236 @@ tests:
   source: .planning/fix-issue-607/PLAN.md
   manual: false
   run:
-    command: go test ./internal/ui/ -run TestFullRepaint_ClearsOnMouseWheelUp_Issue607
-      -count=1 -v
+    command: go test ./internal/ui/ -run TestFullRepaint_ClearsOnMouseWheelUp_Issue607 -count=1 -v
     expected: pass
 - id: issue-607-clear-on-key-navigation
   added: '2026-04-17'
   task: fix-issue-607
   file: internal/ui/home_repaint_test.go
   test_name: TestFullRepaint_ClearsOnKeyNavigation_Issue607
-  purpose: full_repaint=true must emit tea.ClearScreen on key-driven navigation
-    (j).
+  purpose: full_repaint=true must emit tea.ClearScreen on key-driven navigation (j).
   source: .planning/fix-issue-607/PLAN.md
   manual: false
   run:
-    command: go test ./internal/ui/ -run TestFullRepaint_ClearsOnKeyNavigation_Issue607
-      -count=1 -v
+    command: go test ./internal/ui/ -run TestFullRepaint_ClearsOnKeyNavigation_Issue607 -count=1 -v
     expected: pass
 - id: issue-607-clear-on-any-key
   added: '2026-04-17'
   task: fix-issue-607
   file: internal/ui/home_repaint_test.go
   test_name: TestFullRepaint_NonNavKeyStillClears_Issue607
-  purpose: Single-rule contract — under full_repaint ANY KeyMsg clears,
-    not just j/k. Catches regressions that narrow the rule to specific keys.
+  purpose: "Single-rule contract \u2014 under full_repaint ANY KeyMsg clears, not just j/k. Catches regressions that narrow the rule to specific keys."
   source: .planning/fix-issue-607/PLAN.md
   manual: false
   run:
-    command: go test ./internal/ui/ -run TestFullRepaint_NonNavKeyStillClears_Issue607
-      -count=1 -v
+    command: go test ./internal/ui/ -run TestFullRepaint_NonNavKeyStillClears_Issue607 -count=1 -v
     expected: pass
 - id: issue-607-default-no-clear-on-scroll
   added: '2026-04-17'
   task: fix-issue-607
   file: internal/ui/home_repaint_test.go
   test_name: TestFullRepaint_Disabled_NoClearOnScroll_Issue607
-  purpose: Regression guard for default users — full_repaint=false must NOT
-    emit ClearScreen on scroll (would flicker every default install).
+  purpose: "Regression guard for default users \u2014 full_repaint=false must NOT emit ClearScreen on scroll (would flicker every default install)."
   source: .planning/fix-issue-607/PLAN.md
   manual: false
   run:
-    command: go test ./internal/ui/ -run TestFullRepaint_Disabled_NoClearOnScroll_Issue607
-      -count=1 -v
+    command: go test ./internal/ui/ -run TestFullRepaint_Disabled_NoClearOnScroll_Issue607 -count=1 -v
     expected: pass
 - id: issue-607-default-no-clear-on-key
   added: '2026-04-17'
   task: fix-issue-607
   file: internal/ui/home_repaint_test.go
   test_name: TestFullRepaint_Disabled_NoClearOnKey_Issue607
-  purpose: Regression guard for default users — full_repaint=false must NOT
-    emit ClearScreen on KeyMsg.
+  purpose: "Regression guard for default users \u2014 full_repaint=false must NOT emit ClearScreen on KeyMsg."
   source: .planning/fix-issue-607/PLAN.md
   manual: false
   run:
-    command: go test ./internal/ui/ -run TestFullRepaint_Disabled_NoClearOnKey_Issue607
-      -count=1 -v
+    command: go test ./internal/ui/ -run TestFullRepaint_Disabled_NoClearOnKey_Issue607 -count=1 -v
     expected: pass
 - id: issue-607-non-wheel-mouse-no-clear
   added: '2026-04-17'
   task: fix-issue-607
   file: internal/ui/home_repaint_test.go
   test_name: TestFullRepaint_NonWheelMouseDoesNotClear_Issue607
-  purpose: Non-wheel mouse events (clicks, drags) under full_repaint must NOT
-    clear — would cause click-flicker. Pins the wheel-only scope of the fix.
+  purpose: "Non-wheel mouse events (clicks, drags) under full_repaint must NOT clear \u2014 would cause click-flicker. Pins the wheel-only scope of the fix."
   source: .planning/fix-issue-607/PLAN.md
   manual: false
   run:
-    command: go test ./internal/ui/ -run TestFullRepaint_NonWheelMouseDoesNotClear_Issue607
-      -count=1 -v
+    command: go test ./internal/ui/ -run TestFullRepaint_NonWheelMouseDoesNotClear_Issue607 -count=1 -v
     expected: pass
 - id: issue-598-fresh-claude-id-over-stale
   added: '2026-04-17'
   task: fix-issue-598
   file: internal/ui/send_output_content_test.go
   test_name: TestGetSessionContentWithLive_PrefersFreshIDOverStoredStaleID
-  purpose: Cross-session `x` send-output must use the live CLAUDE_SESSION_ID
-    from tmux env, not a stale stored ClaudeSessionID. Reproduces the v1.7.10
-    bug where resumed sessions leaked prior-conversation JSONL content into
-    the target session.
+  purpose: Cross-session `x` send-output must use the live CLAUDE_SESSION_ID from tmux env, not a stale stored ClaudeSessionID. Reproduces the v1.7.10 bug where resumed sessions leaked prior-conversation JSONL content into the target session.
   source: .planning/fix-issue-598/PLAN.md
   manual: false
   run:
-    command: go test ./internal/ui/ -run TestGetSessionContentWithLive_PrefersFreshIDOverStoredStaleID
-      -race -count=1 -v
+    command: go test ./internal/ui/ -run TestGetSessionContentWithLive_PrefersFreshIDOverStoredStaleID -race -count=1 -v
     expected: pass
 - id: issue-598-keeps-stored-when-live-empty
   added: '2026-04-17'
   task: fix-issue-598
   file: internal/ui/send_output_content_test.go
   test_name: TestGetSessionContentWithLive_KeepsStoredIDWhenLiveEmpty
-  purpose: Back-compat — when tmux env has no live CLAUDE_SESSION_ID,
-    getSessionContent falls through to the stored ID. Prevents the refresh
-    path from clobbering valid state.
+  purpose: "Back-compat \u2014 when tmux env has no live CLAUDE_SESSION_ID, getSessionContent falls through to the stored ID. Prevents the refresh path from clobbering valid state."
   source: .planning/fix-issue-598/PLAN.md
   manual: false
   run:
-    command: go test ./internal/ui/ -run TestGetSessionContentWithLive_KeepsStoredIDWhenLiveEmpty
-      -race -count=1 -v
+    command: go test ./internal/ui/ -run TestGetSessionContentWithLive_KeepsStoredIDWhenLiveEmpty -race -count=1 -v
     expected: pass
 - id: issue-598-refresh-nil-tmux-safe
   added: '2026-04-17'
   task: fix-issue-598
   file: internal/session/instance_test.go
   test_name: TestInstance_RefreshLiveSessionIDs_NoOpWhenTmuxSessionNil
-  purpose: RefreshLiveSessionIDs must be a safe no-op when tmuxSession is nil
-    so callers can invoke it unconditionally. Pins the safety contract.
+  purpose: RefreshLiveSessionIDs must be a safe no-op when tmuxSession is nil so callers can invoke it unconditionally. Pins the safety contract.
   source: .planning/fix-issue-598/PLAN.md
   manual: false
   run:
-    command: go test ./internal/session/ -run TestInstance_RefreshLiveSessionIDs_NoOpWhenTmuxSessionNil
-      -race -count=1 -v
+    command: go test ./internal/session/ -run TestInstance_RefreshLiveSessionIDs_NoOpWhenTmuxSessionNil -race -count=1 -v
     expected: pass
 - id: issue-618-iterm-clearscrollback-constant
   added: '2026-04-17'
   task: fix-issue-618
   file: internal/tmux/pty_test.go
   test_name: TestITermClearScrollback_ConstantContents
-  purpose: Guard the iTerm2-specific OSC 1337 ClearScrollback constant. If the
-    constant drifts (typo, wrong terminator, accidental deletion), iTerm2 3.6.x
-    users regress to cross-session scrollback bleedover (#618 = regression of #419).
+  purpose: Guard the iTerm2-specific OSC 1337 ClearScrollback constant. If the constant drifts (typo, wrong terminator, accidental deletion), iTerm2 3.6.x users regress to cross-session scrollback bleedover (#618 = regression of [#419]).
   source: .planning/fix-issue-618/PLAN.md
   manual: false
   run:
-    command: go test ./internal/tmux/ -run TestITermClearScrollback_ConstantContents
-      -race -count=1 -v
+    command: go test ./internal/tmux/ -run TestITermClearScrollback_ConstantContents -race -count=1 -v
     expected: pass
 - id: issue-618-emit-scrollback-clear-both-escapes
   added: '2026-04-17'
   task: fix-issue-618
   file: internal/tmux/pty_test.go
   test_name: TestEmitScrollbackClear_IncludesBothEscapes
-  purpose: Parallel-paths guard. Both Attach() entry and cleanupAttach() on
-    detach route through emitScrollbackClear(); this test asserts the helper
-    emits BOTH the generic CSI 3 J escape AND the iTerm2-specific OSC 1337
-    ClearScrollback escape in the correct order (CSI first, OSC second).
-    Prevents silent drift between the two boundaries.
+  purpose: Parallel-paths guard. Both Attach() entry and cleanupAttach() on detach route through emitScrollbackClear(); this test asserts the helper emits BOTH the generic CSI 3 J escape AND the iTerm2-specific OSC 1337 ClearScrollback escape in the correct order (CSI first, OSC second). Prevents silent drift between the two boundaries.
   source: .planning/fix-issue-618/PLAN.md
   manual: false
   run:
-    command: go test ./internal/tmux/ -run TestEmitScrollbackClear_IncludesBothEscapes
-      -race -count=1 -v
+    command: go test ./internal/tmux/ -run TestEmitScrollbackClear_IncludesBothEscapes -race -count=1 -v
     expected: pass
 - id: issue-618-cleanup-attach-emits-iterm-osc1337
   added: '2026-04-17'
   task: fix-issue-618
   file: internal/tmux/pty_test.go
   test_name: TestCleanupAttach_EmitsITermClearScrollback
-  purpose: Live-boundary regression. Detach path (Ctrl+Q) must emit OSC 1337
-    ClearScrollback on stdout so iTerm2 3.6.x actually clears its scrollback
-    (#618). TTY-gated — skips on CI without a terminal.
+  purpose: "Live-boundary regression. Detach path (Ctrl+Q) must emit OSC 1337 ClearScrollback on stdout so iTerm2 3.6.x actually clears its scrollback (#618). TTY-gated \u2014 skips on CI without a terminal."
   source: .planning/fix-issue-618/PLAN.md
   manual: false
   run:
-    command: go test ./internal/tmux/ -run TestCleanupAttach_EmitsITermClearScrollback
-      -race -count=1 -v
+    command: go test ./internal/tmux/ -run TestCleanupAttach_EmitsITermClearScrollback -race -count=1 -v
     expected: pass
 - id: issue-601-prepare-command-applies-wrapper-before-bash-wrap
   added: '2026-04-17'
   task: fix-issue-601
   file: internal/session/instance_test.go
   test_name: TestPrepareCommand_AppliesWrapperBeforeBashWrap
-  purpose: prepareCommand must apply the user wrapper BEFORE the bash -c wrap
-    so trailing args in a "{command} --flag1 --flag2" template land INSIDE the
-    bash -c single-quoted payload. The reversed order dropped flags by turning
-    them into bash positional parameters ($0, $1, ...).
+  purpose: prepareCommand must apply the user wrapper BEFORE the bash -c wrap so trailing args in a "{command} --flag1 --flag2" template land INSIDE the bash -c single-quoted payload. The reversed order dropped flags by turning them into bash positional parameters ($0, $1, ...).
   source: .planning/fix-issue-601/PLAN.md
   manual: false
   run:
-    command: go test ./internal/session/ -run TestPrepareCommand_AppliesWrapperBeforeBashWrap
-      -race -count=1 -v
+    command: go test ./internal/session/ -run TestPrepareCommand_AppliesWrapperBeforeBashWrap -race -count=1 -v
     expected: pass
 - id: issue-601-prepare-command-reporter-repro
   added: '2026-04-17'
   task: fix-issue-601
   file: internal/session/instance_test.go
   test_name: TestPrepareCommand_Issue601_ReporterRepro
-  purpose: Mirrors the reporter's exact scenario — claude-compatible wrapper +
-    --session-id + --dangerously-skip-permissions. Asserts flags survive the
-    wrap/substitute chain to the tmux.Start boundary.
+  purpose: "Mirrors the reporter's exact scenario \u2014 claude-compatible wrapper + --session-id + --dangerously-skip-permissions. Asserts flags survive the wrap/substitute chain to the tmux.Start boundary."
   source: .planning/fix-issue-601/PLAN.md
   manual: false
   run:
-    command: go test ./internal/session/ -run TestPrepareCommand_Issue601_ReporterRepro
-      -race -count=1 -v
+    command: go test ./internal/session/ -run TestPrepareCommand_Issue601_ReporterRepro -race -count=1 -v
     expected: pass
 - id: issue-601-prepare-command-quoting-safe
   added: '2026-04-17'
   task: fix-issue-601
   file: internal/session/instance_test.go
   test_name: TestPrepareCommand_WrapperWithSingleQuoteInCmd_QuotesSafely
-  purpose: "After the reorder, a single quote inside the fully-substituted wrapped string must still be escaped via the POSIX close/dq/open (close-quote, double-quoted-squote, reopen-quote) pattern used by prepareCommand."
+  purpose: After the reorder, a single quote inside the fully-substituted wrapped string must still be escaped via the POSIX close/dq/open (close-quote, double-quoted-squote, reopen-quote) pattern used by prepareCommand.
   source: .planning/fix-issue-601/PLAN.md
   manual: false
   run:
-    command: go test ./internal/session/ -run TestPrepareCommand_WrapperWithSingleQuoteInCmd_QuotesSafely
-      -race -count=1 -v
+    command: go test ./internal/session/ -run TestPrepareCommand_WrapperWithSingleQuoteInCmd_QuotesSafely -race -count=1 -v
     expected: pass
 - id: issue-601-prepare-command-no-wrapper-unchanged
   added: '2026-04-17'
   task: fix-issue-601
   file: internal/session/instance_test.go
   test_name: TestPrepareCommand_NoWrapper_Unchanged
-  purpose: Guard against the reorder breaking the no-wrapper path — when no
-    wrapper is configured, prepareCommand must return cmd unchanged.
+  purpose: "Guard against the reorder breaking the no-wrapper path \u2014 when no wrapper is configured, prepareCommand must return cmd unchanged."
   source: .planning/fix-issue-601/PLAN.md
   manual: false
   run:
-    command: go test ./internal/session/ -run TestPrepareCommand_NoWrapper_Unchanged
-      -race -count=1 -v
+    command: go test ./internal/session/ -run TestPrepareCommand_NoWrapper_Unchanged -race -count=1 -v
     expected: pass
 - id: issue-601-cli-folds-extras-into-wrapper
   added: '2026-04-17'
   task: fix-issue-601
   file: cmd/agent-deck/launch_cmd_test.go
   test_name: TestLaunch_ToolWithFlags_FoldsExtrasIntoWrapper
-  purpose: CLI-parse boundary regression — resolveSessionCommand must fold EVERY
-    extra arg of a recognized tool into the wrapper template as "{command} <extras>".
-    Paired with the session-layer TestPrepareCommand_Issue601_ReporterRepro,
-    this pins both ends of the #601 data flow.
+  purpose: "CLI-parse boundary regression \u2014 resolveSessionCommand must fold EVERY extra arg of a recognized tool into the wrapper template as \"{command} <extras>\". Paired with the session-layer TestPrepareCommand_Issue601_ReporterRepro, this pins both ends of the [#601] data flow."
   source: .planning/fix-issue-601/PLAN.md
   manual: false
   run:
-    command: go test ./cmd/agent-deck/ -run TestLaunch_ToolWithFlags_FoldsExtrasIntoWrapper
-      -race -count=1 -v
+    command: go test ./cmd/agent-deck/ -run TestLaunch_ToolWithFlags_FoldsExtrasIntoWrapper -race -count=1 -v
     expected: pass
 - id: issue-601-cli-session-id-preserved
   added: '2026-04-17'
   task: fix-issue-601
   file: cmd/agent-deck/launch_cmd_test.go
   test_name: TestLaunch_ToolWithSessionIdFlag_IsPreserved
-  purpose: Narrower #601 symptom — --session-id must survive CLI parse for
-    claude-compatible wrappers, unblocking deterministic session IDs and JSONL
-    file resolution.
+  purpose: "Narrower [#601] symptom \u2014 --session-id must survive CLI parse for claude-compatible wrappers, unblocking deterministic session IDs and JSONL file resolution."
   source: .planning/fix-issue-601/PLAN.md
   manual: false
   run:
-    command: go test ./cmd/agent-deck/ -run TestLaunch_ToolWithSessionIdFlag_IsPreserved
-      -race -count=1 -v
+    command: go test ./cmd/agent-deck/ -run TestLaunch_ToolWithSessionIdFlag_IsPreserved -race -count=1 -v
+    expected: pass
+- id: v1716-manifest-yaml-valid
+  added: '2026-04-17'
+  task: v1716-cleanup
+  file: internal/releasetests/manifest_test.go
+  test_name: TestManifestIsValidYAML
+  purpose: YAML validity gate. .claude/release-tests.yaml must be loadable by gopkg.in/yaml.v3 (strict YAML 1.2). Guards against inline issue-NNN comment-truncation foot-gun (verify-today-sprint REPORT F2, introduced by 4b49e6d).
+  source: .planning/v1716-cleanup/PLAN.md
+  manual: false
+  run:
+    command: go test ./internal/releasetests/ -run TestManifestIsValidYAML -count=1 -v
+    expected: pass
+- id: v1716-manifest-source-drift
+  added: '2026-04-17'
+  task: v1716-cleanup
+  file: internal/releasetests/manifest_test.go
+  test_name: TestManifestReferencesExistInSource
+  purpose: Manifest/source drift guard. Every non-manual release-tests.yaml entry's (file, test_name) pair must resolve in source. Catches rebase-silent-deletion of peer regression tests (verify-today-sprint REPORT F1; PR 640 dropped two issue-598 tests).
+  source: .planning/v1716-cleanup/PLAN.md
+  manual: false
+  run:
+    command: go test ./internal/releasetests/ -run TestManifestReferencesExistInSource -count=1 -v
+    expected: pass
+- id: v1716-tmux-bootstrap-session
+  added: '2026-04-17'
+  task: v1716-cleanup
+  file: internal/session/testmain_test.go
+  test_name: TestTmuxBootstrap_ServerIsRunning
+  purpose: Pins that session-package TestMain bootstraps an idle tmux session in the isolated socket, so downstream regression tests (issue-610 CLI parity, issue-618 OSC cleanup) stop silently no-opping on fresh TMUX_TMPDIR (verify-today-sprint REPORT F3).
+  source: .planning/v1716-cleanup/PLAN.md
+  manual: false
+  run:
+    command: go test ./internal/session/ -run TestTmuxBootstrap_ServerIsRunning -race -count=1 -v
+    expected: pass
+- id: v1716-tmux-bootstrap-tmux-pkg
+  added: '2026-04-17'
+  task: v1716-cleanup
+  file: internal/tmux/testmain_test.go
+  test_name: TestTmuxBootstrap_ServerIsRunning
+  purpose: Parallel-paths guard for the tmux package variant of the bootstrap. Pins issue-618 cleanup-attach OSC test and siblings actively run on isolated sockets.
+  source: .planning/v1716-cleanup/PLAN.md
+  manual: false
+  run:
+    command: go test ./internal/tmux/ -run TestTmuxBootstrap_ServerIsRunning -race -count=1 -v
     expected: pass

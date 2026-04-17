@@ -1,25 +1,97 @@
 package session
 
 import (
+	"fmt"
 	"os"
 	"os/exec"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/asheshgoplani/agent-deck/internal/testutil"
 )
 
-// skipIfNoTmuxServer skips the test if tmux binary is missing or server isn't running.
-// This prevents test failures in CI environments where tmux is installed but no server runs.
-func skipIfNoTmuxServer(t *testing.T) {
+// bootstrapSessionName is the idle tmux session kept alive for the lifetime
+// of this test binary so skipIfNoTmuxBinary never silently no-ops tests that
+// expect `tmux list-sessions` to succeed. See .planning/v1716-cleanup/PLAN.md
+// concern 3 and .planning/verify-today-sprint/REPORT.md F3.
+const bootstrapSessionName = "agent-deck-test-bootstrap"
+
+// skipIfNoTmuxBinary skips the test only when the tmux binary is absent from
+// PATH. Historically this was skipIfNoTmuxServer which ALSO skipped when
+// `tmux list-sessions` failed -- that silently dropped regression coverage
+// in isolated TMUX_TMPDIR environments (fresh socket, no server).
+// TestMain now bootstraps a server in the isolated socket, so the server
+// check is no longer necessary.
+func skipIfNoTmuxBinary(t *testing.T) {
 	t.Helper()
 	if _, err := exec.LookPath("tmux"); err != nil {
 		t.Skip("tmux not available")
 	}
-	// Check if tmux server is running by trying to list sessions
-	if err := exec.Command("tmux", "list-sessions").Run(); err != nil {
-		t.Skip("tmux server not running")
+}
+
+// skipIfNoTmuxServer is kept as a thin alias for skipIfNoTmuxBinary so that
+// historical test files still compile. New tests should call
+// skipIfNoTmuxBinary directly. The behavioural change is intentional and
+// tracked by TestPersistence_* + TestTmuxBootstrap_ServerIsRunning.
+func skipIfNoTmuxServer(t *testing.T) {
+	t.Helper()
+	skipIfNoTmuxBinary(t)
+}
+
+// skipIfClaudePaneUnreliable skips when a claude pane launched via
+// inst.Start() cannot be kept alive long enough to run tmux
+// set-environment / get-environment. inst.Start() builds a command like
+// `claude --session-id UUID --dangerously-skip-permissions` which exits
+// immediately in most test environments (no such session id on disk).
+//
+// Before v1.7.16 the tests that call inst.Start() + SetEnvironment
+// skipped implicitly because skipIfNoTmuxServer + isolated TMUX_TMPDIR
+// returned no sessions. Now that TestMain bootstraps a server, the
+// implicit gate is gone. Making the skip explicit keeps the pre-existing
+// behaviour without pretending these tests run. Fixing the tests to use
+// a manually-constructed long-lived tmux session (rather than
+// inst.Start()) is tracked as a follow-up — out of scope for v1.7.16.
+func skipIfClaudePaneUnreliable(t *testing.T) {
+	t.Helper()
+	if _, err := exec.LookPath("claude"); err != nil {
+		t.Skip("claude binary not available (test requires a live claude pane)")
 	}
+	// Probe by spawning an Instance exactly the way each test does, then
+	// checking if the pane stays alive for a short settle. If it dies, the
+	// real test can't run either. This exactly mirrors buildClaudeCommand
+	// and prepareCommand shape — the probe result matches reality.
+	probe := NewInstanceWithTool("agent-deck-probe-inst", t.TempDir(), "claude")
+	if err := probe.Start(); err != nil {
+		t.Skipf("probe Start failed in this env: %v", err)
+	}
+	// Poll for pane death over a generous window. Claude's "fast exit"
+	// timing varies with system load and whether earlier tests left
+	// state in ~/.claude; a single 400ms sample was flaky under the
+	// full test suite (2/5 false-positives observed).
+	deadline := time.Now().Add(2 * time.Second)
+	alive := true
+	for time.Now().Before(deadline) {
+		time.Sleep(200 * time.Millisecond)
+		ps := probe.GetTmuxSession()
+		if ps == nil || !ps.Exists() || ps.IsPaneDead() {
+			alive = false
+			break
+		}
+	}
+	_ = probe.Kill()
+	if !alive {
+		t.Skip("claude pane died shortly after Start() in this environment (no claude auth/config, fast-exit on flags, etc.)")
+	}
+}
+
+// skipIfNoClaudeBinary is the alias name older call sites use. Kept so
+// the 5 platform-test sites compile; semantics are now
+// skipIfClaudePaneUnreliable (probe for stay-alive, not just PATH
+// presence).
+func skipIfNoClaudeBinary(t *testing.T) {
+	t.Helper()
+	skipIfClaudePaneUnreliable(t)
 }
 
 func TestMain(m *testing.M) {
@@ -34,6 +106,15 @@ func TestMain(m *testing.M) {
 	// See internal/testutil/tmuxenv.go for the full postmortem.
 	cleanupTmux := testutil.IsolateTmuxSocket()
 	defer cleanupTmux()
+
+	// Bootstrap an idle detached tmux session in the isolated socket so
+	// `tmux list-sessions` succeeds for the lifetime of the test binary.
+	// Without this, regression tests that depend on a running tmux server
+	// (e.g. #610 CLI parity, #618 OSC cleanup) silently SKIP on cold-boot
+	// local runs and pass only when an earlier test happened to start one.
+	// See .planning/v1716-cleanup/PLAN.md concern 3.
+	cleanupBootstrap := bootstrapTmuxServer()
+	defer cleanupBootstrap()
 
 	// Force test profile to prevent production data corruption
 	// See CLAUDE.md: "2025-12-11 Incident: Tests with AGENTDECK_PROFILE=work overwrote ALL 36 production sessions"
@@ -66,5 +147,41 @@ func cleanupTestSessions() {
 		if strings.Contains(sess, "Test-Skip-Regen") {
 			_ = exec.Command("tmux", "kill-session", "-t", sess).Run()
 		}
+	}
+}
+
+// bootstrapTmuxServer starts a detached no-op tmux session in the currently
+// isolated socket and returns a cleanup that kills the server at test-suite
+// exit. If tmux is not installed, it's a no-op and tests simply skip via
+// skipIfNoTmuxBinary. Any start error is printed (not fatal) so environments
+// without tmux can still run non-tmux tests.
+func bootstrapTmuxServer() func() {
+	if _, err := exec.LookPath("tmux"); err != nil {
+		return func() {}
+	}
+	cmd := exec.Command("tmux", "new-session", "-d", "-s", bootstrapSessionName, "sh", "-c", "sleep 3600")
+	if out, err := cmd.CombinedOutput(); err != nil {
+		fmt.Fprintf(os.Stderr, "bootstrapTmuxServer: new-session failed: %v (%s)\n", err, strings.TrimSpace(string(out)))
+		return func() {}
+	}
+	return func() {
+		_ = exec.Command("tmux", "kill-server").Run()
+	}
+}
+
+// TestTmuxBootstrap_ServerIsRunning pins that TestMain started a tmux server
+// in the isolated socket so downstream tests no longer silent-skip on fresh
+// TMUX_TMPDIR runs. Required regression guard for F3 of the sprint report.
+func TestTmuxBootstrap_ServerIsRunning(t *testing.T) {
+	skipIfNoTmuxBinary(t)
+	if err := exec.Command("tmux", "list-sessions").Run(); err != nil {
+		t.Fatalf("tmux list-sessions failed after bootstrap: %v", err)
+	}
+	out, err := exec.Command("tmux", "list-sessions", "-F", "#{session_name}").Output()
+	if err != nil {
+		t.Fatalf("list-sessions -F: %v", err)
+	}
+	if !strings.Contains(string(out), bootstrapSessionName) {
+		t.Fatalf("bootstrap session %q not present; got: %s", bootstrapSessionName, string(out))
 	}
 }
