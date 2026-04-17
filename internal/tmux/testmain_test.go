@@ -5,6 +5,8 @@ import (
 	"os/exec"
 	"strings"
 	"testing"
+
+	"github.com/asheshgoplani/agent-deck/internal/testutil"
 )
 
 // skipIfNoTmuxServer skips the test if tmux binary is missing or server isn't running.
@@ -24,6 +26,15 @@ func skipIfNoTmuxServer(t *testing.T) {
 // accidental modification of production data.
 // CRITICAL: This was missing and caused test data to overwrite production sessions!
 func TestMain(m *testing.M) {
+	// Isolate the tmux socket. Without this, `tmux new-session` / `list-sessions` /
+	// `kill-session` calls in test setup & cleanup hit the user's default
+	// /tmp/tmux-<uid>/default socket — destabilizing their live sessions.
+	// 2026-04-17 incident: go test ./... killed every session in the personal
+	// profile when a maintainer ran tests during PR review.
+	// See internal/testutil/tmuxenv.go for the full postmortem.
+	cleanupTmux := testutil.IsolateTmuxSocket()
+	defer cleanupTmux()
+
 	// Force _test profile for all tests in this package
 	os.Setenv("AGENTDECK_PROFILE", "_test")
 

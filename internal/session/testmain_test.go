@@ -27,6 +27,14 @@ func TestMain(m *testing.M) {
 	// commands operate on their temp repos instead of the real repository.
 	testutil.UnsetGitRepoEnv()
 
+	// Isolate the tmux socket. Without this, tests spawn tmux sessions on the
+	// user's default socket and destabilize live agent-deck sessions.
+	// 2026-04-17 incident: go test ./... killed every session in the personal
+	// profile when a maintainer ran tests during PR review.
+	// See internal/testutil/tmuxenv.go for the full postmortem.
+	cleanupTmux := testutil.IsolateTmuxSocket()
+	defer cleanupTmux()
+
 	// Force test profile to prevent production data corruption
 	// See CLAUDE.md: "2025-12-11 Incident: Tests with AGENTDECK_PROFILE=work overwrote ALL 36 production sessions"
 	os.Setenv("AGENTDECK_PROFILE", "_test")
