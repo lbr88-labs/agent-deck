@@ -77,6 +77,138 @@ func TestLoadSkillSources_DefaultsWhenMissing(t *testing.T) {
 	}
 }
 
+func TestExpandSkillPath_DollarHome(t *testing.T) {
+	homeDir, cleanup := setupSkillTestEnv(t)
+	defer cleanup()
+
+	got := expandSkillPath("$HOME/.agent-deck/skills/pool")
+	want := filepath.Join(homeDir, ".agent-deck", "skills", "pool")
+	if got != want {
+		t.Fatalf("expandSkillPath($HOME/...) = %q, want %q", got, want)
+	}
+}
+
+func TestExpandSkillPath_BracedDollarHome(t *testing.T) {
+	homeDir, cleanup := setupSkillTestEnv(t)
+	defer cleanup()
+
+	got := expandSkillPath("${HOME}/foo")
+	want := filepath.Join(homeDir, "foo")
+	if got != want {
+		t.Fatalf("expandSkillPath(${HOME}/foo) = %q, want %q", got, want)
+	}
+}
+
+func TestExpandSkillPath_BareDollarHome(t *testing.T) {
+	homeDir, cleanup := setupSkillTestEnv(t)
+	defer cleanup()
+
+	if got := expandSkillPath("$HOME"); got != homeDir {
+		t.Fatalf("expandSkillPath($HOME) = %q, want %q", got, homeDir)
+	}
+	if got := expandSkillPath("${HOME}"); got != homeDir {
+		t.Fatalf("expandSkillPath(${HOME}) = %q, want %q", got, homeDir)
+	}
+}
+
+func TestExpandSkillPath_DollarHomeSubstringPreserved(t *testing.T) {
+	_, cleanup := setupSkillTestEnv(t)
+	defer cleanup()
+
+	// $HOMEBREW must NOT match $HOME — env var name is HOMEBREW, not HOME.
+	got := expandSkillPath("/etc/$HOMEBREW/foo")
+	want := filepath.Clean("/etc/$HOMEBREW/foo")
+	if got != want {
+		t.Fatalf("expandSkillPath(/etc/$HOMEBREW/foo) = %q, want %q", got, want)
+	}
+}
+
+func TestExpandSkillPath_UnknownEnvVarPreserved(t *testing.T) {
+	_, cleanup := setupSkillTestEnv(t)
+	defer cleanup()
+
+	// Only $HOME is expanded. Other env refs pass through verbatim so sources.toml
+	// does not silently inherit arbitrary process environment into config paths.
+	got := expandSkillPath("$USER/foo")
+	want := filepath.Clean("$USER/foo")
+	if got != want {
+		t.Fatalf("expandSkillPath($USER/foo) = %q, want %q", got, want)
+	}
+}
+
+func TestLoadSkillSources_ExpandsDollarHomeOnLoad(t *testing.T) {
+	homeDir, cleanup := setupSkillTestEnv(t)
+	defer cleanup()
+
+	sourcesPath, err := GetSkillSourcesPath()
+	if err != nil {
+		t.Fatalf("GetSkillSourcesPath failed: %v", err)
+	}
+	if err := os.MkdirAll(filepath.Dir(sourcesPath), 0o700); err != nil {
+		t.Fatalf("failed to create sources dir: %v", err)
+	}
+
+	toml := "[sources.pool]\n" +
+		`path = "$HOME/.agent-deck/skills/pool"` + "\n" +
+		`description = "sync-from-mac"` + "\n" +
+		"enabled = true\n"
+	if err := os.WriteFile(sourcesPath, []byte(toml), 0o600); err != nil {
+		t.Fatalf("failed to write sources.toml: %v", err)
+	}
+
+	sources, err := LoadSkillSources()
+	if err != nil {
+		t.Fatalf("LoadSkillSources failed: %v", err)
+	}
+
+	pool, ok := sources["pool"]
+	if !ok {
+		t.Fatalf("expected pool source in sources map")
+	}
+	want := filepath.Join(homeDir, ".agent-deck", "skills", "pool")
+	if pool.Path != want {
+		t.Fatalf("pool.Path = %q, want %q (was $HOME expanded on load?)", pool.Path, want)
+	}
+}
+
+func TestLoadSkillSources_DiscoversSkillsViaDollarHome(t *testing.T) {
+	homeDir, cleanup := setupSkillTestEnv(t)
+	defer cleanup()
+
+	poolRoot := filepath.Join(homeDir, ".agent-deck", "skills", "pool")
+	writeSkillDir(t, poolRoot, "demo", "demo", "Demo skill for #617 repro")
+
+	sourcesPath, err := GetSkillSourcesPath()
+	if err != nil {
+		t.Fatalf("GetSkillSourcesPath failed: %v", err)
+	}
+	if err := os.MkdirAll(filepath.Dir(sourcesPath), 0o700); err != nil {
+		t.Fatalf("failed to create sources dir: %v", err)
+	}
+	toml := "[sources.pool]\n" +
+		`path = "$HOME/.agent-deck/skills/pool"` + "\n" +
+		"enabled = true\n"
+	if err := os.WriteFile(sourcesPath, []byte(toml), 0o600); err != nil {
+		t.Fatalf("failed to write sources.toml: %v", err)
+	}
+
+	candidates, err := ListAvailableSkills()
+	if err != nil {
+		t.Fatalf("ListAvailableSkills failed: %v", err)
+	}
+
+	found := false
+	for _, c := range candidates {
+		if c.Source == "pool" && c.Name == "demo" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected to discover pool/demo via $HOME expansion; got %d candidates: %+v", len(candidates), candidates)
+	}
+}
+
 func TestAddAndRemoveSkillSource(t *testing.T) {
 	_, cleanup := setupSkillTestEnv(t)
 	defer cleanup()
