@@ -1511,6 +1511,31 @@ func sendWithRetry(tmuxSess *tmux.Session, message string, skipVerify bool) erro
 	})
 }
 
+// noWaitSendOptions returns the verification-loop options used by the
+// `session send --no-wait` path.
+//
+// STUB (issue #616 RED): returns the pre-fix behavior so the regression
+// tests for issue #616 fail on main. Real values land in the Phase 5 fix.
+func noWaitSendOptions() sendRetryOptions {
+	return sendRetryOptions{
+		maxRetries:     8,
+		checkDelay:     150 * time.Millisecond,
+		maxFullResends: -1,
+	}
+}
+
+// awaitComposerReadyBestEffort polls the pane until the Claude composer
+// prompt appears, or returns false after maxWait.
+//
+// STUB (issue #616 RED): returns false immediately without polling. Real
+// implementation lands in the Phase 5 fix.
+func awaitComposerReadyBestEffort(target sendRetryTarget, maxWait, pollInterval time.Duration) bool {
+	_ = target
+	_ = maxWait
+	_ = pollInterval
+	return false
+}
+
 type sendRetryTarget interface {
 	SendKeysAndEnter(string) error
 	GetStatus() (string, error)

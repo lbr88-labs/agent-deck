@@ -460,6 +460,131 @@ func TestSendWithRetryTarget_FullResendMaxLimit(t *testing.T) {
 	}
 }
 
+// --- Issue #616 regression tests ---------------------------------------
+//
+// Bug: `session send --no-wait` on a freshly-launched Claude session can
+// exit the verification loop on `activeChecks>=2` (status="active" from
+// startup animations) BEFORE Claude's composer has rendered. By the time
+// the composer shows the still-unsent message, the loop has already
+// returned "success" — leaving the prompt typed-but-not-submitted.
+//
+// Fix: preflight readiness barrier (capped) + extended verification
+// budget in `noWaitSendOptions`. Tests verify both.
+// -----------------------------------------------------------------------
+
+// TestSendWithRetryTarget_NoWait_ReEntersWhenComposerRendersLate simulates
+// the #616 race: Claude reports "active" (loading) while the composer is
+// blank, then the composer renders with the unsent message once loading
+// finishes. The current --no-wait options (maxRetries=8) return success
+// on `activeChecks>=2` well before the composer renders.
+//
+// RED on main (v1.7.9): SendEnter fires 0 times.
+// GREEN after fix (v1.7.10): SendEnter fires ≥1 time because
+// `noWaitSendOptions()` has a large enough retry budget to reach the
+// iterations where the composer is visible.
+func TestSendWithRetryTarget_NoWait_ReEntersWhenComposerRendersLate(t *testing.T) {
+	// 5 iterations of (status=active, pane="") simulate Claude TUI startup.
+	// After that, composer renders with the unsent message at status="waiting".
+	const lateRenderAt = 5
+	n := 12
+	statuses := make([]string, n)
+	panes := make([]string, n)
+	for i := 0; i < lateRenderAt; i++ {
+		statuses[i] = "active"
+		panes[i] = ""
+	}
+	for i := lateRenderAt; i < n; i++ {
+		statuses[i] = "waiting"
+		panes[i] = "❯ TEST_MSG_616"
+	}
+	mock := &mockSendRetryTarget{statuses: statuses, panes: panes}
+
+	// Use production --no-wait options (with checkDelay=0 for fast tests).
+	opts := noWaitSendOptions()
+	opts.checkDelay = 0
+	err := sendWithRetryTarget(mock, "TEST_MSG_616", false, opts)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if got := atomic.LoadInt32(&mock.sendEnterCalls); got == 0 {
+		t.Fatalf("issue #616 regression: --no-wait verification window too "+
+			"short — returned before the composer rendered with the unsent "+
+			"message, so no re-Enter fired (SendEnter calls = %d, expected ≥1)", got)
+	}
+}
+
+// TestSendWithRetryTarget_NoWait_BudgetSpansRealisticClaudeStartup asserts
+// that `noWaitSendOptions()` has enough retries to cover ~5+ seconds of
+// Claude startup. Guard against silent budget shrinkage in future refactors.
+func TestSendWithRetryTarget_NoWait_BudgetSpansRealisticClaudeStartup(t *testing.T) {
+	opts := noWaitSendOptions()
+	total := time.Duration(opts.maxRetries) * opts.checkDelay
+	if total < 4*time.Second {
+		t.Fatalf("--no-wait verification budget too short to span Claude "+
+			"startup: %v (need ≥4s). Issue #616 repro window is 5-40s.", total)
+	}
+	if opts.maxFullResends >= 0 {
+		t.Fatalf("--no-wait must have maxFullResends=-1 to preserve #479 "+
+			"(double-send regression), got %d", opts.maxFullResends)
+	}
+}
+
+// TestAwaitComposerReadyBestEffort_ReturnsTrueWhenComposerAppears verifies
+// the new preflight barrier detects the Claude composer prompt appearing
+// within the cap.
+func TestAwaitComposerReadyBestEffort_ReturnsTrueWhenComposerAppears(t *testing.T) {
+	// 3 empty polls, then composer.
+	mock := &mockSendRetryTarget{
+		panes: []string{"", "", "", "❯ ", "❯ "},
+	}
+	ok := awaitComposerReadyBestEffort(mock, 2*time.Second, 10*time.Millisecond)
+	if !ok {
+		t.Fatal("expected true when composer appears within cap")
+	}
+}
+
+// TestAwaitComposerReadyBestEffort_CappedAtMaxWait verifies the preflight
+// barrier respects the cap and does NOT block --no-wait indefinitely if
+// Claude never gets ready (e.g. the session is broken).
+func TestAwaitComposerReadyBestEffort_CappedAtMaxWait(t *testing.T) {
+	panes := make([]string, 100)
+	for i := range panes {
+		panes[i] = "loading..."
+	}
+	mock := &mockSendRetryTarget{panes: panes}
+
+	const maxWait = 300 * time.Millisecond
+	start := time.Now()
+	ok := awaitComposerReadyBestEffort(mock, maxWait, 25*time.Millisecond)
+	elapsed := time.Since(start)
+
+	if ok {
+		t.Fatal("expected false when composer never appears")
+	}
+	if elapsed < maxWait || elapsed > maxWait+200*time.Millisecond {
+		t.Fatalf("expected barrier to return at ~%v, got %v", maxWait, elapsed)
+	}
+}
+
+// TestAwaitComposerReadyBestEffort_ImmediateReturnWhenAlreadyReady verifies
+// that warm sessions pay near-zero latency for the preflight barrier.
+func TestAwaitComposerReadyBestEffort_ImmediateReturnWhenAlreadyReady(t *testing.T) {
+	mock := &mockSendRetryTarget{
+		panes: []string{"❯ "}, // already ready on first poll
+	}
+	start := time.Now()
+	ok := awaitComposerReadyBestEffort(mock, 2*time.Second, 50*time.Millisecond)
+	elapsed := time.Since(start)
+
+	if !ok {
+		t.Fatal("expected true when composer visible on first poll")
+	}
+	if elapsed > 100*time.Millisecond {
+		t.Fatalf("expected near-zero latency on warm session, got %v", elapsed)
+	}
+}
+
 func TestSendWithRetryTarget_NoWaitDoesNotResend(t *testing.T) {
 	// Regression test for issue #479: --no-wait sends message twice.
 	// When maxFullResends is negative (disabled), the verification loop
