@@ -1766,6 +1766,14 @@ func handleRemove(profile string, args []string) {
 		}
 	}
 
+	// v1.7.21+: if this session was spawned via LaunchAs=service, the
+	// transient systemd-user service unit survives a plain `tmux
+	// kill-server` (Restart=on-failure would respawn it). Best-effort
+	// stop + reset-failed the unit here so `agent-deck remove` is truly
+	// terminal. No-op on non-service-mode sessions and on non-systemd
+	// hosts.
+	_ = inst.StopServiceUnit()
+
 	// Clean up worktree directory if this is a worktree session
 	if inst.IsWorktree() {
 		if err := git.RemoveWorktree(inst.WorktreeRepoRoot, inst.WorktreePath, false); err != nil {

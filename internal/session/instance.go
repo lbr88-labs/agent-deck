@@ -2096,6 +2096,7 @@ func (i *Instance) Start() error {
 	i.tmuxSession.OptionOverrides = i.buildTmuxOptionOverrides()
 	i.tmuxSession.RunCommandAsInitialProcess = i.IsSandboxed() || i.Tool != "shell"
 	i.tmuxSession.LaunchInUserScope = GetTmuxSettings().GetLaunchInUserScope()
+	i.tmuxSession.LaunchAs = GetTmuxSettings().GetLaunchAs()
 
 	// Start the tmux session
 	if err := i.tmuxSession.Start(command); err != nil {
@@ -2248,6 +2249,7 @@ func (i *Instance) StartWithMessage(message string) error {
 	i.tmuxSession.OptionOverrides = i.buildTmuxOptionOverrides()
 	i.tmuxSession.RunCommandAsInitialProcess = i.IsSandboxed() || i.Tool != "shell"
 	i.tmuxSession.LaunchInUserScope = GetTmuxSettings().GetLaunchInUserScope()
+	i.tmuxSession.LaunchAs = GetTmuxSettings().GetLaunchAs()
 
 	// Start the tmux session
 	if err := i.tmuxSession.Start(command); err != nil {
@@ -3999,6 +4001,21 @@ func parseGenericOutput(content, tool string) (*ResponseOutput, error) {
 	}, nil
 }
 
+// StopServiceUnit best-effort stops + resets-failed the transient
+// systemd-user service unit associated with this instance's tmux
+// server (if LaunchAs=service was used). Intended for the remove/delete
+// code path ONLY — NOT for restart, which needs the unit to persist so
+// it can re-spawn tmux.
+//
+// No-ops on non-systemd hosts. Returns nil when the unit doesn't exist
+// or was never started (best-effort semantics per v1.7.21 spec).
+func (i *Instance) StopServiceUnit() error {
+	if i.tmuxSession == nil {
+		return nil
+	}
+	return tmux.StopServiceUnit(i.tmuxSession.Name)
+}
+
 // Kill terminates the tmux session and cleans up sandbox container if present.
 func (i *Instance) Kill() error {
 	// Kill tmux session first, but always continue to container cleanup.
@@ -4331,6 +4348,7 @@ func (i *Instance) Restart() error {
 	i.tmuxSession.OptionOverrides = i.buildTmuxOptionOverrides()
 	i.tmuxSession.RunCommandAsInitialProcess = i.IsSandboxed() || i.Tool != "shell"
 	i.tmuxSession.LaunchInUserScope = GetTmuxSettings().GetLaunchInUserScope()
+	i.tmuxSession.LaunchAs = GetTmuxSettings().GetLaunchAs()
 
 	mcpLog.Debug("restart_starting_new_session", slog.String("command", command))
 
