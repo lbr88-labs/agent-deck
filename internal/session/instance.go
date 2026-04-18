@@ -4110,6 +4110,11 @@ func (i *Instance) Restart() error {
 		// Persist .sid sidecar so hook events after restart can be correlated
 		WriteHookSessionAnchor(i.ID, i.ClaudeSessionID)
 
+		// Issue #666: kill OTHER agentdeck tmux sessions sharing this
+		// Claude session id so two `claude --resume` processes don't
+		// race the same conversation (and stack two telegram pollers).
+		i.sweepDuplicateToolSessions()
+
 		// Re-capture MCPs after restart (they may have changed since session started)
 		i.CaptureLoadedMCPs()
 
@@ -4144,6 +4149,9 @@ func (i *Instance) Restart() error {
 
 		// Persist .sid sidecar so hook events after restart can be correlated
 		WriteHookSessionAnchor(i.ID, i.GeminiSessionID)
+
+		// Issue #666: sweep cross-tmux duplicates on the respawn path too.
+		i.sweepDuplicateToolSessions()
 
 		i.Status = StatusWaiting
 		return nil
@@ -4197,6 +4205,9 @@ func (i *Instance) Restart() error {
 		if i.OpenCodeSessionID != "" {
 			WriteHookSessionAnchor(i.ID, i.OpenCodeSessionID)
 		}
+
+		// Issue #666: sweep cross-tmux duplicates on the respawn path too.
+		i.sweepDuplicateToolSessions()
 
 		i.Status = StatusWaiting
 		return nil
@@ -4256,6 +4267,9 @@ func (i *Instance) Restart() error {
 
 		// Persist .sid sidecar so hook events after restart can be correlated
 		WriteHookSessionAnchor(i.ID, i.CodexSessionID)
+
+		// Issue #666: sweep cross-tmux duplicates on the respawn path too.
+		i.sweepDuplicateToolSessions()
 
 		i.Status = StatusWaiting
 		return nil
