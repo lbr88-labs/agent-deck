@@ -242,19 +242,14 @@ func handleConductorSetup(profile string, args []string) {
 	// v1.7.22: warn on the "global telegram enabled in profile settings.json"
 	// anti-pattern that silently leaks pollers to every claude session under
 	// this profile. We detect but do not auto-mutate settings.json (#658).
-	{
-		cfgDir := ""
-		if config != nil {
-			cfgDir = config.GetProfileClaudeConfigDir(resolvedProfile)
-		}
-		if cfgDir == "" {
-			cfgDir = session.GetClaudeConfigDirForGroup("")
-		}
-		if globalTelegramEnabled, _ := readTelegramGloballyEnabled(cfgDir); globalTelegramEnabled {
-			emitTelegramWarnings(os.Stderr, session.TelegramValidatorInput{
-				GlobalEnabled: true,
-			})
-		}
+	cfgDir := config.GetProfileClaudeConfigDir(resolvedProfile)
+	if cfgDir == "" {
+		cfgDir = session.GetClaudeConfigDirForGroup("")
+	}
+	if globalTelegramEnabled, _ := readTelegramGloballyEnabled(cfgDir); globalTelegramEnabled {
+		emitTelegramWarnings(os.Stderr, session.TelegramValidatorInput{
+			GlobalEnabled: true,
+		})
 	}
 
 	// Step 2: If conductor system not enabled, run first-time setup
