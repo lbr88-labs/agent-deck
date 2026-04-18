@@ -993,3 +993,69 @@ tests:
   run:
     command: go test ./cmd/agent-deck/ -run "TestConductorSetup_WarnsOnGlobalTelegramEnabled|TestConductorSetup_RecommendsEnvFileOverWrapper|TestEmitTelegramWarnings_CleanConfig_Silent" -count=1 -v
     expected: pass
+- id: v1723-history-loss-rebind-rejects-less-data
+  added: '2026-04-18'
+  task: v1723-history-loss-guard
+  file: internal/session/instance_test.go
+  test_name: TestInstance_UpdateHookStatus_RejectsRebindWhenCurrentHasMoreData
+  purpose: 'Issue #661 manifestation 3 — UserPromptSubmit rebind must refuse to replace a rich current session with a sparser candidate. Size-based rejection with lifecycle action=reject reason=candidate_has_less_conversation_data. Stops conductor history loss across restarts.'
+  source: .planning/fix-issue-661/PLAN.md
+  manual: false
+  run:
+    command: go test ./internal/session/ -run TestInstance_UpdateHookStatus_RejectsRebindWhenCurrentHasMoreData -count=1 -race -v
+    expected: pass
+- id: v1723-history-loss-rebind-empty-candidate
+  added: '2026-04-18'
+  task: v1723-history-loss-guard
+  file: internal/session/instance_test.go
+  test_name: TestInstance_UpdateHookStatus_RejectsRebindWhenCurrentHasDataCandidateEmpty
+  purpose: 'Preserves v1.7.7 reject path on the UserPromptSubmit route when candidate jsonl has zero sessionId records. Keeps the weaker guarantee alongside the stronger v1.7.23 guard so both are permanent.'
+  source: .planning/fix-issue-661/PLAN.md
+  manual: false
+  run:
+    command: go test ./internal/session/ -run TestInstance_UpdateHookStatus_RejectsRebindWhenCurrentHasDataCandidateEmpty -count=1 -race -v
+    expected: pass
+- id: v1723-history-loss-rebind-allows-current-empty
+  added: '2026-04-18'
+  task: v1723-history-loss-guard
+  file: internal/session/instance_test.go
+  test_name: TestInstance_UpdateHookStatus_AllowsRebindWhenCurrentIsEmpty
+  purpose: 'Healthy-path guard — when current jsonl has no sessionId records and candidate has data, the first-prompt rebind must proceed. Prevents the v1.7.23 guard from over-rejecting during normal session bring-up.'
+  source: .planning/fix-issue-661/PLAN.md
+  manual: false
+  run:
+    command: go test ./internal/session/ -run TestInstance_UpdateHookStatus_AllowsRebindWhenCurrentIsEmpty -count=1 -race -v
+    expected: pass
+- id: v1723-history-loss-rebind-allows-cold-start
+  added: '2026-04-18'
+  task: v1723-history-loss-guard
+  file: internal/session/instance_test.go
+  test_name: TestInstance_UpdateHookStatus_AllowsRebindWhenCurrentIsUnset
+  purpose: 'Cold start — with i.ClaudeSessionID == "" the first hook binding must be accepted unconditionally. Guards against the v1.7.23 size comparison blocking the very first bind.'
+  source: .planning/fix-issue-661/PLAN.md
+  manual: false
+  run:
+    command: go test ./internal/session/ -run TestInstance_UpdateHookStatus_AllowsRebindWhenCurrentIsUnset -count=1 -race -v
+    expected: pass
+- id: v1723-history-loss-flap-replay
+  added: '2026-04-18'
+  task: v1723-history-loss-guard
+  file: internal/session/instance_test.go
+  test_name: TestInstance_UpdateHookStatus_RejectsBidirectionalFlap
+  purpose: 'Replay of the travel-conductor 3-restart flap from the real lifecycle.jsonl — rich-id is bound first, then three consecutive fresh UUIDs arrive as UserPromptSubmit candidates. ClaudeSessionID must remain the rich one across all three cycles.'
+  source: .planning/fix-issue-661/PLAN.md
+  manual: false
+  run:
+    command: go test ./internal/session/ -run TestInstance_UpdateHookStatus_RejectsBidirectionalFlap -count=1 -race -v
+    expected: pass
+- id: v1723-history-loss-boundary-resume
+  added: '2026-04-18'
+  task: v1723-history-loss-guard
+  file: internal/session/instance_test.go
+  test_name: TestInstance_BuildClaudeResumeCommand_AfterFlap_ResumesRichID
+  purpose: 'Live-runtime-boundary pin — after the flap, the emitted restart command (buildClaudeResumeCommand) must contain --resume <rich-uuid> and never the overwritten fresh UUID. Proves the user-visible fix at the exact layer that regressed.'
+  source: .planning/fix-issue-661/PLAN.md
+  manual: false
+  run:
+    command: go test ./internal/session/ -run TestInstance_BuildClaudeResumeCommand_AfterFlap_ResumesRichID -count=1 -race -v
+    expected: pass
