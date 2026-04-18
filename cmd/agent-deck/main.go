@@ -32,7 +32,7 @@ import (
 	"github.com/asheshgoplani/agent-deck/internal/web"
 )
 
-var Version = "1.7.25" // overridden at build time via -ldflags "-X main.Version=..."
+var Version = "1.7.26" // overridden at build time via -ldflags "-X main.Version=..."
 
 // Table column widths for list command output
 const (
@@ -2702,6 +2702,8 @@ func detectTool(cmd string) string {
 		return "gemini"
 	case strings.Contains(cmd, "codex"):
 		return "codex"
+	case strings.Contains(cmd, "copilot"):
+		return "copilot"
 	case strings.Contains(cmd, "cursor"):
 		return "cursor"
 	default:
