@@ -209,21 +209,19 @@ When you first start (or after a restart):
 - Your own session can be restarted by the bridge if it detects you're in an error state.
 - Keep state.json small (no large output dumps). Store summaries, not full text.
 
-## Telegram Topology (v1.7.23+, supersedes v1.7.22 guidance)
+## Telegram Topology (v1.7.22+)
 
-Each conductor that owns a Telegram bot must follow this topology, or the bot goes silent on the next restart (v1.7.22 told you to disable the plugin globally — that guidance was wrong, see "Topology note" below):
+Each conductor that owns a Telegram bot must follow this topology, or pollers leak and the bot stops responding with 409 Conflict after a few hours:
 
-- **Enable the plugin globally in this profile**: `enabledPlugins."telegram@claude-plugins-official" = true` in the profile's `settings.json`. This is how the plugin actually loads into the claude process.
-- **Subscribe per-session via `--channels`**: set `channels = ["plugin:telegram@claude-plugins-official"]` on this conductor's agent-deck record (via `agent-deck session set <conductor> channels ...`). The plugin is loaded once in the process; `--channels` wires the subscription for whichever session owns the bot's channel.
+- **Activate per-session only**: set `channels = ["plugin:telegram@claude-plugins-official"]` on this conductor's agent-deck record (via `agent-deck session set <conductor> channels ...`).
 - **Inject `TELEGRAM_STATE_DIR` via `env_file`**: in `~/.agent-deck/config.toml`, set `[conductors.{PROFILE}.claude].env_file = "~/.agent-deck/conductor/{PROFILE}/.envrc"` (and a matching `[groups.{PROFILE}.claude]` block). The `.envrc` file contains a single line: `export TELEGRAM_STATE_DIR=<profile-state-dir>`. Never use a session wrapper (`agent-deck session set <conductor> wrapper "TELEGRAM_STATE_DIR=... {command}"`) — it works on resume but silently fails on fresh-start.
-- **One bot token = one channel-owning session.** Never share tokens across conductors. `getUpdates` is single-consumer per token — the rejected consumer gets a 409 Conflict.
-- **Topology note (why v1.7.22 was reversed)**: `--channels` only SUBSCRIBES a session to a channel; it does not force-load the plugin. So if `enabledPlugins` is false the plugin is never loaded and `--channels` is a silent no-op — this was the exact regression observed on conductor hosts that followed v1.7.22's "disable globally" advice. Always: global ON + per-conductor `--channels` + per-conductor `env_file`.
+- **Keep global telegram disabled**: `enabledPlugins."telegram@claude-plugins-official"` must be absent or `false` in this profile's `settings.json`. If it is `true`, every claude child session loads the plugin, and the conductor loads it twice.
 - **Preflight checklist before expecting messages to flow**:
   1. `channels` persisted on this session (check with `agent-deck -p {PROFILE} list --json | jq ...`).
   2. `env_file` present and readable, containing `export TELEGRAM_STATE_DIR=...`.
-  3. Plugin enabled globally in this profile: `CLAUDE_CONFIG_DIR=<profile-dir> claude plugin list` shows `telegram@claude-plugins-official` as enabled.
+  3. Plugin enabled in this profile: `CLAUDE_CONFIG_DIR=<profile-dir> claude plugin list` shows `telegram@claude-plugins-official` as installed.
   4. No stray pollers: `pgrep -af 'bun.*telegram' | wc -l` equals the number of conductor bots (one per token).
 - **Debug checklist when bot goes silent**:
   1. `curl https://api.telegram.org/bot<TOKEN>/getMe` → `ok:true`.
   2. `pgrep -af 'bun.*telegram.*start'` — one PID per conductor; verify each has a distinct `TELEGRAM_STATE_DIR` in `/proc/<pid>/environ`.
-  3. Look for `⚠  CHANNELS_WITHOUT_GLOBAL_PLUGIN` or `⚠  WRAPPER_DEPRECATED` lines in recent agent-deck command output — these are the leading indicators (v1.7.22's `GLOBAL_ANTIPATTERN` / `DOUBLE_LOAD` codes were removed in v1.7.23).
+  3. Look for `⚠  GLOBAL_ANTIPATTERN` / `DOUBLE_LOAD` / `WRAPPER_DEPRECATED` lines in recent agent-deck command output — these are the leading indicators.

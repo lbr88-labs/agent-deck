@@ -10,7 +10,7 @@ import (
 	"github.com/asheshgoplani/agent-deck/internal/session"
 )
 
-// CLI-level telegram topology tests — v1.7.23 semantic reversal (#661 scope).
+// CLI-level telegram topology tests (fix v1.7.22, Closes #658).
 //
 // These exercise the CLI glue: reading enabledPlugins from Claude Code's
 // settings.json, feeding the validator, and formatting warnings on stderr.
@@ -66,19 +66,12 @@ func TestReadTelegramGloballyEnabled_FalseWhenExplicitlyDisabled(t *testing.T) {
 	}
 }
 
-// Conductor subscribes to telegram channel but plugin is globally disabled
-// → plugin never loads → silent bridge outage. This is the v1.7.23-corrected
-// misconfiguration. User-facing warning must include the ⚠ prefix, the
-// new CHANNELS_WITHOUT_GLOBAL_PLUGIN code (or the "without" label), and
-// the exact settings.json key so users can find and fix the setting.
-func TestConductorSetup_WarnsOnChannelsWithoutGlobalPlugin(t *testing.T) {
+func TestConductorSetup_WarnsOnGlobalTelegramEnabled(t *testing.T) {
 	var buf bytes.Buffer
 	in := session.TelegramValidatorInput{
-		GlobalEnabled: false,
-		SessionChannels: []string{
-			"plugin:telegram@claude-plugins-official",
-		},
-		SessionWrapper: "",
+		GlobalEnabled:   true,
+		SessionChannels: nil,
+		SessionWrapper:  "",
 	}
 	emitTelegramWarnings(&buf, in)
 
@@ -86,8 +79,8 @@ func TestConductorSetup_WarnsOnChannelsWithoutGlobalPlugin(t *testing.T) {
 	if !strings.Contains(out, "⚠") {
 		t.Errorf("warning output should be prefixed with ⚠, got: %s", out)
 	}
-	if !strings.Contains(out, "CHANNELS_WITHOUT_GLOBAL_PLUGIN") {
-		t.Errorf("output should surface the CHANNELS_WITHOUT_GLOBAL_PLUGIN code, got: %s", out)
+	if !strings.Contains(out, "GLOBAL_ANTIPATTERN") && !strings.Contains(strings.ToLower(out), "anti-pattern") {
+		t.Errorf("output should surface the GLOBAL_ANTIPATTERN code or anti-pattern label, got: %s", out)
 	}
 	if !strings.Contains(out, "enabledPlugins") {
 		t.Errorf("output should reference enabledPlugins so users can find the setting, got: %s", out)
@@ -97,7 +90,7 @@ func TestConductorSetup_WarnsOnChannelsWithoutGlobalPlugin(t *testing.T) {
 func TestConductorSetup_RecommendsEnvFileOverWrapper(t *testing.T) {
 	var buf bytes.Buffer
 	in := session.TelegramValidatorInput{
-		GlobalEnabled: true,
+		GlobalEnabled: false,
 		SessionChannels: []string{
 			"plugin:telegram@claude-plugins-official",
 		},
@@ -114,19 +107,16 @@ func TestConductorSetup_RecommendsEnvFileOverWrapper(t *testing.T) {
 	}
 }
 
-// Canonical supported topology: plugin enabled globally, conductor
-// subscribes via --channels, no wrapper. Must produce zero CLI output —
-// the v1.7.22 version of this test expected the opposite (treated the
-// supported topology as the antipattern).
-func TestEmitTelegramWarnings_CanonicalTopology_Silent(t *testing.T) {
+// Silent path: nothing to warn about → emitter writes nothing (clean logs).
+func TestEmitTelegramWarnings_CleanConfig_Silent(t *testing.T) {
 	var buf bytes.Buffer
 	in := session.TelegramValidatorInput{
-		GlobalEnabled:   true,
+		GlobalEnabled:   false,
 		SessionChannels: []string{"plugin:telegram@claude-plugins-official"},
 		SessionWrapper:  "",
 	}
 	emitTelegramWarnings(&buf, in)
 	if buf.Len() != 0 {
-		t.Errorf("canonical topology must produce no output, got: %q", buf.String())
+		t.Errorf("clean config must produce no output, got: %q", buf.String())
 	}
 }

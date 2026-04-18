@@ -927,135 +927,69 @@ tests:
   run:
     command: go test ./internal/session/ -run TestTmuxSettings_GetLaunchAs_UnknownValueReturnsEmpty -count=1 -v
     expected: pass
-- id: v1723-history-loss-rebind-rejects-less-data
+- id: v1722-telegram-global-disabled-no-warning
   added: '2026-04-18'
-  task: v1723-history-loss-guard
-  file: internal/session/instance_test.go
-  test_name: TestInstance_UpdateHookStatus_RejectsRebindWhenCurrentHasMoreData
-  purpose: 'Issue #661 manifestation 3 — UserPromptSubmit rebind must refuse to replace a rich current session with a sparser candidate. Size-based rejection with lifecycle action=reject reason=candidate_has_less_conversation_data. Stops conductor history loss across restarts.'
-  source: .planning/fix-issue-661/PLAN.md
-  manual: false
-  run:
-    command: go test ./internal/session/ -run TestInstance_UpdateHookStatus_RejectsRebindWhenCurrentHasMoreData -count=1 -race -v
-    expected: pass
-- id: v1723-history-loss-rebind-empty-candidate
-  added: '2026-04-18'
-  task: v1723-history-loss-guard
-  file: internal/session/instance_test.go
-  test_name: TestInstance_UpdateHookStatus_RejectsRebindWhenCurrentHasDataCandidateEmpty
-  purpose: 'Preserves v1.7.7 reject path on the UserPromptSubmit route when candidate jsonl has zero sessionId records. Keeps the weaker guarantee alongside the stronger v1.7.23 guard so both are permanent.'
-  source: .planning/fix-issue-661/PLAN.md
-  manual: false
-  run:
-    command: go test ./internal/session/ -run TestInstance_UpdateHookStatus_RejectsRebindWhenCurrentHasDataCandidateEmpty -count=1 -race -v
-    expected: pass
-- id: v1723-history-loss-rebind-allows-current-empty
-  added: '2026-04-18'
-  task: v1723-history-loss-guard
-  file: internal/session/instance_test.go
-  test_name: TestInstance_UpdateHookStatus_AllowsRebindWhenCurrentIsEmpty
-  purpose: 'Healthy-path guard — when current jsonl has no sessionId records and candidate has data, the first-prompt rebind must proceed. Prevents the v1.7.23 guard from over-rejecting during normal session bring-up.'
-  source: .planning/fix-issue-661/PLAN.md
-  manual: false
-  run:
-    command: go test ./internal/session/ -run TestInstance_UpdateHookStatus_AllowsRebindWhenCurrentIsEmpty -count=1 -race -v
-    expected: pass
-- id: v1723-history-loss-rebind-allows-cold-start
-  added: '2026-04-18'
-  task: v1723-history-loss-guard
-  file: internal/session/instance_test.go
-  test_name: TestInstance_UpdateHookStatus_AllowsRebindWhenCurrentIsUnset
-  purpose: 'Cold start — with i.ClaudeSessionID == "" the first hook binding must be accepted unconditionally. Guards against the v1.7.23 size comparison blocking the very first bind.'
-  source: .planning/fix-issue-661/PLAN.md
-  manual: false
-  run:
-    command: go test ./internal/session/ -run TestInstance_UpdateHookStatus_AllowsRebindWhenCurrentIsUnset -count=1 -race -v
-    expected: pass
-- id: v1723-history-loss-flap-replay
-  added: '2026-04-18'
-  task: v1723-history-loss-guard
-  file: internal/session/instance_test.go
-  test_name: TestInstance_UpdateHookStatus_RejectsBidirectionalFlap
-  purpose: 'Replay of the travel-conductor 3-restart flap from the real lifecycle.jsonl — rich-id is bound first, then three consecutive fresh UUIDs arrive as UserPromptSubmit candidates. ClaudeSessionID must remain the rich one across all three cycles.'
-  source: .planning/fix-issue-661/PLAN.md
-  manual: false
-  run:
-    command: go test ./internal/session/ -run TestInstance_UpdateHookStatus_RejectsBidirectionalFlap -count=1 -race -v
-    expected: pass
-- id: v1723-history-loss-boundary-resume
-  added: '2026-04-18'
-  task: v1723-history-loss-guard
-  file: internal/session/instance_test.go
-  test_name: TestInstance_BuildClaudeResumeCommand_AfterFlap_ResumesRichID
-  purpose: 'Live-runtime-boundary pin — after the flap, the emitted restart command (buildClaudeResumeCommand) must contain --resume <rich-uuid> and never the overwritten fresh UUID. Proves the user-visible fix at the exact layer that regressed.'
-  source: .planning/fix-issue-661/PLAN.md
-  manual: false
-  run:
-    command: go test ./internal/session/ -run TestInstance_BuildClaudeResumeCommand_AfterFlap_ResumesRichID -count=1 -race -v
-    expected: pass
-- id: v1723-telegram-canonical-topology-silent
-  added: '2026-04-18'
-  task: v1723-history-loss-guard
+  task: v1722-telegram-poller-stability
   file: internal/session/telegram_validator_test.go
-  test_name: TestTelegramValidator_GlobalEnabledWithChannels_NoWarning
-  purpose: 'Canonical supported topology — global plugin enabled + conductor subscribes via --channels must produce zero warnings. v1.7.22 treated this as the anti-pattern; v1.7.23 corrects to the real verified topology.'
-  source: .planning/fix-issue-661/PLAN.md
+  test_name: TestTelegramValidator_GlobalDisabled_NoWarning
+  purpose: 'Silent path — when the profile is configured correctly the validator emits zero warnings, keeping logs clean. Locks the no-noise baseline so future guards do not accidentally warn on the supported topology.'
+  source: .planning/fix-v1722-telegram-poller-stability/PLAN.md
   manual: false
   run:
-    command: go test ./internal/session/ -run TestTelegramValidator_GlobalEnabledWithChannels_NoWarning -count=1 -v
+    command: go test ./internal/session/ -run TestTelegramValidator_GlobalDisabled_NoWarning -count=1 -v
     expected: pass
-- id: v1723-telegram-channels-without-global-plugin
+- id: v1722-telegram-global-enabled-warn-antipattern
   added: '2026-04-18'
-  task: v1723-history-loss-guard
+  task: v1722-telegram-poller-stability
   file: internal/session/telegram_validator_test.go
-  test_name: TestTelegramValidator_GlobalDisabled_WithChannels_WarnChannelsWithoutPlugin
-  purpose: 'v1.7.23 reversed warning — conductor subscribing via --channels while the plugin is globally disabled is the real misconfiguration. --channels only subscribes; it does not force-load the plugin. Without global=true the plugin never loads, subscription no-ops, and the conductor has no telegram bridge.'
-  source: .planning/fix-issue-661/PLAN.md
+  test_name: TestTelegramValidator_GlobalEnabled_OrdinarySession_WarnAntiPattern
+  purpose: 'Root-cause A — detect the profile-wide enablement of telegram@claude-plugins-official in settings.json, the anti-pattern that leaks a bun poller to every claude subprocess.'
+  source: .planning/fix-v1722-telegram-poller-stability/PLAN.md
   manual: false
   run:
-    command: go test ./internal/session/ -run TestTelegramValidator_GlobalDisabled_WithChannels_WarnChannelsWithoutPlugin -count=1 -v
+    command: go test ./internal/session/ -run TestTelegramValidator_GlobalEnabled_OrdinarySession_WarnAntiPattern -count=1 -v
     expected: pass
-- id: v1723-telegram-removed-codes-permanence
+- id: v1722-telegram-double-load
   added: '2026-04-18'
-  task: v1723-history-loss-guard
+  task: v1722-telegram-poller-stability
   file: internal/session/telegram_validator_test.go
-  test_name: TestTelegramValidator_v1_7_22_CodesRemoved
-  purpose: 'Permanence guard — GLOBAL_ANTIPATTERN and DOUBLE_LOAD were removed in v1.7.23 because both rested on a mis-model of the plugin loader. Any reintroduction of either code under any input must break this test.'
-  source: .planning/fix-issue-661/PLAN.md
+  test_name: TestTelegramValidator_GlobalEnabled_ConductorSession_WarnDoubleLoad
+  purpose: 'Root-cause B — detect the combined global+channels configuration that makes the plugin load twice in one claude process, producing Telegram 409 Conflict.'
+  source: .planning/fix-v1722-telegram-poller-stability/PLAN.md
   manual: false
   run:
-    command: go test ./internal/session/ -run TestTelegramValidator_v1_7_22_CodesRemoved -count=1 -v
+    command: go test ./internal/session/ -run TestTelegramValidator_GlobalEnabled_ConductorSession_WarnDoubleLoad -count=1 -v
     expected: pass
-- id: v1723-telegram-wrapper-deprecated
+- id: v1722-telegram-wrapper-deprecated
   added: '2026-04-18'
-  task: v1723-history-loss-guard
+  task: v1722-telegram-poller-stability
   file: internal/session/telegram_validator_test.go
   test_name: TestTelegramValidator_WrapperStateDir_AntiPattern
-  purpose: 'WRAPPER_DEPRECATED — unchanged by v1.7.23. Wrapper-injected TELEGRAM_STATE_DIR still fails silently on fresh-start due to bash -c argv splitting; env_file is still the canonical mechanism.'
-  source: .planning/fix-issue-661/PLAN.md
+  purpose: 'Root-cause C — detect the wrapper-injected TELEGRAM_STATE_DIR anti-pattern and recommend the canonical env_file mechanism. Wrapper fails silently on the fresh-start path due to bash -c argv splitting.'
+  source: .planning/fix-v1722-telegram-poller-stability/PLAN.md
   manual: false
   run:
     command: go test ./internal/session/ -run TestTelegramValidator_WrapperStateDir_AntiPattern -count=1 -v
     expected: pass
-- id: v1723-telegram-settings-reader
+- id: v1722-telegram-settings-reader
   added: '2026-04-18'
-  task: v1723-history-loss-guard
+  task: v1722-telegram-poller-stability
   file: cmd/agent-deck/conductor_cmd_telegram_test.go
   test_name: TestReadTelegramGloballyEnabled_TrueWhenSettingsHasIt
-  purpose: 'CLI helper — parses Claude Code settings.json defensively. Missing file and missing key both map to (false, nil) — absence is the safe baseline.'
-  source: .planning/fix-issue-661/PLAN.md
+  purpose: 'CLI helper parses Claude Code settings.json defensively — missing file and missing key both map to false (safe baseline), explicit true surfaces the anti-pattern.'
+  source: .planning/fix-v1722-telegram-poller-stability/PLAN.md
   manual: false
   run:
     command: go test ./cmd/agent-deck/ -run TestReadTelegramGloballyEnabled_ -count=1 -v
     expected: pass
-- id: v1723-telegram-cli-warn-channels-without-global
+- id: v1722-telegram-warn-formatting
   added: '2026-04-18'
-  task: v1723-history-loss-guard
+  task: v1722-telegram-poller-stability
   file: cmd/agent-deck/conductor_cmd_telegram_test.go
-  test_name: TestConductorSetup_WarnsOnChannelsWithoutGlobalPlugin
-  purpose: 'CLI surface — the human-facing warning includes the ⚠ prefix, the CHANNELS_WITHOUT_GLOBAL_PLUGIN code, and the exact enabledPlugins settings.json key so users can find and fix the silent-bridge-outage condition.'
-  source: .planning/fix-issue-661/PLAN.md
+  test_name: TestConductorSetup_WarnsOnGlobalTelegramEnabled
+  purpose: 'End-to-end CLI surface — the human-facing warning text includes the ⚠ prefix, the GLOBAL_ANTIPATTERN code or label, and the exact settings.json key so users can find and fix the setting.'
+  source: .planning/fix-v1722-telegram-poller-stability/PLAN.md
   manual: false
   run:
-    command: go test ./cmd/agent-deck/ -run "TestConductorSetup_WarnsOnChannelsWithoutGlobalPlugin|TestConductorSetup_RecommendsEnvFileOverWrapper|TestEmitTelegramWarnings_CanonicalTopology_Silent" -count=1 -v
+    command: go test ./cmd/agent-deck/ -run "TestConductorSetup_WarnsOnGlobalTelegramEnabled|TestConductorSetup_RecommendsEnvFileOverWrapper|TestEmitTelegramWarnings_CleanConfig_Silent" -count=1 -v
     expected: pass

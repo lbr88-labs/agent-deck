@@ -5,32 +5,67 @@ import (
 	"testing"
 )
 
-// Telegram-topology validator tests — v1.7.23 semantic reversal (#661 scope).
+// Telegram-topology validator tests (fix v1.7.22, Closes #658).
 //
-// v1.7.22 warned when enabledPlugins.telegram@...=true in the profile's
-// settings.json, on the theory that every claude session loaded the plugin
-// and started a redundant bun poller. Production verification disproved
-// that: --channels only SUBSCRIBES a session to a channel; it does not
-// force-load the plugin. If enabledPlugins.telegram@... is false, the
-// plugin is never loaded, --channels is a no-op, and the conductor has no
-// telegram bridge at all.
+// These tests enforce the Codex-approved three-root-cause fix:
+//   A. Global enablement of telegram@claude-plugins-official in profile
+//      settings.json → per-session poller leak.
+//   B. Global enablement + --channels on the same session → plugin loaded
+//      twice in one claude process → dueling bun pollers → Telegram 409.
+//   C. wrapper-based TELEGRAM_STATE_DIR injection is silently unreliable on
+//      the fresh-start path; env_file is the canonical mechanism.
 //
-// v1.7.23 therefore reverses the warning direction:
-//
-//   CHANNELS_WITHOUT_GLOBAL_PLUGIN — conductor subscribes via --channels
-//       but enabledPlugins is false → plugin never loads → silent bridge
-//       outage. The correct topology is global=true + --channels per
-//       conductor + env_file per conductor for TELEGRAM_STATE_DIR.
-//
-//   WRAPPER_DEPRECATED — unchanged. Wrapper-based TELEGRAM_STATE_DIR is
-//       still unreliable on the fresh-start path; env_file is canonical.
-//
-// The v1.7.22 GLOBAL_ANTIPATTERN and DOUBLE_LOAD codes are removed —
-// both rested on a mis-model of claude's plugin loader.
+// The validator is pure (no I/O) and takes the three inputs as struct fields.
+// CLI layer is responsible for reading settings.json and feeding GlobalEnabled.
 
-func TestTelegramValidator_GlobalEnabledWithChannels_NoWarning(t *testing.T) {
-	// Canonical supported topology: plugin loaded globally, one conductor
-	// session subscribes to the channel via --channels. Must be silent.
+func TestTelegramValidator_GlobalDisabled_NoWarning(t *testing.T) {
+	in := TelegramValidatorInput{
+		GlobalEnabled: false,
+		SessionChannels: []string{
+			"plugin:telegram@claude-plugins-official",
+			"plugin:slack@claude-plugins-official",
+		},
+		SessionWrapper: "ENV=foo {command}",
+	}
+	got := ValidateTelegramTopology(in)
+	if len(got) != 0 {
+		t.Fatalf("GlobalEnabled=false must produce zero warnings, got %d: %+v", len(got), got)
+	}
+}
+
+func TestTelegramValidator_GlobalEnabled_OrdinarySession_WarnAntiPattern(t *testing.T) {
+	in := TelegramValidatorInput{
+		GlobalEnabled:   true,
+		SessionChannels: nil, // ordinary child session, no telegram channel
+		SessionWrapper:  "",
+	}
+	got := ValidateTelegramTopology(in)
+
+	var antipattern *TelegramWarning
+	for i := range got {
+		if got[i].Code == "GLOBAL_ANTIPATTERN" {
+			antipattern = &got[i]
+			break
+		}
+	}
+	if antipattern == nil {
+		t.Fatalf("expected GLOBAL_ANTIPATTERN warning, got %+v", got)
+	}
+	if !strings.Contains(antipattern.Message, "enabledPlugins") {
+		t.Errorf("GLOBAL_ANTIPATTERN message must reference enabledPlugins, got: %s", antipattern.Message)
+	}
+	if !strings.Contains(strings.ToLower(antipattern.Message), "telegram") {
+		t.Errorf("GLOBAL_ANTIPATTERN message must reference telegram, got: %s", antipattern.Message)
+	}
+	// Must NOT emit DOUBLE_LOAD when session has no telegram channel.
+	for _, w := range got {
+		if w.Code == "DOUBLE_LOAD" {
+			t.Errorf("ordinary session must not receive DOUBLE_LOAD warning, got: %+v", w)
+		}
+	}
+}
+
+func TestTelegramValidator_GlobalEnabled_ConductorSession_WarnDoubleLoad(t *testing.T) {
 	in := TelegramValidatorInput{
 		GlobalEnabled: true,
 		SessionChannels: []string{
@@ -39,96 +74,34 @@ func TestTelegramValidator_GlobalEnabledWithChannels_NoWarning(t *testing.T) {
 		SessionWrapper: "",
 	}
 	got := ValidateTelegramTopology(in)
-	if len(got) != 0 {
-		t.Fatalf("canonical topology must produce zero warnings, got %d: %+v", len(got), got)
-	}
-}
 
-func TestTelegramValidator_GlobalEnabled_NoChannels_NoWarning(t *testing.T) {
-	// Plugin globally loaded, ordinary session that doesn't own a channel.
-	// This is fine — non-subscribing sessions coexist with a single
-	// channel-owning session. Must be silent.
-	in := TelegramValidatorInput{
-		GlobalEnabled:   true,
-		SessionChannels: nil,
-		SessionWrapper:  "",
-	}
-	got := ValidateTelegramTopology(in)
-	if len(got) != 0 {
-		t.Fatalf("global-enabled + no channels must be silent, got %d: %+v", len(got), got)
-	}
-}
-
-func TestTelegramValidator_GlobalDisabled_NoChannels_NoWarning(t *testing.T) {
-	// Plugin disabled globally, session doesn't use telegram — nothing to
-	// warn about. Must be silent.
-	in := TelegramValidatorInput{
-		GlobalEnabled:   false,
-		SessionChannels: nil,
-		SessionWrapper:  "",
-	}
-	got := ValidateTelegramTopology(in)
-	if len(got) != 0 {
-		t.Fatalf("global-disabled + no channels must be silent, got %d: %+v", len(got), got)
-	}
-}
-
-func TestTelegramValidator_GlobalDisabled_WithChannels_WarnChannelsWithoutPlugin(t *testing.T) {
-	// The real v1.7.23-corrected misconfiguration: conductor asks for a
-	// telegram channel subscription but the plugin isn't enabled globally,
-	// so the plugin never loads and --channels silently no-ops.
-	in := TelegramValidatorInput{
-		GlobalEnabled: false,
-		SessionChannels: []string{
-			"plugin:telegram@claude-plugins-official",
-		},
-		SessionWrapper: "",
-	}
-	got := ValidateTelegramTopology(in)
-
-	var warn *TelegramWarning
+	codes := map[string]bool{}
+	var doubleLoad *TelegramWarning
 	for i := range got {
-		if got[i].Code == "CHANNELS_WITHOUT_GLOBAL_PLUGIN" {
-			warn = &got[i]
-			break
+		codes[got[i].Code] = true
+		if got[i].Code == "DOUBLE_LOAD" {
+			doubleLoad = &got[i]
 		}
 	}
-	if warn == nil {
-		t.Fatalf("expected CHANNELS_WITHOUT_GLOBAL_PLUGIN warning, got %+v", got)
+	if !codes["GLOBAL_ANTIPATTERN"] {
+		t.Errorf("expected GLOBAL_ANTIPATTERN, got codes %+v", codes)
 	}
-	msg := strings.ToLower(warn.Message)
-	if !strings.Contains(msg, "enabledplugins") {
-		t.Errorf("message must reference enabledPlugins so users can find the setting, got: %s", warn.Message)
+	if doubleLoad == nil {
+		t.Fatalf("expected DOUBLE_LOAD warning, got %+v", got)
 	}
-	if !strings.Contains(msg, "--channels") {
-		t.Errorf("message must reference --channels, got: %s", warn.Message)
+	msg := strings.ToLower(doubleLoad.Message)
+	// message should explain the actual failure mode
+	if !strings.Contains(msg, "twice") && !strings.Contains(msg, "duplicate") {
+		t.Errorf("DOUBLE_LOAD message should explain plugin loaded twice, got: %s", doubleLoad.Message)
 	}
-	if !strings.Contains(msg, "force-load") && !strings.Contains(msg, "never load") {
-		t.Errorf("message should explain that --channels does not force-load, got: %s", warn.Message)
-	}
-}
-
-func TestTelegramValidator_GlobalDisabled_WithNonTelegramChannels_NoWarning(t *testing.T) {
-	// Ensure prefix match is correct — a slack channel must not trigger
-	// the telegram warning.
-	in := TelegramValidatorInput{
-		GlobalEnabled: false,
-		SessionChannels: []string{
-			"plugin:slack@claude-plugins-official",
-		},
-		SessionWrapper: "",
-	}
-	got := ValidateTelegramTopology(in)
-	if len(got) != 0 {
-		t.Fatalf("non-telegram channels must not trigger telegram warnings, got %+v", got)
+	if !strings.Contains(msg, "409") && !strings.Contains(msg, "conflict") {
+		t.Errorf("DOUBLE_LOAD message should reference 409/Conflict, got: %s", doubleLoad.Message)
 	}
 }
 
 func TestTelegramValidator_WrapperStateDir_AntiPattern(t *testing.T) {
-	// WRAPPER_DEPRECATED remains unchanged in v1.7.23: env_file is still
-	// the canonical mechanism; wrapper-based injection is still unreliable.
 	in := TelegramValidatorInput{
-		GlobalEnabled: true,
+		GlobalEnabled: false,
 		SessionChannels: []string{
 			"plugin:telegram@claude-plugins-official",
 		},
@@ -151,11 +124,11 @@ func TestTelegramValidator_WrapperStateDir_AntiPattern(t *testing.T) {
 	}
 }
 
+// Sanity: wrapper with TELEGRAM_STATE_DIR on a session without telegram
+// channel is NOT a v1.7.22-relevant antipattern (nothing to poll). Don't warn.
 func TestTelegramValidator_WrapperStateDir_NoTelegramChannel_NoWarning(t *testing.T) {
-	// Wrapper-based TELEGRAM_STATE_DIR on a session without a telegram
-	// channel is harmless (nothing to poll). Must not warn.
 	in := TelegramValidatorInput{
-		GlobalEnabled:   true,
+		GlobalEnabled:   false,
 		SessionChannels: nil,
 		SessionWrapper:  "TELEGRAM_STATE_DIR=/tmp/x {command}",
 	}
@@ -163,27 +136,6 @@ func TestTelegramValidator_WrapperStateDir_NoTelegramChannel_NoWarning(t *testin
 	for _, w := range got {
 		if w.Code == "WRAPPER_DEPRECATED" {
 			t.Errorf("no telegram channel: must not emit WRAPPER_DEPRECATED, got %+v", w)
-		}
-	}
-}
-
-// Guard: the v1.7.22 codes must not re-appear. Removing these is a
-// semantic promise of v1.7.23 — any reintroduction should break a test.
-func TestTelegramValidator_v1_7_22_CodesRemoved(t *testing.T) {
-	cases := []TelegramValidatorInput{
-		{GlobalEnabled: true, SessionChannels: nil, SessionWrapper: ""},
-		{GlobalEnabled: true, SessionChannels: []string{"plugin:telegram@claude-plugins-official"}, SessionWrapper: ""},
-		{GlobalEnabled: false, SessionChannels: []string{"plugin:telegram@claude-plugins-official"}, SessionWrapper: ""},
-	}
-	for _, in := range cases {
-		got := ValidateTelegramTopology(in)
-		for _, w := range got {
-			if w.Code == "GLOBAL_ANTIPATTERN" {
-				t.Errorf("GLOBAL_ANTIPATTERN removed in v1.7.23 — reintroduced for input %+v: %+v", in, w)
-			}
-			if w.Code == "DOUBLE_LOAD" {
-				t.Errorf("DOUBLE_LOAD removed in v1.7.23 — reintroduced for input %+v: %+v", in, w)
-			}
 		}
 	}
 }
