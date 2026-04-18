@@ -1103,3 +1103,14 @@ tests:
   run:
     command: go test ./internal/session/ -run TestDetachKey_ConfigurableViaToml -count=1 -v
     expected: pass
+- id: issue-628-watcher-help-examples
+  added: '2026-04-17'
+  task: feat-628-watcher-docs
+  file: cmd/agent-deck/watcher_cmd_test.go
+  test_name: TestWatcherHelp_MentionsAdapterExamples
+  purpose: "agent-deck watcher --help must include an example for every adapter type (webhook/github/ntfy/slack) plus a pointer to watcher-creator skill and the README anchor \u2014 guards against docs regression that erases first-time-setup guidance."
+  source: issue-628-documentation-for-watcher-feature
+  manual: false
+  run:
+    command: go test ./cmd/agent-deck/ -run TestWatcherHelp_MentionsAdapterExamples -count=1 -v
+    expected: pass
