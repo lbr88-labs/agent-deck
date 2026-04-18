@@ -1114,6 +1114,28 @@ tests:
   run:
     command: go test ./cmd/agent-deck/ -run TestWatcherHelp_MentionsAdapterExamples -count=1 -v
     expected: pass
+- id: issue-391-session-color-valid
+  added: '2026-04-17'
+  task: feat-391-per-session-colors
+  file: cmd/agent-deck/session_color_test.go
+  test_name: TestIsValidSessionColor
+  purpose: 'Locks the CLI-boundary validator for per-session color (issue #391): empty/truecolor-hex/ANSI-256 accepted; typos like "red", malformed hex, and out-of-range ints rejected. Prevents bad values reaching the render layer.'
+  source: issue-391-per-session-colors
+  manual: false
+  run:
+    command: go test ./cmd/agent-deck/ -run TestIsValidSessionColor -count=1 -v
+    expected: pass
+- id: issue-391-session-color-persist
+  added: '2026-04-17'
+  task: feat-391-per-session-colors
+  file: cmd/agent-deck/session_color_test.go
+  test_name: TestSessionSetColor_PersistsValidAndRejectsInvalid
+  purpose: "End-to-end CLI round-trip for per-session color (issue #391): set \u2192 list shows field; invalid value rejected with non-zero exit AND prior value preserved; empty clears the field (omitempty on persisted JSON). Guards the full persistence path through SQLite blob."
+  source: issue-391-per-session-colors
+  manual: false
+  run:
+    command: go test ./cmd/agent-deck/ -run TestSessionSetColor_PersistsValidAndRejectsInvalid -count=1 -v -timeout 120s
+    expected: pass
 - id: v1725-issue666-empty-grouppath-load-fallback
   added: '2026-04-18'
   task: v1725-issue666-group-disappearance

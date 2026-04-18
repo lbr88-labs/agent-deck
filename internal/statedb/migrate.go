@@ -94,6 +94,8 @@ type toolDataBlob struct {
 	AdditionalPaths    []string                `json:"additional_paths,omitempty"`
 	MultiRepoTempDir   string                  `json:"multi_repo_temp_dir,omitempty"`
 	MultiRepoWorktrees []multiRepoWorktreeBlob `json:"multi_repo_worktrees,omitempty"`
+	// Presentation
+	Color string `json:"color,omitempty"` // issue #391 — per-session TUI row tint
 }
 
 // multiRepoWorktreeBlob is the JSON representation of a multi-repo worktree in tool_data.
@@ -222,6 +224,7 @@ func MarshalToolData(
 	multiRepoTempDir string, multiRepoWorktrees []MultiRepoWorktreeData,
 	channels []string,
 	extraArgs []string,
+	color string, // issue #391
 ) json.RawMessage {
 	td := toolDataBlob{
 		ClaudeSessionID:   claudeSessionID,
@@ -243,6 +246,7 @@ func MarshalToolData(
 		MultiRepoEnabled:  multiRepoEnabled,
 		AdditionalPaths:   additionalPaths,
 		MultiRepoTempDir:  multiRepoTempDir,
+		Color:             color,
 	}
 	for _, wt := range multiRepoWorktrees {
 		td.MultiRepoWorktrees = append(td.MultiRepoWorktrees, multiRepoWorktreeBlob(wt))
@@ -279,6 +283,7 @@ func UnmarshalToolData(data json.RawMessage) (
 	multiRepoTempDir string, multiRepoWorktrees []MultiRepoWorktreeData,
 	channels []string,
 	extraArgs []string,
+	color string, // issue #391
 ) {
 	if len(data) == 0 {
 		return
@@ -287,6 +292,7 @@ func UnmarshalToolData(data json.RawMessage) (
 	if err := json.Unmarshal(data, &td); err != nil {
 		return
 	}
+	color = td.Color
 	claudeSessionID = td.ClaudeSessionID
 	if td.ClaudeDetectedAt > 0 {
 		claudeDetectedAt = time.Unix(td.ClaudeDetectedAt, 0)
