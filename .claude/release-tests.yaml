@@ -828,3 +828,102 @@ tests:
   run:
     command: go test ./internal/ui/ -run TestRenderPreviewPane_NvimStatusline_NoBleedEscapes_Issue579 -count=1 -v
     expected: pass
+- id: v1721-launch-as-service-argv-shape
+  added: '2026-04-18'
+  task: v1721-scope-to-service
+  file: internal/tmux/tmux_launch_as_test.go
+  test_name: TestStartCommandSpec_LaunchAs_Service_UsesServiceForm
+  purpose: 'Pins the exact systemd-run argv for LaunchAs=service — Type=forking, Restart=on-failure, KillMode=control-group, NO --scope, NO --collect. Missing any of these silently defeats the auto-restart guarantee.'
+  source: .planning/v1721-scope-to-service/PLAN.md
+  manual: false
+  run:
+    command: go test ./internal/tmux/ -run TestStartCommandSpec_LaunchAs_Service_UsesServiceForm -count=1 -v
+    expected: pass
+- id: v1721-launch-as-scope-backcompat
+  added: '2026-04-18'
+  task: v1721-scope-to-service
+  file: internal/tmux/tmux_launch_as_test.go
+  test_name: TestStartCommandSpec_LaunchAs_Scope_UsesScopeForm
+  purpose: 'Backward-compatibility lifeline. Users who set launch_as="scope" must get the exact PR #467 argv shape. Guards against a future service-mode refactor silently mutating scope-mode semantics.'
+  source: .planning/v1721-scope-to-service/PLAN.md
+  manual: false
+  run:
+    command: go test ./internal/tmux/ -run TestStartCommandSpec_LaunchAs_Scope_UsesScopeForm -count=1 -v
+    expected: pass
+- id: v1721-launch-as-empty-legacy-respect
+  added: '2026-04-18'
+  task: v1721-scope-to-service
+  file: internal/tmux/tmux_launch_as_test.go
+  test_name: TestStartCommandSpec_LaunchAs_Empty_RespectsLegacyLaunchInUserScope
+  purpose: 'Zero-behavior-change contract for v1.7.20 users. Unset launch_as must defer fully to LaunchInUserScope — NO accidental switch to service mode, NO accidental switch to direct.'
+  source: .planning/v1721-scope-to-service/PLAN.md
+  manual: false
+  run:
+    command: go test ./internal/tmux/ -run TestStartCommandSpec_LaunchAs_Empty_RespectsLegacyLaunchInUserScope -count=1 -v
+    expected: pass
+- id: v1721-launch-as-invalid-fallback
+  added: '2026-04-18'
+  task: v1721-scope-to-service
+  file: internal/tmux/tmux_launch_as_test.go
+  test_name: TestStartCommandSpec_LaunchAs_Invalid_FallsBackToLegacy
+  purpose: 'Typo protection. A misspelled launch_as value must NOT silently opt the user into service mode — must fall through to LaunchInUserScope with a one-line warning log.'
+  source: .planning/v1721-scope-to-service/PLAN.md
+  manual: false
+  run:
+    command: go test ./internal/tmux/ -run TestStartCommandSpec_LaunchAs_Invalid_FallsBackToLegacy -count=1 -v
+    expected: pass
+- id: v1721-fallback-service-to-scope
+  added: '2026-04-18'
+  task: v1721-scope-to-service
+  file: internal/tmux/tmux_service_fallback_test.go
+  test_name: TestStart_Service_WhenServiceFails_FallbackToScope
+  purpose: 'Three-tier fallback chain — when service-mode systemd-run fails (rare; e.g. transient-unit Restart= rejected on very old systemd), fall back to scope-mode before falling to direct tmux. Preserves PR #467 isolation even when service mode is broken.'
+  source: .planning/v1721-scope-to-service/PLAN.md
+  manual: false
+  run:
+    command: go test ./internal/tmux/ -run TestStart_Service_WhenServiceFails_FallbackToScope -count=1 -timeout 60s -v
+    expected: pass
+- id: v1721-fallback-all-three-wraps-error
+  added: '2026-04-18'
+  task: v1721-scope-to-service
+  file: internal/tmux/tmux_service_fallback_test.go
+  test_name: TestStart_Service_AllThreePathsFail_ErrorIncludesAllThree
+  purpose: 'Observability. When all three tiers fail the error must list every diagnostic so operators can grep one log to find which tier broke.'
+  source: .planning/v1721-scope-to-service/PLAN.md
+  manual: false
+  run:
+    command: go test ./internal/tmux/ -run TestStart_Service_AllThreePathsFail_ErrorIncludesAllThree -count=1 -v
+    expected: pass
+- id: v1721-service-restarts-on-sigkill
+  added: '2026-04-18'
+  task: v1721-scope-to-service
+  file: internal/tmux/tmux_service_integration_test.go
+  test_name: TestTmuxService_RestartsOnUnexpectedKill
+  purpose: 'Headline live-boundary empirical guarantee — the whole point of v1.7.21. Spawn tmux via the exact argv startCommandSpec emits, SIGKILL the daemon, observe systemd bring it back via Restart=on-failure within ~10s. Requires systemd-user; skips cleanly elsewhere.'
+  source: .planning/v1721-scope-to-service/PLAN.md
+  manual: false
+  run:
+    command: go test ./internal/tmux/ -run TestTmuxService_RestartsOnUnexpectedKill -count=1 -timeout 60s -v
+    expected: pass
+- id: v1721-service-clean-stop
+  added: '2026-04-18'
+  task: v1721-scope-to-service
+  file: internal/tmux/tmux_service_integration_test.go
+  test_name: TestTmuxService_ExplicitStopDoesNotTriggerRestart
+  purpose: 'Removal semantics. systemctl --user stop must be a CLEAN stop — Restart=on-failure must NOT fire. This guarantees `agent-deck remove` is truly terminal and not papered over by auto-restart.'
+  source: .planning/v1721-scope-to-service/PLAN.md
+  manual: false
+  run:
+    command: go test ./internal/tmux/ -run TestTmuxService_ExplicitStopDoesNotTriggerRestart -count=1 -timeout 60s -v
+    expected: pass
+- id: v1721-tmux-settings-get-launch-as
+  added: '2026-04-18'
+  task: v1721-scope-to-service
+  file: internal/session/userconfig_launch_as_test.go
+  test_name: TestTmuxSettings_GetLaunchAs_UnknownValueReturnsEmpty
+  purpose: 'Config parse guard. An unknown launch_as value in config.toml must return "" from GetLaunchAs so the legacy LaunchInUserScope code path kicks in — never a random spawn path.'
+  source: .planning/v1721-scope-to-service/PLAN.md
+  manual: false
+  run:
+    command: go test ./internal/session/ -run TestTmuxSettings_GetLaunchAs_UnknownValueReturnsEmpty -count=1 -v
+    expected: pass
