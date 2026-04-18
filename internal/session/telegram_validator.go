@@ -4,17 +4,32 @@ import "strings"
 
 // Telegram-topology validator.
 //
-// Surfaces three anti-patterns that cause telegram poller leaks and 409
-// Conflict lockouts across conductor hosts (fix v1.7.22, issue #658):
+// v1.7.23 semantic reversal (#661 scope): v1.7.22 warned when
+// enabledPlugins.telegram@...=true on the theory that every claude session
+// would load the plugin and start a redundant bun poller. Production
+// verification disproved this. --channels only SUBSCRIBES a session to a
+// channel; it does not force-load the plugin. If enabledPlugins is false,
+// the plugin is never loaded, --channels is a silent no-op, and the
+// conductor has no telegram bridge at all.
 //
-//	GLOBAL_ANTIPATTERN — enabledPlugins."telegram@claude-plugins-official"=true
-//	                     in a profile settings.json makes every claude
-//	                     session load the plugin.
-//	DOUBLE_LOAD        — global + --channels on the same session makes the
-//	                     plugin load twice in one process → 409.
-//	WRAPPER_DEPRECATED — TELEGRAM_STATE_DIR injected via session wrapper is
-//	                     unreliable on the fresh-start path. Use
-//	                     [conductors.<name>.claude].env_file instead.
+// The supported conductor topology is therefore:
+//
+//   1. enabledPlugins."telegram@claude-plugins-official"=true globally —
+//      this is how the plugin actually loads into the claude process.
+//   2. --channels plugin:telegram@... on each conductor session — this
+//      subscribes the conductor to the bot's updates.
+//   3. [conductors.<name>.claude].env_file per conductor — deterministic
+//      TELEGRAM_STATE_DIR injection on both fresh-start and resume paths.
+//
+// The only current topology antipatterns are:
+//
+//	CHANNELS_WITHOUT_GLOBAL_PLUGIN — conductor subscribes via --channels
+//	                                 but enabledPlugins is false → plugin
+//	                                 never loads → silent bridge outage.
+//	WRAPPER_DEPRECATED             — TELEGRAM_STATE_DIR injected via
+//	                                 session wrapper; unreliable on
+//	                                 fresh-start due to bash -c argv
+//	                                 splitting. Use env_file instead.
 //
 // Pure and side-effect-free. CLI layer owns I/O (reading settings.json) and
 // presentation (formatting warnings on stderr).
@@ -42,13 +57,13 @@ type TelegramValidatorInput struct {
 
 // TelegramWarning is one emission from the validator.
 type TelegramWarning struct {
-	Code    string // GLOBAL_ANTIPATTERN | DOUBLE_LOAD | WRAPPER_DEPRECATED
+	Code    string // CHANNELS_WITHOUT_GLOBAL_PLUGIN | WRAPPER_DEPRECATED
 	Message string
 }
 
 // ValidateTelegramTopology returns zero or more warnings for the given
-// session configuration. Ordering is stable: GLOBAL_ANTIPATTERN,
-// DOUBLE_LOAD, WRAPPER_DEPRECATED.
+// session configuration. Ordering is stable:
+// CHANNELS_WITHOUT_GLOBAL_PLUGIN, WRAPPER_DEPRECATED.
 func ValidateTelegramTopology(in TelegramValidatorInput) []TelegramWarning {
 	hasTelegramChannel := false
 	for _, ch := range in.SessionChannels {
@@ -60,17 +75,11 @@ func ValidateTelegramTopology(in TelegramValidatorInput) []TelegramWarning {
 
 	var out []TelegramWarning
 
-	if in.GlobalEnabled {
+	if hasTelegramChannel && !in.GlobalEnabled {
 		out = append(out, TelegramWarning{
-			Code:    "GLOBAL_ANTIPATTERN",
-			Message: `enabledPlugins."telegram@claude-plugins-official"=true in the profile settings.json is an anti-pattern for conductor hosts. Every claude session launched under this profile will start a telegram poller — including child agents spawned by the conductor. Disable the global flag and activate telegram per-session via --channels instead.`,
+			Code:    "CHANNELS_WITHOUT_GLOBAL_PLUGIN",
+			Message: `Session subscribes via --channels plugin:telegram@... but enabledPlugins."telegram@claude-plugins-official"=false in the profile settings.json. --channels only SUBSCRIBES a session to a channel — it does not force-load the plugin. With global disabled the plugin never loads, the bun poller never starts, and this conductor has no telegram bridge. Fix: set enabledPlugins."telegram@claude-plugins-official"=true in the profile settings.json so the plugin loads; --channels then subscribes each conductor session. Canonical topology is global=true + per-conductor --channels + per-conductor [conductors.<name>.claude].env_file for TELEGRAM_STATE_DIR.`,
 		})
-		if hasTelegramChannel {
-			out = append(out, TelegramWarning{
-				Code:    "DOUBLE_LOAD",
-				Message: `Global telegram enablement AND --channels telegram@... on the same session: the plugin is loaded twice in one claude process. Two bun pollers race for the same bot token and Telegram rejects one with 409 Conflict. The supported topology is one channel-owning session per bot token with the global flag disabled (see skills/agent-deck SKILL.md "Telegram conductor topology").`,
-			})
-		}
 	}
 
 	if hasTelegramChannel && strings.Contains(in.SessionWrapper, "TELEGRAM_STATE_DIR=") {
