@@ -5,6 +5,11 @@ All notable changes to Agent Deck will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.7.30] - 2026-04-19
+
+### Fixed
+- **Per-session color tint now actually renders in the TUI** (issue [#391](https://github.com/asheshgoplani/agent-deck/issues/391)): PR #650 (v1.7.27) added the `Instance.Color` field, TOML validation, CLI plumbing (`agent-deck session set <id> color '#FF0000'`), SQLite persistence, and `list --json` exposure — but the TUI dashboard never consumed the field, so users setting a color saw it round-trip through storage yet every row kept the default palette. `renderSessionItem` now overrides the title foreground with `lipgloss.Color(Instance.Color)` when the field is non-empty, preserving the bold/underline weight cues that distinguish Running/Waiting/Error states for colorblind users. Empty `Color` is the default and leaves rendering byte-identical to v1.7.29 (fully opt-in). Accepts both accepted formats from `isValidSessionColor`: `#RRGGBB` truecolor hex and `0..255` ANSI 256-palette index. Tests: `TestIssue391_SessionRow_{HexColorRenderedAsForeground,ANSIIndexColorRendered,EmptyColorLeavesRowUntinted}` in `internal/ui/issue391_tui_test.go` (Seam A, per `internal/ui/TUI_TESTS.md`).
+
 ## [1.7.29] - 2026-04-19
 
 ### Added

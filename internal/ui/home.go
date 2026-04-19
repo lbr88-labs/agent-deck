@@ -10597,6 +10597,17 @@ func (h *Home) renderSessionItem(
 		titleStyle = SessionTitleDefault
 	}
 
+	// Issue #391: per-session color tint. When the user has set
+	// Instance.Color (validated CLI-side in isValidSessionColor), override
+	// the title foreground with that color. Bold/underline from the
+	// status-based style above is preserved — only the hue changes, so
+	// colorblind accessibility via weight still works. Empty Color is the
+	// default and leaves titleStyle untouched (zero behavior change for
+	// users who haven't opted in).
+	if inst.Color != "" {
+		titleStyle = titleStyle.Foreground(lipgloss.Color(inst.Color))
+	}
+
 	// Tool badge with brand-specific color
 	// Claude=orange, Gemini=purple, Codex=cyan, Aider=red
 	toolStyle := GetToolStyle(instTool)
