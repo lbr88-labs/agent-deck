@@ -1598,3 +1598,69 @@ tests:
   run:
     command: go test ./internal/ui/ -run TestCreateSessionTool_Pi -count=1 -race -v
     expected: pass
+- id: v1732-pr675-project-skills-dir-mapping
+  added: '2026-04-19'
+  task: v1732-pr-675
+  file: internal/session/skills_runtime_test.go
+  test_name: TestProjectSkillsDirMapping
+  purpose: 'PR #675 — GetProjectSkillsDir/SupportsProjectSkills/ShouldRestartProjectSkills must produce the right triple for claude (.claude/skills, supported, restart), gemini/codex (.agents/skills, supported, restart), pi (.agents/skills, supported, NO restart), and shell (empty, unsupported, no restart). Pins the runtime→directory contract so a future refactor cannot silently send Pi skills back to .claude/skills/ or enable auto-restart for Pi (Pi does not yet hot-reload skills).'
+  source: github-pr-675
+  manual: false
+  run:
+    command: go test ./internal/session/ -run TestProjectSkillsDirMapping -count=1 -race -v
+    expected: pass
+- id: v1732-pr675-apply-migrates-between-roots
+  added: '2026-04-19'
+  task: v1732-pr-675
+  file: internal/session/skills_runtime_test.go
+  test_name: TestSkillRuntime_ApplyMigratesBetweenManagedRoots
+  purpose: 'PR #675 — when a session is restarted with a different runtime (e.g. claude → gemini), the next ApplyProjectSkills must materialize the skill into the new managed root (.agents/skills) AND remove the old managed target (.claude/skills). Locks down the migration semantics — regressions here would leave orphaned .claude/skills/* directories every time a user switches runtimes, and the manifest would silently keep pointing to .claude/skills/ forever.'
+  source: github-pr-675
+  manual: false
+  run:
+    command: go test ./internal/session/ -run TestSkillRuntime_ApplyMigratesBetweenManagedRoots -count=1 -race -v
+    expected: pass
+- id: v1732-pr675-attach-migrates-when-source-unavailable
+  added: '2026-04-19'
+  task: v1732-pr-675
+  file: internal/session/skills_runtime_test.go
+  test_name: TestSkillRuntime_AttachMigratesFromExistingTargetWhenSourceUnavailable
+  purpose: 'PR #675 — the fallback case: when the original SourcePath no longer exists on disk (e.g. a pool skill was deleted) but the old managed target is still readable, attach into the new runtime root must rebuild from the existing target (copy-only, no symlink). Guards against a regression where losing the source directory would make runtime-switch migration impossible — users would be stranded with a manifest entry pointing at a dir they cannot move.'
+  source: github-pr-675
+  manual: false
+  run:
+    command: go test ./internal/session/ -run TestSkillRuntime_AttachMigratesFromExistingTargetWhenSourceUnavailable -count=1 -race -v
+    expected: pass
+- id: v1732-pr675-detach-removes-agent-skills-target
+  added: '2026-04-19'
+  task: v1732-pr-675
+  file: internal/session/skills_runtime_test.go
+  test_name: TestSkillRuntime_DetachRemovesAgentSkillsTarget
+  purpose: 'PR #675 — DetachSkillFromProject must physically remove the materialized entry under .agents/skills/ (not just delete the manifest row). Pins the detach contract for the new runtime-neutral managed root so a future refactor that special-cases .claude/skills/ cannot leave .agents/skills/ orphans behind. Companion to removeAttachmentTarget''s defense-in-depth check (target must be under a known managed dir AND resolved path must stay inside base — blocks `..`-traversal even with a hand-edited manifest).'
+  source: github-pr-675
+  manual: false
+  run:
+    command: go test ./internal/session/ -run TestSkillRuntime_DetachRemovesAgentSkillsTarget -count=1 -race -v
+    expected: pass
+- id: v1732-pr675-tui-reconcile-on-runtime-switch
+  added: '2026-04-19'
+  task: v1732-pr-675
+  file: internal/ui/skill_dialog_test.go
+  test_name: TestSkillDialog_ShowMarksReconcileNeededForRuntimeSwitch
+  purpose: 'PR #675 — when the TUI Skills Manager opens for a session whose attached skills point at a managed root that doesn''t match the active runtime, NeedsApply() must return true even when the user hasn''t moved anything between columns. Pins the auto-reconcile UX: pressing Enter after a Claude-to-Gemini restart migrates all attachments in one keystroke with no manual shuffling.'
+  source: github-pr-675
+  manual: false
+  run:
+    command: go test ./internal/ui/ -run TestSkillDialog_ShowMarksReconcileNeededForRuntimeSwitch -count=1 -race -v
+    expected: pass
+- id: v1732-pr675-tui-gemini-apply-uses-agent-skills
+  added: '2026-04-19'
+  task: v1732-pr-675
+  file: internal/ui/skill_dialog_test.go
+  test_name: TestSkillDialog_ApplyUsesAgentSkillsDirForGemini
+  purpose: 'PR #675 — the TUI Apply path must honour the runtime-specific destination: attaching a skill in a Gemini session through the Skills Manager materializes into <project>/.agents/skills/, not <project>/.claude/skills/. Companion to TestSkillRuntime_AttachUsesAgentSkillsDirForGemini on the session-layer side; this is the UI-to-session integration seam.'
+  source: github-pr-675
+  manual: false
+  run:
+    command: go test ./internal/ui/ -run TestSkillDialog_ApplyUsesAgentSkillsDirForGemini -count=1 -race -v
+    expected: pass
