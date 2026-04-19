@@ -1543,3 +1543,36 @@ tests:
   run:
     command: go test ./cmd/agent-deck/ -run TestSessionSearch_NoMatches -count=1 -race -v
     expected: pass
+- id: v1730-issue391-hex-color-rendered
+  added: '2026-04-19'
+  task: v1730-issue-391
+  file: internal/ui/issue391_tui_test.go
+  test_name: TestIssue391_SessionRow_HexColorRenderedAsForeground
+  purpose: 'Issue #391 — renderSessionItem applies Instance.Color as title foreground when set to a #RRGGBB truecolor hex. Pins the render contract so a future refactor of titleStyle cannot silently drop the tint overlay (the exact failure mode from v1.7.27–v1.7.29 where the field round-tripped through storage but never reached the render layer).'
+  source: github-issue-391
+  manual: false
+  run:
+    command: go test ./internal/ui/ -run TestIssue391_SessionRow_HexColorRenderedAsForeground -count=1 -race -v
+    expected: pass
+- id: v1730-issue391-ansi-color-rendered
+  added: '2026-04-19'
+  task: v1730-issue-391
+  file: internal/ui/issue391_tui_test.go
+  test_name: TestIssue391_SessionRow_ANSIIndexColorRendered
+  purpose: 'Issue #391 — renderSessionItem handles the second accepted color format from isValidSessionColor: a 0..255 ANSI 256-palette index emits the `38;5;<idx>` foreground escape. Guards against a future "truecolor-hex only" regression that would silently reject valid CLI input.'
+  source: github-issue-391
+  manual: false
+  run:
+    command: go test ./internal/ui/ -run TestIssue391_SessionRow_ANSIIndexColorRendered -count=1 -race -v
+    expected: pass
+- id: v1730-issue391-empty-color-untinted
+  added: '2026-04-19'
+  task: v1730-issue-391
+  file: internal/ui/issue391_tui_test.go
+  test_name: TestIssue391_SessionRow_EmptyColorLeavesRowUntinted
+  purpose: 'Issue #391 — the fall-through invariant: Color="" must leave the row untinted. Guards against a future refactor that turns the opt-in tint into a mandatory one, which would change rendering for every user who never set a color.'
+  source: github-issue-391
+  manual: false
+  run:
+    command: go test ./internal/ui/ -run TestIssue391_SessionRow_EmptyColorLeavesRowUntinted -count=1 -race -v
+    expected: pass
