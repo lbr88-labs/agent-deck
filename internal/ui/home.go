@@ -18,6 +18,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+	"unicode/utf8"
 
 	"github.com/charmbracelet/bubbles/textarea"
 	tea "github.com/charmbracelet/bubbletea"
@@ -252,8 +253,8 @@ type Home struct {
 	lastLoadMtime       time.Time  // File mtime when we last loaded (for external change detection)
 
 	// Preview cache (async fetching - View() must be pure, no blocking I/O)
-	previewCache      map[string]string    // sessionID -> cached preview content
-	previewCacheTime  map[string]time.Time // sessionID -> when cached (for expiration)
+	previewCache      map[string]string    // previewKey -> cached preview content
+	previewCacheTime  map[string]time.Time // previewKey -> when cached (for expiration)
 	previewCacheMu    sync.RWMutex         // Protects previewCache for thread-safety
 	previewFetchingID string               // ID currently being fetched (prevents duplicate fetches)
 
@@ -578,6 +579,7 @@ type previewDebounceMsg struct {
 	previewKey  string // cache key
 	sessionID   string // parent session ID (for instance lookup)
 	windowIndex int    // -1 for session, >= 0 for specific window
+	remoteName  string // remote name for remote session preview
 }
 
 // analyticsFetchedMsg is sent when async analytics parsing is complete
@@ -2192,6 +2194,42 @@ func previewCacheKey(sessionID string, windowIndex int) string {
 	return fmt.Sprintf("%s:%d", sessionID, windowIndex)
 }
 
+func remotePreviewCacheKey(remoteName, sessionID string) string {
+	return fmt.Sprintf("remote:%s:%s", remoteName, sessionID)
+}
+
+const (
+	remotePreviewMaxLines = 200
+	remotePreviewMaxBytes = 16 * 1024
+)
+
+func truncateRemotePreviewContent(content string) string {
+	if content == "" {
+		return ""
+	}
+
+	lines := strings.Split(content, "\n")
+	if len(lines) > remotePreviewMaxLines {
+		lines = lines[len(lines)-remotePreviewMaxLines:]
+		content = strings.Join(lines, "\n")
+	}
+
+	if len(content) <= remotePreviewMaxBytes {
+		return content
+	}
+
+	trimmed := []byte(content)
+	trimmed = trimmed[len(trimmed)-remotePreviewMaxBytes:]
+	for len(trimmed) > 0 && !utf8.Valid(trimmed) {
+		trimmed = trimmed[1:]
+	}
+	if idx := bytes.IndexByte(trimmed, '\n'); idx >= 0 && idx < len(trimmed)-1 {
+		trimmed = trimmed[idx+1:]
+	}
+
+	return string(trimmed)
+}
+
 // fetchPreview returns a command that asynchronously fetches preview content.
 // windowIndex < 0 captures the session's primary pane; >= 0 captures a specific window.
 func (h *Home) fetchPreview(inst *session.Instance, key string, windowIndex int) tea.Cmd {
@@ -2230,6 +2268,42 @@ func (h *Home) fetchPreviewDebounced(sessionID string, windowIndex int) tea.Cmd 
 	}
 }
 
+func (h *Home) fetchRemotePreviewDebounced(remoteName, sessionID string) tea.Cmd {
+	const debounceDelay = 150 * time.Millisecond
+
+	key := remotePreviewCacheKey(remoteName, sessionID)
+	h.previewDebounceMu.Lock()
+	h.pendingPreviewKey = key
+	h.previewDebounceMu.Unlock()
+
+	return func() tea.Msg {
+		time.Sleep(debounceDelay)
+		return previewDebounceMsg{previewKey: key, sessionID: sessionID, windowIndex: -1, remoteName: remoteName}
+	}
+}
+
+func (h *Home) fetchRemotePreview(remoteName, sessionID, key string) tea.Cmd {
+	return func() tea.Msg {
+		config, err := session.LoadUserConfig()
+		if err != nil || config == nil || config.Remotes == nil {
+			return previewFetchedMsg{previewKey: key, err: fmt.Errorf("failed to load remote config")}
+		}
+
+		rc, ok := config.Remotes[remoteName]
+		if !ok {
+			return previewFetchedMsg{previewKey: key, err: fmt.Errorf("remote '%s' not found", remoteName)}
+		}
+
+		runner := session.NewSSHRunner(remoteName, rc)
+		ctx, cancel := context.WithTimeout(h.ctx, 15*time.Second)
+		defer cancel()
+
+		content, fetchErr := runner.FetchSessionOutput(ctx, sessionID)
+		content = truncateRemotePreviewContent(content)
+		return previewFetchedMsg{previewKey: key, content: content, err: fetchErr}
+	}
+}
+
 // selectedPreviewTarget returns the instance, cache key, and window index for the currently
 // selected flat item. windowIndex is -1 for session items.
 func (h *Home) selectedPreviewTarget() (*session.Instance, string, int) {
@@ -2253,12 +2327,32 @@ func (h *Home) selectedPreviewTarget() (*session.Instance, string, int) {
 	return nil, "", -1
 }
 
+func (h *Home) selectedRemotePreviewTarget() (string, string, string, bool) {
+	if h.cursor >= len(h.flatItems) {
+		return "", "", "", false
+	}
+	item := h.flatItems[h.cursor]
+	if item.Type != session.ItemTypeRemoteSession || item.RemoteSession == nil {
+		return "", "", "", false
+	}
+	if item.RemoteName == "" || item.RemoteSession.ID == "" {
+		return "", "", "", false
+	}
+
+	key := remotePreviewCacheKey(item.RemoteName, item.RemoteSession.ID)
+	return item.RemoteName, item.RemoteSession.ID, key, true
+}
+
 // fetchSelectedPreview debounces a preview fetch for the currently selected item.
 // Handles both session and window items transparently.
 func (h *Home) fetchSelectedPreview() tea.Cmd {
 	inst, _, winIdx := h.selectedPreviewTarget()
 	if inst == nil {
-		return nil
+		remoteName, remoteSessionID, _, ok := h.selectedRemotePreviewTarget()
+		if !ok {
+			return nil
+		}
+		return h.fetchRemotePreviewDebounced(remoteName, remoteSessionID)
 	}
 	return h.fetchPreviewDebounced(inst.ID, winIdx)
 }
@@ -4068,6 +4162,26 @@ func (h *Home) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return h, nil // Superseded by newer navigation
 		}
 
+		if msg.remoteName != "" {
+			var cmds []tea.Cmd
+
+			// Preview fetch
+			h.previewCacheMu.Lock()
+			needsPreviewFetch := h.previewFetchingID != msg.previewKey
+			if needsPreviewFetch {
+				h.previewFetchingID = msg.previewKey
+			}
+			h.previewCacheMu.Unlock()
+			if needsPreviewFetch {
+				cmds = append(cmds, h.fetchRemotePreview(msg.remoteName, msg.sessionID, msg.previewKey))
+			}
+
+			if len(cmds) > 0 {
+				return h, tea.Batch(cmds...)
+			}
+			return h, nil
+		}
+
 		// Find session and trigger actual fetch
 		h.instancesMu.RLock()
 		inst := h.instanceByID[msg.sessionID]
@@ -4166,13 +4280,14 @@ func (h *Home) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return h, nil
 
 	case previewFetchedMsg:
-		// Async preview content received - update cache with timestamp
+		// Async preview content received - always advance the TTL so failures
+		// and empty responses don't trigger a fetch on every tick.
 		// Protect both previewFetchingID and previewCache with the same mutex
 		h.previewCacheMu.Lock()
 		h.previewFetchingID = ""
+		h.previewCacheTime[msg.previewKey] = time.Now()
 		if msg.err == nil {
 			h.previewCache[msg.previewKey] = msg.content
-			h.previewCacheTime[msg.previewKey] = time.Now()
 		}
 		h.previewCacheMu.Unlock()
 		return h, nil
@@ -4461,8 +4576,10 @@ func (h *Home) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// which runs even when TUI is paused during tea.Exec
 
 		// Fetch preview for currently selected item (if stale/missing and not fetching)
-		// Cache expires after 2 seconds to show live terminal updates without excessive fetching
+		// Local previews use a short TTL for near-live terminal updates.
 		const previewCacheTTL = 2 * time.Second
+		// Remote previews use a longer TTL to avoid frequent SSH calls.
+		const remotePreviewCacheTTL = 10 * time.Second
 		var previewCmd tea.Cmd
 		selectedInst, selectedKey, selectedWinIdx := h.selectedPreviewTarget()
 		if selectedInst != nil && !h.shouldSuppressPreviewRefresh(time.Now()) {
@@ -4475,6 +4592,18 @@ func (h *Home) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 				previewCmd = h.fetchPreview(selectedInst, selectedKey, selectedWinIdx)
 			}
 			h.previewCacheMu.Unlock()
+		} else {
+			remoteName, remoteSessionID, remoteKey, ok := h.selectedRemotePreviewTarget()
+			if ok {
+				h.previewCacheMu.Lock()
+				cachedTime, hasCached := h.previewCacheTime[remoteKey]
+				cacheExpired := !hasCached || time.Since(cachedTime) > remotePreviewCacheTTL
+				if cacheExpired && h.previewFetchingID != remoteKey {
+					h.previewFetchingID = remoteKey
+					previewCmd = h.fetchRemotePreview(remoteName, remoteSessionID, remoteKey)
+				}
+				h.previewCacheMu.Unlock()
+			}
 		}
 		cmds := []tea.Cmd{h.tick(), previewCmd, remoteFetchCmd}
 		if h.fullRepaint {
@@ -10881,6 +11010,31 @@ func (h *Home) renderRemotePreview(item session.Item, width, height int) string 
 		b.WriteString(dimStyle.Render("Group:   ") + rs.Group + "\n")
 	}
 	b.WriteString("\n")
+
+	pvKey := remotePreviewCacheKey(item.RemoteName, rs.ID)
+	h.previewCacheMu.RLock()
+	previewContent, hasPreview := h.previewCache[pvKey]
+	_, hasFetched := h.previewCacheTime[pvKey]
+	h.previewCacheMu.RUnlock()
+
+	b.WriteString(dimStyle.Render("Last response") + "\n")
+	b.WriteString(strings.Repeat("-", max(1, min(width-4, 40))))
+	b.WriteString("\n")
+	previewContent = truncateRemotePreviewContent(previewContent)
+	if hasPreview && strings.TrimSpace(previewContent) != "" {
+		b.WriteString(previewContent)
+		b.WriteString("\n\n")
+	} else if hasFetched {
+		b.WriteString(dimStyle.Render("No response available yet."))
+		b.WriteString("\n\n")
+	} else if rs.Status == "running" || rs.Status == "waiting" {
+		b.WriteString(dimStyle.Render("Fetching remote preview..."))
+		b.WriteString("\n\n")
+	} else {
+		b.WriteString(dimStyle.Render("No response available yet."))
+		b.WriteString("\n\n")
+	}
+
 	b.WriteString(dimStyle.Render("Press Enter to attach via SSH"))
 
 	return b.String()
