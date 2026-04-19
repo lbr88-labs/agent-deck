@@ -7468,26 +7468,7 @@ func (h *Home) createSessionInGroupWithWorktreeAndOptions(
 			path = worktreePath
 		}
 
-		tool := "shell"
-		switch command {
-		case "claude":
-			tool = "claude"
-		case "gemini":
-			tool = "gemini"
-		case "aider":
-			tool = "aider"
-		case "codex":
-			tool = "codex"
-		case "opencode":
-			tool = "opencode"
-		default:
-			// Check custom tools: tool identity stays as the custom name (e.g. "glm")
-			// so config lookup works, but command resolves to the actual binary (e.g. "claude")
-			if toolDef := session.GetToolDef(command); toolDef != nil {
-				tool = command
-				command = toolDef.Command
-			}
-		}
+		tool, command := createSessionTool(command)
 
 		var inst *session.Instance
 		if groupPath != "" {
@@ -7646,6 +7627,35 @@ func (h *Home) createSessionInGroupWithWorktreeAndOptions(
 		uiLog.Info("session_create_succeeded", slog.String("id", inst.ID))
 		return sessionCreatedMsg{instance: inst, tempID: tempID}
 	}
+}
+
+// createSessionTool maps a free-form command to (tool, command). Built-in
+// tools resolve to themselves; custom tool names from user config resolve
+// to the configured binary while keeping the custom name as the tool
+// identity (so [tools.<name>] config lookup works). Anything unrecognised
+// falls back to a "shell" session running `command` verbatim.
+func createSessionTool(command string) (string, string) {
+	tool := "shell"
+	switch command {
+	case "claude":
+		tool = "claude"
+	case "gemini":
+		tool = "gemini"
+	case "aider":
+		tool = "aider"
+	case "codex":
+		tool = "codex"
+	case "opencode":
+		tool = "opencode"
+	case "pi":
+		tool = "pi"
+	default:
+		if toolDef := session.GetToolDef(command); toolDef != nil {
+			tool = command
+			command = toolDef.Command
+		}
+	}
+	return tool, command
 }
 
 func applyCreateSessionToolOverrides(inst *session.Instance, tool string, geminiYoloMode bool) {

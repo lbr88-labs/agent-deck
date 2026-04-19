@@ -13,6 +13,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 	"syscall"
 	"time"
@@ -32,7 +33,7 @@ import (
 	"github.com/asheshgoplani/agent-deck/internal/web"
 )
 
-var Version = "1.7.30" // overridden at build time via -ldflags "-X main.Version=..."
+var Version = "1.7.31" // overridden at build time via -ldflags "-X main.Version=..."
 
 // Table column widths for list command output
 const (
@@ -2702,6 +2703,8 @@ func detectTool(cmd string) string {
 		return "gemini"
 	case strings.Contains(cmd, "codex"):
 		return "codex"
+	case hasCommandToken(cmd, "pi"):
+		return "pi"
 	case strings.Contains(cmd, "copilot"):
 		return "copilot"
 	case strings.Contains(cmd, "cursor"):
@@ -2709,6 +2712,14 @@ func detectTool(cmd string) string {
 	default:
 		return "shell"
 	}
+}
+
+// hasCommandToken reports whether `want` appears as a whitespace-delimited
+// token in `cmd` (case-insensitive). Used for short, ambiguous tool names
+// like "pi" where strings.Contains would falsely match "epic", "tapioca",
+// etc. Longer names like "copilot" or "claude" don't need this.
+func hasCommandToken(cmd, want string) bool {
+	return slices.Contains(strings.Fields(strings.ToLower(cmd)), want)
 }
 
 // handleUninstall removes agent-deck from the system

@@ -1576,3 +1576,25 @@ tests:
   run:
     command: go test ./internal/ui/ -run TestIssue391_SessionRow_EmptyColorLeavesRowUntinted -count=1 -race -v
     expected: pass
+- id: v1731-pr674-pi-detect-cli
+  added: '2026-04-19'
+  task: v1731-pr-674
+  file: cmd/agent-deck/copilot_detect_test.go
+  test_name: TestDetectTool_Pi
+  purpose: 'PR #674 (community contribution from @masta-g3) — `agent-deck add -c pi .` must produce Tool="pi" not Tool="shell" with Command="pi". Pins token-matching detection so short ambiguous names like "pi" survive a future refactor without false-matching against substrings ("epic", "tapioca"). Companion to the existing tmux-side detection in internal/tmux; this is the CLI -c flag parser at the boundary.'
+  source: github-pr-674
+  manual: false
+  run:
+    command: go test ./cmd/agent-deck/ -run TestDetectTool_Pi -count=1 -race -v
+    expected: pass
+- id: v1731-pr674-pi-detect-tui
+  added: '2026-04-19'
+  task: v1731-pr-674
+  file: internal/ui/home_test.go
+  test_name: TestCreateSessionTool_Pi
+  purpose: 'PR #674 — TUI session creation must map command="pi" to (tool="pi", command="pi") via createSessionTool. Pins the helper extracted from the inline switch in createSessionInGroupWithWorktreeAndOptions so a future TUI refactor cannot regress Pi sessions back to Tool="shell".'
+  source: github-pr-674
+  manual: false
+  run:
+    command: go test ./internal/ui/ -run TestCreateSessionTool_Pi -count=1 -race -v
+    expected: pass

@@ -82,6 +82,16 @@ func TestApplyCreateSessionToolOverrides_NonGeminiNoop(t *testing.T) {
 	}
 }
 
+// Co-credit @masta-g3 (PR #674): TUI session creation must produce
+// Tool="pi" rather than Tool="shell" with Command="pi", matching the
+// tmux/userconfig wiring already present.
+func TestCreateSessionTool_Pi(t *testing.T) {
+	tool, command := createSessionTool("pi")
+	if tool != "pi" || command != "pi" {
+		t.Fatalf("createSessionTool(\"pi\") = (%q, %q), want (\"pi\", \"pi\")", tool, command)
+	}
+}
+
 func TestHomeInit(t *testing.T) {
 	home := NewHome()
 	cmd := home.Init()

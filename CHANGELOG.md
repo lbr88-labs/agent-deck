@@ -5,6 +5,11 @@ All notable changes to Agent Deck will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.7.31] - 2026-04-19
+
+### Fixed
+- **Pi (Inflection AI's `pi` CLI) is now detected as a first-class tool in CLI and TUI session creation paths** (community PR [#674](https://github.com/asheshgoplani/agent-deck/pull/674) by @masta-g3, rebased onto current main as the original branch was stale): `agent-deck add -c pi .` and TUI session creation both produced `Tool="shell"` with `Command="pi"`, even though the rest of the framework (tmux content detection in `internal/tmux/tmux.go`, userconfig builtin registration, pattern detection, GetToolIcon) was already wired for Pi. Two missed call sites: `cmd/agent-deck/main.go::detectTool` (the free-form `-c` parser) and `internal/ui/home.go` (the TUI session creation switch). `detectTool` now recognises `pi` via a new `hasCommandToken` helper that does whitespace-token matching rather than `strings.Contains`, so short ambiguous names like "pi" do not get hijacked by substrings of unrelated words ("epic", "tapioca", "spider", "happiness"). The TUI's inline tool-mapping switch is extracted into a reusable `createSessionTool(command) (tool, command)` and given a `pi` case. Tests: `TestDetectTool_Pi` (5 cases including the false-match guards) in `cmd/agent-deck/copilot_detect_test.go`; `TestCreateSessionTool_Pi` in `internal/ui/home_test.go`. Co-credit: @masta-g3 (PR #674) for the original pattern; rebased + extended with the substring-false-match cases by maintainers.
+
 ## [1.7.30] - 2026-04-19
 
 ### Fixed
