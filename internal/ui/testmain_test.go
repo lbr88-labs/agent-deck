@@ -23,6 +23,13 @@ func TestMain(m *testing.M) {
 	// Force _test profile for all tests in this package
 	os.Setenv("AGENTDECK_PROFILE", "_test")
 
+	// v1.7.38: stub syncOptOutToConfig to a no-op by default so feedback
+	// dialog tests that exercise stepRating 'n' / stepConfirm decline do
+	// NOT write to the developer's real ~/.agent-deck/config.toml. Tests
+	// that want to verify the sync actually runs install their own stub
+	// via stubSyncOptOut(t).
+	syncOptOutToConfig = func() {}
+
 	// Run tests
 	code := m.Run()
 

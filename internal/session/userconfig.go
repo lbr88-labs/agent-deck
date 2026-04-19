@@ -156,6 +156,21 @@ type UserConfig struct {
 
 	// Watcher defines event watcher settings
 	Watcher WatcherSettings `toml:"watcher"`
+
+	// Feedback defines in-product feedback prompt settings (v1.7.38+).
+	// Mirrors the opt-out in ~/.agent-deck/feedback-state.json so it is visible
+	// to the user and editable without running `agent-deck feedback`.
+	Feedback FeedbackSettings `toml:"feedback"`
+}
+
+// FeedbackSettings controls the in-product feedback prompts.
+// When Disabled is true, neither the auto-prompt (TUI) nor the post-launch
+// auto-trigger (CLI, if any) will fire. Explicit `agent-deck feedback`
+// invocations still run but show a re-enable prompt first. v1.7.38+.
+type FeedbackSettings struct {
+	// Disabled suppresses all passive feedback prompts when true.
+	// Defaults to false. Set by RecordOptOut paths; cleared on re-enable.
+	Disabled bool `toml:"disabled"`
 }
 
 // OpenClawSettings configures the OpenClaw gateway connection.
@@ -1353,6 +1368,24 @@ var defaultUserConfig = UserConfig{
 	MCPs:  make(map[string]MCPDef),
 }
 
+// cloneDefaultUserConfig returns a fresh shallow copy of defaultUserConfig with
+// independent Tools/MCPs maps, so callers mutating the returned value cannot
+// leak into later LoadUserConfig() calls. Introduced with v1.7.38's feedback
+// opt-out work after a cross-test mutation leak (cfg.Feedback.Disabled=true)
+// corrupted the shared global between parallel test cases.
+func cloneDefaultUserConfig() UserConfig {
+	c := defaultUserConfig
+	c.Tools = make(map[string]ToolDef, len(defaultUserConfig.Tools))
+	for k, v := range defaultUserConfig.Tools {
+		c.Tools[k] = v
+	}
+	c.MCPs = make(map[string]MCPDef, len(defaultUserConfig.MCPs))
+	for k, v := range defaultUserConfig.MCPs {
+		c.MCPs[k] = v
+	}
+	return c
+}
+
 // Cache for user config. Invalidated when config.toml's mtime advances past
 // the snapshot taken at cache time, so long-running processes (TUI, web,
 // notify-daemon) pick up external edits without requiring a full restart.
@@ -1407,13 +1440,15 @@ func LoadUserConfig() (*UserConfig, error) {
 	}
 
 	if pathErr != nil {
-		userConfigCache = &defaultUserConfig
+		fresh := cloneDefaultUserConfig()
+		userConfigCache = &fresh
 		userConfigCacheMtime = time.Time{}
 		return userConfigCache, nil
 	}
 
 	if _, err := os.Stat(configPath); os.IsNotExist(err) {
-		userConfigCache = &defaultUserConfig
+		fresh := cloneDefaultUserConfig()
+		userConfigCache = &fresh
 		userConfigCacheMtime = time.Time{}
 		return userConfigCache, nil
 	}
@@ -1422,7 +1457,8 @@ func LoadUserConfig() (*UserConfig, error) {
 	if _, err := toml.DecodeFile(configPath, &config); err != nil {
 		// Cache default to prevent hot-looping on a broken file, but still
 		// return the error so the caller can surface it.
-		userConfigCache = &defaultUserConfig
+		fresh := cloneDefaultUserConfig()
+		userConfigCache = &fresh
 		userConfigCacheMtime = currentMtime
 		return userConfigCache, fmt.Errorf("config.toml parse error: %w", err)
 	}

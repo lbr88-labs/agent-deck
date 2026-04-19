@@ -92,6 +92,7 @@ func withFeedbackLogin(t *testing.T, login string) func() {
 // never return and the test would time out.
 // ──────────────────────────────────────────────────────────────────
 func TestFeedback_PromptPrintsBeforeStdinBlocks(t *testing.T) {
+	isolateFeedbackHome(t)
 	defer withFeedbackLogin(t, "octocat")()
 
 	inR, inW := io.Pipe()
@@ -152,6 +153,7 @@ func TestFeedback_PromptPrintsBeforeStdinBlocks(t *testing.T) {
 // GhCmd NOT called, state IS saved, stdout contains 'Not posted.'
 // ──────────────────────────────────────────────────────────────────
 func TestIssue679_ConfirmN_DoesNotPost(t *testing.T) {
+	isolateFeedbackHome(t)
 	defer withStdin(t, pipeInput(t, "4", "great tool", "n"))()
 	defer withFeedbackLogin(t, "octocat")()
 
@@ -182,6 +184,7 @@ func TestIssue679_ConfirmN_DoesNotPost(t *testing.T) {
 //
 // ──────────────────────────────────────────────────────────────────
 func TestIssue679_ConfirmY_GhSuccess_Posts(t *testing.T) {
+	isolateFeedbackHome(t)
 	defer withStdin(t, pipeInput(t, "5", "bug report", "y"))()
 	defer withFeedbackLogin(t, "octocat")()
 
@@ -223,6 +226,7 @@ func TestIssue679_ConfirmY_GhSuccess_Posts(t *testing.T) {
 //
 // ──────────────────────────────────────────────────────────────────
 func TestIssue679_ConfirmY_GhFailure_NoFallback(t *testing.T) {
+	isolateFeedbackHome(t)
 	defer withStdin(t, pipeInput(t, "3", "meh", "y"))()
 	defer withFeedbackLogin(t, "octocat")()
 
@@ -256,6 +260,7 @@ func TestIssue679_ConfirmY_GhFailure_NoFallback(t *testing.T) {
 // (d) empty line on confirm → default-N → GhCmd NOT called.
 // ──────────────────────────────────────────────────────────────────
 func TestIssue679_EmptyConfirm_DefaultNo(t *testing.T) {
+	isolateFeedbackHome(t)
 	defer withStdin(t, pipeInput(t, "4", "", ""))()
 	defer withFeedbackLogin(t, "octocat")()
 
@@ -277,6 +282,7 @@ func TestIssue679_EmptyConfirm_DefaultNo(t *testing.T) {
 // (e) 'Y' uppercase → treated as yes.
 // ──────────────────────────────────────────────────────────────────
 func TestIssue679_Confirm_UppercaseY(t *testing.T) {
+	isolateFeedbackHome(t)
 	defer withStdin(t, pipeInput(t, "4", "comment", "Y"))()
 	defer withFeedbackLogin(t, "octocat")()
 
@@ -295,6 +301,7 @@ func TestIssue679_Confirm_UppercaseY(t *testing.T) {
 // (f) ' y ' with whitespace → accepted after trim.
 // ──────────────────────────────────────────────────────────────────
 func TestIssue679_Confirm_WhitespaceY(t *testing.T) {
+	isolateFeedbackHome(t)
 	defer withStdin(t, pipeInput(t, "4", "comment", " y "))()
 	defer withFeedbackLogin(t, "octocat")()
 
@@ -315,6 +322,7 @@ func TestIssue679_Confirm_WhitespaceY(t *testing.T) {
 // a distinctive marker and assert every line appears in stdout.
 // ──────────────────────────────────────────────────────────────────
 func TestIssue679_Disclosure_PreviewMatchesFormatComment(t *testing.T) {
+	isolateFeedbackHome(t)
 	comment := "ZEBRA-MARKER-ROSETTA-PINE"
 	defer withStdin(t, pipeInput(t, "2", comment, "n"))()
 	defer withFeedbackLogin(t, "octocat")()
@@ -339,6 +347,7 @@ func TestIssue679_Disclosure_PreviewMatchesFormatComment(t *testing.T) {
 // the Discussion URL, and the gh CLI.
 // ──────────────────────────────────────────────────────────────────
 func TestIssue679_Disclosure_ShowsLogin(t *testing.T) {
+	isolateFeedbackHome(t)
 	defer withStdin(t, pipeInput(t, "4", "x", "n"))()
 	defer withFeedbackLogin(t, "octocat")()
 
@@ -365,6 +374,7 @@ func TestIssue679_Disclosure_ShowsLogin(t *testing.T) {
 // Login lookup fallback: empty login → 'your GitHub account', no '@' prefix.
 // ──────────────────────────────────────────────────────────────────
 func TestIssue679_Disclosure_LoginFallback(t *testing.T) {
+	isolateFeedbackHome(t)
 	defer withStdin(t, pipeInput(t, "4", "x", "n"))()
 	defer withFeedbackLogin(t, "")()
 
@@ -383,8 +393,13 @@ func TestIssue679_Disclosure_LoginFallback(t *testing.T) {
 
 // ──────────────────────────────────────────────────────────────────
 // Legacy opt-out behavior ('n' at rating prompt) stays intact.
+// v1.7.38: isolate HOME so the opt-out doesn't leak to the real
+// ~/.agent-deck/ — the opt-out now persists to config.toml as well,
+// and the prior "restore state.json only" pattern no longer covers
+// the full footprint.
 // ──────────────────────────────────────────────────────────────────
 func TestIssue679_OptOut_Unchanged(t *testing.T) {
+	isolateFeedbackHome(t)
 	defer withStdin(t, pipeInput(t, "n"))()
 	defer withFeedbackLogin(t, "octocat")()
 
@@ -400,8 +415,4 @@ func TestIssue679_OptOut_Unchanged(t *testing.T) {
 	if st.FeedbackEnabled {
 		t.Error("opt-out must set FeedbackEnabled=false")
 	}
-
-	// Restore state so later tests don't inherit the opt-out.
-	st.FeedbackEnabled = true
-	_ = feedback.SaveState(st)
 }

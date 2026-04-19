@@ -359,9 +359,15 @@ func TestFeedbackDialog_ViewNonEmpty(t *testing.T) {
 	}
 }
 
-// TestFeedbackDialog_OnDemandShortcut verifies that Show() makes the dialog visible regardless
-// of opt-out state or prior rating -- i.e. on-demand bypasses ShouldShow() entirely.
-// This mirrors what the ctrl+e handler does: call Show() unconditionally.
+// TestFeedbackDialog_OnDemandShortcut verifies that Show() makes the dialog visible
+// when called for a previously-rated version (ctrl+e bypasses ShouldShow's
+// LastRatedVersion / ShownCount checks).
+//
+// v1.7.38: the opt-out case used to assert "Show() on FeedbackEnabled=false still
+// shows" — that contract is reversed. Show() now no-ops on opted-out state as a
+// belt-and-braces guard against a caller forgetting the ShouldShow gate. The ctrl+e
+// handler re-enables FeedbackEnabled BEFORE calling Show() (see home.go ctrl+e
+// handler + TestV1738_FeedbackDialog_Show_NoOpWhenOptedOut).
 func TestFeedbackDialog_OnDemandShortcut(t *testing.T) {
 	sender := feedback.NewSender()
 
@@ -376,22 +382,5 @@ func TestFeedbackDialog_OnDemandShortcut(t *testing.T) {
 	d1.Show("1.5.1", st1, sender)
 	if !d1.IsVisible() {
 		t.Error("case 1: expected dialog to be visible after on-demand Show() even though LastRatedVersion matches, but IsVisible() returned false")
-	}
-
-	// Case 2: FeedbackEnabled=false (auto-popup would block this).
-	d2 := NewFeedbackDialog()
-	d2.Show("1.5.1", &feedback.State{FeedbackEnabled: true, MaxShows: 3}, sender)
-	d2.Hide()
-	if d2.IsVisible() {
-		t.Fatal("expected dialog hidden after Hide(), but IsVisible() returned true")
-	}
-
-	st2 := &feedback.State{
-		FeedbackEnabled: false, // user opted out -- auto-popup would skip entirely
-		MaxShows:        3,
-	}
-	d2.Show("1.5.1", st2, sender)
-	if !d2.IsVisible() {
-		t.Error("case 2: expected dialog to be visible after on-demand Show() even with FeedbackEnabled=false, but IsVisible() returned false")
 	}
 }

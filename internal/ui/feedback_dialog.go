@@ -8,10 +8,23 @@ import (
 	"time"
 
 	"github.com/asheshgoplani/agent-deck/internal/feedback"
+	"github.com/asheshgoplani/agent-deck/internal/session"
 	"github.com/charmbracelet/bubbles/textarea"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 )
+
+// syncOptOutToConfig mirrors the in-memory opt-out into ~/.agent-deck/config.toml
+// so the decision is visible to the user when they inspect the config file.
+// Overridable for tests; production wiring writes via session.SaveUserConfig.
+var syncOptOutToConfig = func() {
+	cfg, err := session.LoadUserConfig()
+	if err != nil || cfg == nil || cfg.Feedback.Disabled {
+		return
+	}
+	cfg.Feedback.Disabled = true
+	_ = session.SaveUserConfig(cfg)
+}
 
 type feedbackStep int
 
@@ -79,7 +92,17 @@ func (d *FeedbackDialog) IsVisible() bool {
 }
 
 // Show displays the dialog for the given version, state, and sender.
+//
+// v1.7.38: when the state is opted-out (FeedbackEnabled=false), Show() is a
+// silent no-op. Every auto-prompt caller is gated on ShouldShow already, which
+// checks FeedbackEnabled — this is belt-and-braces so a new caller that forgets
+// the ShouldShow gate cannot accidentally re-prompt an opted-out user.
+// Explicit "open on demand" paths (e.g. ctrl+e) must re-enable the state
+// BEFORE calling Show(); the dialog itself does not carry a re-enable UI.
 func (d *FeedbackDialog) Show(version string, st *feedback.State, sender *feedback.Sender) {
+	if st != nil && !st.FeedbackEnabled {
+		return
+	}
 	d.visible = true
 	d.step = stepRating
 	d.rating = 0
@@ -135,6 +158,7 @@ func (d *FeedbackDialog) Update(msg tea.KeyMsg) (*FeedbackDialog, tea.Cmd) {
 		case "n":
 			feedback.RecordOptOut(d.state)
 			_ = feedback.SaveState(d.state)
+			syncOptOutToConfig()
 			d.Hide()
 		case "esc":
 			d.Hide()
@@ -169,6 +193,11 @@ func (d *FeedbackDialog) Update(msg tea.KeyMsg) (*FeedbackDialog, tea.Cmd) {
 			return d, tea.Batch(d.sendCmd(d.pendingComment), dismissAfter2s())
 		default:
 			// Anything else — 'n', 'N', Esc, Enter, stray keys — declines.
+			// v1.7.38: decline at disclosure is a persistent opt-out, not a
+			// one-shot dismiss. Matches the CLI's "Post this? [y/N]" path.
+			feedback.RecordOptOut(d.state)
+			_ = feedback.SaveState(d.state)
+			syncOptOutToConfig()
 			d.step = stepDismissed
 			return d, dismissAfter2s()
 		}
