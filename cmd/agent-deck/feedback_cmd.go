@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/asheshgoplani/agent-deck/internal/feedback"
+	"github.com/asheshgoplani/agent-deck/internal/session"
 )
 
 // ghUserLogin returns the authenticated GitHub account login (e.g.
@@ -52,6 +53,37 @@ func handleFeedbackWithSender(args []string, version string, sender *feedback.Se
 
 	reader := bufio.NewReader(in)
 
+	// v1.7.38: if the user previously opted out (via state.json or an
+	// edited config.toml [feedback].disabled=true), ask whether to
+	// re-enable before showing the rating prompt. Default-N. This keeps
+	// explicit `agent-deck feedback` usable while respecting the opt-out
+	// for every other code path.
+	st, _ := feedback.LoadState()
+	cfg, _ := session.LoadUserConfig()
+	if isFeedbackOptedOut(st, cfg) {
+		fmt.Fprintln(w, "Feedback is currently disabled (opt-out saved from a previous run).")
+		fmt.Fprint(w, "Enable feedback and continue? [y/N]: ")
+		answer, _ := reader.ReadString('\n')
+		if !isYesConfirmation(answer) {
+			fmt.Fprintln(w, "Feedback stays disabled. Run 'agent-deck feedback' again any time.")
+			return nil
+		}
+		// Re-enable in BOTH stores so state.json and config.toml stay in sync.
+		if st != nil {
+			st.FeedbackEnabled = true
+			if saveErr := feedback.SaveState(st); saveErr != nil {
+				fmt.Fprintf(os.Stderr, "feedback: save state: %v\n", saveErr)
+			}
+		}
+		if cfg != nil && cfg.Feedback.Disabled {
+			cfg.Feedback.Disabled = false
+			if saveErr := session.SaveUserConfig(cfg); saveErr != nil {
+				fmt.Fprintf(os.Stderr, "feedback: save config: %v\n", saveErr)
+			}
+		}
+		fmt.Fprintln(w, "Feedback re-enabled.")
+	}
+
 	fmt.Fprint(w, "Rating (1-5, n=never-again, q=quit): ")
 
 	line, err := reader.ReadString('\n')
@@ -66,13 +98,7 @@ func handleFeedbackWithSender(args []string, version string, sender *feedback.Se
 		return nil
 
 	case "n":
-		st, _ := feedback.LoadState()
-		feedback.RecordOptOut(st)
-		if saveErr := feedback.SaveState(st); saveErr != nil {
-			// Non-fatal: log to stderr but don't abort
-			fmt.Fprintf(os.Stderr, "feedback: save state: %v\n", saveErr)
-		}
-		fmt.Fprintln(w, "Feedback disabled. You can always re-open via 'agent-deck feedback'.")
+		persistFeedbackOptOut(w, "Feedback disabled. Run 'agent-deck feedback' any time to re-enable.")
 		return nil
 
 	case "1", "2", "3", "4", "5":
@@ -106,7 +132,10 @@ func handleFeedbackWithSender(args []string, version string, sender *feedback.Se
 		fmt.Fprint(w, "Post this? [y/N]: ")
 		confirmLine, _ := reader.ReadString('\n')
 		if !isYesConfirmation(confirmLine) {
-			fmt.Fprintln(w, "Not posted.")
+			// v1.7.38: declining at the disclosure step is a persistent
+			// opt-out, not a one-shot "not posted". Previously the user
+			// would re-see this prompt on every launch.
+			persistFeedbackOptOut(w, "Not posted. Feedback prompts disabled — run 'agent-deck feedback' any time to re-enable.")
 			return nil
 		}
 
@@ -172,6 +201,43 @@ func renderFeedbackDisclosure(w io.Writer, body, login string) {
 func isYesConfirmation(line string) bool {
 	s := strings.ToLower(strings.TrimSpace(line))
 	return s == "y" || s == "yes"
+}
+
+// isFeedbackOptedOut returns true when either the feedback-state.json
+// has FeedbackEnabled=false or the user's config.toml has
+// [feedback].disabled=true. Either one opts out (v1.7.38).
+func isFeedbackOptedOut(st *feedback.State, cfg *session.UserConfig) bool {
+	if st != nil && !st.FeedbackEnabled {
+		return true
+	}
+	if cfg != nil && cfg.Feedback.Disabled {
+		return true
+	}
+	return false
+}
+
+// persistFeedbackOptOut writes the opt-out to BOTH stores and prints the
+// given message. Errors on either write are non-fatal — they log to stderr
+// but do not abort the CLI flow. v1.7.38.
+func persistFeedbackOptOut(w io.Writer, userMessage string) {
+	st, _ := feedback.LoadState()
+	if st == nil {
+		st = &feedback.State{MaxShows: 3}
+	}
+	feedback.RecordOptOut(st)
+	if saveErr := feedback.SaveState(st); saveErr != nil {
+		fmt.Fprintf(os.Stderr, "feedback: save state: %v\n", saveErr)
+	}
+
+	cfg, _ := session.LoadUserConfig()
+	if cfg != nil && !cfg.Feedback.Disabled {
+		cfg.Feedback.Disabled = true
+		if saveErr := session.SaveUserConfig(cfg); saveErr != nil {
+			fmt.Fprintf(os.Stderr, "feedback: save config: %v\n", saveErr)
+		}
+	}
+
+	fmt.Fprintln(w, userMessage)
 }
 
 // printFeedbackHelp documents the `agent-deck feedback` flow, with

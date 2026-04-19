@@ -3369,10 +3369,14 @@ func (h *Home) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 			h.confirmDialog.SetSize(h.width, h.height)
 		}
 
-		// Show feedback popup if user has a new version and hasn't rated yet (D-11/D-12)
+		// Show feedback popup if user has a new version and hasn't rated yet (D-11/D-12).
+		// v1.7.38: also skip when the user's config.toml has [feedback].disabled=true,
+		// so a user who opts out via config edit (not just state.json) is honoured.
 		if h.feedbackDialog != nil && !h.feedbackDialog.IsVisible() {
 			fbState, _ := feedback.LoadState()
-			if feedback.ShouldShow(fbState, Version) {
+			cfg, _ := session.LoadUserConfig()
+			configDisabled := cfg != nil && cfg.Feedback.Disabled
+			if !configDisabled && feedback.ShouldShow(fbState, Version) {
 				feedback.RecordShown(fbState)
 				_ = feedback.SaveState(fbState)
 				h.feedbackState = fbState
@@ -6358,6 +6362,14 @@ func (h *Home) handleMainKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			}
 			if h.feedbackSender == nil {
 				h.feedbackSender = feedback.NewSender()
+			}
+			// v1.7.38: ctrl+e is explicit user intent. If the user previously
+			// opted out (via CLI decline or TUI stepConfirm decline), re-enable
+			// the state in memory + on disk BEFORE calling Show() so the new
+			// "Show() no-ops on opt-out" guard does not block this path.
+			if st != nil && !st.FeedbackEnabled {
+				st.FeedbackEnabled = true
+				_ = feedback.SaveState(st)
 			}
 			h.feedbackDialog.Show(Version, st, h.feedbackSender)
 			h.feedbackDialog.SetSize(h.width, h.height)
