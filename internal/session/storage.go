@@ -36,21 +36,21 @@ type StorageData struct {
 
 // InstanceData represents the serializable session data
 type InstanceData struct {
-	ID              string    `json:"id"`
-	Title           string    `json:"title"`
-	ProjectPath     string    `json:"project_path"`
-	GroupPath       string    `json:"group_path"`
-	Order           int       `json:"order"`
-	ParentSessionID string    `json:"parent_session_id,omitempty"` // Links to parent session (sub-session support)
-	IsConductor        bool      `json:"is_conductor,omitempty"`        // True if this session is a conductor orchestrator
+	ID                 string    `json:"id"`
+	Title              string    `json:"title"`
+	ProjectPath        string    `json:"project_path"`
+	GroupPath          string    `json:"group_path"`
+	Order              int       `json:"order"`
+	ParentSessionID    string    `json:"parent_session_id,omitempty"`    // Links to parent session (sub-session support)
+	IsConductor        bool      `json:"is_conductor,omitempty"`         // True if this session is a conductor orchestrator
 	NoTransitionNotify bool      `json:"no_transition_notify,omitempty"` // Suppress transition event dispatch
 	Command            string    `json:"command"`
-	Wrapper         string    `json:"wrapper,omitempty"`
-	Tool            string    `json:"tool"`
-	Status          Status    `json:"status"`
-	CreatedAt       time.Time `json:"created_at"`
-	LastAccessedAt  time.Time `json:"last_accessed_at,omitempty"`
-	TmuxSession     string    `json:"tmux_session"`
+	Wrapper            string    `json:"wrapper,omitempty"`
+	Tool               string    `json:"tool"`
+	Status             Status    `json:"status"`
+	CreatedAt          time.Time `json:"created_at"`
+	LastAccessedAt     time.Time `json:"last_accessed_at,omitempty"`
+	TmuxSession        string    `json:"tmux_session"`
 
 	// Worktree support
 	WorktreePath     string `json:"worktree_path,omitempty"`
@@ -331,25 +331,25 @@ func (s *Storage) SaveWithGroups(instances []*Instance, groupTree *GroupTree) er
 		)
 
 		rows[i] = &statedb.InstanceRow{
-			ID:              inst.ID,
-			Title:           inst.Title,
-			ProjectPath:     inst.ProjectPath,
-			GroupPath:       inst.GroupPath,
-			Order:           inst.Order,
-			Command:         inst.Command,
-			Wrapper:         inst.Wrapper,
-			Tool:            inst.Tool,
-			Status:          string(inst.Status),
-			TmuxSession:     tmuxName,
-			CreatedAt:       inst.CreatedAt,
-			LastAccessed:    inst.LastAccessedAt,
+			ID:                 inst.ID,
+			Title:              inst.Title,
+			ProjectPath:        inst.ProjectPath,
+			GroupPath:          inst.GroupPath,
+			Order:              inst.Order,
+			Command:            inst.Command,
+			Wrapper:            inst.Wrapper,
+			Tool:               inst.Tool,
+			Status:             string(inst.Status),
+			TmuxSession:        tmuxName,
+			CreatedAt:          inst.CreatedAt,
+			LastAccessed:       inst.LastAccessedAt,
 			ParentSessionID:    inst.ParentSessionID,
 			IsConductor:        inst.IsConductor,
 			NoTransitionNotify: inst.NoTransitionNotify,
 			WorktreePath:       inst.WorktreePath,
-			WorktreeRepo:    inst.WorktreeRepoRoot,
-			WorktreeBranch:  inst.WorktreeBranch,
-			ToolData:        toolData,
+			WorktreeRepo:       inst.WorktreeRepoRoot,
+			WorktreeBranch:     inst.WorktreeBranch,
+			ToolData:           toolData,
 		}
 	}
 

@@ -2,6 +2,7 @@ package session
 
 import (
 	"encoding/json"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -225,6 +226,87 @@ func TestSyncProfileSkipsWhenInstanceNoTransitionNotify(t *testing.T) {
 	// Verify the flag is set correctly
 	if !child.NoTransitionNotify {
 		t.Fatal("NoTransitionNotify should be true")
+	}
+}
+
+// TestDispatchDropsEventWhenChildNoTransitionNotify is the strengthened
+// regression test requested during PR #580 maintainer review: the weaker
+// sibling above only proves the parent resolver is still reachable. This
+// one proves the dispatch-level guard in transition_notifier.go:147 is the
+// one dropping the event — even when (a) parent exists, (b) parent is
+// live (StatusWaiting, not running → no defer), and (c) the event passes
+// every earlier filter in NotifyTransition. Without the dispatch guard,
+// SendSessionMessageReliable would fire and the event would come back as
+// transitionDeliverySent, not transitionDeliveryDropped.
+func TestDispatchDropsEventWhenChildNoTransitionNotify(t *testing.T) {
+	tmpHome := t.TempDir()
+	t.Setenv("HOME", tmpHome)
+	t.Setenv("AGENT_DECK_HOME", "")
+	t.Setenv("AGENT_DECK_PROFILE", "")
+	// Ensure no ambient config leaks the flag state from the developer's machine.
+	ClearUserConfigCache()
+	t.Cleanup(func() { ClearUserConfigCache() })
+
+	// Seed the profile dir + config so GetEffectiveProfile resolves cleanly.
+	if err := os.MkdirAll(tmpHome+"/.agent-deck", 0o700); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+
+	profile := "_test-no-transition-notify"
+	storage, err := NewStorageWithProfile(profile)
+	if err != nil {
+		t.Fatalf("NewStorageWithProfile: %v", err)
+	}
+
+	now := time.Now()
+	child := &Instance{
+		ID:                 "child-1",
+		Title:              "worker",
+		ProjectPath:        "/tmp/child",
+		GroupPath:          DefaultGroupPath,
+		ParentSessionID:    "parent-1",
+		Tool:               "shell",
+		Status:             StatusWaiting,
+		CreatedAt:          now,
+		NoTransitionNotify: true, // <-- the guard under test
+	}
+	parent := &Instance{
+		ID:          "parent-1",
+		Title:       "orchestrator",
+		ProjectPath: "/tmp/parent",
+		GroupPath:   DefaultGroupPath,
+		Tool:        "shell",
+		Status:      StatusWaiting, // live, not running → dispatch() would NOT defer
+		CreatedAt:   now,
+	}
+
+	if err := storage.SaveWithGroups([]*Instance{child, parent}, nil); err != nil {
+		t.Fatalf("SaveWithGroups: %v", err)
+	}
+
+	notifier := NewTransitionNotifier()
+	event := TransitionNotificationEvent{
+		ChildSessionID: child.ID,
+		ChildTitle:     child.Title,
+		Profile:        profile,
+		FromStatus:     "running",
+		ToStatus:       "waiting",
+		Timestamp:      now,
+	}
+
+	got := notifier.NotifyTransition(event)
+
+	// The guard at transition_notifier.go:147 must short-circuit to dropped.
+	// If a future refactor removes that guard, dispatch would proceed to
+	// SendSessionMessageReliable (which returns sent or failed depending on
+	// tmux availability in the test env), making this test fail.
+	if got.DeliveryResult != transitionDeliveryDropped {
+		t.Fatalf("dispatch must drop event when child.NoTransitionNotify=true, got DeliveryResult=%q", got.DeliveryResult)
+	}
+	// Target fields must remain zero — the drop happens before parent resolution wires them.
+	if got.TargetSessionID != "" || got.TargetKind != "" {
+		t.Fatalf("dropped event must not be tagged with a target, got TargetSessionID=%q TargetKind=%q",
+			got.TargetSessionID, got.TargetKind)
 	}
 }
 

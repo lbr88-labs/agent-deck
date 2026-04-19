@@ -314,6 +314,26 @@ Both Telegram and Slack can run simultaneously — the bridge daemon handles bot
 
 **Built-in status-driven notifications**: conductor setup also installs a transition notifier daemon (`agent-deck notify-daemon`) that watches status transitions and sends parent nudges when child sessions move `running -> waiting|error|idle`.
 
+Dispatch can be suppressed at two scopes (PR #580, v1.7.34):
+
+```toml
+# Global kill switch in ~/.agent-deck/config.toml (default: true)
+[notifications]
+transition_events = false
+```
+
+```bash
+# Per-session at creation
+agent-deck add --no-transition-notify -c claude .
+agent-deck -p work launch . --no-transition-notify -c claude -m "Do task"
+
+# Per-session at runtime
+agent-deck session set-transition-notify worker off
+agent-deck session set-transition-notify worker on
+```
+
+Suppression only affects dispatch — the parent link itself is unchanged. Deferred/retried events also honour the flag (guard is in `transition_notifier.dispatch` as well as both daemon entry points).
+
 **Heartbeat-driven monitoring**: heartbeats still run on the configured interval (default 15 minutes) as a secondary safety net. If a conductor response includes `NEED:`, the bridge forwards that alert to Telegram and/or Slack.
 
 **Telegram conductor topology (v1.7.22+)**: each conductor bot must own exactly one channel-owning session. Activate telegram per-session via `--channels plugin:telegram@claude-plugins-official` and inject `TELEGRAM_STATE_DIR` via `[conductors.<name>.claude].env_file` in `~/.agent-deck/config.toml`. Do NOT set `enabledPlugins."telegram@claude-plugins-official"=true` in a profile's `settings.json` — that leaks a poller to every claude session under the profile. agent-deck emits warnings (`GLOBAL_ANTIPATTERN`, `DOUBLE_LOAD`, `WRAPPER_DEPRECATED`) when it detects these setups. Full guidance: [Telegram conductor topology](skills/agent-deck/SKILL.md#telegram-conductor-topology-v1722).

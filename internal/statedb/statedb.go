@@ -30,25 +30,25 @@ type StateDB struct {
 
 // InstanceRow represents a session row in the database.
 type InstanceRow struct {
-	ID              string
-	Title           string
-	ProjectPath     string
-	GroupPath       string
-	Order           int
-	Command         string
-	Wrapper         string
-	Tool            string
-	Status          string
-	TmuxSession     string
-	CreatedAt       time.Time
-	LastAccessed    time.Time
-	ParentSessionID string
+	ID                 string
+	Title              string
+	ProjectPath        string
+	GroupPath          string
+	Order              int
+	Command            string
+	Wrapper            string
+	Tool               string
+	Status             string
+	TmuxSession        string
+	CreatedAt          time.Time
+	LastAccessed       time.Time
+	ParentSessionID    string
 	IsConductor        bool
 	NoTransitionNotify bool
 	WorktreePath       string
-	WorktreeRepo    string
-	WorktreeBranch  string
-	ToolData        json.RawMessage // JSON blob for tool-specific data
+	WorktreeRepo       string
+	WorktreeBranch     string
+	ToolData           json.RawMessage // JSON blob for tool-specific data
 }
 
 // WatcherRow represents a watcher row in the database.

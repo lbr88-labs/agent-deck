@@ -735,17 +735,17 @@ func handleSessionShow(profile string, args []string) {
 
 	// Prepare JSON output
 	jsonData := map[string]interface{}{
-		"id":                  inst.ID,
-		"title":               inst.Title,
-		"profile":             profile,
-		"status":              StatusString(inst.Status),
-		"path":                inst.ProjectPath,
-		"group":               inst.GroupPath,
-		"parent_session_id":   inst.ParentSessionID,
-		"parent_project_path": inst.ParentProjectPath,
+		"id":                   inst.ID,
+		"title":                inst.Title,
+		"profile":              profile,
+		"status":               StatusString(inst.Status),
+		"path":                 inst.ProjectPath,
+		"group":                inst.GroupPath,
+		"parent_session_id":    inst.ParentSessionID,
+		"parent_project_path":  inst.ParentProjectPath,
 		"no_transition_notify": inst.NoTransitionNotify,
-		"tool":                inst.Tool,
-		"created_at":          inst.CreatedAt.Format(time.RFC3339),
+		"tool":                 inst.Tool,
+		"created_at":           inst.CreatedAt.Format(time.RFC3339),
 	}
 
 	if inst.Command != "" {
