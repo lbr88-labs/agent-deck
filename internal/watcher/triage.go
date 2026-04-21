@@ -127,6 +127,11 @@ func (s AgentDeckLaunchSpawner) Spawn(ctx context.Context, req TriageRequest) (s
 		return "", fmt.Errorf("triage_spawner: launch: %w", err)
 	}
 
+	// Reap the child asynchronously so its exit doesn't become a zombie.
+	// Prior to v1.7.43 this was fire-and-forget and produced one zombie
+	// per triage spawn (#677).
+	go func() { _ = cmd.Wait() }()
+
 	return sessionTitle, nil
 }
 
