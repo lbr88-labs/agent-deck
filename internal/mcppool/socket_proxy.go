@@ -70,6 +70,24 @@ type SocketProxy struct {
 	restartCount  int          // Track restart attempts
 	totalFailures int          // Cumulative failures across all restarts
 	successSince  time.Time    // When the proxy last became StatusRunning
+
+	// waitOnce guards p.mcpProcess.Wait() so exactly one goroutine reaps
+	// the child. Prior to v1.7.43, broadcastResponses() detected EOF on
+	// MCP-stdout (process died) but left the zombie unreaped until Stop()
+	// was eventually called — if ever (#677).
+	waitOnce sync.Once
+}
+
+// reap calls mcpProcess.Wait() exactly once, freeing the child's process
+// table entry. Safe to call from broadcastResponses (natural EOF path) and
+// Stop (explicit shutdown path); additional calls are no-ops.
+func (p *SocketProxy) reap() {
+	if p.mcpProcess == nil {
+		return
+	}
+	p.waitOnce.Do(func() {
+		_ = p.mcpProcess.Wait()
+	})
 }
 
 // SetStatus safely updates the proxy status
@@ -244,6 +262,9 @@ func (p *SocketProxy) Start() error {
 	listener, err := net.Listen("unix", p.socketPath)
 	if err != nil {
 		_ = p.mcpProcess.Process.Kill()
+		// Reap the child we just killed so it doesn't linger as a zombie
+		// when socket creation fails (#677).
+		p.reap()
 		return err
 	}
 	p.listener = listener
@@ -394,6 +415,11 @@ func (p *SocketProxy) broadcastResponses() {
 	// Mark proxy as failed so health monitor can restart it
 	p.SetStatus(StatusFailed)
 
+	// Reap the MCP child now that its stdout is closed — otherwise it
+	// lingers as a zombie until Stop()/Restart() is called, which under
+	// "MCP attached but idle" workloads may be never (#677).
+	p.reap()
+
 	// Close all client connections so reconnecting proxies know to retry
 	p.closeAllClientsOnFailure()
 
@@ -516,20 +542,21 @@ func (p *SocketProxy) Stop() error {
 		p.mcpStdin.Close()
 		// Context cancel above triggers cmd.Cancel (SIGTERM), then WaitDelay handles
 		// escalation to SIGKILL + pipe close after 3s. Add 5s safety net.
-		done := make(chan error, 1)
+		// Route Wait() through reap() so broadcastResponses (which may
+		// have already reaped on natural EOF) and this path cannot
+		// double-Wait (#677).
+		done := make(chan struct{})
 		go func() {
-			done <- p.mcpProcess.Wait()
+			p.reap()
+			close(done)
 		}()
 		select {
-		case err := <-done:
-			if err != nil {
-				proxyLog.Warn("process_exit_error", slog.String("mcp", p.name), slog.String("error", err.Error()))
-			}
+		case <-done:
 		case <-time.After(5 * time.Second):
 			// Final safety net: force kill entire process group if SIGTERM didn't work
 			proxyLog.Warn("process_wait_timeout", slog.String("mcp", p.name))
 			_ = syscall.Kill(-p.mcpProcess.Process.Pid, syscall.SIGKILL)
-			<-done // Wait must return after Kill
+			<-done // reap() must return after Kill
 		}
 		os.Remove(p.socketPath)
 		proxyLog.Info("proxy_stopped", slog.String("mcp", p.name))

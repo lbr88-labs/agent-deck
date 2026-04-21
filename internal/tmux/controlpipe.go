@@ -55,6 +55,12 @@ type ControlPipe struct {
 	// Lifecycle
 	done      chan struct{}
 	closeOnce sync.Once
+
+	// waitOnce guards cmd.Wait() so exactly one of reader() (natural EOF)
+	// and Close() (manual shutdown) reaps the child. Without this, a tmux
+	// subprocess that exited on its own became a zombie until Close() was
+	// eventually called — or forever if it never was (#677).
+	waitOnce sync.Once
 }
 
 type commandResponse struct {
@@ -146,6 +152,15 @@ func newControlPipeOnce(sessionName string) (*ControlPipe, error) {
 	return cp, nil
 }
 
+// reap calls cmd.Wait() exactly once, harvesting the child's exit status and
+// freeing its process-table entry. Safe to call from any goroutine; extra
+// calls are no-ops. Required to prevent zombie accumulation (#677).
+func (cp *ControlPipe) reap() {
+	cp.waitOnce.Do(func() {
+		_ = cp.cmd.Wait()
+	})
+}
+
 // reader is the goroutine that parses tmux control mode protocol events.
 // It handles %output, %begin/%end/%error for command responses, and
 // silently skips all other %-prefixed control lines.
@@ -154,6 +169,9 @@ func (cp *ControlPipe) reader() {
 		cp.mu.Lock()
 		cp.alive = false
 		cp.mu.Unlock()
+		// Reap the child before signaling done so anyone watching Done()
+		// can rely on the process being fully torn down (#677).
+		cp.reap()
 		close(cp.done)
 		pipeLog.Debug("pipe_reader_exited", slog.String("session", cp.sessionName))
 	}()
@@ -345,8 +363,9 @@ func (cp *ControlPipe) Close() {
 			}
 		}
 
-		// Wait for the process to exit (prevents zombies)
-		_ = cp.cmd.Wait()
+		// Wait for the process to exit (prevents zombies). Routed through
+		// reap() so reader() and Close() cannot double-Wait (#677).
+		cp.reap()
 
 		pipeLog.Debug("pipe_closed", slog.String("session", cp.sessionName))
 	})
