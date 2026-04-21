@@ -5,6 +5,15 @@ All notable changes to Agent Deck will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.7.42] - 2026-04-21
+
+### Changed
+- **CI: audit + fix-or-disable broken gates ([#682](https://github.com/asheshgoplani/agent-deck/issues/682)).** Two PR gates removed, zero fixed in place, four still active. Green now means green again. Every PR merged between v1.7.34 and v1.7.41 carried a red `Visual Regression` check and in most cases a red `Lighthouse CI` check too, and the recurring "ignore the red, it's just visual-regression" exception was training the team to merge through real failures. Both gates shared the same root cause — `./build/agent-deck web` imports bubbletea transitively and fails its cancel-reader init on headless CI runners (`error creating cancelreader: bubbletea: error creating cancel reader: add reader to epoll interest list`), so the test server never binds and every Playwright/Lighthouse spec fails with `ERR_CONNECTION_REFUSED`. The Lighthouse budget in `.lighthouserc.json` was also never re-baselined against the current webui bundle. Fixing the server-start path (PTY wrapper or a `--no-tui` startup flag) is tracked as a stability-ledger follow-up; until then, per the audit recommendation, both PR gates are **removed**:
+  - `.github/workflows/visual-regression.yml` — **deleted.** Same test matrix still runs on the Sunday cron via `weekly-regression.yml`. Local run: `cd tests/e2e && npx playwright test --config=pw-visual-regression.config.ts` against a local `agent-deck web`.
+  - `.github/workflows/lighthouse-ci.yml` — **deleted.** Same Lighthouse suite still runs weekly via `weekly-regression.yml`. Local run: `./tests/lighthouse/calibrate.sh` then `npx lhci autorun --config=.lighthouserc.json`.
+
+  Remaining active PR gate is `session-persistence.yml` (the `TestPersistence_*` suite plus `scripts/verify-session-persistence.sh`), which has passed consistently on every run and gates the class of bug the v1.5.2 mandate was written to prevent. `release.yml`, `pages.yml`, `issue-notify.yml`, `pr-notify.yml`, `weekly-regression.yml` are unchanged. New `.github/workflows/README.md` documents the full disposition and the local-run commands, and flags that `weekly-regression.yml` currently hits the same bubbletea/TTY failure (but is alert-only and idempotent, so at most one open issue per week — not a flood). No source code changed, no tests changed — this is strictly a CI-topology edit.
+
 ## [1.7.41] - 2026-04-20
 
 ### Fixed
