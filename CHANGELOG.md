@@ -5,6 +5,11 @@ All notable changes to Agent Deck will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.7.44] - 2026-04-21
+
+### Changed
+- **Mobile web terminal input** ([#652](https://github.com/asheshgoplani/agent-deck/pull/652) by [@JMBattista](https://github.com/JMBattista)): mobile clients (`pointer: coarse`) no longer enforce an implicit read-only mode in the web UI. Keystrokes from phones/tablets now flow to the tmux session like any other client. To preserve the previous behavior, start the web server with `agent-deck web --read-only` — the server-side flag now owns read-only enforcement for all devices. Rebuild of JMBattista's original PR #652 (which had accumulated merge conflicts across 9 intervening releases); authorship is preserved via `Co-Authored-By` trailer on the rebuilt commit. Four surgical changes in `internal/web/static/app/TerminalPanel.js`: (1) the `const isMobile = isMobileDevice()` component-scope variable is removed, (2) `disableStdin: mobile` in the `new Terminal({...})` constructor becomes `disableStdin: false`, (3) the `if (!mobile) { inputDisposable = terminal.onData(...) }` gate becomes an unconditional `const inputDisposable = terminal.onData(...)` so phone/tablet keystrokes reach the WebSocket, (4) the mobile-only `container.addEventListener('touchstart', (e) => e.preventDefault())` block and the `READ-ONLY: terminal input is disabled on mobile` yellow banner are both deleted. The `readOnlySignal` + `payload.readOnly || mobile` OR in `onWsMessage` loses the `|| mobile` half so the server-side `--read-only` flag is the single source of truth for input enablement across all device types. PERF-E listener-site count drops from 9 to 8 (the mobile-only anonymous touchstart preventDefault was the 9th site); `tests/e2e/visual/p8-perf-e-listener-cleanup.spec.ts` updated to assert `controller.signal` appears `>=8` times, and `tests/e2e/visual/p1-bug6-terminal-padding.spec.ts` flips from asserting the READ-ONLY banner is present to asserting it is absent, plus two new structural tests (`terminal.onData is not gated on !mobile`, `disableStdin is not OR-ed with mobile on status messages`) to guard the rebuild from regressing.
+
 ## [1.7.43] - 2026-04-21
 
 ### Fixed
