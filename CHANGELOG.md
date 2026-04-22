@@ -5,6 +5,26 @@ All notable changes to Agent Deck will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.7.60] - 2026-04-22
+
+### Added
+- **Group-scoped keyboard navigation in the TUI (Alt+j/k, Alt+1-9, Alt+g/G, Alt+/).** Addresses recurring feedback "jumping between shells is too complicated — shortcuts needed" (Christoph Becker, via Feedback Hub). The existing global tier — plain `j`/`k`, `1`-`9`, `g`/`gg`/`G`, `/` — continues to work exactly as before with no muscle-memory breakage or test churn. The new `Alt+`-prefixed layer restricts movement to the cursor's **current group**:
+  - `Alt+j` / `Alt+k` — next / previous session in the current group. No-ops at the group boundary instead of spilling into the next group's first session.
+  - `Alt+1`-`Alt+9` — jump to the Nth session within the current group (1-indexed). Plain `1`-`9` still jumps to the Nth root group.
+  - `Alt+g` / `Alt+G` — first / last session in the current group.
+  - `Alt+/` — fuzzy search filtered to the current group only. The local `Search` component grew a `scopedGroup` field so background session reloads (every ~2s via `h.search.SetItems(h.instances)` from seven call sites in `home.go`) do not leak out-of-group results into a scoped search session; `Hide()` clears the scope.
+
+  "Current group" is derived from the cursor position: on a session item it's `Session.GroupPath`; on a group header it's the header's `Path`; on a window item it's the parent session's group path. See `currentGroupPath` in `internal/ui/group_nav.go`.
+
+  **Discoverability** lands alongside the keybinds so users find out the shortcuts exist before giving up:
+  - `?` help overlay gains a new "GROUP NAVIGATION (v1.7.60)" section listing all four Alt+ keybinds.
+  - README grows a two-tier keybindings table (Global vs Group) with explicit scope descriptions.
+  - One-shot status-bar hint on first TUI launch after upgrading to v1.7.60, reusing the existing maintenance-banner slot (no new layout math): "Tip: Alt+j/k and Alt+1-9 navigate within the current group. Press ? for all keybindings." The hint dismisses on any keypress or ESC, and a sentinel file at `~/.agent-deck/.nav-hint-v1760-shown` ensures it never reappears. Running under `AGENTDECK_PROFILE=_test` suppresses the hint so UI tests never write to a developer's real `~/.agent-deck/` directory.
+
+  Tests: 17 new cases in `internal/ui/group_nav_test.go` — `TestGroupNav_AltJ_MovesToNextSessionInGroup`, `TestGroupNav_AltJ_DoesNotCrossGroupBoundary`, `TestGroupNav_AltK_MovesToPrevSessionInGroup`, `TestGroupNav_AltK_DoesNotCrossGroupBoundary`, `TestGroupNav_AltJ_FromGroupHeader_GoesToFirstSession`, `TestGroupNav_Alt2_JumpsToSecondInGroup`, `TestGroupNav_Alt3_JumpsToThirdInGroup`, `TestGroupNav_Alt5_BeyondGroup_IsNoop`, `TestGroupNav_Alt1_InBetaGroup_LandsOnB1`, `TestGroupNav_AltG_LowerCase_JumpsToFirstInGroup`, `TestGroupNav_AltShiftG_JumpsToLastInGroup`, `TestGroupNav_AltG_InBetaGroup_LandsOnB1NotA1`, `TestGroupNav_AltSlash_OpensSearchScopedToCurrentGroup`, `TestGroupNav_EvalHarness_RendersAndLandsOnRightSession` (end-to-end: renders TUI frame, dispatches Alt+1/2/3, asserts cursor identity + non-empty `View()` output), plus three regression tests (`TestGroupNav_Regression_PlainJ_StillMovesDownFlatList`, `TestGroupNav_Regression_PlainJ_CrossesGroupBoundary`, `TestGroupNav_Regression_Plain1_JumpsToFirstRootGroup`) pinning the global tier's existing semantics. Discoverability coverage: `TestNavHint_ShownOnFirstLaunch_DismissedAfterKeypress` and `TestNavHint_SkippedWhenSentinelExists` isolate `HOME` to a `TempDir` and unset `AGENTDECK_PROFILE` so the sentinel logic runs under test without polluting the developer's real home directory.
+
+  Version numbering: v1.7.59 is reserved for the in-flight update-nudge session, so this release skips to v1.7.60. Matches the pre-existing ghost-version precedent (v1.7.44-45, .47, .55 were never tagged either).
+
 ## [1.7.58] - 2026-04-22
 
 ### Fixed

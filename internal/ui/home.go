@@ -404,6 +404,11 @@ type Home struct {
 	maintenanceMsg     string
 	maintenanceMsgTime time.Time
 
+	// navHintActive: true while the v1.7.60 group-navigation discoverability
+	// hint is the current occupant of the maintenanceMsg slot. Dismissed on
+	// the first keypress (handleMainKey).
+	navHintActive bool
+
 	// Cursor sync: track last notification bar switch during attach
 	// When user switches sessions via Ctrl+b N while attached (tea.Exec),
 	// we record the target session ID so cursor can follow after detach
@@ -976,6 +981,17 @@ func NewHomeWithProfileAndMode(profile string) *Home {
 		logSettings := session.GetLogSettings()
 		tmux.RunLogMaintenance(logSettings.MaxSizeMB, logSettings.MaxLines, logSettings.RemoveOrphans)
 	}()
+
+	// v1.7.60: one-shot nav-discoverability hint. Reuses the maintenance-banner
+	// slot so no extra layout math is needed. Dismisses via the existing ESC
+	// handler, or gets overwritten by a real maintenance event — either way
+	// the sentinel file is written so the hint never reappears.
+	if !navHintAlreadyShown() {
+		h.maintenanceMsg = navHintText
+		h.maintenanceMsgTime = time.Now()
+		h.navHintActive = true
+		markNavHintShown()
+	}
 
 	return h
 }
@@ -5498,6 +5514,16 @@ func (h *Home) handleMainKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return h, nil
 	}
 
+	// v1.7.60: any keypress dismisses the one-shot nav-discoverability hint
+	// (beyond the existing ESC path). The sentinel was already written at
+	// NewHome, so this only has to clear the visible banner.
+	if h.navHintActive {
+		h.navHintActive = false
+		if h.maintenanceMsg == navHintText {
+			h.maintenanceMsg = ""
+		}
+	}
+
 	switch key {
 	case "q", "ctrl+c":
 		return h.tryQuit()
@@ -5611,6 +5637,50 @@ func (h *Home) handleMainKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		} else {
 			h.search.Show()
 		}
+		return h, nil
+
+	// Group-scoped navigation layer (v1.7.60): Alt+* keys navigate only within
+	// the cursor's current group. Plain j/k/1-9/g/G// remain unchanged above.
+	case "alt+j": // Next session in current group
+		if target := h.nextSessionInCurrentGroup(); target >= 0 {
+			h.jumpToIndex(target)
+			return h, h.fetchSelectedPreview()
+		}
+		return h, nil
+
+	case "alt+k": // Previous session in current group
+		if target := h.prevSessionInCurrentGroup(); target >= 0 {
+			h.jumpToIndex(target)
+			return h, h.fetchSelectedPreview()
+		}
+		return h, nil
+
+	case "alt+1", "alt+2", "alt+3", "alt+4", "alt+5", "alt+6", "alt+7", "alt+8", "alt+9":
+		// Jump to Nth session in current group (1-indexed).
+		n := int(key[len(key)-1] - '0')
+		if target := h.nthSessionInCurrentGroup(n); target >= 0 {
+			h.jumpToIndex(target)
+			return h, h.fetchSelectedPreview()
+		}
+		return h, nil
+
+	case "alt+g": // First session in current group
+		if target := h.firstSessionInCurrentGroup(); target >= 0 {
+			h.jumpToIndex(target)
+			return h, h.fetchSelectedPreview()
+		}
+		return h, nil
+
+	case "alt+G": // Last session in current group
+		if target := h.lastSessionInCurrentGroup(); target >= 0 {
+			h.jumpToIndex(target)
+			return h, h.fetchSelectedPreview()
+		}
+		return h, nil
+
+	case "alt+/": // In-group filter search
+		h.search.SetSize(h.width, h.height)
+		h.openInGroupSearch()
 		return h, nil
 
 	case "enter":

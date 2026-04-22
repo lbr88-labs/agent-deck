@@ -39,7 +39,8 @@ type Search struct {
 	height         int
 	visible        bool
 	allItems       []*session.Instance
-	switchToGlobal bool // Flag to signal switch to global search
+	switchToGlobal bool   // Flag to signal switch to global search
+	scopedGroup    string // Non-empty => filter items to this exact GroupPath (v1.7.60)
 }
 
 // NewSearch creates a new search overlay
@@ -58,10 +59,28 @@ func NewSearch() *Search {
 	}
 }
 
-// SetItems sets the full list of items to search through
+// SetItems sets the full list of items to search through. When a group scope
+// has been set via SetScopedGroup, items are filtered to that group before
+// storage so background reloads do not leak out-of-group sessions into a
+// scoped in-group search session.
 func (s *Search) SetItems(items []*session.Instance) {
-	s.allItems = items
+	if s.scopedGroup != "" {
+		filtered := make([]*session.Instance, 0, len(items))
+		for _, it := range items {
+			if it != nil && it.GroupPath == s.scopedGroup {
+				filtered = append(filtered, it)
+			}
+		}
+		s.allItems = filtered
+	} else {
+		s.allItems = items
+	}
 	s.updateResults()
+}
+
+// SetScopedGroup restricts SetItems to a single group path. Pass "" to clear.
+func (s *Search) SetScopedGroup(groupPath string) {
+	s.scopedGroup = groupPath
 }
 
 // SetSize sets the dimensions of the search overlay
@@ -86,10 +105,11 @@ func (s *Search) WantsSwitchToGlobal() bool {
 	return false
 }
 
-// Hide hides the search overlay
+// Hide hides the search overlay and clears any group scope.
 func (s *Search) Hide() {
 	s.visible = false
 	s.input.Blur()
+	s.scopedGroup = ""
 }
 
 // IsVisible returns whether the search overlay is visible

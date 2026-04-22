@@ -146,6 +146,24 @@ Running many sessions? Socket pooling shares MCP processes across all sessions v
 
 Press `/` to fuzzy-search across all sessions. Filter by status with `!` (running), `@` (waiting), `#` (idle), `$` (error). Press `G` for global search across all Claude conversations.
 
+### Keyboard navigation (v1.7.60)
+
+Two tiers of keybindings move the cursor around the session list. The global tier is unchanged from earlier versions; the `Alt+` tier (added in v1.7.60) restricts movement to the current group only. Press `?` in the TUI to see the full table in-app.
+
+| Scope | Keys | What it does |
+|---|---|---|
+| **Global (flat list)** | `j` / `k` or `↓` / `↑` | Move cursor down / up through every item |
+| Global | `gg` | Jump to top of list |
+| Global | `G` | Open global search across all Claude conversations |
+| Global | `1`–`9` | Jump to Nth root group header |
+| Global | `/` | Open fuzzy search across all sessions |
+| **Group (current group only)** | `Alt+j` / `Alt+k` | Next / previous session in current group (skips group boundaries) |
+| Group | `Alt+1`–`Alt+9` | Jump to Nth session within the current group |
+| Group | `Alt+g` / `Alt+G` | First / last session in current group |
+| Group | `Alt+/` | Open fuzzy search filtered to the current group's sessions |
+
+"Current group" is derived from the cursor position: on a session it's that session's group; on a group header it's that group; on a window it's the parent session's group. On a group boundary `Alt+j` / `Alt+k` no-op rather than spilling into the next group.
+
 ### Status Detection
 
 Smart polling detects what every agent is doing right now:
