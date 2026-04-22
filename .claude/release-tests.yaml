@@ -1664,3 +1664,58 @@ tests:
   run:
     command: go test ./internal/ui/ -run TestSkillDialog_ApplyUsesAgentSkillsDirForGemini -count=1 -race -v
     expected: pass
+- id: v1757-fix715-isbare-detection
+  added: '2026-04-22'
+  task: fix-715
+  file: internal/git/bare_repo_test.go
+  test_name: TestIsBareRepoWorktree_TrueForLinkedWorktree
+  purpose: 'Issue #715 — IsBareRepoWorktree must return true for every linked worktree of a bare .bare/ layout. This is the single detection point that flips GetMainWorktreePath and GetWorktreeBaseRoot into bare-repo mode; a regression here silently breaks every downstream .agent-deck/ lookup.'
+  source: github-issue-715
+  manual: false
+  run:
+    command: go test ./internal/git/ -run TestIsBareRepoWorktree_TrueForLinkedWorktree -count=1 -race -v
+    expected: pass
+- id: v1757-fix715-main-path-from-bare
+  added: '2026-04-22'
+  task: fix-715
+  file: internal/git/bare_repo_test.go
+  test_name: TestGetMainWorktreePath_BareRepo
+  purpose: 'Issue #715 — GetMainWorktreePath, called from any of the three linked worktrees in a bare layout, must return the project root (parent of .bare/). Before the fix it silently returned the calling worktree path because the TrimSuffix-against-".git" branch never matched. This is the regression guard for the root cause.'
+  source: github-issue-715
+  manual: false
+  run:
+    command: go test ./internal/git/ -run TestGetMainWorktreePath_BareRepo -count=1 -race -v
+    expected: pass
+- id: v1757-fix715-all-worktrees-equal
+  added: '2026-04-22'
+  task: fix-715
+  file: internal/git/bare_repo_test.go
+  test_name: TestBareRepo_AllWorktreesEqual_NoDefaultAssumption
+  purpose: 'Issue #715 — pins the "no default worktree" invariant. GetMainWorktreePath must return the same project root regardless of which linked worktree is queried. Protects against any future refactor that accidentally reintroduces a "first-created worktree wins" or "main-branch worktree is default" assumption.'
+  source: github-issue-715
+  manual: false
+  run:
+    command: go test ./internal/git/ -run TestBareRepo_AllWorktreesEqual_NoDefaultAssumption -count=1 -race -v
+    expected: pass
+- id: v1757-fix715-project-root-agent-deck
+  added: '2026-04-22'
+  task: fix-715
+  file: internal/git/bare_repo_test.go
+  test_name: TestCreateWorktreeWithSetup_BareRepo
+  purpose: 'Issue #715 — end-to-end: CreateWorktreeWithSetup on a bare-repo project root must create the worktree via the nested .bare/ AND run the .agent-deck/worktree-setup.sh located next to .bare/, not inside any individual worktree. Mirrors how launch_cmd.go / handleAdd invoke the flow on the live CLI.'
+  source: github-issue-715
+  manual: false
+  run:
+    command: go test ./internal/git/ -run TestCreateWorktreeWithSetup_BareRepo -count=1 -race -v
+    expected: pass
+- id: v1757-fix715-branch-exists-project-root
+  added: '2026-04-22'
+  task: fix-715
+  file: internal/git/bare_repo_test.go
+  test_name: TestBranchExists_FromBareProjectRoot
+  purpose: 'Issue #715 — BranchExists is called in launch_cmd.go with the result of GetWorktreeBaseRoot, which for bare layouts returns the project root (no .git). Without resolveGitInvocationDir this call silently reported every branch as non-existent, breaking the -b / -w flow. Pins the transparent resolution so future callers in the same shape do not reintroduce the drop.'
+  source: github-issue-715
+  manual: false
+  run:
+    command: go test ./internal/git/ -run TestBranchExists_FromBareProjectRoot -count=1 -race -v
+    expected: pass
