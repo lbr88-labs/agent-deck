@@ -324,6 +324,9 @@ type Home struct {
 	// Update notification (async check on startup, periodic re-check)
 	updateInfo      *update.UpdateInfo
 	lastUpdateCheck time.Time
+	// updateNudgeDismissed suppresses the >5-releases-behind nudge for
+	// the rest of the process. Reset on restart. Conductor task #45.
+	updateNudgeDismissed bool
 
 	// Launching animation state (for newly created sessions)
 	launchingSessions  map[string]time.Time        // sessionID -> creation time
@@ -1573,7 +1576,7 @@ func (h *Home) syncViewport() {
 	// Filter bar is always shown for consistent layout (matches View())
 	filterBarHeight := 1
 	updateBannerHeight := 0
-	if h.updateInfo != nil && h.updateInfo.Available {
+	if h.shouldRenderUpdateNudge() {
 		updateBannerHeight = 1
 	}
 	maintenanceBannerHeight := 0
@@ -1716,7 +1719,7 @@ func (h *Home) getVisibleHeight() int {
 	panelTitleLines := 2
 	filterBarHeight := 1
 	updateBannerHeight := 0
-	if h.updateInfo != nil && h.updateInfo.Available {
+	if h.shouldRenderUpdateNudge() {
 		updateBannerHeight = 1
 	}
 	maintenanceBannerHeight := 0
@@ -5458,7 +5461,7 @@ func (h *Home) handleMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 func (h *Home) getListContentStartY() int {
 	// Header: 1 line, Filter bar: 1 line
 	startY := 2
-	if h.updateInfo != nil && h.updateInfo.Available {
+	if h.shouldRenderUpdateNudge() {
 		startY++ // Update banner
 	}
 	if h.maintenanceMsg != "" {
@@ -5527,6 +5530,15 @@ func (h *Home) handleMainKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch key {
 	case "q", "ctrl+c":
 		return h.tryQuit()
+
+	case "U":
+		// Dismiss the >5-releases-behind update nudge for this session.
+		// Only meaningful when the nudge is actually showing — otherwise
+		// fall through so other "U"-bound paths can handle it.
+		if h.shouldRenderUpdateNudge() {
+			h.handleUpdateNudgeDismiss(msg)
+			return h, nil
+		}
 
 	case "esc":
 		// Dismiss maintenance banner if visible
@@ -9207,7 +9219,7 @@ func (h *Home) View() string {
 	// UPDATE BANNER (if update available)
 	// ═══════════════════════════════════════════════════════════════════
 	updateBannerHeight := 0
-	if h.updateInfo != nil && h.updateInfo.Available {
+	if h.shouldRenderUpdateNudge() {
 		updateBannerHeight = 1
 		updateStyle := lipgloss.NewStyle().
 			Foreground(ColorBg).
@@ -9215,9 +9227,7 @@ func (h *Home) View() string {
 			Bold(true).
 			MaxWidth(h.width).
 			Align(lipgloss.Center)
-		updateText := fmt.Sprintf(" ⬆ Update available: v%s → v%s (run: agent-deck update) ",
-			h.updateInfo.CurrentVersion, h.updateInfo.LatestVersion)
-		b.WriteString(updateStyle.Render(updateText))
+		b.WriteString(updateStyle.Render(h.renderUpdateNudgeText()))
 		b.WriteString("\n")
 	}
 

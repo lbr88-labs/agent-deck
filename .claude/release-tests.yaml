@@ -1719,3 +1719,102 @@ tests:
   run:
     command: go test ./internal/git/ -run TestBranchExists_FromBareProjectRoot -count=1 -race -v
     expected: pass
+- id: v1759-fix45-count-releases-behind
+  added: '2026-04-22'
+  task: fix-45
+  file: internal/update/update_nudge_test.go
+  test_name: TestCountReleasesBehind_Basic
+  purpose: 'Conductor task #45 — CountReleasesBehind must return the number of tags strictly newer than the current version, tolerating v prefixes, clamping to 0 when current is at or ahead of latest. This is the arithmetic backbone for the >5-releases-behind nudge; an off-by-one here would silence the nudge for severely-behind users or spam it for near-current ones.'
+  source: conductor-task-45
+  manual: false
+  run:
+    command: go test ./internal/update/ -run TestCountReleasesBehind_Basic -count=1 -race -v
+    expected: pass
+- id: v1759-fix45-should-nudge-threshold
+  added: '2026-04-22'
+  task: fix-45
+  file: internal/update/update_nudge_test.go
+  test_name: TestShouldNudge_ThresholdIsGreaterThanFive
+  purpose: 'Conductor task #45 — the nudge fires only at >5 releases behind (6+), never at exactly 5 or below. Pins the threshold so a well-meaning refactor that changes > to >= or flips the constant silently does not widen or narrow who sees the nudge.'
+  source: conductor-task-45
+  manual: false
+  run:
+    command: go test ./internal/update/ -run TestShouldNudge_ThresholdIsGreaterThanFive -count=1 -race -v
+    expected: pass
+- id: v1759-fix45-env-skip-network
+  added: '2026-04-22'
+  task: fix-45
+  file: internal/update/update_nudge_test.go
+  test_name: TestCheckForUpdate_EnvSkipsCheckAndReturnsEmpty
+  purpose: 'Conductor task #45 — AGENTDECK_SKIP_UPDATE_CHECK=1 is a hard kill-switch: no network call, no cache read, return empty UpdateInfo. Protects air-gapped / locked-down / CI environments from outbound GitHub probes. Test points apiBaseURL at an httptest server that t.Fatal-s on any hit; a regression that lets the env slip through trips it immediately.'
+  source: conductor-task-45
+  manual: false
+  run:
+    command: go test ./internal/update/ -run TestCheckForUpdate_EnvSkipsCheckAndReturnsEmpty -count=1 -race -v
+    expected: pass
+- id: v1759-fix45-cached-update-info-offline
+  added: '2026-04-22'
+  task: fix-45
+  file: internal/update/update_nudge_test.go
+  test_name: TestCachedUpdateInfo_OfflineReadFromCache
+  purpose: 'Conductor task #45 — CachedUpdateInfo reads the on-disk cache without ever hitting the network. Used by agent-deck --version for the instant annotation. Test covers no-cache-yet (nil, nil), populated cache (Available=true), and user-ahead (Available=false).'
+  source: conductor-task-45
+  manual: false
+  run:
+    command: go test ./internal/update/ -run TestCachedUpdateInfo_OfflineReadFromCache -count=1 -race -v
+    expected: pass
+- id: v1759-fix45-tui-threshold
+  added: '2026-04-22'
+  task: fix-45
+  file: internal/ui/update_nudge_test.go
+  test_name: TestUpdateNudge_ShowsOnlyWhenSixPlusBehind
+  purpose: 'Conductor task #45 — pins the TUI-side nudge gate: Home.shouldRenderUpdateNudge returns true only when updateInfo is populated, Available is true, and ReleasesBehind > NudgeThreshold (5). Catches a regression where the banner height accounting in home.go gets un-gated back to any Available=true.'
+  source: conductor-task-45
+  manual: false
+  run:
+    command: go test ./internal/ui/ -run TestUpdateNudge_ShowsOnlyWhenSixPlusBehind -count=1 -race -v
+    expected: pass
+- id: v1759-fix45-tui-dismiss-key
+  added: '2026-04-22'
+  task: fix-45
+  file: internal/ui/update_nudge_test.go
+  test_name: TestUpdateNudge_DismissKeySuppressesBanner
+  purpose: 'Conductor task #45 — pins the "shift+U dismisses for the session" contract. handleUpdateNudgeDismiss flips updateNudgeDismissed and shouldRenderUpdateNudge returns false thereafter, even if updateInfo still says 30-behind. Protects against a key-handler refactor that drops the dismiss branch.'
+  source: conductor-task-45
+  manual: false
+  run:
+    command: go test ./internal/ui/ -run TestUpdateNudge_DismissKeySuppressesBanner -count=1 -race -v
+    expected: pass
+- id: v1759-fix45-version-annotation
+  added: '2026-04-22'
+  task: fix-45
+  file: cmd/agent-deck/version_nudge_test.go
+  test_name: TestVersionOutput_AppendsUpdateAnnotationWhenBehind
+  purpose: 'Conductor task #45 — agent-deck --version must append " (update available: vA.B.C)" when the disk cache shows the user is behind. Writes to an io.Writer, not os.Stdout, so the assertion is byte-exact. Catches a flag-dispatch refactor that bypasses writeVersionOutput.'
+  source: conductor-task-45
+  manual: false
+  run:
+    command: go test ./cmd/agent-deck/ -run TestVersionOutput_AppendsUpdateAnnotationWhenBehind -count=1 -race -v
+    expected: pass
+- id: v1759-fix45-version-env-skip
+  added: '2026-04-22'
+  task: fix-45
+  file: cmd/agent-deck/version_nudge_test.go
+  test_name: TestVersionOutput_NoAnnotationWhenEnvSkipped
+  purpose: 'Conductor task #45 — AGENTDECK_SKIP_UPDATE_CHECK=1 strips the --version annotation. Users who opt out of update nagging get a clean "Agent Deck vX.Y.Z" line even with a populated cache.'
+  source: conductor-task-45
+  manual: false
+  run:
+    command: go test ./cmd/agent-deck/ -run TestVersionOutput_NoAnnotationWhenEnvSkipped -count=1 -race -v
+    expected: pass
+- id: v1759-fix45-eval-version-annotation
+  added: '2026-04-22'
+  task: fix-45
+  file: tests/eval/session/update_nudge_test.go
+  test_name: TestEval_VersionFlag_ShowsUpdateAnnotationFromCache
+  purpose: 'Conductor task #45 — eval_smoke case: seeds a fake update-cache.json in the sandbox HOME and runs the real agent-deck --version binary. Proves the full flag-dispatch → writeVersionOutput → CachedUpdateInfo path works end-to-end, catching regressions a pure Go unit test would miss (e.g. a main.go refactor that stops routing --version through writeVersionOutput).'
+  source: conductor-task-45
+  manual: false
+  run:
+    command: go test -tags eval_smoke ./tests/eval/session/ -run TestEval_VersionFlag_ShowsUpdateAnnotationFromCache -count=1 -race -v
+    expected: pass

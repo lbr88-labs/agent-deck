@@ -65,6 +65,7 @@ type UpdateCache struct {
 	CurrentVersion string    `json:"current_version"`
 	DownloadURL    string    `json:"download_url"`
 	ReleaseURL     string    `json:"release_url"`
+	ReleasesBehind int       `json:"releases_behind,omitempty"`
 }
 
 // UpdateInfo contains information about an available update
@@ -74,6 +75,35 @@ type UpdateInfo struct {
 	LatestVersion  string
 	DownloadURL    string
 	ReleaseURL     string
+	// ReleasesBehind is the number of published releases newer than the
+	// current version, capped at recentReleasesLimit. Populated when the
+	// full /releases listing is fetched alongside /releases/latest.
+	ReleasesBehind int
+}
+
+// NudgeThreshold is the minimum "releases behind" count that triggers the
+// startup nudge. Users with fewer releases to catch up on see the usual
+// (quieter) update banner, not the nudge.
+const NudgeThreshold = 5
+
+// SkipUpdateCheckEnv is the env var that fully disables update checking.
+// Set AGENTDECK_SKIP_UPDATE_CHECK=1 in CI, in automation, or for users on
+// locked-down networks.
+const SkipUpdateCheckEnv = "AGENTDECK_SKIP_UPDATE_CHECK"
+
+// recentReleasesLimit is how many recent releases we ask GitHub for when
+// counting how far behind the user is. We only need to know "more than
+// NudgeThreshold", so a single page is plenty.
+const recentReleasesLimit = 30
+
+// isUpdateCheckSkipped reports whether AGENTDECK_SKIP_UPDATE_CHECK is set to
+// a truthy value.
+func isUpdateCheckSkipped() bool {
+	switch strings.ToLower(strings.TrimSpace(os.Getenv(SkipUpdateCheckEnv))) {
+	case "", "0", "false", "no", "off":
+		return false
+	}
+	return true
 }
 
 // getCacheDir returns the cache directory path
@@ -124,6 +154,90 @@ func saveCache(cache *UpdateCache) error {
 
 	cachePath := filepath.Join(cacheDir, CacheFileName)
 	return os.WriteFile(cachePath, data, 0644)
+}
+
+// fetchRecentReleases fetches the most recent `limit` releases from GitHub
+// (newest first). Used by CheckForUpdate to compute ReleasesBehind.
+func fetchRecentReleases(limit int) ([]Release, error) {
+	if limit <= 0 {
+		limit = recentReleasesLimit
+	}
+	url := fmt.Sprintf("%s/repos/%s/releases?per_page=%d", apiBaseURL, GitHubRepo, limit)
+
+	client := &http.Client{Timeout: 10 * time.Second}
+	resp, err := client.Get(url)
+	if err != nil {
+		return nil, fmt.Errorf("failed to list releases: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("GitHub API returned status %d", resp.StatusCode)
+	}
+
+	var releases []Release
+	if err := json.NewDecoder(resp.Body).Decode(&releases); err != nil {
+		return nil, fmt.Errorf("failed to parse release list: %w", err)
+	}
+	return releases, nil
+}
+
+// CountReleasesBehind returns how many entries in `releases` are strictly
+// newer than `currentVersion`. The "v" prefix is tolerated on both sides.
+// If `currentVersion` is ahead of every release (or matches the newest),
+// the result is 0 — never negative.
+func CountReleasesBehind(currentVersion string, releases []Release) int {
+	behind := 0
+	for _, r := range releases {
+		if CompareVersions(r.TagName, currentVersion) > 0 {
+			behind++
+		}
+	}
+	return behind
+}
+
+// CachedUpdateInfo returns the update info from the on-disk cache without
+// touching the network. Used by `agent-deck --version` to annotate the
+// banner instantly (never blocks on a GitHub call). Returns (nil, nil) if
+// there is no cache yet; err only on corruption.
+func CachedUpdateInfo(currentVersion string) (*UpdateInfo, error) {
+	if isUpdateCheckSkipped() {
+		return nil, nil
+	}
+	cache, err := loadCache()
+	if err != nil {
+		// File-not-exist is a normal "no cache yet", not an error.
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	if cache == nil || cache.LatestVersion == "" {
+		return nil, nil
+	}
+	info := &UpdateInfo{
+		CurrentVersion: currentVersion,
+		LatestVersion:  cache.LatestVersion,
+		DownloadURL:    cache.DownloadURL,
+		ReleaseURL:     cache.ReleaseURL,
+		ReleasesBehind: cache.ReleasesBehind,
+		Available:      CompareVersions(currentVersion, cache.LatestVersion) < 0,
+	}
+	return info, nil
+}
+
+// ShouldNudge decides whether the startup nudge should render. Returns
+// true only when there is a real update available AND the user is more
+// than NudgeThreshold releases behind AND AGENTDECK_SKIP_UPDATE_CHECK is
+// not set. Nil info is safe — returns false.
+func ShouldNudge(info *UpdateInfo) bool {
+	if info == nil || !info.Available {
+		return false
+	}
+	if isUpdateCheckSkipped() {
+		return false
+	}
+	return info.ReleasesBehind > NudgeThreshold
 }
 
 // fetchLatestRelease fetches the latest release from GitHub
@@ -287,6 +401,11 @@ func CheckForUpdate(currentVersion string, forceCheck bool) (*UpdateInfo, error)
 		CurrentVersion: currentVersion,
 	}
 
+	// Env kill switch — never hits the network, never reads cache.
+	if isUpdateCheckSkipped() {
+		return info, nil
+	}
+
 	// Try to use cache first (unless force check)
 	if !forceCheck {
 		cache, err := loadCache()
@@ -295,6 +414,7 @@ func CheckForUpdate(currentVersion string, forceCheck bool) (*UpdateInfo, error)
 			info.LatestVersion = cache.LatestVersion
 			info.DownloadURL = cache.DownloadURL
 			info.ReleaseURL = cache.ReleaseURL
+			info.ReleasesBehind = cache.ReleasesBehind
 			info.Available = CompareVersions(currentVersion, cache.LatestVersion) < 0
 			return info, nil
 		}
@@ -309,6 +429,14 @@ func CheckForUpdate(currentVersion string, forceCheck bool) (*UpdateInfo, error)
 	latestVersion := strings.TrimPrefix(release.TagName, "v")
 	downloadURL := getAssetURL(release)
 
+	// Count how many releases the user is behind. A failure here is
+	// non-fatal — we fall back to 0 behind (no nudge) but still report
+	// Available so the standard banner renders.
+	releasesBehind := 0
+	if recent, err := fetchRecentReleases(recentReleasesLimit); err == nil {
+		releasesBehind = CountReleasesBehind(currentVersion, recent)
+	}
+
 	// Update cache
 	cache := &UpdateCache{
 		CheckedAt:      time.Now(),
@@ -316,12 +444,14 @@ func CheckForUpdate(currentVersion string, forceCheck bool) (*UpdateInfo, error)
 		CurrentVersion: currentVersion,
 		DownloadURL:    downloadURL,
 		ReleaseURL:     release.HTMLURL,
+		ReleasesBehind: releasesBehind,
 	}
 	_ = saveCache(cache) // Ignore cache save errors
 
 	info.LatestVersion = latestVersion
 	info.DownloadURL = downloadURL
 	info.ReleaseURL = release.HTMLURL
+	info.ReleasesBehind = releasesBehind
 	info.Available = CompareVersions(currentVersion, latestVersion) < 0
 
 	return info, nil

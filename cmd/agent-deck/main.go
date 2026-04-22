@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
+	"io"
 	"log/slog"
 	"math"
 	"os"
@@ -35,7 +36,7 @@ import (
 	"github.com/asheshgoplani/agent-deck/internal/web"
 )
 
-var Version = "1.7.61" // overridden at build time via -ldflags "-X main.Version=..."
+var Version = "1.7.62" // overridden at build time via -ldflags "-X main.Version=..."
 
 // Table column widths for list command output
 const (
@@ -55,6 +56,18 @@ func init() {
 func initUpdateSettings() {
 	settings := session.GetUpdateSettings()
 	update.SetCheckInterval(settings.CheckIntervalHours)
+}
+
+// writeVersionOutput prints `Agent Deck vX.Y.Z` to `w`, appending
+// ` (update available: vA.B.C)` when the on-disk cache says the user
+// is behind. Offline — never touches the network. Conductor task #45.
+func writeVersionOutput(w io.Writer, currentVersion string) {
+	fmt.Fprintf(w, "Agent Deck v%s", currentVersion)
+	info, err := update.CachedUpdateInfo(currentVersion)
+	if err == nil && info != nil && info.Available {
+		fmt.Fprintf(w, " (update available: v%s)", info.LatestVersion)
+	}
+	fmt.Fprintln(w)
 }
 
 // printUpdateNotice checks for updates and prints a one-liner if available
@@ -211,7 +224,7 @@ func main() {
 	if len(args) > 0 {
 		switch args[0] {
 		case "version", "--version", "-v":
-			fmt.Printf("Agent Deck v%s\n", Version)
+			writeVersionOutput(os.Stdout, Version)
 			return
 		case "help", "--help", "-h":
 			printHelp()
