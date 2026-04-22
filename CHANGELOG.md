@@ -5,7 +5,7 @@ All notable changes to Agent Deck will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [1.7.59] - 2026-04-22
+## [1.7.62] - 2026-04-22
 
 ### Added
 - **Visual update nudge for severely out-of-date installs (conductor task #45).** Driver: on 2026-04-22 four users posted Feedback Hub comments from versions 15-39 releases behind head (v1.7.3, v1.7.17, v1.7.23, v1.7.23). They were hitting bugs that had been fixed weeks earlier. `internal/update/update.go` already queried `/releases/latest`, but the existing banner fired at every `Available=true` and — combined with users who had muted settings, or whose `CheckEnabled` had been off since install — never surfaced loudly enough to convince the severely-behind cohort to upgrade. This release splits that signal into two tiers:
@@ -16,7 +16,43 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - **New public surface in `internal/update`:** `CountReleasesBehind(currentVersion, releases) int`, `ShouldNudge(info) bool`, `CachedUpdateInfo(currentVersion) (*UpdateInfo, error)` for the offline cache read, `NudgeThreshold = 5` constant, `SkipUpdateCheckEnv = "AGENTDECK_SKIP_UPDATE_CHECK"` constant, `ReleasesBehind int` field on `UpdateInfo` and `UpdateCache`, and a new `fetchRecentReleases(limit)` helper that pulls `/releases?per_page=30` to compute the count.
   - **New TUI surface in `internal/ui`:** `Home.shouldRenderUpdateNudge()`, `Home.handleUpdateNudgeDismiss(msg)`, `Home.renderUpdateNudgeText()`, plus a `Home.updateNudgeDismissed bool` field. The three banner-height accounting sites in `home.go` (`getVisibleHeight`, `getListContentStartY`, the main layout render) all go through `shouldRenderUpdateNudge()` so a refactor of any one of them cannot drift from the rest.
   - **CLI surface in `cmd/agent-deck/main.go`:** extracted `writeVersionOutput(w io.Writer, currentVersion string)` so the flag dispatch (`case "version", "--version", "-v":`) writes through an `io.Writer` the tests can assert against byte-exactly. The version-output path is otherwise unchanged.
-  - **Tests:** 6 unit tests in `internal/update/update_nudge_test.go` (threshold arithmetic, env-gate short-circuit, cache round-trip, offline cache read, env-gate on cached read), 4 unit tests in `internal/ui/update_nudge_test.go` (threshold, dismiss, env-gate, banner text content), 4 unit tests in `cmd/agent-deck/version_nudge_test.go` (annotation on, no-cache, up-to-date, env-gate), and 2 eval-smoke cases in `tests/eval/session/update_nudge_test.go` (real-binary `--version` with a seeded cache; real-binary `--version` with env-gate set). All 9 test-file entries added to `.claude/release-tests.yaml` under the `v1759-fix45-*` prefix so the release gate catches any regression. Mandated gates (`TestPersistence_*`, `Feedback|Sender_`, watcher suite) remain green on this branch.
+  - **Tests:** 6 unit tests in `internal/update/update_nudge_test.go` (threshold arithmetic, env-gate short-circuit, cache round-trip, offline cache read, env-gate on cached read), 4 unit tests in `internal/ui/update_nudge_test.go` (threshold, dismiss, env-gate, banner text content), 4 unit tests in `cmd/agent-deck/version_nudge_test.go` (annotation on, no-cache, up-to-date, env-gate), and 2 eval-smoke cases in `tests/eval/session/update_nudge_test.go` (real-binary `--version` with a seeded cache; real-binary `--version` with env-gate set). All 9 test-file entries added to `.claude/release-tests.yaml` under the `v1759-fix45-*` prefix (ID string retained from initial v1.7.59 slot; v1.7.60 reserved v1.7.59 for this work, but v1.7.60 and v1.7.61 both landed in main before this branch merged — see PR #723 merge-commit for detail) so the release gate catches any regression. Mandated gates (`TestPersistence_*`, `Feedback|Sender_`, watcher suite) remain green on this branch.
+
+## [1.7.61] - 2026-04-22
+
+### Added
+- **`agent-deck session remove <id|title>` CLI subcommand** — removes a session from the registry. Only sessions in `stopped` or `error` state are removable by default; `--force` bypasses the gate (destructive). `--all-errored` bulk-removes every session currently in the `error` state and respects status filtering (stopped, idle, running sessions are untouched). `--prune-worktree` is an opt-in destructive variant that additionally kills the tmux process and removes any git worktree associated with the session.
+- **TUI `X` keybind (Home view)** — status-gated registry remove with confirmation dialog. Rejects non-stopped/non-errored sessions with a message steering the user to `d` for destructive delete. The existing `d` → `deleteSession` path (full kill + worktree cleanup) is unchanged and remains the power-user option.
+- **TUI `Ctrl+X` keybind** — bulk remove of all errored sessions with a confirmation dialog that shows the count. When there are no errored sessions the dialog is suppressed and an info message is shown instead.
+- New `ConfirmRemoveSession` and `ConfirmBulkRemoveErrored` confirm-dialog types wired through `confirmAction` with yellow (non-red) border color to distinguish from the destructive `d` delete dialog.
+
+### Preserved (hard invariant)
+- Claude transcripts under `~/.claude/projects/<slug>/` are **never** touched by `remove` or the `X`/`Ctrl+X` TUI keybinds. `TestSessionRemove_PreservesTranscripts` enforces this at CI time.
+
+### Tests
+- `cmd/agent-deck/session_remove_cmd_test.go` — 6 subprocess tests: stopped-succeeds, running-without-force-rejected, running-with-force-succeeds, all-errored-respects-filter, transcripts-preserved, not-found-exit-2.
+- `internal/ui/session_remove_tui_test.go` — 5 Seam A (model-level) tests covering `X` on stopped/error/running and `Ctrl+X` with N>0 / N=0 errored sessions.
+- Full `cmd/agent-deck` suite passes under `-race` in 57.8s. Full `internal/ui` suite passes under `-race` in 29.2s. `TestPersistence_*` mandate suite passes.
+
+## [1.7.60] - 2026-04-22
+
+### Added
+- **Group-scoped keyboard navigation in the TUI (Alt+j/k, Alt+1-9, Alt+g/G, Alt+/).** Addresses recurring feedback "jumping between shells is too complicated — shortcuts needed" (Christoph Becker, via Feedback Hub). The existing global tier — plain `j`/`k`, `1`-`9`, `g`/`gg`/`G`, `/` — continues to work exactly as before with no muscle-memory breakage or test churn. The new `Alt+`-prefixed layer restricts movement to the cursor's **current group**:
+  - `Alt+j` / `Alt+k` — next / previous session in the current group. No-ops at the group boundary instead of spilling into the next group's first session.
+  - `Alt+1`-`Alt+9` — jump to the Nth session within the current group (1-indexed). Plain `1`-`9` still jumps to the Nth root group.
+  - `Alt+g` / `Alt+G` — first / last session in the current group.
+  - `Alt+/` — fuzzy search filtered to the current group only. The local `Search` component grew a `scopedGroup` field so background session reloads (every ~2s via `h.search.SetItems(h.instances)` from seven call sites in `home.go`) do not leak out-of-group results into a scoped search session; `Hide()` clears the scope.
+
+  "Current group" is derived from the cursor position: on a session item it's `Session.GroupPath`; on a group header it's the header's `Path`; on a window item it's the parent session's group path. See `currentGroupPath` in `internal/ui/group_nav.go`.
+
+  **Discoverability** lands alongside the keybinds so users find out the shortcuts exist before giving up:
+  - `?` help overlay gains a new "GROUP NAVIGATION (v1.7.60)" section listing all four Alt+ keybinds.
+  - README grows a two-tier keybindings table (Global vs Group) with explicit scope descriptions.
+  - One-shot status-bar hint on first TUI launch after upgrading to v1.7.60, reusing the existing maintenance-banner slot (no new layout math): "Tip: Alt+j/k and Alt+1-9 navigate within the current group. Press ? for all keybindings." The hint dismisses on any keypress or ESC, and a sentinel file at `~/.agent-deck/.nav-hint-v1760-shown` ensures it never reappears. Running under `AGENTDECK_PROFILE=_test` suppresses the hint so UI tests never write to a developer's real `~/.agent-deck/` directory.
+
+  Tests: 17 new cases in `internal/ui/group_nav_test.go` — `TestGroupNav_AltJ_MovesToNextSessionInGroup`, `TestGroupNav_AltJ_DoesNotCrossGroupBoundary`, `TestGroupNav_AltK_MovesToPrevSessionInGroup`, `TestGroupNav_AltK_DoesNotCrossGroupBoundary`, `TestGroupNav_AltJ_FromGroupHeader_GoesToFirstSession`, `TestGroupNav_Alt2_JumpsToSecondInGroup`, `TestGroupNav_Alt3_JumpsToThirdInGroup`, `TestGroupNav_Alt5_BeyondGroup_IsNoop`, `TestGroupNav_Alt1_InBetaGroup_LandsOnB1`, `TestGroupNav_AltG_LowerCase_JumpsToFirstInGroup`, `TestGroupNav_AltShiftG_JumpsToLastInGroup`, `TestGroupNav_AltG_InBetaGroup_LandsOnB1NotA1`, `TestGroupNav_AltSlash_OpensSearchScopedToCurrentGroup`, `TestGroupNav_EvalHarness_RendersAndLandsOnRightSession` (end-to-end: renders TUI frame, dispatches Alt+1/2/3, asserts cursor identity + non-empty `View()` output), plus three regression tests (`TestGroupNav_Regression_PlainJ_StillMovesDownFlatList`, `TestGroupNav_Regression_PlainJ_CrossesGroupBoundary`, `TestGroupNav_Regression_Plain1_JumpsToFirstRootGroup`) pinning the global tier's existing semantics. Discoverability coverage: `TestNavHint_ShownOnFirstLaunch_DismissedAfterKeypress` and `TestNavHint_SkippedWhenSentinelExists` isolate `HOME` to a `TempDir` and unset `AGENTDECK_PROFILE` so the sentinel logic runs under test without polluting the developer's real home directory.
+
+  Version numbering: v1.7.59 is reserved for the in-flight update-nudge session, so this release skips to v1.7.60. Matches the pre-existing ghost-version precedent (v1.7.44-45, .47, .55 were never tagged either).
 
 ## [1.7.58] - 2026-04-22
 

@@ -407,6 +407,11 @@ type Home struct {
 	maintenanceMsg     string
 	maintenanceMsgTime time.Time
 
+	// navHintActive: true while the v1.7.60 group-navigation discoverability
+	// hint is the current occupant of the maintenanceMsg slot. Dismissed on
+	// the first keypress (handleMainKey).
+	navHintActive bool
+
 	// Cursor sync: track last notification bar switch during attach
 	// When user switches sessions via Ctrl+b N while attached (tea.Exec),
 	// we record the target session ID so cursor can follow after detach
@@ -979,6 +984,17 @@ func NewHomeWithProfileAndMode(profile string) *Home {
 		logSettings := session.GetLogSettings()
 		tmux.RunLogMaintenance(logSettings.MaxSizeMB, logSettings.MaxLines, logSettings.RemoveOrphans)
 	}()
+
+	// v1.7.60: one-shot nav-discoverability hint. Reuses the maintenance-banner
+	// slot so no extra layout math is needed. Dismisses via the existing ESC
+	// handler, or gets overwritten by a real maintenance event — either way
+	// the sentinel file is written so the hint never reappears.
+	if !navHintAlreadyShown() {
+		h.maintenanceMsg = navHintText
+		h.maintenanceMsgTime = time.Now()
+		h.navHintActive = true
+		markNavHintShown()
+	}
 
 	return h
 }
@@ -5501,6 +5517,16 @@ func (h *Home) handleMainKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return h, nil
 	}
 
+	// v1.7.60: any keypress dismisses the one-shot nav-discoverability hint
+	// (beyond the existing ESC path). The sentinel was already written at
+	// NewHome, so this only has to clear the visible banner.
+	if h.navHintActive {
+		h.navHintActive = false
+		if h.maintenanceMsg == navHintText {
+			h.maintenanceMsg = ""
+		}
+	}
+
 	switch key {
 	case "q", "ctrl+c":
 		return h.tryQuit()
@@ -5623,6 +5649,50 @@ func (h *Home) handleMainKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		} else {
 			h.search.Show()
 		}
+		return h, nil
+
+	// Group-scoped navigation layer (v1.7.60): Alt+* keys navigate only within
+	// the cursor's current group. Plain j/k/1-9/g/G// remain unchanged above.
+	case "alt+j": // Next session in current group
+		if target := h.nextSessionInCurrentGroup(); target >= 0 {
+			h.jumpToIndex(target)
+			return h, h.fetchSelectedPreview()
+		}
+		return h, nil
+
+	case "alt+k": // Previous session in current group
+		if target := h.prevSessionInCurrentGroup(); target >= 0 {
+			h.jumpToIndex(target)
+			return h, h.fetchSelectedPreview()
+		}
+		return h, nil
+
+	case "alt+1", "alt+2", "alt+3", "alt+4", "alt+5", "alt+6", "alt+7", "alt+8", "alt+9":
+		// Jump to Nth session in current group (1-indexed).
+		n := int(key[len(key)-1] - '0')
+		if target := h.nthSessionInCurrentGroup(n); target >= 0 {
+			h.jumpToIndex(target)
+			return h, h.fetchSelectedPreview()
+		}
+		return h, nil
+
+	case "alt+g": // First session in current group
+		if target := h.firstSessionInCurrentGroup(); target >= 0 {
+			h.jumpToIndex(target)
+			return h, h.fetchSelectedPreview()
+		}
+		return h, nil
+
+	case "alt+G": // Last session in current group
+		if target := h.lastSessionInCurrentGroup(); target >= 0 {
+			h.jumpToIndex(target)
+			return h, h.fetchSelectedPreview()
+		}
+		return h, nil
+
+	case "alt+/": // In-group filter search
+		h.search.SetSize(h.width, h.height)
+		h.openInGroupSearch()
 		return h, nil
 
 	case "enter":
@@ -6186,6 +6256,39 @@ func (h *Home) handleMainKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		return h, nil
 
+	case "X":
+		// Status-gated registry-only remove. For stopped/errored sessions only;
+		// use 'd' for destructive delete (kills process + removes worktree).
+		if h.cursor < len(h.flatItems) {
+			item := h.flatItems[h.cursor]
+			if item.Type == session.ItemTypeSession && item.Session != nil {
+				status := item.Session.Status
+				if status == session.StatusStopped || status == session.StatusError {
+					h.confirmDialog.ShowRemoveSession(item.Session.ID, item.Session.Title)
+				} else {
+					h.setError(fmt.Errorf("session must be stopped or errored to remove; use 'd' to destructively delete a %s session", status))
+				}
+			}
+		}
+		return h, nil
+
+	case "ctrl+x":
+		// Bulk remove all errored sessions from the registry.
+		count := 0
+		h.instancesMu.RLock()
+		for _, inst := range h.instances {
+			if inst.Status == session.StatusError {
+				count++
+			}
+		}
+		h.instancesMu.RUnlock()
+		if count == 0 {
+			h.setError(fmt.Errorf("no errored sessions to remove"))
+			return h, nil
+		}
+		h.confirmDialog.ShowBulkRemoveErrored(count)
+		return h, nil
+
 	case "i":
 		return h, h.importSessions
 
@@ -6638,6 +6741,15 @@ func (h *Home) confirmAction() tea.Cmd {
 		title := h.confirmDialog.targetName
 		h.confirmDialog.Hide()
 		return h.closeRemoteSession(remoteName, sessionID, title)
+	case ConfirmRemoveSession:
+		sessionID := h.confirmDialog.GetTargetID()
+		if inst := h.getInstanceByID(sessionID); inst != nil {
+			h.confirmDialog.Hide()
+			return h.removeSession(inst)
+		}
+	case ConfirmBulkRemoveErrored:
+		h.confirmDialog.Hide()
+		return h.bulkRemoveErrored()
 	}
 	h.confirmDialog.Hide()
 	return nil
@@ -8224,6 +8336,38 @@ func (h *Home) closeSession(inst *session.Instance) tea.Cmd {
 		killErr := inst.Kill()
 		return sessionClosedMsg{sessionID: id, killErr: killErr}
 	}
+}
+
+// removeSession removes a session from the registry without killing the
+// process or cleaning its worktree. The key handler already enforced the
+// stopped/error gate. Emits sessionDeletedMsg so the existing delete
+// handler in Update persists the change.
+func (h *Home) removeSession(inst *session.Instance) tea.Cmd {
+	id := inst.ID
+	return func() tea.Msg {
+		return sessionDeletedMsg{deletedID: id}
+	}
+}
+
+// bulkRemoveErrored removes every session currently in the 'error' state.
+// Emits one sessionDeletedMsg per removed session; Update is idempotent
+// on repeated deletedIDs.
+func (h *Home) bulkRemoveErrored() tea.Cmd {
+	h.instancesMu.RLock()
+	ids := make([]string, 0, len(h.instances))
+	for _, inst := range h.instances {
+		if inst.Status == session.StatusError {
+			ids = append(ids, inst.ID)
+		}
+	}
+	h.instancesMu.RUnlock()
+
+	cmds := make([]tea.Cmd, 0, len(ids))
+	for _, id := range ids {
+		id := id
+		cmds = append(cmds, func() tea.Msg { return sessionDeletedMsg{deletedID: id} })
+	}
+	return tea.Batch(cmds...)
 }
 
 // sessionRestartedMsg signals that a session was restarted.

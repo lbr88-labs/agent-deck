@@ -146,6 +146,24 @@ Running many sessions? Socket pooling shares MCP processes across all sessions v
 
 Press `/` to fuzzy-search across all sessions. Filter by status with `!` (running), `@` (waiting), `#` (idle), `$` (error). Press `G` for global search across all Claude conversations.
 
+### Keyboard navigation (v1.7.60)
+
+Two tiers of keybindings move the cursor around the session list. The global tier is unchanged from earlier versions; the `Alt+` tier (added in v1.7.60) restricts movement to the current group only. Press `?` in the TUI to see the full table in-app.
+
+| Scope | Keys | What it does |
+|---|---|---|
+| **Global (flat list)** | `j` / `k` or `↓` / `↑` | Move cursor down / up through every item |
+| Global | `gg` | Jump to top of list |
+| Global | `G` | Open global search across all Claude conversations |
+| Global | `1`–`9` | Jump to Nth root group header |
+| Global | `/` | Open fuzzy search across all sessions |
+| **Group (current group only)** | `Alt+j` / `Alt+k` | Next / previous session in current group (skips group boundaries) |
+| Group | `Alt+1`–`Alt+9` | Jump to Nth session within the current group |
+| Group | `Alt+g` / `Alt+G` | First / last session in current group |
+| Group | `Alt+/` | Open fuzzy search filtered to the current group's sessions |
+
+"Current group" is derived from the cursor position: on a session it's that session's group; on a group header it's that group; on a window it's the parent session's group. On a group boundary `Alt+j` / `Alt+k` no-op rather than spilling into the next group.
+
 ### Status Detection
 
 Smart polling detects what every agent is doing right now:
@@ -199,6 +217,51 @@ The script receives two environment variables:
 - `AGENT_DECK_WORKTREE_PATH` — path to the new worktree
 
 The script runs via `sh -e` with a 60-second timeout. If it fails, the worktree is still created — you'll see a warning but the session proceeds normally.
+
+#### Bare repositories and worktrees
+
+Agent-deck supports the [bare-repo layout](https://git-scm.com/docs/git-worktree) where the git metadata sits in `.bare/` and every worktree is a peer (no "main" checkout). A typical tree:
+
+```
+project/
+├── .bare/                         # bare git repo (holds refs, objects, HEAD)
+├── .agent-deck/
+│   └── worktree-setup.sh          # shared setup script (optional)
+├── worktree-a/                    # linked worktree on branch-a
+│   └── .git                       # file: gitdir: ../.bare/worktrees/worktree-a
+└── worktree-b/                    # linked worktree on branch-b
+    └── .git
+```
+
+How agent-deck resolves this layout (v1.7.58+):
+
+- **All three paths work.** `agent-deck add project/`, `agent-deck add project/.bare`, and `agent-deck add project/worktree-a` all resolve to the same "project root" — `project/`, the directory that hosts `.bare/`. Every linked worktree is treated as equal; there is no default or main.
+- **The project root is where shared config lives.** Place `.agent-deck/worktree-setup.sh` at `project/.agent-deck/worktree-setup.sh`, next to `.bare/`. Agent-deck looks for it at exactly that path once it has resolved the project root — it does not search individual worktrees.
+- **`AGENT_DECK_REPO_ROOT` inside the setup script points to `project/`.** So `cp "$AGENT_DECK_REPO_ROOT/.env" "$AGENT_DECK_WORKTREE_PATH/.env"` copies the shared `.env` you keep alongside `.bare/` into each new worktree.
+- **New worktree location follows your `[worktree]` setting.** With `default_location = "subdirectory"` (or `--location subdirectory`) new worktrees land inside the project root at `project/.worktrees/<branch-name>`.
+
+Example — create a new worktree against a bare repo from anywhere:
+
+```sh
+# From the project root
+agent-deck add project/ -c claude --worktree feature/c --new-branch
+
+# Or point directly at the bare dir
+agent-deck add project/.bare -c claude --worktree feature/c --new-branch
+
+# Or from any existing linked worktree
+agent-deck add project/worktree-a -c claude --worktree feature/c --new-branch
+```
+
+All three commands create `project/.worktrees/feature-c/` (with `subdirectory` location) and run `project/.agent-deck/worktree-setup.sh` with `AGENT_DECK_REPO_ROOT=project`.
+
+`agent-deck worktree list` and `agent-deck worktree finish` also work from any of those three locations.
+
+Common gotchas:
+
+- **`.agent-deck/` must live at the project root**, next to `.bare/`. If you commit `.agent-deck/` into a specific branch's worktree instead, agent-deck will not find it — the lookup resolves to the project root, not the current worktree.
+- **The bare repo must be a direct child of the project root.** The auto-discovery scans `<projectRoot>/.bare` first, then direct children as a fallback. A bare repo named something other than `.bare` (e.g. `.git-bare/`) still works; one nested several levels deep does not, so point `agent-deck add` at its parent directly in that case.
+- **If you also keep a `.git` file at the project root** pointing to `.bare/` (a variant some tutorials recommend), point `agent-deck add` at `.bare/` or at a linked worktree rather than at the project root — the `.git` file shadows the bare-repo detection path.
 
 ### Docker Sandbox
 
@@ -553,6 +616,7 @@ See [Troubleshooting](skills/agent-deck/references/troubleshooting.md#uninstalli
 agent-deck                        # Launch TUI
 agent-deck add . -c claude        # Add current dir with Claude
 agent-deck session fork my-proj   # Fork a Claude session
+agent-deck session remove my-proj # Remove stopped/errored session from registry (transcripts preserved)
 agent-deck mcp attach my-proj exa # Attach MCP to session
 agent-deck skill attach my-proj docs --source pool --restart # Attach skill + restart
 agent-deck web                    # Start web UI on http://127.0.0.1:8420
