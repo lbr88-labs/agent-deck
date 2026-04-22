@@ -1971,7 +1971,13 @@ func TestMouseYToItemIndex(t *testing.T) {
 			home := newTestHomeWithItems(100, 30, items)
 			home.viewOffset = tc.viewOffset
 			if tc.banners {
-				home.updateInfo = &update.UpdateInfo{Available: true, CurrentVersion: "1.0", LatestVersion: "2.0"}
+				// v1.7.59: the update banner now renders via ShouldNudge,
+				// which requires ReleasesBehind > NudgeThreshold. Any
+				// value >5 flips the same banner path this test measured.
+				home.updateInfo = &update.UpdateInfo{
+					Available: true, CurrentVersion: "1.0", LatestVersion: "2.0",
+					ReleasesBehind: 30,
+				}
 				home.maintenanceMsg = "test maintenance"
 			}
 
