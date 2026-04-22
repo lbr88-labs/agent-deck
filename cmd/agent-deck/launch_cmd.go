@@ -173,7 +173,7 @@ func handleLaunch(profile string, args []string) {
 	// Handle worktree creation
 	var worktreePath, worktreeRepoRoot string
 	if wtBranch != "" {
-		if !git.IsGitRepo(path) {
+		if !git.IsGitRepoOrBareProjectRoot(path) {
 			out.Error(fmt.Sprintf("%s is not a git repository", path), ErrCodeInvalidOperation)
 			os.Exit(1)
 		}

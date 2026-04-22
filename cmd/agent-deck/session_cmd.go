@@ -627,7 +627,7 @@ func handleSessionFork(profile string, args []string) {
 	// Handle worktree creation
 	var opts *session.ClaudeOptions
 	if wtBranch != "" {
-		if !git.IsGitRepo(inst.ProjectPath) {
+		if !git.IsGitRepoOrBareProjectRoot(inst.ProjectPath) {
 			out.Error("session path is not a git repository", ErrCodeInvalidOperation)
 			os.Exit(1)
 		}

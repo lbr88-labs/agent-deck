@@ -35,7 +35,7 @@ import (
 	"github.com/asheshgoplani/agent-deck/internal/web"
 )
 
-var Version = "1.7.57" // overridden at build time via -ldflags "-X main.Version=..."
+var Version = "1.7.58" // overridden at build time via -ldflags "-X main.Version=..."
 
 // Table column widths for list command output
 const (
@@ -1253,8 +1253,8 @@ func handleAdd(profile string, args []string) {
 	// Handle worktree creation
 	var worktreePath, worktreeRepoRoot string
 	if wtBranch != "" {
-		// Validate path is a git repo
-		if !git.IsGitRepo(path) {
+		// Validate path is a git repo (or a bare-repo project root with nested .bare/)
+		if !git.IsGitRepoOrBareProjectRoot(path) {
 			fmt.Fprintf(os.Stderr, "Error: %s is not a git repository\n", path)
 			os.Exit(1)
 		}

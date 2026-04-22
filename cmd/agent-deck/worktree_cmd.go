@@ -91,13 +91,14 @@ func handleWorktreeList(profile string, args []string) {
 		os.Exit(1)
 	}
 
-	// Check if in a git repo
-	if !git.IsGitRepo(cwd) {
+	// Check if in a git repo (or a bare-repo project root)
+	if !git.IsGitRepoOrBareProjectRoot(cwd) {
 		out.Error("not in a git repository", ErrCodeInvalidOperation)
 		os.Exit(1)
 	}
 
-	// Get repo root (resolve through worktrees to prevent nesting)
+	// Get repo root (resolve through worktrees to prevent nesting; also
+	// handles bare-repo project roots by returning the parent of .bare/).
 	repoRoot, err := git.GetWorktreeBaseRoot(cwd)
 	if err != nil {
 		out.Error(fmt.Sprintf("failed to get repo root: %v", err), ErrCodeInvalidOperation)
@@ -331,7 +332,7 @@ func handleWorktreeCleanup(profile string, args []string) {
 	var orphanedWorktrees []git.Worktree
 	var repoRoot string
 
-	if git.IsGitRepo(cwd) {
+	if git.IsGitRepoOrBareProjectRoot(cwd) {
 		repoRoot, err = git.GetWorktreeBaseRoot(cwd)
 		if err == nil {
 			worktrees, err := git.ListWorktrees(repoRoot)
