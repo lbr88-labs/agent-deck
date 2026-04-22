@@ -168,12 +168,21 @@ func (h *HelpOverlay) View() string {
 				{"k / Up", "Move up"},
 				{"Ctrl+u/d", "Half page up/down"},
 				{"Ctrl+f/b", "Full page up/down"},
-				{"gg / G", "Jump to top/bottom"},
+				{"gg / G", "Jump to top / global search"},
 				{"h / Left", "Collapse / parent"},
 				{"l / Right", "Expand / toggle"},
-				{"1-9", "Jump to group"},
+				{"1-9", "Jump to root group"},
 				{"Space", "Jump mode"},
 				{"Enter", "Attach / toggle"},
+			},
+		},
+		{
+			title: "GROUP NAVIGATION (v1.7.60)",
+			items: [][2]string{
+				{"Alt+j / Alt+k", "Next / prev session in current group"},
+				{"Alt+1 - Alt+9", "Jump to Nth session in current group"},
+				{"Alt+g / Alt+G", "First / last session in current group"},
+				{"Alt+/", "Filter search scoped to current group"},
 			},
 		},
 		{
