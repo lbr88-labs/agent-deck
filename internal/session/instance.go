@@ -81,6 +81,13 @@ type Instance struct {
 	IsConductor        bool   `json:"is_conductor,omitempty"`         // True if this session is a conductor orchestrator
 	NoTransitionNotify bool   `json:"no_transition_notify,omitempty"` // Suppress transition event dispatch for this session
 
+	// TitleLocked, when true, blocks Claude's session name from syncing into
+	// the agent-deck Title (issue #697). Conductors launch workers with a
+	// semantic title (e.g. "SCRUM-351") that Claude would otherwise overwrite
+	// with its auto-generated summary on the next hook event. Set via
+	// `--title-lock` on add/launch or `session set-title-lock`.
+	TitleLocked bool `json:"title_locked,omitempty"`
+
 	// Git worktree support
 	WorktreePath     string `json:"worktree_path,omitempty"`      // Path to worktree (if session is in worktree)
 	WorktreeRepoRoot string `json:"worktree_repo_root,omitempty"` // Original repo root
@@ -161,6 +168,20 @@ type Instance struct {
 	// SSH remote support
 	SSHHost       string `json:"ssh_host,omitempty"`
 	SSHRemotePath string `json:"ssh_remote_path,omitempty"`
+
+	// TmuxSocketName is the tmux `-L <name>` socket selector captured when
+	// this instance was created (v1.7.50+, issue #687). Empty string keeps
+	// the pre-v1.7.50 behavior of targeting the user's default tmux server
+	// — zero change for existing installations.
+	//
+	// Precedence at creation time: the `--tmux-socket` CLI flag on
+	// `agent-deck add` / `agent-deck launch` wins, else
+	// `[tmux].socket_name` from config.toml, else empty. Once persisted,
+	// this value is IMMUTABLE — lifecycle operations (start/stop/restart/
+	// revive) MUST target this same socket even if the installation-wide
+	// config is later edited. Mixing sockets would leave the session
+	// orphaned on an unreachable tmux server.
+	TmuxSocketName string `json:"tmux_socket_name,omitempty"`
 
 	// MCP tracking - which MCPs were loaded when session started/restarted
 	// Used to detect pending MCPs (added after session start) and stale MCPs (removed but still running)
@@ -430,20 +451,26 @@ func (inst *Instance) ClearParent() {
 // NewInstance creates a new session instance
 func NewInstance(title, projectPath string) *Instance {
 	id := GenerateID()
+	// Seed the tmux socket from the installation-wide config. Callers that
+	// want to override (the `--tmux-socket` CLI flag) set
+	// inst.TmuxSocketName + inst.tmuxSession.SocketName before Start().
+	socket := GetTmuxSettings().GetSocketName()
 	tmuxSess := tmux.NewSession(title, projectPath)
+	tmuxSess.SocketName = socket
 	tmuxSess.InstanceID = id // Pass instance ID for activity hooks
 	tmuxSess.SetInjectStatusLine(GetTmuxSettings().GetInjectStatusLine())
 	tmuxSess.SetClearOnRestart(GetTmuxSettings().ClearOnRestart)
 
 	return &Instance{
-		ID:          id,
-		Title:       title,
-		ProjectPath: projectPath,
-		GroupPath:   extractGroupPath(projectPath), // Auto-assign group from path
-		Tool:        "shell",
-		Status:      StatusIdle,
-		CreatedAt:   time.Now(),
-		tmuxSession: tmuxSess,
+		ID:             id,
+		Title:          title,
+		ProjectPath:    projectPath,
+		GroupPath:      extractGroupPath(projectPath), // Auto-assign group from path
+		Tool:           "shell",
+		Status:         StatusIdle,
+		CreatedAt:      time.Now(),
+		TmuxSocketName: socket,
+		tmuxSession:    tmuxSess,
 	}
 }
 
@@ -457,20 +484,23 @@ func NewInstanceWithGroup(title, projectPath, groupPath string) *Instance {
 // NewInstanceWithTool creates a new session with tool-specific initialization
 func NewInstanceWithTool(title, projectPath, tool string) *Instance {
 	id := GenerateID()
+	socket := GetTmuxSettings().GetSocketName()
 	tmuxSess := tmux.NewSession(title, projectPath)
+	tmuxSess.SocketName = socket
 	tmuxSess.InstanceID = id // Pass instance ID for activity hooks
 	tmuxSess.SetInjectStatusLine(GetTmuxSettings().GetInjectStatusLine())
 	tmuxSess.SetClearOnRestart(GetTmuxSettings().ClearOnRestart)
 
 	inst := &Instance{
-		ID:          id,
-		Title:       title,
-		ProjectPath: projectPath,
-		GroupPath:   extractGroupPath(projectPath),
-		Tool:        tool,
-		Status:      StatusIdle,
-		CreatedAt:   time.Now(),
-		tmuxSession: tmuxSess,
+		ID:             id,
+		Title:          title,
+		ProjectPath:    projectPath,
+		GroupPath:      extractGroupPath(projectPath),
+		Tool:           tool,
+		Status:         StatusIdle,
+		CreatedAt:      time.Now(),
+		TmuxSocketName: socket,
+		tmuxSession:    tmuxSess,
 	}
 
 	// Claude session ID will be detected from files Claude creates
@@ -1463,7 +1493,10 @@ func (i *Instance) collectTmuxPaneProcessTreePIDs() []int {
 	}
 
 	target := i.tmuxSession.Name + ":"
-	out, err := exec.Command("tmux", "list-panes", "-t", target, "-F", "#{pane_pid}").Output()
+	// Target the same tmux server the session was created on (issue #687).
+	// A session on an isolated agent-deck socket would return no panes from
+	// the default server and we would mistakenly treat it as empty.
+	out, err := tmux.Exec(i.TmuxSocketName, "list-panes", "-t", target, "-F", "#{pane_pid}").Output()
 	if err != nil {
 		return nil
 	}
@@ -3364,6 +3397,12 @@ func (i *Instance) recreateTmuxSession() {
 	// ProjectPath (which is a symlink into that parent dir). Delegates to
 	// EffectiveWorkingDir so single-repo sessions keep using ProjectPath.
 	i.tmuxSession = tmux.NewSession(i.Title, i.EffectiveWorkingDir())
+	// Preserve the socket the instance was originally created on (issue
+	// #687). A restart/respawn cycle must NOT silently relocate the session
+	// to the current default socket — that would strand the old tmux pane
+	// on the stored socket and create an invisible duplicate on the new
+	// one.
+	i.tmuxSession.SocketName = i.TmuxSocketName
 	i.tmuxSession.InstanceID = i.ID
 	i.tmuxSession.SetInjectStatusLine(GetTmuxSettings().GetInjectStatusLine())
 	i.tmuxSession.SetClearOnRestart(GetTmuxSettings().ClearOnRestart)
@@ -5541,17 +5580,20 @@ func (i *Instance) OpenContainerShell() (string, error) {
 	tmuxName := "ad-term-" + docker.GenerateName(i.ID, i.Title)[len("agent-deck-"):]
 
 	// Kill any existing terminal session to prevent orphans from repeated T presses.
+	// Target the same socket the parent agent-deck instance lives on so the
+	// terminal helper is visible to `tmux -L <socket> ls` and agent-deck's
+	// own reap paths (issue #687).
 	killCtx, killCancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer killCancel()
-	_ = exec.CommandContext(killCtx, "tmux", "kill-session", "-t", tmuxName).Run()
+	_ = tmux.ExecContext(killCtx, i.TmuxSocketName, "kill-session", "-t", tmuxName).Run()
 
 	// Omit -w flag: the container's workdir was set during create (respects worktree path).
 	// Pass the docker exec command as discrete tmux args to avoid shell interpolation of
 	// the container name (defence-in-depth against state file tampering).
 	newCtx, newCancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer newCancel()
-	out, err := exec.CommandContext(newCtx,
-		"tmux", "new-session", "-d", "-s", tmuxName,
+	out, err := tmux.ExecContext(newCtx, i.TmuxSocketName,
+		"new-session", "-d", "-s", tmuxName,
 		"docker", "exec", "-it", i.SandboxContainer, "/bin/sh",
 	).CombinedOutput()
 	if err != nil {

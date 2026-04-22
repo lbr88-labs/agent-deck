@@ -30,6 +30,10 @@ func handleLaunch(profile string, args []string) {
 	parentShort := fs.String("p", "", "Parent session (short)")
 	noParent := fs.Bool("no-parent", false, "Disable automatic parent linking")
 	noTransitionNotify := fs.Bool("no-transition-notify", false, "Suppress transition event notifications to parent session")
+	// #697: conductor-friendly title lock. Prevents Claude's session name
+	// from overwriting the agent-deck title.
+	titleLock := fs.Bool("title-lock", false, "Lock session title so Claude's session name never overrides it (#697)")
+	noTitleSync := fs.Bool("no-title-sync", false, "Alias for --title-lock")
 	jsonOutput := fs.Bool("json", false, "Output as JSON")
 	quiet := fs.Bool("quiet", false, "Minimal output")
 	quietShort := fs.Bool("q", false, "Minimal output (short)")
@@ -69,6 +73,11 @@ func handleLaunch(profile string, args []string) {
 
 	// Resume session flag
 	resumeSession := fs.String("resume-session", "", "Claude session ID to resume")
+
+	// Socket isolation (v1.7.50+, issue #687). Same semantics as
+	// `agent-deck add --tmux-socket`: overrides `[tmux].socket_name` for
+	// this one session, captured once and persisted on the Instance.
+	tmuxSocket := fs.String("tmux-socket", "", "tmux -L socket name for this session (overrides [tmux].socket_name)")
 
 	fs.Usage = func() {
 		fmt.Println("Usage: agent-deck launch [path] [options]")
@@ -164,7 +173,7 @@ func handleLaunch(profile string, args []string) {
 	// Handle worktree creation
 	var worktreePath, worktreeRepoRoot string
 	if wtBranch != "" {
-		if !git.IsGitRepo(path) {
+		if !git.IsGitRepoOrBareProjectRoot(path) {
 			out.Error(fmt.Sprintf("%s is not a git repository", path), ErrCodeInvalidOperation)
 			os.Exit(1)
 		}
@@ -289,12 +298,27 @@ func handleLaunch(profile string, args []string) {
 		newInstance = session.NewInstance(sessionTitle, path)
 	}
 
+	// Socket-isolation CLI override (issue #687 phase 1, v1.7.50).
+	// Matches `agent-deck add --tmux-socket`. Whitespace-only flag falls
+	// back to the config default already seeded by NewInstance.
+	if flagSocket := strings.TrimSpace(*tmuxSocket); flagSocket != "" {
+		newInstance.TmuxSocketName = flagSocket
+		if ts := newInstance.GetTmuxSession(); ts != nil {
+			ts.SocketName = flagSocket
+		}
+	}
+
 	if parentInstance != nil {
 		newInstance.SetParentWithPath(parentInstance.ID, parentInstance.ProjectPath)
 	}
 
 	if *noTransitionNotify {
 		newInstance.NoTransitionNotify = true
+	}
+
+	// #697: title-lock blocks Claude's session-name sync.
+	if *titleLock || *noTitleSync {
+		newInstance.TitleLocked = true
 	}
 
 	if sessionCommandInput != "" {

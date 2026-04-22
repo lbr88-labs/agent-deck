@@ -210,6 +210,7 @@ type Home struct {
 	sessionPickerDialog  *SessionPickerDialog  // For sending output to another session
 	worktreeFinishDialog *WorktreeFinishDialog // For finishing worktree sessions (merge + cleanup)
 	feedbackDialog       *FeedbackDialog       // For in-app feedback popup (Phase 2)
+	zoxidePicker         *ZoxidePicker         // Quick-open picker backed by the zoxide DB
 	feedbackState        *feedback.State       // Loaded at first show, avoids repeated disk I/O
 	feedbackSender       *feedback.Sender      // Sender constructed once in NewHome (Phase 3, per D-05)
 	watcherPanel         *WatcherPanel         // For showing watcher status and events
@@ -242,6 +243,8 @@ type Home struct {
 	isAttaching         atomic.Bool    // Prevents View() output during attach (fixes Bubble Tea Issue #431) - atomic for thread safety
 	statusFilter        session.Status // Filter sessions by status ("" = all, or specific status)
 	groupScope          string         // Limit TUI to a specific group path ("" = all groups)
+	initialSelect       string         // Session ID or title to preselect on first load (#709). Does NOT scope groups.
+	initialSelectDone   bool           // Guard so preselection only fires once
 	previewMode         PreviewMode    // What to show in preview pane (both, output-only, analytics-only)
 	err                 error
 	errTime             time.Time  // When error occurred (for auto-dismiss)
@@ -731,6 +734,7 @@ func NewHomeWithProfileAndMode(profile string) *Home {
 		sessionPickerDialog:  NewSessionPickerDialog(),
 		worktreeFinishDialog: NewWorktreeFinishDialog(),
 		feedbackDialog:       NewFeedbackDialog(),
+		zoxidePicker:         NewZoxidePicker(),
 		feedbackSender:       feedback.NewSender(),
 		watcherPanel:         NewWatcherPanel(),
 		cursor:               0,
@@ -867,7 +871,7 @@ func NewHomeWithProfileAndMode(profile string) *Home {
 
 		for _, inst := range instances {
 			if ts := inst.GetTmuxSession(); ts != nil && ts.Exists() {
-				if err := pm.Connect(ts.Name); err != nil {
+				if err := pm.Connect(ts.Name, inst.TmuxSocketName); err != nil {
 					pipeUILog.Debug("startup_pipe_connect_failed",
 						slog.String("session", ts.Name),
 						slog.String("error", err.Error()))
@@ -1027,6 +1031,42 @@ func (h *Home) SetCostBudget(budget *costs.BudgetChecker) {
 // The path is normalized: lowercased and spaces replaced with hyphens.
 func (h *Home) SetGroupScope(path string) {
 	h.groupScope = strings.ToLower(strings.ReplaceAll(path, " ", "-"))
+}
+
+// SetInitialSelection queues a session to preselect on first render (#709).
+// The value may be a session ID or a title. Preselection runs AFTER
+// rebuildFlatItems so it respects any active group scope: if the session is
+// outside the scope, applyInitialSelection returns false and the caller may
+// warn. Crucially, SetInitialSelection does NOT hide any groups — every group
+// configured by the user stays visible in the sidebar.
+func (h *Home) SetInitialSelection(idOrTitle string) {
+	h.initialSelect = strings.TrimSpace(idOrTitle)
+	h.initialSelectDone = false
+}
+
+// applyInitialSelection positions the cursor on the session matching
+// h.initialSelect, if any. Returns true if a match was found and the cursor
+// was moved, false otherwise. Idempotent — after one successful apply, further
+// calls are no-ops so normal cursor navigation is not overridden.
+func (h *Home) applyInitialSelection() bool {
+	if h.initialSelectDone || h.initialSelect == "" {
+		return false
+	}
+	wanted := strings.ToLower(strings.TrimSpace(h.initialSelect))
+	for i, fi := range h.flatItems {
+		if fi.Type != session.ItemTypeSession || fi.Session == nil {
+			continue
+		}
+		if fi.Session.ID == h.initialSelect ||
+			strings.EqualFold(fi.Session.Title, h.initialSelect) ||
+			strings.ToLower(fi.Session.Title) == wanted {
+			h.cursor = i
+			h.initialSelectDone = true
+			h.syncViewport()
+			return true
+		}
+	}
+	return false
 }
 
 // isInGroupScope returns true if the given path is within the active group scope.
@@ -3519,6 +3559,11 @@ func (h *Home) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 				h.syncViewport()
 			} else {
 				h.rebuildFlatItems()
+				// #709: --select takes precedence over the persisted cursor for
+				// the very first load so users land on the session they asked for.
+				if h.applyInitialSelection() {
+					h.pendingCursorRestore = nil
+				}
 				// Restore cursor from persisted UI state (initial load only)
 				if h.pendingCursorRestore != nil {
 					restored := false
@@ -4059,6 +4104,16 @@ func (h *Home) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.dark {
 			theme = "dark"
 		}
+		// Update COLORFGBG in our process environment so that all downstream
+		// code (ResolveTheme, ThemeColorFGBG, themeEnvExport, currentTmuxThemeStyle)
+		// sees the correct theme. Without this, the stale COLORFGBG inherited
+		// from the parent terminal at launch time takes precedence over the OS
+		// dark mode change, causing sessions to stay in the wrong color scheme.
+		if msg.dark {
+			os.Setenv("COLORFGBG", "15;0")
+		} else {
+			os.Setenv("COLORFGBG", "0;15")
+		}
 		InitTheme(theme)
 		h.propagateThemeToSessions()
 		// IMPORTANT: Re-issue listener to keep watching for theme changes.
@@ -4556,9 +4611,9 @@ func (h *Home) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 				for _, inst := range h.instances {
 					if ts := inst.GetTmuxSession(); ts != nil && ts.Exists() {
 						if !pm.IsConnected(ts.Name) {
-							go func(name string) {
-								_ = pm.Connect(name)
-							}(ts.Name)
+							go func(name, socket string) {
+								_ = pm.Connect(name, socket)
+							}(ts.Name, inst.TmuxSocketName)
 						}
 					}
 				}
@@ -4769,6 +4824,9 @@ func (h *Home) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 			d, cmd := h.feedbackDialog.Update(msg)
 			h.feedbackDialog = d
 			return h, cmd
+		}
+		if h.zoxidePicker.IsVisible() {
+			return h.handleZoxidePickerKey(msg)
 		}
 
 		if h.showCostDashboard {
@@ -5296,7 +5354,8 @@ func (h *Home) hasModalVisible() bool {
 		h.newDialog.IsVisible() || h.groupDialog.IsVisible() || h.forkDialog.IsVisible() ||
 		h.confirmDialog.IsVisible() || h.mcpDialog.IsVisible() || h.skillDialog.IsVisible() ||
 		h.geminiModelDialog.IsVisible() || h.sessionPickerDialog.IsVisible() ||
-		h.worktreeFinishDialog.IsVisible() || h.editPathsDialog.IsVisible()
+		h.worktreeFinishDialog.IsVisible() || h.editPathsDialog.IsVisible() ||
+		h.zoxidePicker.IsVisible()
 }
 
 // markNavigationAndFetchPreview sets navigation tracking state and returns a debounced preview command
@@ -6152,6 +6211,11 @@ func (h *Home) handleMainKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		// Quick create: auto-generated name, smart defaults from group context
 		return h, h.quickCreateSession()
 
+	case "z":
+		h.zoxidePicker.SetSize(h.width, h.height)
+		h.zoxidePicker.Show()
+		return h, nil
+
 	case "d":
 		// Show confirmation dialog before deletion (prevents accidental deletion)
 		if h.cursor < len(h.flatItems) {
@@ -6900,8 +6964,9 @@ func (h *Home) dispatchHealthAlert(state watcher.HealthState) {
 			ts := inst.GetTmuxSession()
 			if ts != nil && ts.Name != "" {
 				tmuxName := ts.Name
+				socket := inst.TmuxSocketName
 				go func() {
-					_ = exec.Command("tmux", "send-keys", "-t", tmuxName, alertMsg, "Enter").Run()
+					_ = tmux.Exec(socket, "send-keys", "-t", tmuxName, alertMsg, "Enter").Run()
 				}()
 			}
 			break
@@ -7869,6 +7934,83 @@ func (h *Home) quickCreateSession() tea.Cmd {
 		false, nil, // no multi-repo
 		"", "", // no parent
 		"", // no placeholder
+	)
+}
+
+// deriveSessionNameFromPath returns the trailing directory of projectPath as a
+// session title. Falls back to a generated name for paths that have no
+// meaningful basename (empty, root, or relative `.`).
+func deriveSessionNameFromPath(projectPath string) string {
+	base := filepath.Base(strings.TrimSpace(projectPath))
+	if base == "" || base == "." || base == "/" {
+		return session.GenerateSessionName()
+	}
+	return base
+}
+
+// ensureUniqueSessionTitle appends a numeric suffix if the preferred title
+// collides with an existing instance. Dedup is global rather than per-group
+// so the zoxide flow doesn't depend on post-hoc group derivation.
+func ensureUniqueSessionTitle(preferred string, instances []*session.Instance) string {
+	used := make(map[string]bool, len(instances))
+	for _, inst := range instances {
+		used[inst.Title] = true
+	}
+	if !used[preferred] {
+		return preferred
+	}
+	for i := 2; i < 1000; i++ {
+		candidate := fmt.Sprintf("%s-%d", preferred, i)
+		if !used[candidate] {
+			return candidate
+		}
+	}
+	return fmt.Sprintf("%s-%d", preferred, time.Now().Unix())
+}
+
+func (h *Home) handleZoxidePickerKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.String() {
+	case "esc":
+		h.zoxidePicker.Hide()
+		return h, nil
+	case "enter":
+		selected := h.zoxidePicker.Selected()
+		h.zoxidePicker.Hide()
+		if selected == "" {
+			return h, nil
+		}
+		return h, h.quickCreateSessionAt(selected)
+	default:
+		h.zoxidePicker, _ = h.zoxidePicker.Update(msg)
+		return h, nil
+	}
+}
+
+// quickCreateSessionAt creates a session rooted at the given path with an
+// auto-generated name and the user's configured default tool, bypassing
+// cursor-context tool inheritance so the zoxide flow always lands on the
+// user's chosen default (Claude, unless overridden in config.toml).
+func (h *Home) quickCreateSessionAt(projectPath string) tea.Cmd {
+	tool := session.GetDefaultTool()
+	if tool == "" {
+		tool = "claude"
+	}
+	command := tool
+
+	preferred := deriveSessionNameFromPath(projectPath)
+	h.instancesMu.RLock()
+	name := ensureUniqueSessionTitle(preferred, h.instances)
+	h.instancesMu.RUnlock()
+
+	return h.createSessionInGroupWithWorktreeAndOptions(
+		name, projectPath, command,
+		"",         // empty group → creator derives from path via extractGroupPath
+		"", "", "", // no worktree
+		false, false, nil,
+		nil, // no extra claude args
+		false, nil,
+		"", "",
+		"",
 	)
 }
 
@@ -8858,6 +9000,9 @@ func (h *Home) View() string {
 	}
 	if h.feedbackDialog.IsVisible() {
 		return h.feedbackDialog.View()
+	}
+	if h.zoxidePicker.IsVisible() {
+		return h.zoxidePicker.View()
 	}
 	if h.showCostDashboard {
 		return h.costDashboard.View()
@@ -12618,11 +12763,19 @@ func (h *Home) renderPreviewPane(width, height int) string {
 		displayWidth := ansi.StringWidth(line)
 		if displayWidth > maxWidth {
 			// ANSI-aware truncation preserves escape codes while trimming visible content
-			truncated := ansi.Truncate(line, maxWidth-3, "...")
-			truncatedLines = append(truncatedLines, truncated)
-		} else {
-			truncatedLines = append(truncatedLines, line)
+			line = ansi.Truncate(line, maxWidth-3, "...")
 		}
+		// Issue #699: captured Claude output (e.g., highlighted input line) can
+		// contain an unclosed SGR whose reset was off-screen or clipped by
+		// truncation. Without a hard reset at each newline boundary, the
+		// highlight persists across the row — and when lipgloss.JoinHorizontal
+		// lays down the next row (left_pane + separator + right_pane), the
+		// left pane inherits the right pane's dangling SGR state. Close every
+		// line that carries ANSI so state never leaks past the pane boundary.
+		if strings.ContainsRune(line, 0x1b) {
+			line += "\x1b[0m"
+		}
+		truncatedLines = append(truncatedLines, line)
 	}
 
 	return strings.Join(truncatedLines, "\n")

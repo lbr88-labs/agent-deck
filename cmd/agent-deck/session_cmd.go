@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"os"
@@ -49,6 +50,8 @@ func handleSession(profile string, args []string) {
 		handleSessionUnsetParent(profile, args[1:])
 	case "set-transition-notify":
 		handleSessionSetTransitionNotify(profile, args[1:])
+	case "set-title-lock":
+		handleSessionSetTitleLock(profile, args[1:])
 	case "set":
 		handleSessionSet(profile, args[1:])
 	case "move", "mv":
@@ -77,7 +80,7 @@ func printSessionHelp() {
 	fmt.Println("Commands:")
 	fmt.Println("  start <id>              Start a session's tmux process")
 	fmt.Println("  stop <id>               Stop/kill session process")
-	fmt.Println("  restart <id>            Restart session (Claude: reload MCPs)")
+	fmt.Println("  restart [id] [--all]    Restart session (Claude: reload MCPs)")
 	fmt.Println("  revive [--all|--name]   Rebuild dead control pipes for errored sessions")
 	fmt.Println("  fork <id>               Fork Claude session with context")
 	fmt.Println("  attach <id>             Attach to session interactively")
@@ -91,6 +94,7 @@ func printSessionHelp() {
 	fmt.Println("  set-parent <id> <parent>  Link session as sub-session of parent")
 	fmt.Println("  unset-parent <id>       Remove sub-session link")
 	fmt.Println("  set-transition-notify <id> <on|off>  Enable/disable transition notifications")
+	fmt.Println("  set-title-lock <id> <on|off>         Lock/unlock title from Claude session-name sync (#697)")
 	fmt.Println()
 	fmt.Println("Global Options:")
 	fmt.Println("  -p, --profile <name>   Use specific profile")
@@ -101,6 +105,7 @@ func printSessionHelp() {
 	fmt.Println("  agent-deck session start my-project")
 	fmt.Println("  agent-deck session stop abc123")
 	fmt.Println("  agent-deck session restart my-project")
+	fmt.Println("  agent-deck session restart --all                # Restart all active sessions")
 	fmt.Println("  agent-deck session fork my-project -t \"my-project-fork\"")
 	fmt.Println("  agent-deck session attach my-project")
 	fmt.Println("  agent-deck session show                  # Auto-detect current session")
@@ -109,6 +114,8 @@ func printSessionHelp() {
 	fmt.Println("  agent-deck session unset-parent sub-task             # Remove sub-session link")
 	fmt.Println("  agent-deck session set-transition-notify worker off    # Suppress notifications")
 	fmt.Println("  agent-deck session set-transition-notify worker on     # Re-enable notifications")
+	fmt.Println("  agent-deck session set-title-lock SCRUM-351 on         # Prevent Claude from renaming it")
+	fmt.Println("  agent-deck session set-title-lock SCRUM-351 off        # Re-enable title sync")
 	fmt.Println("  agent-deck session output my-project                 # Get last response from session")
 	fmt.Println("  agent-deck session output my-project --json          # Get response as JSON")
 	fmt.Println()
@@ -310,16 +317,17 @@ func handleSessionStop(profile string, args []string) {
 	})
 }
 
-// handleSessionRestart restarts a session
+// handleSessionRestart restarts a session (or all active sessions with --all)
 func handleSessionRestart(profile string, args []string) {
 	fs := flag.NewFlagSet("session restart", flag.ExitOnError)
 	jsonOutput := fs.Bool("json", false, "Output as JSON")
 	quiet := fs.Bool("quiet", false, "Minimal output")
 	quietShort := fs.Bool("q", false, "Minimal output (short)")
 	force := fs.Bool("force", false, "Restart even if the session is already healthy and fresh (bypasses issue #30 guard)")
+	all := fs.Bool("all", false, "Restart all active sessions")
 
 	fs.Usage = func() {
-		fmt.Println("Usage: agent-deck session restart <id|title> [options]")
+		fmt.Println("Usage: agent-deck session restart [id|title] [options]")
 		fmt.Println()
 		fmt.Println("Restart a session. For Claude sessions, this reloads MCPs.")
 		fmt.Println()
@@ -330,13 +338,16 @@ func handleSessionRestart(profile string, args []string) {
 		fmt.Println()
 		fmt.Println("Options:")
 		fs.PrintDefaults()
+		fmt.Println()
+		fmt.Println("Examples:")
+		fmt.Println("  agent-deck session restart my-project")
+		fmt.Println("  agent-deck session restart --all")
 	}
 
 	if err := fs.Parse(normalizeArgs(fs, args)); err != nil {
 		os.Exit(1)
 	}
 
-	identifier := fs.Arg(0)
 	quietMode := *quiet || *quietShort
 	out := NewCLIOutput(*jsonOutput, quietMode)
 
@@ -344,6 +355,18 @@ func handleSessionRestart(profile string, args []string) {
 	storage, instances, groups, err := loadSessionData(profile)
 	if err != nil {
 		out.Error(err.Error(), ErrCodeNotFound)
+		os.Exit(1)
+	}
+
+	if *all {
+		restartAllSessions(out, storage, instances, groups)
+		return
+	}
+
+	identifier := fs.Arg(0)
+	if identifier == "" {
+		out.Error("session identifier required (or use --all)", ErrCodeInvalidOperation)
+		fs.Usage()
 		os.Exit(1)
 	}
 
@@ -408,6 +431,94 @@ func handleSessionRestart(profile string, args []string) {
 		data["warning"] = warning
 	}
 	out.Success(fmt.Sprintf("Restarted session: %s", inst.Title), data)
+}
+
+// restartAllSessions restarts every active session one by one.
+func restartAllSessions(out *CLIOutput, storage *session.Storage, instances []*session.Instance, groups []*session.GroupData) {
+	var active []*session.Instance
+	for _, inst := range instances {
+		if inst.Exists() {
+			active = append(active, inst)
+		}
+	}
+
+	if len(active) == 0 {
+		out.Error("no active sessions to restart", ErrCodeNotFound)
+		os.Exit(1)
+	}
+
+	var results []map[string]interface{}
+	var failed int
+
+	for _, inst := range active {
+		result := map[string]interface{}{
+			"id":    inst.ID,
+			"title": inst.Title,
+		}
+
+		if !out.jsonMode {
+			fmt.Printf("Restarting %s...\n", inst.Title)
+		}
+
+		if err := inst.Restart(); err != nil {
+			errMsg := fmt.Sprintf("failed to restart session '%s': %v", inst.Title, err)
+			if !out.jsonMode {
+				fmt.Fprintf(os.Stderr, "  Error: %s\n", errMsg)
+			}
+			result["success"] = false
+			result["error"] = errMsg
+			failed++
+			results = append(results, result)
+			continue
+		}
+		inst.LastStartedAt = time.Now()
+
+		warning := inst.ConsumeCodexRestartWarning()
+		if warning != "" && !out.jsonMode {
+			fmt.Fprintf(os.Stderr, "  Warning: %s\n", warning)
+		}
+
+		// If restart created a fresh session (no prior ID), capture the new ID
+		if session.IsClaudeCompatible(inst.Tool) && inst.ClaudeSessionID == "" {
+			inst.PostStartSync(3 * time.Second)
+		}
+
+		result["success"] = true
+		if warning != "" {
+			result["warning"] = warning
+		}
+		results = append(results, result)
+
+		if !out.jsonMode {
+			fmt.Printf("  Done: %s\n", inst.Title)
+		}
+	}
+
+	// Save updated state after all restarts
+	if err := saveSessionData(storage, instances, groups); err != nil {
+		out.Error(fmt.Sprintf("failed to save session state: %v", err), ErrCodeInvalidOperation)
+		os.Exit(1)
+	}
+
+	if out.jsonMode {
+		out.Success("", map[string]interface{}{
+			"success":   failed == 0,
+			"total":     len(active),
+			"restarted": len(active) - failed,
+			"failed":    failed,
+			"sessions":  results,
+		})
+	} else if !out.quietMode {
+		fmt.Printf("Restarted %d/%d sessions", len(active)-failed, len(active))
+		if failed > 0 {
+			fmt.Printf(" (%d failed)", failed)
+		}
+		fmt.Println()
+	}
+
+	if failed > 0 {
+		os.Exit(1)
+	}
 }
 
 // handleSessionFork forks a Claude session
@@ -516,7 +627,7 @@ func handleSessionFork(profile string, args []string) {
 	// Handle worktree creation
 	var opts *session.ClaudeOptions
 	if wtBranch != "" {
-		if !git.IsGitRepo(inst.ProjectPath) {
+		if !git.IsGitRepoOrBareProjectRoot(inst.ProjectPath) {
 			out.Error("session path is not a git repository", ErrCodeInvalidOperation)
 			os.Exit(1)
 		}
@@ -769,6 +880,7 @@ func handleSessionShow(profile string, args []string) {
 		"parent_session_id":    inst.ParentSessionID,
 		"parent_project_path":  inst.ParentProjectPath,
 		"no_transition_notify": inst.NoTransitionNotify,
+		"title_locked":         inst.TitleLocked,
 		"tool":                 inst.Tool,
 		"created_at":           inst.CreatedAt.Format(time.RFC3339),
 	}
@@ -1064,7 +1176,7 @@ func handleSessionSet(profile string, args []string) {
 		inst.ClaudeDetectedAt = time.Now()
 		// Also update tmux environment if session is running
 		if tmuxSess := inst.GetTmuxSession(); tmuxSess != nil && tmuxSess.Exists() {
-			_ = exec.Command("tmux", "set-environment", "-t", tmuxSess.Name, "CLAUDE_SESSION_ID", value).Run()
+			_ = tmux.Exec(inst.TmuxSocketName, "set-environment", "-t", tmuxSess.Name, "CLAUDE_SESSION_ID", value).Run()
 		}
 	case "gemini-session-id":
 		oldValue = inst.GeminiSessionID
@@ -1072,7 +1184,7 @@ func handleSessionSet(profile string, args []string) {
 		inst.GeminiDetectedAt = time.Now()
 		// Also update tmux environment if session is running
 		if tmuxSess := inst.GetTmuxSession(); tmuxSess != nil && tmuxSess.Exists() {
-			_ = exec.Command("tmux", "set-environment", "-t", tmuxSess.Name, "GEMINI_SESSION_ID", value).Run()
+			_ = tmux.Exec(inst.TmuxSocketName, "set-environment", "-t", tmuxSess.Name, "GEMINI_SESSION_ID", value).Run()
 		}
 	}
 
@@ -1534,6 +1646,90 @@ func handleSessionSetTransitionNotify(profile string, args []string) {
 	})
 }
 
+// handleSessionSetTitleLock toggles Instance.TitleLocked (#697). When on, the
+// claude-hook name-sync path (applyClaudeTitleSync) is a no-op for this
+// session, preserving the conductor-assigned title across Claude renames.
+func handleSessionSetTitleLock(profile string, args []string) {
+	fs := flag.NewFlagSet("session set-title-lock", flag.ExitOnError)
+	jsonOutput := fs.Bool("json", false, "Output as JSON")
+	quiet := fs.Bool("quiet", false, "Minimal output")
+	quietShort := fs.Bool("q", false, "Minimal output (short)")
+
+	fs.Usage = func() {
+		fmt.Println("Usage: agent-deck session set-title-lock <session> <on|off|true|false>")
+		fmt.Println()
+		fmt.Println("Lock or unlock a session's title from Claude session-name sync (#697).")
+		fmt.Println("When locked, Claude's --name / /rename will not overwrite the")
+		fmt.Println("agent-deck title. Conductors rely on this so semantic titles like")
+		fmt.Println("'SCRUM-351' survive Claude's auto-generated summaries.")
+		fmt.Println()
+		fmt.Println("Options:")
+		fs.PrintDefaults()
+		fmt.Println()
+		fmt.Println("Examples:")
+		fmt.Println("  agent-deck session set-title-lock SCRUM-351 on")
+		fmt.Println("  agent-deck session set-title-lock SCRUM-351 off")
+		fmt.Println("  agent-deck session set-title-lock worker true")
+	}
+
+	if err := fs.Parse(normalizeArgs(fs, args)); err != nil {
+		os.Exit(1)
+	}
+
+	if fs.NArg() < 2 {
+		fs.Usage()
+		os.Exit(1)
+	}
+
+	sessionID := fs.Arg(0)
+	value := strings.ToLower(strings.TrimSpace(fs.Arg(1)))
+	quietMode := *quiet || *quietShort
+	out := NewCLIOutput(*jsonOutput, quietMode)
+
+	var locked bool
+	switch value {
+	case "on", "true", "1", "yes":
+		locked = true
+	case "off", "false", "0", "no":
+		locked = false
+	default:
+		out.Error(fmt.Sprintf("invalid value %q: must be 'on' or 'off' (also true/false/1/0)", value), ErrCodeInvalidOperation)
+		os.Exit(1)
+	}
+
+	storage, instances, groupsData, err := loadSessionData(profile)
+	if err != nil {
+		out.Error(err.Error(), ErrCodeNotFound)
+		os.Exit(1)
+	}
+
+	inst, errMsg, errCode := ResolveSession(sessionID, instances)
+	if inst == nil {
+		out.Error(errMsg, errCode)
+		os.Exit(2)
+		return
+	}
+
+	inst.TitleLocked = locked
+
+	groupTree := session.NewGroupTreeWithGroups(instances, groupsData)
+	if err := storage.SaveWithGroups(instances, groupTree); err != nil {
+		out.Error(fmt.Sprintf("failed to save: %v", err), ErrCodeInvalidOperation)
+		os.Exit(1)
+	}
+
+	stateStr := "off"
+	if locked {
+		stateStr = "on"
+	}
+	out.Success(fmt.Sprintf("Title lock for '%s': %s", inst.Title, stateStr), map[string]interface{}{
+		"success":       true,
+		"session_id":    inst.ID,
+		"session_title": inst.Title,
+		"title_locked":  locked,
+	})
+}
+
 // handleSessionSend sends a message to a running session
 // Waits for the agent to be ready before sending (Claude, Gemini, etc.)
 func handleSessionSend(profile string, args []string) {
@@ -1543,7 +1739,11 @@ func handleSessionSend(profile string, args []string) {
 	quiet := fs.Bool("q", false, "Quiet mode")
 	noWait := fs.Bool("no-wait", false, "Don't wait for agent to be ready (send immediately)")
 	wait := fs.Bool("wait", false, "Block until agent finishes processing, then print output")
+	stream := fs.Bool("stream", false, "Stream JSONL events (Claude only) to stdout instead of returning a snapshot")
 	timeout := fs.Duration("timeout", 10*time.Minute, "Max time to wait for completion (used with --wait)")
+	streamIdle := fs.Duration("stream-idle", 10*time.Second, "Max idle time before --stream aborts with error")
+	streamCharBudget := fs.Int("stream-char-budget", 4000, "Char budget for text flush in --stream mode")
+	streamToolBudget := fs.Int("stream-tool-budget", 3, "Tool-event budget for text flush in --stream mode")
 
 	fs.Usage = func() {
 		fmt.Println("Usage: agent-deck session send <id|title> <message> [options]")
@@ -1557,6 +1757,7 @@ func handleSessionSend(profile string, args []string) {
 		fmt.Println("  agent-deck session send my-project \"Summarize recent changes\"")
 		fmt.Println("  agent-deck session send my-project \"run tests\" --wait")
 		fmt.Println("  agent-deck session send my-project \"quick ping\" --no-wait")
+		fmt.Println("  agent-deck session send my-project \"trace progress\" --stream")
 	}
 
 	if err := fs.Parse(normalizeArgs(fs, args)); err != nil {
@@ -1569,6 +1770,11 @@ func handleSessionSend(profile string, args []string) {
 	if len(remaining) < 2 {
 		fs.Usage()
 		out.Error("session and message are required", ErrCodeInvalidOperation)
+		os.Exit(1)
+	}
+
+	if *stream && *wait {
+		out.Error("--stream and --wait are mutually exclusive", ErrCodeInvalidOperation)
 		os.Exit(1)
 	}
 
@@ -1591,6 +1797,15 @@ func handleSessionSend(profile string, args []string) {
 		}
 		os.Exit(1)
 		return // unreachable, satisfies staticcheck SA5011
+	}
+
+	// --stream is Claude-only in Phase 1. Non-Claude tools error cleanly
+	// with a stable message so the CLI contract stays legible.
+	if *stream {
+		if msg := streamPreconditionError(inst.Tool); msg != "" {
+			out.Error(msg, ErrCodeInvalidOperation)
+			os.Exit(1)
+		}
 	}
 
 	// Check if session is running
@@ -1636,12 +1851,29 @@ func handleSessionSend(profile string, args []string) {
 		}
 	}
 
-	out.Success(fmt.Sprintf("Sent message to '%s'", inst.Title), map[string]interface{}{
-		"success":       true,
-		"session_id":    inst.ID,
-		"session_title": inst.Title,
-		"message":       message,
-	})
+	if !*stream {
+		out.Success(fmt.Sprintf("Sent message to '%s'", inst.Title), map[string]interface{}{
+			"success":       true,
+			"session_id":    inst.ID,
+			"session_title": inst.Title,
+			"message":       message,
+		})
+	}
+
+	// --stream: tail the Claude transcript and pipe JSONL events to
+	// stdout until end_turn, idle timeout, or error. Issue #689.
+	if *stream {
+		if err := streamSessionSend(inst, sessionRef, profile, sentAt, streamOptions{
+			idle:       *streamIdle,
+			charBudget: *streamCharBudget,
+			toolBudget: *streamToolBudget,
+			timeout:    *timeout,
+		}); err != nil {
+			// Error already serialized as a stream event; exit 1.
+			os.Exit(1)
+		}
+		return
+	}
 
 	// If --wait, block until the agent finishes processing, then print output
 	if *wait {
@@ -2104,6 +2336,82 @@ func waitForFreshOutput(inst *session.Instance, sentAt time.Time) (*session.Resp
 		return lastResp, nil
 	}
 	return nil, lastErr
+}
+
+// streamPreconditionError returns a non-empty error message when the given
+// tool is not supported by --stream. Phase 1 is Claude-only (issue #689);
+// non-Claude tools error cleanly here rather than silently producing empty
+// output.
+func streamPreconditionError(tool string) string {
+	if session.IsClaudeCompatible(tool) {
+		return ""
+	}
+	return fmt.Sprintf("--stream is not supported for tool %q (Phase 1 supports Claude-compatible tools only)", tool)
+}
+
+// streamOptions carries caller-tunable knobs for --stream.
+type streamOptions struct {
+	idle       time.Duration
+	charBudget int
+	toolBudget int
+	timeout    time.Duration
+}
+
+// streamSessionSend tails the Claude session JSONL for a freshly sent
+// message and writes structured stream events as JSONL to stdout until
+// the assistant reaches end_turn, idle-times out, or ctx is cancelled.
+//
+// Overall budget: streamOptions.timeout bounds the entire stream (not just
+// idle gaps), matching the semantics of --wait's --timeout.
+func streamSessionSend(inst *session.Instance, sessionRef, profile string, sentAt time.Time, opts streamOptions) error {
+	// Resolve JSONL path. Claude writes the file after the first
+	// assistant chunk, so we poll briefly for its existence.
+	resolvedInst := inst
+	if session.IsClaudeCompatible(inst.Tool) {
+		if fresh := inst.GetSessionIDFromTmux(); fresh != "" {
+			inst.ClaudeSessionID = fresh
+			inst.ClaudeDetectedAt = time.Now()
+		}
+	}
+
+	var jsonlPath string
+	deadline := time.Now().Add(opts.timeout)
+	for time.Now().Before(deadline) {
+		jsonlPath = resolvedInst.GetJSONLPath()
+		if jsonlPath != "" {
+			break
+		}
+		// Refresh from DB in case the session was just created.
+		if _, freshInstances, _, loadErr := loadSessionData(profile); loadErr == nil {
+			if fi, _, _ := ResolveSession(sessionRef, freshInstances); fi != nil {
+				resolvedInst = fi
+			}
+		}
+		time.Sleep(200 * time.Millisecond)
+	}
+
+	if jsonlPath == "" {
+		// Emit a single error event to stdout so --stream consumers
+		// always get a parseable response. Matches the schema so they
+		// don't need a separate error channel.
+		errEv := map[string]interface{}{
+			"type":    "error",
+			"message": fmt.Sprintf("session transcript not found within %s (session id=%s)", opts.timeout, resolvedInst.ClaudeSessionID),
+			"ts":      time.Now().UTC().Format(time.RFC3339Nano),
+		}
+		b, _ := json.Marshal(errEv)
+		fmt.Println(string(b))
+		return fmt.Errorf("no transcript")
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), opts.timeout)
+	defer cancel()
+
+	return session.StreamTranscript(ctx, jsonlPath, resolvedInst.ClaudeSessionID, sentAt, os.Stdout, session.StreamConfig{
+		IdleTimeout: opts.idle,
+		CharBudget:  opts.charBudget,
+		ToolBudget:  opts.toolBudget,
+	})
 }
 
 // handleSessionOutput gets the last response from a session

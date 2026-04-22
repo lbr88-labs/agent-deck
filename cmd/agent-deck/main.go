@@ -29,6 +29,7 @@ import (
 	"github.com/asheshgoplani/agent-deck/internal/logging"
 	"github.com/asheshgoplani/agent-deck/internal/session"
 	"github.com/asheshgoplani/agent-deck/internal/statedb"
+	"github.com/asheshgoplani/agent-deck/internal/tmux"
 	"github.com/asheshgoplani/agent-deck/internal/ui"
 	"github.com/asheshgoplani/agent-deck/internal/update"
 	"github.com/asheshgoplani/agent-deck/internal/web"
@@ -193,6 +194,15 @@ func main() {
 		// resolve consistently across all command paths in this process.
 		_ = os.Setenv("AGENTDECK_PROFILE", profile)
 	}
+
+	// Seed the tmux socket-isolation default from `[tmux].socket_name` once
+	// per process (v1.7.50+, issue #687). Package-level tmux probes
+	// (KillSessionsWithEnvValue, ListAllSessions, version check, stale-
+	// socket recovery) read this value to decide which tmux server to
+	// target. Empty string preserves pre-v1.7.50 behavior. Per-Instance
+	// calls use Instance.TmuxSocketName directly — this default is only
+	// the installation-wide fallback for callers without a session handle.
+	tmux.SetDefaultSocketName(session.GetTmuxSettings().GetSocketName())
 
 	var webEnabled bool
 	var webArgs []string
@@ -496,7 +506,10 @@ func main() {
 
 	// Extract --group / -g flag here (TUI-only path; subcommands consume their own -g)
 	var groupScope string
-	groupScope, _ = extractGroupFlag(args)
+	groupScope, args = extractGroupFlag(args)
+	// Extract --select flag (#709): preselect a session without scoping groups.
+	var initialSelect string
+	initialSelect, _ = extractSelectFlag(args)
 
 	// v1.7.41: record TUI launch for feedback-prompt pacing. Seeds
 	// FirstSeenAt on the very first launch and bumps LaunchCount on every
@@ -529,6 +542,38 @@ func main() {
 			fmt.Fprintf(os.Stderr, "Warning: could not verify group '%s' (storage error)\n", groupScope)
 		}
 		homeModel.SetGroupScope(normalizedGroup)
+	}
+	// Apply preselection if specified via --select (#709).
+	// When both -g and --select are given, the preselect runs AFTER the group
+	// scope is applied: Home.applyInitialSelection will fail silently if the
+	// session is outside the scope; we pre-warn here so the user sees both
+	// outputs without digging through logs.
+	if initialSelect != "" {
+		homeModel.SetInitialSelection(initialSelect)
+		if groupScope != "" {
+			if storage, err := session.NewStorageWithProfile(profile); err == nil {
+				if instances, _, err := storage.LoadWithGroups(); err == nil {
+					normalizedGroup := normalizeGroupPath(groupScope)
+					found := false
+					for _, inst := range instances {
+						if inst == nil {
+							continue
+						}
+						if inst.ID != initialSelect && !strings.EqualFold(inst.Title, initialSelect) {
+							continue
+						}
+						gp := inst.GroupPath
+						if gp == normalizedGroup || strings.HasPrefix(gp, normalizedGroup+"/") {
+							found = true
+						}
+						break
+					}
+					if !found {
+						fmt.Fprintf(os.Stderr, "Warning: --select %q is not in group %q; cursor will not be repositioned\n", initialSelect, groupScope)
+					}
+				}
+			}
+		}
 	}
 
 	// ═══════════════════════════════════════════════════════════════════
@@ -753,6 +798,34 @@ func extractGroupFlag(args []string) (string, []string) {
 	return group, remaining
 }
 
+// extractSelectFlag extracts --select <session-id-or-title> from args (#709).
+// Unlike -g / --group, --select does NOT scope the TUI to one group — it only
+// positions the cursor on a matching session while keeping every group visible.
+func extractSelectFlag(args []string) (string, []string) {
+	var selectVal string
+	var remaining []string
+
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
+
+		if strings.HasPrefix(arg, "--select=") {
+			selectVal = strings.TrimPrefix(arg, "--select=")
+			continue
+		}
+		if arg == "--select" {
+			if i+1 < len(args) {
+				selectVal = args[i+1]
+				i++
+				continue
+			}
+		}
+
+		remaining = append(remaining, arg)
+	}
+
+	return selectVal, remaining
+}
+
 // reorderArgsForFlagParsing moves the path argument to the end of args
 // so Go's flag package can parse all flags correctly.
 // Go's flag package stops parsing at the first non-flag argument,
@@ -938,6 +1011,11 @@ func handleAdd(profile string, args []string) {
 	parentShort := fs.String("p", "", "Parent session (short)")
 	noParent := fs.Bool("no-parent", false, "Disable automatic parent linking (use 'session set-parent' later to link manually)")
 	noTransitionNotify := fs.Bool("no-transition-notify", false, "Suppress transition event notifications to parent session")
+	// #697: conductor-friendly title lock. When set, Claude's session name
+	// (--name / /rename) never overwrites the agent-deck title. --no-title-sync
+	// is an alias for discoverability.
+	titleLock := fs.Bool("title-lock", false, "Lock session title so Claude's session name never overrides it (#697)")
+	noTitleSync := fs.Bool("no-title-sync", false, "Alias for --title-lock")
 	quickCreate := fs.Bool("quick", false, "Auto-generate session name (adjective-noun)")
 	quickCreateShort := fs.Bool("Q", false, "Auto-generate session name (short)")
 	jsonOutput := fs.Bool("json", false, "Output as JSON")
@@ -990,6 +1068,12 @@ func handleAdd(profile string, args []string) {
 	resumeSession := fs.String("resume-session", "", "Claude session ID to resume (skips new session creation)")
 	yoloMode := fs.Bool("yolo", false, "Enable YOLO mode for Gemini or Codex sessions")
 	geminiYoloMode := fs.Bool("gemini-yolo", false, "Enable YOLO mode (alias for --yolo)")
+
+	// Socket isolation (v1.7.50+, issue #687). Overrides the installation-
+	// wide `[tmux].socket_name` for this one session. Empty = fall back to
+	// config. Captured once at creation and persisted on the Instance —
+	// subsequent start/restart/revive always target the same socket.
+	tmuxSocket := fs.String("tmux-socket", "", "tmux -L socket name for this session (overrides [tmux].socket_name)")
 
 	fs.Usage = func() {
 		fmt.Println("Usage: agent-deck add [path] [options]")
@@ -1169,8 +1253,8 @@ func handleAdd(profile string, args []string) {
 	// Handle worktree creation
 	var worktreePath, worktreeRepoRoot string
 	if wtBranch != "" {
-		// Validate path is a git repo
-		if !git.IsGitRepo(path) {
+		// Validate path is a git repo (or a bare-repo project root with nested .bare/)
+		if !git.IsGitRepoOrBareProjectRoot(path) {
 			fmt.Fprintf(os.Stderr, "Error: %s is not a git repository\n", path)
 			os.Exit(1)
 		}
@@ -1283,6 +1367,18 @@ func handleAdd(profile string, args []string) {
 		newInstance = session.NewInstance(sessionTitle, path)
 	}
 
+	// Socket-isolation CLI override (issue #687 phase 1, v1.7.50). The
+	// `--tmux-socket` flag beats `[tmux].socket_name`. Whitespace-only
+	// values fall back to the config default via the GetSocketName trim
+	// logic already applied during NewInstance, so we only override when
+	// the user typed something non-empty.
+	if flagSocket := strings.TrimSpace(*tmuxSocket); flagSocket != "" {
+		newInstance.TmuxSocketName = flagSocket
+		if ts := newInstance.GetTmuxSession(); ts != nil {
+			ts.SocketName = flagSocket
+		}
+	}
+
 	// Set parent if specified (includes parent's project path for --add-dir access)
 	if parentInstance != nil {
 		newInstance.SetParentWithPath(parentInstance.ID, parentInstance.ProjectPath)
@@ -1291,6 +1387,11 @@ func handleAdd(profile string, args []string) {
 	// Suppress transition notifications if requested
 	if *noTransitionNotify {
 		newInstance.NoTransitionNotify = true
+	}
+
+	// #697: title-lock blocks Claude's session-name sync. Either flag triggers it.
+	if *titleLock || *noTitleSync {
+		newInstance.TitleLocked = true
 	}
 
 	// Set command if provided
@@ -2565,11 +2666,12 @@ func printHelp() {
 	fmt.Printf("Agent Deck v%s\n", Version)
 	fmt.Println("Terminal session manager for AI coding agents")
 	fmt.Println()
-	fmt.Println("Usage: agent-deck [-p profile] [-g group] [command]")
+	fmt.Println("Usage: agent-deck [-p profile] [-g group] [--select id|title] [command]")
 	fmt.Println()
 	fmt.Println("Global Options:")
 	fmt.Println("  -p, --profile <name>   Use specific profile (default: 'default')")
 	fmt.Println("  -g, --group <name>     Launch TUI scoped to a specific group")
+	fmt.Println("  --select <id|title>    Launch TUI with cursor on a specific session (all groups stay visible)")
 	fmt.Println()
 	fmt.Println("Commands:")
 	fmt.Println("  (none)           Start the TUI")

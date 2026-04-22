@@ -218,6 +218,51 @@ The script receives two environment variables:
 
 The script runs via `sh -e` with a 60-second timeout. If it fails, the worktree is still created — you'll see a warning but the session proceeds normally.
 
+#### Bare repositories and worktrees
+
+Agent-deck supports the [bare-repo layout](https://git-scm.com/docs/git-worktree) where the git metadata sits in `.bare/` and every worktree is a peer (no "main" checkout). A typical tree:
+
+```
+project/
+├── .bare/                         # bare git repo (holds refs, objects, HEAD)
+├── .agent-deck/
+│   └── worktree-setup.sh          # shared setup script (optional)
+├── worktree-a/                    # linked worktree on branch-a
+│   └── .git                       # file: gitdir: ../.bare/worktrees/worktree-a
+└── worktree-b/                    # linked worktree on branch-b
+    └── .git
+```
+
+How agent-deck resolves this layout (v1.7.58+):
+
+- **All three paths work.** `agent-deck add project/`, `agent-deck add project/.bare`, and `agent-deck add project/worktree-a` all resolve to the same "project root" — `project/`, the directory that hosts `.bare/`. Every linked worktree is treated as equal; there is no default or main.
+- **The project root is where shared config lives.** Place `.agent-deck/worktree-setup.sh` at `project/.agent-deck/worktree-setup.sh`, next to `.bare/`. Agent-deck looks for it at exactly that path once it has resolved the project root — it does not search individual worktrees.
+- **`AGENT_DECK_REPO_ROOT` inside the setup script points to `project/`.** So `cp "$AGENT_DECK_REPO_ROOT/.env" "$AGENT_DECK_WORKTREE_PATH/.env"` copies the shared `.env` you keep alongside `.bare/` into each new worktree.
+- **New worktree location follows your `[worktree]` setting.** With `default_location = "subdirectory"` (or `--location subdirectory`) new worktrees land inside the project root at `project/.worktrees/<branch-name>`.
+
+Example — create a new worktree against a bare repo from anywhere:
+
+```sh
+# From the project root
+agent-deck add project/ -c claude --worktree feature/c --new-branch
+
+# Or point directly at the bare dir
+agent-deck add project/.bare -c claude --worktree feature/c --new-branch
+
+# Or from any existing linked worktree
+agent-deck add project/worktree-a -c claude --worktree feature/c --new-branch
+```
+
+All three commands create `project/.worktrees/feature-c/` (with `subdirectory` location) and run `project/.agent-deck/worktree-setup.sh` with `AGENT_DECK_REPO_ROOT=project`.
+
+`agent-deck worktree list` and `agent-deck worktree finish` also work from any of those three locations.
+
+Common gotchas:
+
+- **`.agent-deck/` must live at the project root**, next to `.bare/`. If you commit `.agent-deck/` into a specific branch's worktree instead, agent-deck will not find it — the lookup resolves to the project root, not the current worktree.
+- **The bare repo must be a direct child of the project root.** The auto-discovery scans `<projectRoot>/.bare` first, then direct children as a fallback. A bare repo named something other than `.bare` (e.g. `.git-bare/`) still works; one nested several levels deep does not, so point `agent-deck add` at its parent directly in that case.
+- **If you also keep a `.git` file at the project root** pointing to `.bare/` (a variant some tutorials recommend), point `agent-deck add` at `.bare/` or at a linked worktree rather than at the project root — the `.git` file shadows the bare-repo detection path.
+
 ### Docker Sandbox
 
 Run sessions inside isolated Docker containers. The project directory is bind-mounted read-write, so agents work on your code while the rest of the system stays protected.
@@ -452,6 +497,53 @@ weekly_limit = 200.00
 [costs.pricing.overrides]
 "custom-model" = { input_per_mtok = 1.0, output_per_mtok = 5.0 }
 ```
+
+### Socket Isolation (v1.7.50+)
+
+Run agent-deck on its own tmux server so it never touches your interactive tmux's config, bindings, or sessions. Opt-in via a single config line:
+
+```toml
+# ~/.agent-deck/config.toml
+[tmux]
+socket_name = "agent-deck"
+```
+
+With this set, every agent-deck session is spawned as `tmux -L agent-deck …` — a fully isolated tmux server whose socket lives at `$TMUX_TMPDIR/tmux-<uid>/agent-deck` (or `/tmp/tmux-<uid>/agent-deck` when `TMUX_TMPDIR` is unset, the standard tmux fallback). Your regular tmux server at `default` is never touched.
+
+**What this buys you:**
+- `[tmux].inject_status_line`, bind-key, and global `set-option` mutations stay on the agent-deck server. Your personal status bar, plugins, and theme are untouched.
+- A stray `tmux kill-server` in your shell cannot take agent-deck's managed sessions down with it.
+- `tmux -L agent-deck ls` from the shell shows exactly agent-deck's sessions — no mixing with your own work sessions.
+- Fixes [#276](https://github.com/asheshgoplani/agent-deck/issues/276) and [#687](https://github.com/asheshgoplani/agent-deck/issues/687) at the root, not via per-option sentinels.
+
+**Default behavior unchanged.** Leave `socket_name` unset (the default) and agent-deck behaves exactly like v1.7.46: it uses your default tmux server. This is a pure opt-in.
+
+**Per-session override.** The `agent-deck add` and `agent-deck launch` commands both accept `--tmux-socket <name>` to override the installation-wide default for one session:
+
+```bash
+# One-off isolated session even though config says otherwise
+agent-deck add --tmux-socket experiment -c claude .
+agent-deck launch --tmux-socket experiment -c claude -m "Try the risky thing"
+```
+
+Precedence at session creation: `--tmux-socket` flag > `[tmux].socket_name` > empty.
+
+**Immutable after creation.** Each session captures its socket name in SQLite at creation time. Changing `socket_name` in config later does **not** migrate existing sessions — they stay on the socket they were created on, so restart/revive cycles keep reaching the right tmux server. This is deliberate: mixing sockets mid-life would strand sessions on an unreachable server.
+
+**Migrating existing sessions.** There's no `migrate-socket` subcommand in this release. To move an existing session onto an isolated socket:
+
+1. Set `[tmux].socket_name = "agent-deck"` in your config.
+2. Stop the session (`agent-deck session stop <name>`) — this kills the tmux pane on the old server.
+3. Restart it (`agent-deck session start <name>`) — agent-deck will see TmuxSocketName=`""` on the stored Instance, spawn a fresh pane on the old server, and keep it there. To force it onto the new socket, edit `~/.agent-deck/<profile>/state.db`:
+   ```sql
+   UPDATE instances SET tmux_socket_name = 'agent-deck' WHERE id = '<session-id>';
+   ```
+   then restart agent-deck. Subsequent starts will spawn on `tmux -L agent-deck`.
+4. Easier: delete the old session with `agent-deck rm <name>` and re-create it with `agent-deck add` — the new row picks up the config-wide default.
+
+A proper `session migrate-socket` subcommand is tracked for phase 2.
+
+**`TMUX_TMPDIR` is honored.** Socket path resolution follows tmux's standard rules: if you set `TMUX_TMPDIR=/custom/dir`, agent-deck's socket lives at `/custom/dir/tmux-<uid>/agent-deck`. No extra config needed.
 
 ### Feedback
 
