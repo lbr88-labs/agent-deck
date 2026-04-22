@@ -12693,11 +12693,19 @@ func (h *Home) renderPreviewPane(width, height int) string {
 		displayWidth := ansi.StringWidth(line)
 		if displayWidth > maxWidth {
 			// ANSI-aware truncation preserves escape codes while trimming visible content
-			truncated := ansi.Truncate(line, maxWidth-3, "...")
-			truncatedLines = append(truncatedLines, truncated)
-		} else {
-			truncatedLines = append(truncatedLines, line)
+			line = ansi.Truncate(line, maxWidth-3, "...")
 		}
+		// Issue #699: captured Claude output (e.g., highlighted input line) can
+		// contain an unclosed SGR whose reset was off-screen or clipped by
+		// truncation. Without a hard reset at each newline boundary, the
+		// highlight persists across the row — and when lipgloss.JoinHorizontal
+		// lays down the next row (left_pane + separator + right_pane), the
+		// left pane inherits the right pane's dangling SGR state. Close every
+		// line that carries ANSI so state never leaks past the pane boundary.
+		if strings.ContainsRune(line, 0x1b) {
+			line += "\x1b[0m"
+		}
+		truncatedLines = append(truncatedLines, line)
 	}
 
 	return strings.Join(truncatedLines, "\n")

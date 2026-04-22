@@ -5,6 +5,11 @@ All notable changes to Agent Deck will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.7.57] - 2026-04-22
+
+### Fixed
+- **Right-pane preview no longer bleeds background highlights into the left pane** ([#699](https://github.com/asheshgoplani/agent-deck/issues/699), reported by @javierciccarelli on Ghostty against v1.7.43). When a Claude session's captured output contained an unclosed SGR — typically a background highlight on the user's input line whose closing reset was off-screen, clipped by the preview's width truncation, or emitted in a later capture window — the right pane's rendered line ended with SGR state still active at its newline boundary. `lipgloss.JoinHorizontal` then laid the next terminal row out as `left_pane + separator + right_pane + "\n"`, and the *next* row's left-pane whitespace was painted under the right pane's dangling highlight. Ghostty is strict about SGR persistence across rows, which is why the reporter saw a yellow band extend across the entire left column whenever they typed at the Claude prompt. Root cause was in `internal/ui/home.go:renderPreviewPane` — `ansi.Truncate` faithfully preserves the SGR *opening* of a truncated line but emits no closing reset, and the final width-enforcement pass (line 12543+) re-truncated without appending one either. Fix adds a single guard in the final pass: every line whose bytes contain an ESC (`0x1b`) now gets a hard `\x1b[0m` appended before the join, so SGR state is always reset at every newline boundary before `lipgloss.JoinHorizontal` assembles the frame. Harmless no-op on lines without ANSI; critical for lines with an unclosed highlight. This is the sibling invariant to the [#579](https://github.com/asheshgoplani/agent-deck/issues/579) CSI K/J erase-escape strip and the light-theme `remapANSIBackground` shipped with v1.6: those prevent the terminal from *starting* a bleed; this one stops state from *surviving* past a line. Regression coverage at three seams, matching the repo convention: `TestPreviewPane_RightPaneDoesNotLeakSGRState_Issue699` + `TestPreviewPane_TruncatedLineDoesNotLeakSGRState_Issue699` (Seam A unit, `internal/ui/preview_ansi_bleed_test.go` — assert no line in `renderPreviewPane`'s output leaves SGR active at its `\n`); `TestEval_FullViewDoesNotLeakSGRAcrossRows_Issue699` (Seam B eval, `eval_smoke` tier, `internal/ui/preview_ansi_bleed_eval_test.go` — drives the full `Home.View()` including `lipgloss.JoinHorizontal` and asserts the row-level invariant the user actually sees); `scripts/verify-preview-ansi-bleed.sh` (Seam C, builds the real binary and boots it in tmux as a final smoke check). Seam A and B both verified RED on the unfixed code (row 12 of the Seam B render captured `"                ... │ \x1b[43m> tell me about ghostty                ..."` — ends with SGR=43 active — exactly @javierciccarelli's screenshot) and GREEN after the one-line fix. `eval-smoke.yml` path triggers extended to include `internal/ui/home.go` and `internal/ui/preview*.go` so the Seam B eval runs per-PR on any preview-pane change. Thanks @javierciccarelli for the reproducer and the pinpoint screenshot.
+
 ## [1.7.56] - 2026-04-22
 
 ### Fixed
@@ -29,7 +34,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   All mandatory test gates pass unchanged: `TestPersistence_*`, Feedback + Sender_, Watcher framework, full `internal/tmux/...` race-detected suite.
 
   Thanks to [@jcordasco](https://github.com/jcordasco) for the detailed v1.7.50 audit that caught this — socket isolation at start + stop without isolation at attach would have been worse than no isolation at all, because users would have believed they were protected.
-
 ## [1.7.54] - 2026-04-22
 
 ### Added
