@@ -1271,27 +1271,10 @@ func TestRemoteRestartReturnsRemoteCommand(t *testing.T) {
 	_ = h
 }
 
-func TestRemoteSelectionNOpensNewDialog(t *testing.T) {
-	home := NewHome()
-	home.width = 100
-	home.height = 30
-
-	remote := session.RemoteSessionInfo{ID: "remote-123", Title: "remote-session", RemoteName: "myserver"}
-	home.flatItems = []session.Item{{Type: session.ItemTypeRemoteSession, RemoteSession: &remote, RemoteName: "myserver"}}
-	home.cursor = 0
-
-	model, cmd := home.handleMainKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'n'}})
-	h, ok := model.(*Home)
-	if !ok {
-		t.Fatal("handleMainKey should return *Home")
-	}
-	if cmd != nil {
-		t.Fatal("pressing n on remote selection should not execute remote attach command")
-	}
-	if !h.newDialog.IsVisible() {
-		t.Fatal("pressing n on remote selection should open new session dialog")
-	}
-}
+// TestRemoteSelectionNOpensNewDialog was removed with the #743 fix: it
+// codified d9a5de8's broken contract (n on a remote session opens the local
+// dialog). The regression guard now lives in
+// TestRegression743_NOnRemoteSession_QuickCreatesNoDialog.
 
 func TestSelectedRemotePreviewTarget(t *testing.T) {
 	home := NewHome()
@@ -1365,26 +1348,9 @@ func TestRenderRemotePreviewIncludesCachedResponse(t *testing.T) {
 	}
 }
 
-func TestRemoteGroupSelectionNOpensNewDialog(t *testing.T) {
-	home := NewHome()
-	home.width = 100
-	home.height = 30
-
-	home.flatItems = []session.Item{{Type: session.ItemTypeRemoteGroup, RemoteName: "myserver", Path: "remotes/myserver"}}
-	home.cursor = 0
-
-	model, cmd := home.handleMainKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'n'}})
-	h, ok := model.(*Home)
-	if !ok {
-		t.Fatal("handleMainKey should return *Home")
-	}
-	if cmd != nil {
-		t.Fatal("pressing n on remote group should not execute remote attach command")
-	}
-	if !h.newDialog.IsVisible() {
-		t.Fatal("pressing n on remote group should open new session dialog")
-	}
-}
+// TestRemoteGroupSelectionNOpensNewDialog was removed with the #743 fix —
+// see the note on TestRemoteSelectionNOpensNewDialog above. Guard lives in
+// TestRegression743_NOnRemoteGroup_QuickCreatesNoDialog.
 
 func TestRenderRemotePreviewShowsEmptyStateAfterFetch(t *testing.T) {
 	home := NewHome()
@@ -2835,5 +2801,56 @@ func TestHandleMainKeyQuickApproveSkipsNonClaudeTool(t *testing.T) {
 	model, _ := home.handleMainKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'a'}})
 	if _, ok := model.(*Home); !ok {
 		t.Fatal("handleMainKey should return *Home")
+	}
+}
+
+// TestRegression743_NOnRemoteSession_QuickCreatesNoDialog guards #743.
+// v1.7.68 shipped d9a5de8 which removed the remote early-return from the `n`
+// key handler, so pressing `n` on a remote session opened the local
+// newDialog and created a LOCAL session instead of a remote one. Restoring
+// the pre-d9a5de8 behavior: `n` on a remote-session cursor issues the remote
+// quick-create command and does NOT open the local new-session dialog.
+func TestRegression743_NOnRemoteSession_QuickCreatesNoDialog(t *testing.T) {
+	home := NewHome()
+	home.width = 100
+	home.height = 30
+
+	remote := session.RemoteSessionInfo{ID: "remote-123", Title: "remote-session", RemoteName: "myserver"}
+	home.flatItems = []session.Item{{Type: session.ItemTypeRemoteSession, RemoteSession: &remote, RemoteName: "myserver"}}
+	home.cursor = 0
+
+	model, cmd := home.handleMainKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'n'}})
+	h, ok := model.(*Home)
+	if !ok {
+		t.Fatal("handleMainKey should return *Home")
+	}
+	if cmd == nil {
+		t.Fatal("pressing n on a remote session must issue the remote quick-create command (was local dialog)")
+	}
+	if h.newDialog.IsVisible() {
+		t.Fatal("pressing n on a remote session must NOT open the local new-session dialog")
+	}
+}
+
+// TestRegression743_NOnRemoteGroup_QuickCreatesNoDialog — same contract for
+// cursor on a remote group header row.
+func TestRegression743_NOnRemoteGroup_QuickCreatesNoDialog(t *testing.T) {
+	home := NewHome()
+	home.width = 100
+	home.height = 30
+
+	home.flatItems = []session.Item{{Type: session.ItemTypeRemoteGroup, RemoteName: "myserver", Path: "remotes/myserver"}}
+	home.cursor = 0
+
+	model, cmd := home.handleMainKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'n'}})
+	h, ok := model.(*Home)
+	if !ok {
+		t.Fatal("handleMainKey should return *Home")
+	}
+	if cmd == nil {
+		t.Fatal("pressing n on a remote group must issue the remote quick-create command")
+	}
+	if h.newDialog.IsVisible() {
+		t.Fatal("pressing n on a remote group must NOT open the local new-session dialog")
 	}
 }

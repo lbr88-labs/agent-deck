@@ -3559,6 +3559,17 @@ func (h *Home) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// Restore state if provided (from auto-reload)
 			if msg.restoreState != nil {
 				h.restoreState(*msg.restoreState)
+				// #746: re-run --select after auto-reload. The very first
+				// loadSessionsMsg may fire before the storage watcher has
+				// observed a session that `launch --json` just persisted,
+				// so applyInitialSelection returns false and the cursor
+				// lands on whatever pendingCursorRestore resolves to (an
+				// adjacent row). When the watcher catches up the new
+				// session, loadSessionsMsg fires again with restoreState
+				// populated — this is our retry window. The helper is
+				// idempotent: it no-ops after the first successful match,
+				// so normal navigation is not overridden.
+				h.applyInitialSelection()
 				h.syncViewport()
 			} else {
 				h.rebuildFlatItems()
@@ -5096,8 +5107,12 @@ func (h *Home) handleNewDialogKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		// Resolve worktree target if enabled; actual worktree creation runs in async command.
 		var worktreePath, worktreeRepoRoot string
 		if worktreeEnabled && branchName != "" {
-			// Validate path is a git repo
-			if !git.IsGitRepo(path) {
+			// Validate path is a git repo OR a bare-repo project root (#742 /
+			// #715): IsGitRepoOrBareProjectRoot accepts a directory that
+			// contains a nested .bare/ even though the directory itself has
+			// no .git. Downstream GetWorktreeBaseRoot + CreateWorktreeWithSetup
+			// handle both layouts transparently.
+			if !git.IsGitRepoOrBareProjectRoot(path) {
 				h.newDialog.SetError("Path is not a git repository")
 				return h, nil
 			}
@@ -6122,6 +6137,19 @@ func (h *Home) handleMainKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return h, nil
 
 	case "n":
+		// If the cursor is on a remote group/session, quick-create on the
+		// remote instead of opening the local new-session dialog (#743).
+		// Pre-v1.7.68 behaviour that d9a5de8 accidentally removed: the local
+		// dialog has no remote awareness, so falling through to it created
+		// the session on localhost even though the user was clearly operating
+		// in the Remotes section.
+		if h.cursor >= 0 && h.cursor < len(h.flatItems) {
+			item := h.flatItems[h.cursor]
+			if item.Type == session.ItemTypeRemoteGroup || item.Type == session.ItemTypeRemoteSession {
+				return h, h.createRemoteSession(item.RemoteName)
+			}
+		}
+
 		// Collect unique project paths sorted by most recently accessed
 		type pathInfo struct {
 			path           string
@@ -7363,7 +7391,9 @@ func (h *Home) handleForkDialogKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 				// Resolve worktree target if enabled; actual creation runs in async command.
 				if worktreeEnabled && branchName != "" {
-					if !git.IsGitRepo(source.ProjectPath) {
+					// Bare-repo project roots must pass — same contract as
+					// the new-session path (#742).
+					if !git.IsGitRepoOrBareProjectRoot(source.ProjectPath) {
 						h.forkDialog.SetError("Path is not a git repository")
 						return h, nil
 					}
@@ -7746,7 +7776,11 @@ func (h *Home) createSessionInGroupWithWorktreeAndOptions(
 				var newAdditionalPaths []string
 				for i, p := range allPaths {
 					wtPath := filepath.Join(parentDir, dirnames[i])
-					if git.IsGitRepo(p) {
+					// Accept bare-repo project roots in the multi-repo
+					// path too (#742). Without this, a .bare layout
+					// silently fell through to os.Symlink below,
+					// skipping worktree creation AND the setup hook.
+					if git.IsGitRepoOrBareProjectRoot(p) {
 						repoRoot, rootErr := git.GetWorktreeBaseRoot(p)
 						if rootErr != nil {
 							uiLog.Warn("multi_repo_worktree_skip", slog.String("path", p), slog.String("error", rootErr.Error()))
