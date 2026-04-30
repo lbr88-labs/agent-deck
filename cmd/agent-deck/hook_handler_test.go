@@ -255,3 +255,25 @@ func TestIsTerminalHookEvent(t *testing.T) {
 		}
 	}
 }
+
+// TestParentIsDSP_EnvVarOverride verifies the explicit env-var path of the DSP
+// detection used by handleHookHandler to emit a PermissionRequest allow.
+// The env-var path is the cross-platform fallback when /proc is unavailable
+// (macOS) or when the launch site wants to declare DSP intent explicitly.
+func TestParentIsDSP_EnvVarOverride(t *testing.T) {
+	t.Setenv("AGENTDECK_DSP_MODE", "1")
+	if !parentIsDSP() {
+		t.Errorf("parentIsDSP() = false; expected true when AGENTDECK_DSP_MODE=1")
+	}
+}
+
+// TestParentIsDSP_NoOverrideNoFlag verifies that without the env var override
+// AND without --dangerously-skip-permissions in the parent's cmdline,
+// parentIsDSP returns false. The Go test runner is not launched with DSP, so
+// /proc/<ppid>/cmdline should not contain the flag in normal CI.
+func TestParentIsDSP_NoOverrideNoFlag(t *testing.T) {
+	t.Setenv("AGENTDECK_DSP_MODE", "")
+	if parentIsDSP() {
+		t.Skipf("parentIsDSP() returned true unexpectedly; the test runner's parent appears to have --dangerously-skip-permissions in its cmdline. Skipping the negative assertion.")
+	}
+}

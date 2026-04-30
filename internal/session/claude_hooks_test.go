@@ -105,6 +105,49 @@ func TestPreCompactHookIsSynchronous(t *testing.T) {
 	}
 }
 
+// TestPermissionRequestHookIsSynchronous guards the fix for the headless /
+// /remote-control silent-deny: an async PermissionRequest hook with no UI
+// fallback was treated as a non-decision and Claude Code defaulted to deny.
+// Sync mode lets Claude Code consult the hook's stdout decision.
+func TestPermissionRequestHookIsSynchronous(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	if _, err := InjectClaudeHooks(tmpDir); err != nil {
+		t.Fatalf("InjectClaudeHooks failed: %v", err)
+	}
+
+	data, err := os.ReadFile(filepath.Join(tmpDir, "settings.json"))
+	if err != nil {
+		t.Fatalf("Failed to read settings.json: %v", err)
+	}
+	var settings map[string]json.RawMessage
+	if err := json.Unmarshal(data, &settings); err != nil {
+		t.Fatalf("Failed to parse settings: %v", err)
+	}
+
+	var hooks map[string]json.RawMessage
+	if err := json.Unmarshal(settings["hooks"], &hooks); err != nil {
+		t.Fatalf("Failed to parse hooks: %v", err)
+	}
+
+	var matchers []claudeHookMatcher
+	if err := json.Unmarshal(hooks["PermissionRequest"], &matchers); err != nil {
+		t.Fatalf("Failed to parse PermissionRequest matchers: %v", err)
+	}
+
+	if len(matchers) == 0 || len(matchers[0].Hooks) == 0 {
+		t.Fatal("PermissionRequest has no hooks")
+	}
+
+	hook := matchers[0].Hooks[0]
+	if hook.Async {
+		t.Error("PermissionRequest hook must be synchronous (Async should be false) so Claude Code consults the hook's stdout decision")
+	}
+	if hook.Command != agentDeckHookCommand {
+		t.Errorf("PermissionRequest hook command = %q, want %q", hook.Command, agentDeckHookCommand)
+	}
+}
+
 func TestInjectClaudeHooks_PreservesExisting(t *testing.T) {
 	tmpDir := t.TempDir()
 

@@ -131,6 +131,36 @@ func handleHookHandler() {
 	// Write cost event if this hook contains usage data
 	logCostDebug("hook event=%s instance=%s status=%s", payload.HookEventName, instanceID, status)
 	writeCostEvent(instanceID, data)
+
+	// PermissionRequest in DSP-launched, agent-deck-managed sessions: emit an
+	// explicit allow decision so headless / /remote-control contexts (which
+	// have no UI fallback) do not silently deny. DSP is the user-declared
+	// trust signal; the hook just makes that declaration consistent across
+	// interactive and non-interactive Claude UIs. Without this, a sync hook
+	// that exits with no decision falls through to Claude Code's default,
+	// which denies in UI-less contexts. Status-tracking behavior above is
+	// unchanged.
+	if payload.HookEventName == "PermissionRequest" && parentIsDSP() {
+		fmt.Println(`{"hookSpecificOutput":{"hookEventName":"PermissionRequest","permissionDecision":"allow"}}`)
+	}
+}
+
+// parentIsDSP reports whether the parent process (typically the claude binary)
+// was launched with --dangerously-skip-permissions. Returns true if the
+// AGENTDECK_DSP_MODE env var is explicitly set, or, on Linux/WSL, if the
+// parent's /proc/<ppid>/cmdline contains the DSP flag. Returns false on
+// non-Linux platforms unless AGENTDECK_DSP_MODE is set, since /proc is
+// unavailable; agent-deck launch paths can opt those platforms in via the
+// env var when needed.
+func parentIsDSP() bool {
+	if os.Getenv("AGENTDECK_DSP_MODE") == "1" {
+		return true
+	}
+	cmdline, err := os.ReadFile(fmt.Sprintf("/proc/%d/cmdline", os.Getppid()))
+	if err != nil {
+		return false
+	}
+	return strings.Contains(string(cmdline), "--dangerously-skip-permissions")
 }
 
 // writeHookStatus writes a hook status file atomically for one instance.

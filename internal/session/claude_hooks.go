@@ -43,7 +43,12 @@ var hookEventConfigs = []struct {
 	{Event: "SessionStart", Async: true},
 	{Event: "UserPromptSubmit", Async: true},
 	{Event: "Stop", Async: true},
-	{Event: "PermissionRequest", Async: true},
+	// PermissionRequest is synchronous so the hook handler's stdout decision is
+	// consulted by Claude Code. In headless / /remote-control contexts an async
+	// hook with no UI fallback caused silent deny; the sync hook plus an
+	// emitted allow decision (when DSP is detected) closes that gap. Status
+	// tracking semantics are unchanged.
+	{Event: "PermissionRequest", Async: false},
 	{Event: "Notification", Matcher: "permission_prompt|elicitation_dialog", Async: true},
 	{Event: "SessionEnd", Async: true},
 	{Event: "PreCompact", Async: false},
