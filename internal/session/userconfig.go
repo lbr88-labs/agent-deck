@@ -237,6 +237,10 @@ func (rc RemoteConfig) GetProfile() string {
 type ProfileSettings struct {
 	// Claude defines Claude Code overrides for a specific profile.
 	Claude ProfileClaudeSettings `toml:"claude"`
+	// Costs defines profile-specific cost-tracking overrides.
+	// Nil pointer means "no [profiles.<name>.costs] block in TOML"; the
+	// resolver falls through to global [costs] settings.
+	Costs *ProfileCosts `toml:"costs"`
 }
 
 // ProfileClaudeSettings defines profile-specific Claude overrides.
@@ -2693,11 +2697,76 @@ func GetMCPDef(name string) *MCPDef {
 
 // CostsSettings configures cost tracking, budgets, and pricing overrides.
 type CostsSettings struct {
-	Currency      string          `toml:"currency"`
-	Timezone      string          `toml:"timezone"`
-	RetentionDays int             `toml:"retention_days"`
-	Budgets       BudgetSettings  `toml:"budgets"`
-	Pricing       PricingSettings `toml:"pricing"`
+	Currency      string `toml:"currency"`
+	Timezone      string `toml:"timezone"`
+	RetentionDays int    `toml:"retention_days"`
+	// CostLineTemplate overrides the home status-bar cost segment.
+	// Three-state pointer: nil falls through to the next layer
+	// (profile -> global -> hardcoded); explicit empty string disables.
+	CostLineTemplate *string `toml:"cost_line_template"`
+	// CostLineHideWhenZero hides the segment when every recognized variable
+	// in the active template renders to $0.00. Three-state pointer; default
+	// is true (preserves the legacy "no events, no segment" behavior).
+	CostLineHideWhenZero *bool           `toml:"cost_line_hide_when_zero"`
+	Budgets              BudgetSettings  `toml:"budgets"`
+	Pricing              PricingSettings `toml:"pricing"`
+}
+
+// ProfileCosts holds per-profile overrides for cost-related settings.
+// Pointer fields use the same fall-through semantics as CostsSettings.
+type ProfileCosts struct {
+	CostLineTemplate     *string `toml:"cost_line_template"`
+	CostLineHideWhenZero *bool   `toml:"cost_line_hide_when_zero"`
+}
+
+// defaultCostLineTemplate is the hardcoded fallback that preserves the
+// pre-template status-bar segment exactly: render today's total and hide
+// when zero events have been recorded.
+const defaultCostLineTemplate = "{cost_today} today"
+
+// ResolveCostLineTemplate returns the active status-bar cost-line template
+// and hide-when-zero flag, applying the resolution chain:
+//
+//	profile.costs > [costs] > hardcoded "{cost_today} today" (template, default true for hide)
+//
+// Pointer semantics:
+//   - nil at any level falls through to the next level
+//   - explicit empty string for template disables the segment (returned as "")
+//   - explicit bool for hide_when_zero is honored at that level
+//
+// Safe to call with cfg == nil; returns the hardcoded default + true.
+func ResolveCostLineTemplate(cfg *UserConfig, profile string) (template string, hideWhenZero bool) {
+	template = defaultCostLineTemplate
+	hideWhenZero = true
+
+	if cfg == nil {
+		return
+	}
+
+	var profileCosts *ProfileCosts
+	if cfg.Profiles != nil {
+		if p, ok := cfg.Profiles[profile]; ok {
+			profileCosts = p.Costs
+		}
+	}
+
+	// Template: profile (set) > global (set) > hardcoded
+	switch {
+	case profileCosts != nil && profileCosts.CostLineTemplate != nil:
+		template = *profileCosts.CostLineTemplate
+	case cfg.Costs.CostLineTemplate != nil:
+		template = *cfg.Costs.CostLineTemplate
+	}
+
+	// Hide flag: profile (set) > global (set) > true
+	switch {
+	case profileCosts != nil && profileCosts.CostLineHideWhenZero != nil:
+		hideWhenZero = *profileCosts.CostLineHideWhenZero
+	case cfg.Costs.CostLineHideWhenZero != nil:
+		hideWhenZero = *cfg.Costs.CostLineHideWhenZero
+	}
+
+	return
 }
 
 type BudgetSettings struct {
