@@ -1356,6 +1356,38 @@ func getCodexHomeDir() string {
 	return filepath.Join(home, ".codex")
 }
 
+// runWithTimeout runs op in a goroutine and waits up to timeout for it to
+// complete. Returns true if op finished, false if it timed out. The
+// abandoned goroutine continues running until op returns naturally; its
+// effects on shared state after timeout are not consulted by callers, which
+// must check the return value before reading any variables op may have
+// written.
+//
+// Used to backstop FS operations under ~/.codex/sessions which can hang
+// indefinitely on a stuck FS layer (kernel D-state during readdir on the
+// WSL 9p path was observed on 2026-04-28; one thread held a dentry that
+// the FS layer never released, blocking every agent-deck CLI command that
+// transitively walked the codex sessions tree).
+func runWithTimeout(timeout time.Duration, op func()) bool {
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		op()
+	}()
+	select {
+	case <-done:
+		return true
+	case <-time.After(timeout):
+		return false
+	}
+}
+
+// codexWalkDirTimeout caps the recursive walk over $CODEX_HOME/sessions/ in
+// queryCodexSession. Healthy walks of a year's sessions complete in roughly
+// one second; the bound is generous so a slow disk does not false-negative
+// while still preventing indefinite hangs.
+const codexWalkDirTimeout = 5 * time.Second
+
 // queryCodexSession scans Codex sessions and returns the best candidate.
 // Selection strategy:
 //  1. Prefer sessions whose JSONL metadata matches this instance's project path.
@@ -1375,57 +1407,70 @@ func (i *Instance) queryCodexSession(excludeIDs map[string]bool, allowUnscoped b
 
 	normalizedProjectPath := normalizePath(i.ProjectPath)
 
-	err := filepath.WalkDir(sessionsDir, func(path string, d os.DirEntry, err error) error {
-		if err != nil {
-			return nil // Skip errors
-		}
+	var walkErr error
+	if !runWithTimeout(codexWalkDirTimeout, func() {
+		walkErr = filepath.WalkDir(sessionsDir, func(path string, d os.DirEntry, err error) error {
+			if err != nil {
+				return nil // Skip errors
+			}
 
-		if d.IsDir() || !strings.HasSuffix(d.Name(), ".jsonl") {
-			return nil
-		}
-
-		sessionID := uuidPattern.FindString(d.Name())
-		if sessionID == "" {
-			return nil
-		}
-		if excludeIDs != nil && excludeIDs[sessionID] {
-			return nil
-		}
-
-		info, err := d.Info()
-		if err != nil {
-			return nil
-		}
-
-		// Only consider sessions created after we started this instance.
-		if i.CodexStartedAt > 0 {
-			startTime := time.UnixMilli(i.CodexStartedAt)
-			if info.ModTime().Before(startTime) {
+			if d.IsDir() || !strings.HasSuffix(d.Name(), ".jsonl") {
 				return nil
 			}
-		}
 
-		matchesProject, hasProjectMetadata := codexSessionMatchesProject(path, normalizedProjectPath)
-		if matchesProject {
-			if bestScopedID == "" || info.ModTime().After(bestScopedTime) {
-				bestScopedID = sessionID
-				bestScopedTime = info.ModTime()
+			sessionID := uuidPattern.FindString(d.Name())
+			if sessionID == "" {
+				return nil
 			}
+			if excludeIDs != nil && excludeIDs[sessionID] {
+				return nil
+			}
+
+			info, err := d.Info()
+			if err != nil {
+				return nil
+			}
+
+			// Only consider sessions created after we started this instance.
+			if i.CodexStartedAt > 0 {
+				startTime := time.UnixMilli(i.CodexStartedAt)
+				if info.ModTime().Before(startTime) {
+					return nil
+				}
+			}
+
+			matchesProject, hasProjectMetadata := codexSessionMatchesProject(path, normalizedProjectPath)
+			if matchesProject {
+				if bestScopedID == "" || info.ModTime().After(bestScopedTime) {
+					bestScopedID = sessionID
+					bestScopedTime = info.ModTime()
+				}
+				return nil
+			}
+
+			// Use unscoped records only when bootstrapping and metadata is unavailable.
+			if allowUnscoped && !hasProjectMetadata {
+				if bestUnscopedID == "" || info.ModTime().After(bestUnscopedTime) {
+					bestUnscopedID = sessionID
+					bestUnscopedTime = info.ModTime()
+				}
+			}
+
 			return nil
-		}
-
-		// Use unscoped records only when bootstrapping and metadata is unavailable.
-		if allowUnscoped && !hasProjectMetadata {
-			if bestUnscopedID == "" || info.ModTime().After(bestUnscopedTime) {
-				bestUnscopedID = sessionID
-				bestUnscopedTime = info.ModTime()
-			}
-		}
-
-		return nil
-	})
-	if err != nil {
-		sessionLog.Debug("codex_scan_error", slog.String("error", err.Error()))
+		})
+	}) {
+		// Walk did not complete in time. The most likely cause is a stuck FS
+		// layer (e.g., WSL kernel D-state). Return without consulting the
+		// best* variables since they may be partially populated; the caller
+		// retries with backoff so a transient stall self-heals.
+		sessionLog.Warn("codex_walkdir_timeout",
+			slog.String("instance_id", i.ID),
+			slog.String("sessions_dir", sessionsDir),
+			slog.Duration("timeout", codexWalkDirTimeout))
+		return ""
+	}
+	if walkErr != nil {
+		sessionLog.Debug("codex_scan_error", slog.String("error", walkErr.Error()))
 	}
 
 	if bestScopedID != "" {
