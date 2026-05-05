@@ -46,7 +46,7 @@ function WorkHead() {
   if (!session) return null
 
   const kindLabel = (session.kind || 'agent').toUpperCase()
-  const profile = profileSignal.value
+  const profile = profileSignal.value || ''
   const canMutate = mutationsEnabledSignal.value
 
   const action = (verb) => {
@@ -59,7 +59,7 @@ function WorkHead() {
     <div class="work-head">
       <div class="path">
         <span class=${`kind ${session.kind || ''}`}>${kindLabel}</span>
-        <span class="seg">${profile} /</span>
+        ${profile && html`<span class="seg">${profile} /</span>`}
         <span class="seg">${session.group || 'default'} /</span>
         <span class="cur">${session.title}</span>
       </div>

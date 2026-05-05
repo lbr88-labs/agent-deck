@@ -18,7 +18,7 @@ export function Footer() {
   return html`
     <div class="footer">
       <span class="fseg"><span class="d" style=${dotStyle}/>ws · ${conn}</span>
-      <span class="fseg">profile · ${profileSignal.value}</span>
+      ${profileSignal.value && html`<span class="fseg">profile · ${profileSignal.value}</span>`}
       <span class="fseg">sessions · ${sessions.length}</span>
       <span class="fseg" style="color: var(--tn-green);">● ${running}</span>
       <span class="fseg" style="color: var(--tn-yellow);">◐ ${waiting}</span>

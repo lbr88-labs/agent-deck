@@ -69,18 +69,16 @@ export function Topbar() {
         ${(() => {
           const p = profilesSignal.value
           const list = p && Array.isArray(p.profiles) ? p.profiles : null
-          if (list && list.length > 0) {
-            return html`
-              <select class="icon-btn"
-                style=${{ width: 'auto', padding: '0 8px', fontFamily: 'var(--mono)', fontSize: '11px' }}
-                value=${profileSignal.value}
-                onChange=${e => (profileSignal.value = e.target.value)}>
-                ${list.map(name => html`<option key=${name} value=${name}>${name}</option>`)}
-              </select>
-            `
-          }
+          // Hold the dropdown until /api/profiles resolves so we never
+          // flash a hardcoded default on cold load.
+          if (!list || list.length === 0) return null
           return html`
-            <span class="conn-pill" style="font-family: var(--mono);">profile · ${profileSignal.value}</span>
+            <select class="icon-btn"
+              style=${{ width: 'auto', padding: '0 8px', fontFamily: 'var(--mono)', fontSize: '11px' }}
+              value=${profileSignal.value || (p.current || list[0])}
+              onChange=${e => (profileSignal.value = e.target.value)}>
+              ${list.map(name => html`<option key=${name} value=${name}>${name}</option>`)}
+            </select>
           `
         })()}
         <${ToastHistoryDrawerToggle}/>

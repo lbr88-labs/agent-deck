@@ -62,8 +62,12 @@ export const showColsSignal = signal(loadJSON('agentdeck.showCols', {
 }))
 persist(showColsSignal, 'agentdeck.showCols')
 
-// Profile selector (read-only display today; the API exposes profile under /healthz + /api/settings).
-export const profileSignal = signal('personal')
+// Profile selector. Initialized to empty so cold loads don't flash a
+// hardcoded default before /api/profiles resolves. AppShell seeds this
+// from `current` on the first /api/profiles response; consumers
+// (Topbar, Footer, AppShell.WorkHead) treat empty as "not yet known"
+// and render a neutral placeholder.
+export const profileSignal = signal('')
 
 // Apply accent/density/rail dataset attributes for CSS variable swap.
 // design-tokens.css uses `:root[data-*]` selectors; we also mirror to
