@@ -80,24 +80,29 @@ function WorkHead() {
   `
 }
 
-function Pane({ tab }) {
-  switch (tab) {
-    case 'fleet':     return html`<${FleetPane}/>`
-    case 'terminal':  return html`<${TerminalPane}/>`
-    case 'costs':     return html`<${CostsPane}/>`
-    case 'search':    return html`<${SearchPane}/>`
-    case 'mcp':       return html`<${StubPane} title="MCP Manager"
-                            message="MCP attachments are managed in the TUI today. The web API does not expose attach / detach / pool toggles yet."
-                            hotkey="m"/>`
-    case 'skills':    return html`<${StubPane} title="Skills"
-                            message="Skill attachments are managed in the TUI today. The web API does not expose skill management yet."
-                            hotkey="s"/>`
-    case 'conductor': return html`<${StubPane} title="Conductor"
-                            message="Conductor orchestration view is TUI-only. The web API does not expose child topology, bridges, or NEED escalation."/>`
-    case 'watchers':  return html`<${StubPane} title="Watchers"
-                            message="Watcher framework events are routed in the backend; the web API does not surface event streams or routing config."/>`
-    default:          return html`<${TerminalPane}/>`
-  }
+// Pane switcher — TerminalPane is ALWAYS rendered and only hidden via CSS
+// when another tab is active. This preserves the xterm.js + WebSocket lifecycle
+// across tab switches; unmounting would trigger a reconnect storm and lose
+// scrollback. Other panes are cheap enough to mount/unmount on demand.
+function Panes({ tab }) {
+  return html`
+    <div style=${{ display: tab === 'terminal' ? 'flex' : 'none', flex: 1, minHeight: 0, flexDirection: 'column' }}>
+      <${TerminalPane}/>
+    </div>
+    ${tab === 'fleet'     && html`<${FleetPane}/>`}
+    ${tab === 'costs'     && html`<${CostsPane}/>`}
+    ${tab === 'search'    && html`<${SearchPane}/>`}
+    ${tab === 'mcp'       && html`<${StubPane} title="MCP Manager"
+                              message="MCP attachments are managed in the TUI today. The web API does not expose attach / detach / pool toggles yet."
+                              hotkey="m"/>`}
+    ${tab === 'skills'    && html`<${StubPane} title="Skills"
+                              message="Skill attachments are managed in the TUI today. The web API does not expose skill management yet."
+                              hotkey="s"/>`}
+    ${tab === 'conductor' && html`<${StubPane} title="Conductor"
+                              message="Conductor orchestration view is TUI-only. The web API does not expose child topology, bridges, or NEED escalation."/>`}
+    ${tab === 'watchers'  && html`<${StubPane} title="Watchers"
+                              message="Watcher framework events are routed in the backend; the web API does not surface event streams or routing config."/>`}
+  `
 }
 
 export function AppShell() {
@@ -170,7 +175,7 @@ export function AppShell() {
       <div class="main">
         <${WorkHead}/>
         <div class="work-body">
-          <${Pane} tab=${activeTab}/>
+          <${Panes} tab=${activeTab}/>
         </div>
       </div>
       <${RightRail}/>

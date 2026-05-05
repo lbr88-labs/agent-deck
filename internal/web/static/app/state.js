@@ -88,9 +88,6 @@ export const wsStateSignal = signal('disconnected')
 // Read-only mode from WebSocket status:connected payload
 export const readOnlySignal = signal(false)
 
-// Tab navigation: 'terminal' | 'costs'
-export const activeTabSignal = signal('terminal')
-
 // Push notification state (migrated from app.js state object)
 export const pushConfigSignal = signal(null)        // null or { enabled, vapidPublicKey }
 export const pushSubscribedSignal = signal(false)
