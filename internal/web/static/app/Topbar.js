@@ -7,11 +7,12 @@
 import { html } from 'htm/preact'
 import { Logo, Icon, ICONS } from './icons.js'
 import { menuModelSignal } from './dataModel.js'
-import { connectionSignal } from './state.js'
+import { connectionSignal, profilesSignal } from './state.js'
 import {
   activeTabSignal, paletteOpenSignal, tweaksOpenSignal,
   railSignal, profileSignal,
 } from './uiState.js'
+import { ToastHistoryDrawerToggle } from './ToastHistoryDrawer.js'
 
 const TABS = [
   { id: 'fleet',     label: 'Fleet'     },
@@ -65,12 +66,24 @@ export function Topbar() {
         <div class=${`conn-pill ${connClass}`}>
           <span class="dot" style=${connDotStyle}/>ws · ${conn === 'connected' ? 'live' : conn}
         </div>
-        <select class="icon-btn" style=${{ width: 'auto', padding: '0 8px', fontFamily: 'var(--mono)', fontSize: '11px' }}
-          value=${profileSignal.value}
-          onChange=${e => (profileSignal.value = e.target.value)}>
-          <option value="personal">personal</option>
-          <option value="work">work</option>
-        </select>
+        ${(() => {
+          const p = profilesSignal.value
+          const list = p && Array.isArray(p.profiles) ? p.profiles : null
+          if (list && list.length > 0) {
+            return html`
+              <select class="icon-btn"
+                style=${{ width: 'auto', padding: '0 8px', fontFamily: 'var(--mono)', fontSize: '11px' }}
+                value=${profileSignal.value}
+                onChange=${e => (profileSignal.value = e.target.value)}>
+                ${list.map(name => html`<option key=${name} value=${name}>${name}</option>`)}
+              </select>
+            `
+          }
+          return html`
+            <span class="conn-pill" style="font-family: var(--mono);">profile · ${profileSignal.value}</span>
+          `
+        })()}
+        <${ToastHistoryDrawerToggle}/>
         <button
           class=${`icon-btn ${rail === 'visible' ? 'active' : ''}`}
           onClick=${() => (railSignal.value = rail === 'visible' ? 'hidden' : 'visible')}

@@ -25,6 +25,7 @@ import { menuModelSignal } from './dataModel.js'
 import {
   selectedIdSignal, createSessionDialogSignal, confirmDialogSignal,
   groupNameDialogSignal, mutationsEnabledSignal, infoDrawerOpenSignal,
+  profilesSignal, systemStatsSignal,
 } from './state.js'
 import {
   activeTabSignal, paletteOpenSignal, tweaksOpenSignal,
@@ -130,6 +131,37 @@ export function AppShell() {
         }
       })
       .catch(() => {})
+  }, [])
+
+  // Hydrate profilesSignal once. The Topbar reads this for the profile
+  // dropdown options and uses the `current` field to seed profileSignal
+  // (UI-side selection) on first load.
+  useEffect(() => {
+    fetch('/api/profiles')
+      .then(r => r.ok ? r.json() : null)
+      .then(data => {
+        if (data && Array.isArray(data.profiles)) {
+          profilesSignal.value = data
+          if (data.current) profileSignal.value = data.current
+        }
+      })
+      .catch(() => {})
+  }, [])
+
+  // Poll /api/system/stats every 5s for the Footer indicators. Stops on
+  // unmount; the Footer treats absent fields as "unavailable" so the user
+  // sees nothing rather than zeros when a collector is offline.
+  useEffect(() => {
+    let cancelled = false
+    const fetchStats = () => {
+      fetch('/api/system/stats')
+        .then(r => r.ok ? r.json() : null)
+        .then(data => { if (!cancelled && data) systemStatsSignal.value = data })
+        .catch(() => {})
+    }
+    fetchStats()
+    const id = setInterval(fetchStats, 5000)
+    return () => { cancelled = true; clearInterval(id) }
   }, [])
 
   // Global keyboard shortcuts.

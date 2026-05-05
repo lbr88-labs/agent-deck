@@ -139,3 +139,15 @@ export const mutationsEnabledSignal = signal(true)
 // has seen real data, it is past the skeleton phase forever. Per 06-05 STATE.md
 // handoff: new signals are APPENDED AT THE TAIL to preserve clean merges.
 export const sessionsLoadedSignal = signal(false)
+
+// PR-B: profiles list from GET /api/profiles, hydrated once on AppShell mount.
+// Shape: { current: string, profiles: string[] }. The Topbar reads this to
+// build the profile dropdown (replacing hardcoded options).
+export const profilesSignal = signal(null)
+
+// PR-B: system sysinfo block from GET /api/system/stats, polled every 5s.
+// Shape: { cpu, memory, disk, load, gpu?, network }. Each block is only
+// present when the underlying collector is Available=true. The Footer reads
+// this for live CPU / memory / network indicators. Defaults to null until
+// the first poll lands; consumers handle the null case.
+export const systemStatsSignal = signal(null)
