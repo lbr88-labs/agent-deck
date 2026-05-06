@@ -415,32 +415,39 @@ export function TerminalPanel() {
     }
   }
 
+  // PR-B: outer chrome uses the bundle's `.term-frame` look.
+  // The `.term-wrap` parent (provided by panes/TerminalPane.js) supplies
+  // outer padding and flex sizing, so this component only renders the
+  // inner frame + xterm canvas.
   return html`
-    <div class="flex flex-col h-full relative">
-      <div class="flex-1 min-h-0 min-w-0 p-sp-16 overflow-hidden">
-        <div ref=${containerRef} class="h-full w-full overflow-hidden" />
+    <div class="term-frame" style="position: relative;">
+      <div class="term-strip">
+        <span class="tdots"><i/><i/><i/></span>
+        <span class="tpath">session · ${sessionId}</span>
+        <span style="flex: 1;"/>
+      </div>
+      <div style="flex: 1; min-height: 0; min-width: 0; overflow: hidden; padding: 14px 16px;">
+        <div ref=${containerRef} style="height: 100%; width: 100%; overflow: hidden;"/>
       </div>
       ${fatalError && html`
         <div role="alert"
-             class="absolute inset-x-0 top-0 m-sp-12 rounded-md border border-tn-red/40 bg-tn-card/95 dark:bg-tn-card/95 bg-white/95 shadow-lg p-sp-16">
-          <div class="flex items-start gap-sp-12">
-            <svg class="w-5 h-5 flex-shrink-0 dark:text-tn-red text-red-600" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
-              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
-                    d="M12 9v2m0 4h.01M5.07 19h13.86c1.54 0 2.5-1.67 1.73-3L13.73 4a2 2 0 00-3.46 0L3.34 16c-.77 1.33.19 3 1.73 3z"/>
-            </svg>
-            <div class="flex-1 min-w-0">
-              <p class="font-semibold dark:text-tn-fg text-gray-900">Terminal disconnected</p>
-              <p class="text-sm dark:text-tn-fg/80 text-gray-700 mt-1">${fatalError.message}</p>
-              ${fatalError.hint && html`<p class="text-sm dark:text-tn-muted text-gray-600 mt-2">${fatalError.hint}</p>`}
-              <div class="flex gap-sp-8 mt-3">
-                <button type="button" onClick=${handleFatalRestart}
-                  class="px-3 py-1.5 rounded text-sm dark:bg-tn-green/20 bg-green-100 dark:text-tn-green text-green-700 hover:dark:bg-tn-green/30 hover:bg-green-200 transition-colors">
-                  Restart session
-                </button>
-                <button type="button" onClick=${() => setFatalError(null)}
-                  class="px-3 py-1.5 rounded text-sm dark:text-tn-muted text-gray-600 hover:dark:bg-tn-muted/10 hover:bg-gray-100 transition-colors">
-                  Dismiss
-                </button>
+             style=${{
+               position: 'absolute', inset: '12px 12px auto 12px',
+               border: '1px solid rgba(247,118,142,0.4)',
+               background: 'rgba(22,22,30,0.95)',
+               borderRadius: 'var(--radius-lg)',
+               boxShadow: '0 30px 60px -20px rgba(0,0,0,0.55)',
+               padding: '14px 16px',
+             }}>
+          <div style="display: flex; align-items: flex-start; gap: 12px;">
+            <span style="color: var(--tn-red); font-size: 18px; line-height: 1;">⚠</span>
+            <div style="flex: 1; min-width: 0;">
+              <div style="font-weight: 600; color: var(--text-hi);">Terminal disconnected</div>
+              <div style="font-size: 12.5px; color: var(--text); margin-top: 4px;">${fatalError.message}</div>
+              ${fatalError.hint && html`<div style="font-size: 11.5px; color: var(--muted); margin-top: 6px;">${fatalError.hint}</div>`}
+              <div style="display: flex; gap: 8px; margin-top: 10px;">
+                <button type="button" class="btn primary" onClick=${handleFatalRestart}>Restart session</button>
+                <button type="button" class="btn ghost" onClick=${() => setFatalError(null)}>Dismiss</button>
               </div>
             </div>
           </div>

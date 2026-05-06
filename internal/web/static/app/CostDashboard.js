@@ -198,61 +198,58 @@ export function CostDashboard() {
 
   if (loading) {
     return html`
-      <div class="p-4 md:p-6 overflow-y-auto h-full dark:text-tn-fg text-gray-700">
-        <p class="text-sm dark:text-tn-muted text-gray-500">Loading cost data...</p>
+      <div style="padding: 18px; font-family: var(--mono); font-size: 12px; color: var(--muted);">
+        Loading cost data…
       </div>
     `
   }
 
   if (error) {
     return html`
-      <div class="p-4 md:p-6 overflow-y-auto h-full dark:text-tn-fg text-gray-700">
-        <p class="text-sm dark:text-tn-muted text-gray-500">
-          Cost tracking is not enabled. Start agent-deck with cost tracking to see data here.
-        </p>
+      <div class="chart-card" style="margin: 14px;">
+        <div class="title">Cost tracking unavailable</div>
+        <div style="font-family: var(--mono); font-size: 12px; color: var(--text-dim); line-height: 1.6;">
+          Start agent-deck with the cost tracker enabled to see spend, daily history, and per-model
+          breakdowns here. The fixture binary intentionally runs without it.
+        </div>
       </div>
     `
   }
 
   return html`
-    <div class="p-sp-16 md:p-sp-24 overflow-y-auto h-full dark:text-tn-fg text-gray-700">
-
-      <!-- Summary cards -->
-      <div class="grid grid-cols-2 lg:grid-cols-4 gap-sp-16 mb-sp-24">
-        <div class="dark:bg-tn-card bg-white rounded-lg p-4">
-          <div class="text-xs dark:text-tn-muted text-gray-500 uppercase">Today</div>
-          <div class="text-2xl font-bold dark:text-[#7dcfff] text-teal-600 mt-1">${fmt(summary.today_usd)}</div>
-          <div class="text-xs dark:text-tn-muted text-gray-600 mt-1">${summary.today_events} events</div>
+    <div style="display: flex; flex-direction: column; gap: 12px; flex: 1; min-height: 0; overflow: auto;">
+      <div class="stat-grid">
+        <div class="stat">
+          <div class="lab">TODAY</div>
+          <div class="val">${fmt(summary.today_usd)}</div>
+          <div class="delta">${summary.today_events} events</div>
         </div>
-        <div class="dark:bg-tn-card bg-white rounded-lg p-4">
-          <div class="text-xs dark:text-tn-muted text-gray-500 uppercase">This Week</div>
-          <div class="text-2xl font-bold dark:text-[#7dcfff] text-teal-600 mt-1">${fmt(summary.week_usd)}</div>
-          <div class="text-xs dark:text-tn-muted text-gray-600 mt-1">${summary.week_events} events</div>
+        <div class="stat">
+          <div class="lab">THIS WEEK</div>
+          <div class="val">${fmt(summary.week_usd)}</div>
+          <div class="delta">${summary.week_events} events</div>
         </div>
-        <div class="dark:bg-tn-card bg-white rounded-lg p-4">
-          <div class="text-xs dark:text-tn-muted text-gray-500 uppercase">This Month</div>
-          <div class="text-2xl font-bold dark:text-[#7dcfff] text-teal-600 mt-1">${fmt(summary.month_usd)}</div>
-          <div class="text-xs dark:text-tn-muted text-gray-600 mt-1">${summary.month_events} events</div>
+        <div class="stat">
+          <div class="lab">THIS MONTH</div>
+          <div class="val">${fmt(summary.month_usd)}</div>
+          <div class="delta">${summary.month_events} events</div>
         </div>
-        <div class="dark:bg-tn-card bg-white rounded-lg p-4">
-          <div class="text-xs dark:text-tn-muted text-gray-500 uppercase">Projected</div>
-          <div class="text-2xl font-bold dark:text-[#7dcfff] text-teal-600 mt-1">${fmt(summary.projected_usd)}</div>
-          <div class="text-xs dark:text-tn-muted text-gray-600 mt-1">based on 7-day avg</div>
+        <div class="stat">
+          <div class="lab">PROJECTED</div>
+          <div class="val">${fmt(summary.projected_usd)}</div>
+          <div class="delta">based on 7-day avg</div>
         </div>
       </div>
-
-      <!-- Charts -->
-      <div class="grid grid-cols-1 lg:grid-cols-3 gap-sp-16 mb-sp-24">
-        <div class="lg:col-span-2 dark:bg-tn-card bg-white rounded-lg p-4">
-          <div class="text-sm dark:text-tn-muted text-gray-500 uppercase mb-3">Daily Spend (Last 30 Days)</div>
+      <div style="display: grid; grid-template-columns: 2fr 1fr; gap: 12px;">
+        <div class="chart-card">
+          <div class="title">Daily spend · last 30 days</div>
           <canvas ref=${dailyCanvasRef}></canvas>
         </div>
-        <div class="dark:bg-tn-card bg-white rounded-lg p-4">
-          <div class="text-sm dark:text-tn-muted text-gray-500 uppercase mb-3">Cost by Model</div>
+        <div class="chart-card">
+          <div class="title">Cost by model</div>
           <canvas ref=${modelCanvasRef}></canvas>
         </div>
       </div>
-
     </div>
   `
 }

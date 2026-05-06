@@ -1,14 +1,16 @@
-// Toast.js -- Global toast notifications (WEB-P0-4 + POL-7)
+// Toast.js -- Global toast notifications, restyled (PR-B) to use the bundle's
+// `.toast` class with role-styled border tints (errors bordered in red,
+// success in green, info in accent blue).
 //
-// Contract (06-CONTEXT.md lines 84-96):
+// Behavior contract preserved verbatim from pre-redesign:
 //   - Visible stack capped at 3.
-//   - When a 4th toast arrives, evict oldest non-error first (FIFO).
-//     Errors are evicted only if all 3 visible are errors AND a new error arrives.
-//   - info / success toasts auto-dismiss after 5 seconds.
-//   - error toasts do NOT auto-dismiss (require explicit click).
-//   - Dismissed toasts push into toastHistorySignal (capped at 50,
-//     localStorage-persisted under key `agentdeck_toast_history`).
-//   - Errors use aria-live="assertive"; info / success use aria-live="polite".
+//   - Eviction: oldest non-error first; only evict errors when all visible
+//     are errors AND a new error arrives.
+//   - info / success auto-dismiss after 5s.
+//   - error toasts require explicit click.
+//   - Dismissed toasts pushed to toastHistorySignal (cap 50, localStorage
+//     key `agentdeck_toast_history`).
+//   - aria-live="assertive" for errors, "polite" otherwise.
 import { html } from 'htm/preact'
 import { toastsSignal, toastHistorySignal } from './state.js'
 
@@ -23,29 +25,24 @@ function pushToHistory(toast) {
   toastHistorySignal.value = next
   try {
     localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(next))
-  } catch (_) {
-    // localStorage may throw in incognito / privacy modes; drop persistence silently.
-  }
+  } catch (_) { /* incognito */ }
 }
 
 export function addToast(message, type) {
   const resolvedType = type || 'error'
   const newToast = { id: ++nextId, message, type: resolvedType, createdAt: Date.now() }
   let next = [...toastsSignal.value, newToast]
-  // Cap visible stack at 3 (literal per 06-CONTEXT.md line 91)
   if (next.length > 3) {
-    // Evict oldest non-error first; only evict errors if all visible are errors.
     const nonErrorIdx = next.findIndex(t => t.type !== 'error')
     if (nonErrorIdx >= 0) {
       const [evicted] = next.splice(nonErrorIdx, 1)
       pushToHistory(evicted)
     } else {
-      const evicted = next.shift() // FIFO error eviction (only when all visible are errors)
+      const evicted = next.shift()
       pushToHistory(evicted)
     }
   }
   toastsSignal.value = next
-  // Auto-dismiss info / success only. Errors require explicit X click.
   if (newToast.type !== 'error') {
     setTimeout(() => removeToast(newToast.id), AUTO_DISMISS_MS)
   }
@@ -57,57 +54,52 @@ export function removeToast(id) {
   toastsSignal.value = toastsSignal.value.filter(t => t.id !== id)
 }
 
-export function ToastContainer() {
-  const toasts = toastsSignal.value
-  const errors = toasts.filter(t => t.type === 'error')
-  const nonErrors = toasts.filter(t => t.type !== 'error')
-  if (toasts.length === 0) return null
-
+function ToastItem({ id, message, type }) {
+  const borderColor =
+    type === 'error'   ? 'var(--tn-red)'
+    : type === 'info'  ? 'var(--accent)'
+    : 'var(--tn-green)'
+  const sigil =
+    type === 'error'   ? '✕'
+    : type === 'info'  ? 'ℹ'
+    : '✓'
   return html`
-    <div class="fixed bottom-4 right-4 z-toast flex flex-col gap-2 max-w-sm pointer-events-none">
-      ${errors.length > 0 && html`
-        <div role="alert" aria-live="assertive" class="flex flex-col gap-2 pointer-events-auto">
-          ${errors.map(toast => html`<${ToastItem} key=${toast.id} ...${toast} />`)}
-        </div>
-      `}
-      ${nonErrors.length > 0 && html`
-        <div role="status" aria-live="polite" class="flex flex-col gap-2 pointer-events-auto">
-          ${nonErrors.map(toast => html`<${ToastItem} key=${toast.id} ...${toast} />`)}
-        </div>
-      `}
+    <div class="toast" style=${{ borderColor, position: 'relative', pointerEvents: 'auto' }}>
+      <span class="t" style=${{ color: borderColor }}>${sigil}</span>
+      <span style="margin-left: 6px;">${message}</span>
+      <button type="button"
+        onClick=${() => removeToast(id)}
+        aria-label="Dismiss"
+        style="background: transparent; border: 0; color: var(--muted); cursor: pointer;
+               margin-left: 10px; padding: 0 4px; font-size: 12px;">✕</button>
     </div>
   `
 }
 
-function ToastItem({ id, message, type }) {
-  const bgColor = type === 'error'
-    ? 'dark:bg-tn-red/20 bg-red-50 dark:border-tn-red/40 border-red-200'
-    : 'dark:bg-tn-green/20 bg-green-50 dark:border-tn-green/40 border-green-200'
-  const textColor = type === 'error'
-    ? 'dark:text-tn-red text-red-700'
-    : 'dark:text-tn-green text-green-700'
-  const iconColor = type === 'error'
-    ? 'dark:text-tn-red text-red-500'
-    : 'dark:text-tn-green text-green-500'
-
+export function ToastContainer() {
+  const toasts = toastsSignal.value
+  if (toasts.length === 0) return null
+  const errors = toasts.filter(t => t.type === 'error')
+  const nonErrors = toasts.filter(t => t.type !== 'error')
+  // Stack toasts vertically above the footer; the bundle's `.toast` class
+  // anchors a single instance to the bottom-right, so for multiple we
+  // wrap with absolute-positioned stack.
   return html`
-    <div class="flex items-start gap-2 px-3 py-2.5 rounded-lg border shadow-lg
-                ${bgColor} animate-slide-in-right">
-      <svg class="w-4 h-4 mt-0.5 flex-shrink-0 ${iconColor}" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
-        ${type === 'error'
-          ? html`<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
-                       d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/>`
-          : html`<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
-                       d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"/>`
-        }
-      </svg>
-      <span class="text-sm flex-1 ${textColor}">${message}</span>
-      <button
-        type="button"
-        onClick=${() => removeToast(id)}
-        class="flex-shrink-0 min-w-[44px] min-h-[44px] flex items-center justify-center ${textColor} opacity-60 hover:opacity-100 transition-opacity"
-        aria-label="Dismiss"
-      >\u2715</button>
+    <div style=${{
+      position: 'fixed', bottom: '40px', right: '14px', zIndex: 70,
+      display: 'flex', flexDirection: 'column', gap: '6px',
+      pointerEvents: 'none', maxWidth: '420px',
+    }}>
+      ${errors.length > 0 && html`
+        <div role="alert" aria-live="assertive" style=${{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+          ${errors.map(t => html`<${ToastItem} key=${t.id} ...${t}/>`)}
+        </div>
+      `}
+      ${nonErrors.length > 0 && html`
+        <div role="status" aria-live="polite" style=${{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+          ${nonErrors.map(t => html`<${ToastItem} key=${t.id} ...${t}/>`)}
+        </div>
+      `}
     </div>
   `
 }
