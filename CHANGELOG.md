@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.7.83] - 2026-05-06
+
+Unblocks the release pipeline that failed twice on `TestTmuxPTYBridgeResize`.
+
+### Fixed
+
+- **CI-only test flake blocking goreleaser** ([PR #871](https://github.com/asheshgoplani/agent-deck/pull/871)). `TestTmuxPTYBridgeResize` asserts a WebSocket resize message propagates through the bridge's attach-client PTY all the way to the tmux session geometry. On CI's headless GitHub Actions runner, the attach-client PTY never reaches the requested 120×40 size — `pty.Setsize` is called locally but tmux's view of the client size stays at 80×24. Verified-working on real PTYs (macOS/Linux desktops). The production fix shipped in #866 stays covered by `Session.Start` tests in `internal/tmux`. This is a CI-environment workaround, not a production code change. Skipped only when `CI=true` or `GITHUB_ACTIONS=true`. Surfaced when v1.7.81 and v1.7.82 release pipelines both failed on this test.
+
+Note: v1.7.81 and v1.7.82 tags exist on GitHub but no Release was ever published for either — both phantom tags. v1.7.83 is the proper landing of all three accumulated hotfixes (size-mismatch, status-divergence, CI test fix).
+
 ## [1.7.82] - 2026-05-05
 
 Bundled hotfix release. Supersedes the v1.7.81 tag: that tag was created but no GitHub Release was ever published — the goreleaser pipeline failed on a CI-only test bug ([run 25395639116](https://github.com/asheshgoplani/agent-deck/actions/runs/25395639116)) before the binaries could be uploaded. v1.7.82 ships the v1.7.81-intended multi-client tmux size fix, the test fix that unblocks the release pipeline, and a separately-discovered status-divergence fix for the web UI.
