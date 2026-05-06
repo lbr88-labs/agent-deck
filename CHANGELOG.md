@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.8.1] - 2026-05-06
+
+Hotfix bundle on top of v1.8.0. Five focused bug fixes — three from external contributors, two from accumulated triage.
+
+### Fixed
+
+- **`agent-deck session send` could silently drop prompts to sub-sessions** ([#876](https://github.com/asheshgoplani/agent-deck/issues/876), [PR #879](https://github.com/asheshgoplani/agent-deck/pull/879)). Reported by @DOKoenegras (v1.7.71). The verification loop in `sendWithRetryTarget` tracked positive delivery signals (active-status, paste-marker, message-in-pane) but treated their absence as success. Under timing races (sub-session spawned in quick succession, inner Claude TUI's input handler not yet mounted), every signal genuinely fails to fire and the loop returns `nil` after exhausting its 15s budget. Fixed by adding opt-in `verifyDelivery` to `sendRetryOptions`; default-on for the CLI's `defaultSendOptions()` and `noWaitSendOptions()` paths. When set, the loop now returns an error referencing #876 if no positive evidence is observed. Six new regression tests in `cmd/agent-deck/session_send_test.go`; two confirmed TDD red→green.
+
+- **`bridge.py` failed to import on Python 3.8 (default WSL Ubuntu 20.04)** ([#864](https://github.com/asheshgoplani/agent-deck/issues/864), [PR #878](https://github.com/asheshgoplani/agent-deck/pull/878)). Reported by @JMBattista. Runtime use of `Coroutine` from `collections.abc` (PEP 585 subscript) failed on Python 3.8 with `TypeError: 'ABCMeta' object is not subscriptable`. Fixed by importing `Coroutine` from `typing` instead. Added `conductor/tests/test_python_compat.py` (AST scan for runtime PEP 585 subscripts) and `.github/workflows/python-compat.yml` (matrix on Python 3.8/3.9/3.10/3.11/3.12) so this can't regress.
+
+- **Homebrew install verification** ([#873](https://github.com/asheshgoplani/agent-deck/issues/873), [PR #878](https://github.com/asheshgoplani/agent-deck/pull/878)). Reported by @Wolfsrudel. Live infrastructure was already healthy on v1.8.0 (goreleaser brews block fired correctly, formula present at `asheshgoplani/homebrew-tap`); the original report predates that fix. Added `scripts/verify-homebrew-install.sh` (8 checks: tap reachable, formula present, version matches latest release, all asset URLs resolve, README install command unchanged) and `.github/workflows/homebrew-verify.yml` (runs on PRs touching install docs / goreleaser, on every release tag, weekly cron) so future drift gets caught.
+
+- **TOCTOU race in worktree setup script executable-bit dispatch** ([PR #861](https://github.com/asheshgoplani/agent-deck/pull/861), thanks @spawnia). `buildSetupCmd` re-stat'd the script after `findWorktreeSetupScript` had already statted it, opening a window where mode bits could change between calls. Fix captures `os.FileMode` once at discovery and threads it through. Internal-only signature change; public `CreateWorktreeWithSetup` API unchanged. New test `TestFindWorktreeSetupScript_PresentExecutable` validates the captured mode.
+
+- **`~` in worktree `path_template` was treated as a literal directory** ([PR #863](https://github.com/asheshgoplani/agent-deck/pull/863), thanks @spawnia). `resolveTemplate` did not expand `~` so configured paths like `~/.agent-deck/worktrees/{repo}/{branch}` resolved to nonsense like `/home/user/project/~/.agent-deck/worktrees/...`. `GenerateWorktreePath` already had the right expansion; this realigns `resolveTemplate` with it. Includes a regression test that fails with the literal-`~` path before the fix.
+
+- **`%` filter exclude-set is now configurable; active-filter hint is highlighted** ([PR #874](https://github.com/asheshgoplani/agent-deck/pull/874), thanks @borng). Resolves [#491](https://github.com/asheshgoplani/agent-deck/issues/491) / [#516](https://github.com/asheshgoplani/agent-deck/issues/516). Adds `[display].active_filter_excludes` config — default `["error", "stopped"]` preserves existing behavior; opt in to `["error"]` to keep stopped/closed sessions visible. The pill bar's dim state, `matchesStatusFilter`, and per-frame hint render all consult the same exclude set. The `$` keybinding alignment between TUI/MD docs/UI hint is a follow-up; see borng's comment on PR #874.
+
 ## [1.8.0] - 2026-05-06
 
 WebUI redesign — five-zone responsive layout. Ships PR-B ([PR #860](https://github.com/asheshgoplani/agent-deck/pull/860)) on top of every accumulated v1.7.81-v1.7.83 hotfix that the redesign was originally targeted at. Users running v1.7.83 still saw the pre-redesign UI; v1.8.0 is the version where the new shell actually reaches them.
