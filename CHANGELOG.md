@@ -7,6 +7,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.8.0] - 2026-05-06
+
+WebUI redesign — five-zone responsive layout. Ships PR-B ([PR #860](https://github.com/asheshgoplani/agent-deck/pull/860)) on top of every accumulated v1.7.81-v1.7.83 hotfix that the redesign was originally targeted at. Users running v1.7.83 still saw the pre-redesign UI; v1.8.0 is the version where the new shell actually reaches them.
+
+### Added
+
+- **Five-zone AppShell** — top bar, left rail, main pane, right rail, mobile tab bar. Replaces the prior two-pane layout. Tablet (~820px) and phone (<720px) breakpoints documented in the playwright `chromium-tablet` / `chromium-phone` projects.
+- **RightRail panel** — pulled session-context affordances out of the main pane into a dedicated rail (toggleable on tablet, hidden on phone in favor of the bottom tab bar).
+- **MobileTabs** — bottom tab bar that surfaces the rail/main switching that desktop gets via the side rails.
+- **CommandPalette redesign** — restyled chrome consistent with the new dialog system.
+- **Restyled dialogs** — `CreateSession`, `Confirm`, `GroupName` move to the new design tokens; new dialog header/footer rhythm.
+- **Restyled panels** — `Toast`, `ToastHistoryDrawer`, `SettingsPanel`, `EmptyState`, `TerminalPanel` chrome, `CostDashboard` chrome.
+- **Design tokens** — `internal/web/static/app/design-tokens.css` extracts color / spacing / radius primitives consumed by the redesigned components. Tailwind output regenerated against the new source globs.
+- **`/api/profiles` + `/api/system/stats`** — new GET endpoints powering `ProfileDropdown` (display-only by design) and the redesigned `StubPane`.
+
+### Changed
+
+- **Pre-redesign components removed.** The legacy two-pane chrome and its assets are gone — there is no `?legacy` toggle. Anyone pinning to an older bundle should pin to the v1.7.83 release artifacts.
+- **Visual-baseline screenshots regenerated** for the new shell across desktop/tablet/phone projects.
+
+### Fixed
+
+- **Cold-load `profileSignal` no longer flashes "personal" before the API resolves** — initial render now defers the dropdown label until `/api/profiles` responds, so users on a non-personal profile don't see a one-frame flicker.
+- **`TerminalPane` stays mounted across tab switches** — orphan signal exports that survived the redesign port were removed; tab switches now preserve PTY state instead of remounting and dropping the connection.
+
+### Notes
+
+- **Profile switcher is display-only.** `ProfileDropdown` shows the active profile but does not switch profiles from the web UI. Switching is still done via the `-p` / `--profile` flag at `agent-deck` invocation time. Surfacing read-only state was a deliberate scoping choice for v1.8.0.
+- **Bundles every v1.7.81-v1.7.83 hotfix.** Multi-client tmux size mismatch ([#866](https://github.com/asheshgoplani/agent-deck/pull/866)), web `/api/sessions` waiting-status divergence ([#867](https://github.com/asheshgoplani/agent-deck/pull/867)), `TestTmuxPTYBridgeResize` CI skip ([#871](https://github.com/asheshgoplani/agent-deck/pull/871)) are all included — those releases shipped on top of the pre-redesign UI; v1.8.0 is where they meet the new shell.
+- **Stack stays Preact + htm + signals.** No framework rewrite, no new dependencies. The redesign reorganizes layout and chrome only.
+
 ## [1.7.83] - 2026-05-06
 
 Unblocks the release pipeline that failed twice on `TestTmuxPTYBridgeResize`.

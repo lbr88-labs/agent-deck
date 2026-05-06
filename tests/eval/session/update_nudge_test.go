@@ -44,10 +44,10 @@ func TestEval_VersionFlag_ShowsUpdateAnnotationFromCache(t *testing.T) {
 	}
 	cache := map[string]any{
 		"checked_at":      time.Now().Format(time.RFC3339Nano),
-		"latest_version":  "1.7.99",
+		"latest_version":  "1.8.99",
 		"current_version": "1.7.20",
 		"download_url":    "https://example.invalid/download",
-		"release_url":     "https://example.invalid/releases/v1.7.99",
+		"release_url":     "https://example.invalid/releases/v1.8.99",
 		"releases_behind": 30,
 	}
 	data, err := json.MarshalIndent(cache, "", "  ")
@@ -72,13 +72,13 @@ func TestEval_VersionFlag_ShowsUpdateAnnotationFromCache(t *testing.T) {
 	if !strings.Contains(got, "Agent Deck v") {
 		t.Fatalf("missing version header; got: %q", got)
 	}
-	if !strings.Contains(got, "(update available: v1.7.99)") {
+	if !strings.Contains(got, "(update available: v1.8.99)") {
 		t.Fatalf("missing update annotation — did the flag dispatch bypass writeVersionOutput?\n"+
 			"got: %q\n"+
 			"wanted substring: %q\n"+
 			"Fix hint: check cmd/agent-deck/main.go line ~213 ('case \"version\", \"--version\", \"-v\":') "+
 			"still calls writeVersionOutput(os.Stdout, Version).",
-			got, "(update available: v1.7.99)")
+			got, "(update available: v1.8.99)")
 	}
 }
 
@@ -95,7 +95,7 @@ func TestEval_VersionFlag_EnvSkipSuppressesAnnotation(t *testing.T) {
 	}
 	cache := map[string]any{
 		"checked_at":      time.Now().Format(time.RFC3339Nano),
-		"latest_version":  "1.7.99",
+		"latest_version":  "1.8.99",
 		"current_version": "1.7.20",
 		"releases_behind": 30,
 	}
