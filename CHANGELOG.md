@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **MCP-per-scope cascade prevention.** On Linux+systemd hosts, each MCP child process now spawns inside its own transient user scope (`mcp-<owner>-<mcp>-<ts>.scope` under `mcp-pool.slice`) with `MemoryMax=1G`, `CPUWeight=50`, and `TasksMax=200`. Background: a 2026-05-08 cascade saw 43 simultaneous duplicate `@upstash/context7-mcp` instances accumulate inside the conductor's tmux scope (58.2 GB resident); when `user@1000` memory pressure crossed 50 %, systemd-oomd ranked cgroups by memory × pressure × pgscan and picked the conductor scope (largest by RSS) — SIGKILLing 604 processes in one shot, including the conductor itself. Per-MCP scopes give systemd-oomd a precise kill target so a misbehaving MCP becomes its own victim instead of dragging the orchestrator down. Gated behind `AGENT_DECK_MCP_ISOLATION` (default ON on Linux, OFF elsewhere); falls back to plain `exec.Cmd` when `systemd-run` is missing (containers, minimal images) or on macOS/Windows. Scope semantics use `systemd-run --scope`, which `execve`'s into the target command — so PID, file descriptors, env vars, process group, and the existing `Setpgid + SIGTERM-the-pgroup` cancel logic in `socket_proxy.go` all keep working unchanged. Wired into both stdio (`internal/mcppool/socket_proxy.go`) and HTTP (`internal/mcppool/http_server.go`) MCP launch paths. Eight new regression tests in `internal/mcppool/scope_launcher_test.go` and `scope_launcher_integration_test.go`, including a two-way correctness check (mutating `wrapMCPCommand` to drop the wrapper makes the integration test fail with the child landing back in the parent's scope — exactly the cascade pattern from the root cause analysis).
+
 ## [1.8.3] - 2026-05-07
 
 Hotfix bundle on top of v1.8.2. Three contributor PRs: a TUI inline-title regression and two conductor heartbeat-rules improvements bringing the OS heartbeat path to parity with `bridge.py`.
