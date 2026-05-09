@@ -152,8 +152,17 @@ func (s *HTTPServer) Start() error {
 	}
 	s.logWriter = logWriter
 
-	// Start the server process
-	s.process = exec.CommandContext(s.ctx, s.command, s.args...)
+	// Start the server process. On Linux+systemd we wrap each MCP child
+	// inside its own transient user scope so systemd-oomd's per-cgroup
+	// kill heuristic targets the misbehaving MCP, not the conductor.
+	launchCmd, launchArgs, scopeWrapped, scopeUnit := wrapMCPCommand(
+		fmt.Sprintf("%d", os.Getpid()), s.name, s.command, s.args)
+	s.process = exec.CommandContext(s.ctx, launchCmd, launchArgs...)
+	if scopeWrapped {
+		httpLog.Info("mcp_isolation_scope",
+			slog.String("mcp", s.name),
+			slog.String("unit", scopeUnit))
+	}
 	cmdEnv := os.Environ()
 	for k, v := range s.env {
 		// Reject environment variables that could be used for code injection.

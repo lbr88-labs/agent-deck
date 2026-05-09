@@ -214,7 +214,14 @@ func (p *SocketProxy) Start() error {
 	}
 	p.logWriter = logWriter
 
-	p.mcpProcess = exec.CommandContext(p.ctx, p.command, p.args...)
+	launchCmd, launchArgs, scopeWrapped, scopeUnit := wrapMCPCommand(
+		fmt.Sprintf("%d", os.Getpid()), p.name, p.command, p.args)
+	p.mcpProcess = exec.CommandContext(p.ctx, launchCmd, launchArgs...)
+	if scopeWrapped {
+		proxyLog.Info("mcp_isolation_scope",
+			slog.String("mcp", p.name),
+			slog.String("unit", scopeUnit))
+	}
 	cmdEnv := os.Environ()
 	for k, v := range p.env {
 		// Reject environment variables that could be used for code injection.
