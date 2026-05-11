@@ -315,11 +315,30 @@ func (s *HTTPServer) Start() error {
 
 	// Wait for server to become ready
 	if err := s.waitReady(); err != nil {
-		// Process may have already exited
-		s.SetStatus(StatusFailed)
+		// Caller has no Stop() path on a failed Start, so we must
+		// clean up the child + log FD ourselves here. Without this,
+		// every Start cycle of an unhealthy MCP leaked one log FD
+		// (TestHTTPServer_Start_FailingCommand_NoFDLeak, v1.9
+		// release blocker). Kill, then wait on processDone (closed
+		// by monitorProcess after Wait()) before closing logWriter
+		// so the child's stderr can't write into a closed file.
+		if proc != nil && proc.Process != nil {
+			_ = proc.Process.Kill()
+		}
+		if done != nil {
+			select {
+			case <-done:
+			case <-time.After(2 * time.Second):
+				httpLog.Warn("waitready_reap_timeout",
+					slog.String("mcp", s.name))
+			}
+		}
+		_ = logWriter.Close()
 		s.mu.Lock()
+		s.logWriter = nil
 		s.lastError = err
 		s.mu.Unlock()
+		s.SetStatus(StatusFailed)
 		return fmt.Errorf("HTTP server %s failed to become ready: %w", s.name, err)
 	}
 
@@ -404,14 +423,24 @@ func (s *HTTPServer) waitReady() error {
 	pollInterval := 100 * time.Millisecond
 	deadline := time.Now().Add(s.startupTimeout)
 
+	// Snapshot the per-spawn done channel. monitorProcess closes it after
+	// Wait() returns, so it is the Wait-safe signal that the child exited.
+	// Reading s.process.ProcessState directly races with Wait()'s write to
+	// that field (see killLeftoverProcess comment for the same pattern).
+	s.mu.RLock()
+	done := s.processDone
+	s.mu.RUnlock()
+
 	for time.Now().Before(deadline) {
-		// Check if process exited
-		s.mu.RLock()
-		if s.process != nil && s.process.ProcessState != nil {
-			s.mu.RUnlock()
-			return fmt.Errorf("process exited before becoming ready")
+		// Check if process exited via the done channel — no race with
+		// the monitor goroutine's Wait().
+		if done != nil {
+			select {
+			case <-done:
+				return fmt.Errorf("process exited before becoming ready")
+			default:
+			}
 		}
-		s.mu.RUnlock()
 
 		// Check if URL is reachable
 		if s.isURLReachable() {
