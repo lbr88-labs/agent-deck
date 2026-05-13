@@ -46,14 +46,14 @@ func migrateTestSetup(t *testing.T, src, dst string) (srcStorage, dstStorage *St
 func makeRow(id, title, groupPath string) *statedb.InstanceRow {
 	yolo := true
 	tdBlob, _ := json.Marshal(map[string]any{
-		"claude_session_id":   "claude-" + id,
-		"claude_detected_at":  1700000000,
-		"gemini_session_id":   "gem-" + id,
-		"gemini_yolo_mode":    &yolo,
-		"notes":               "migration sentinel " + id,
-		"latest_prompt":       "hello",
-		"loaded_mcp_names":    []string{"mcp-a", "mcp-b"},
-		"channels":            []string{"chan-1"},
+		"claude_session_id":  "claude-" + id,
+		"claude_detected_at": 1700000000,
+		"gemini_session_id":  "gem-" + id,
+		"gemini_yolo_mode":   &yolo,
+		"notes":              "migration sentinel " + id,
+		"latest_prompt":      "hello",
+		"loaded_mcp_names":   []string{"mcp-a", "mcp-b"},
+		"channels":           []string{"chan-1"},
 	})
 	return &statedb.InstanceRow{
 		ID:              id,

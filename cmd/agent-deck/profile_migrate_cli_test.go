@@ -44,7 +44,9 @@ func addInProfile(t *testing.T, home, profile, title, path string) string {
 		t.Fatalf("add in profile %q failed: code=%d\nstdout: %s\nstderr: %s",
 			profile, code, stdout, stderr)
 	}
-	var resp struct{ ID string `json:"id"` }
+	var resp struct {
+		ID string `json:"id"`
+	}
 	if err := json.Unmarshal([]byte(stdout), &resp); err != nil {
 		t.Fatalf("parse add response: %v\nstdout: %s", err, stdout)
 	}

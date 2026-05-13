@@ -1898,6 +1898,7 @@ func TestPromoteSession_SubSessionBecomesTopLevel(t *testing.T) {
 		}
 	}
 }
+
 // TestPromoteSession_TopLevelNoOp: PromoteSession on an already-top-level
 // session is a no-op.
 func TestPromoteSession_TopLevelNoOp(t *testing.T) {
@@ -1974,6 +1975,7 @@ func TestDemoteSession_TopLevelBecomesLastChild(t *testing.T) {
 		t.Errorf("top-level after demote = %v, want %v", gotTop, wantTop)
 	}
 }
+
 // TestDemoteSession_FirstTopLevelNoOp: DemoteSession on the first top-level
 // in a group is a no-op (no previous peer to nest under). Cross-group moves
 // stay on the M shortcut.
@@ -1999,6 +2001,7 @@ func TestDemoteSession_FirstTopLevelNoOp(t *testing.T) {
 		t.Errorf("p1 should remain top-level; got ParentSessionID = %q", p1.ParentSessionID)
 	}
 }
+
 // TestDemoteSession_SubSessionNoOp: demote on an already-sub-session is a
 // no-op (single-level nesting only).
 func TestDemoteSession_SubSessionNoOp(t *testing.T) {
@@ -2024,6 +2027,7 @@ func TestDemoteSession_SubSessionNoOp(t *testing.T) {
 		t.Errorf("sub-session should not change parent on demote; got %q", s1.ParentSessionID)
 	}
 }
+
 // TestDemoteSession_WithChildrenNoOp: a top-level session that already has
 // children of its own cannot be demoted (single-level nesting invariant,
 // matches `session set-parent` validation).
