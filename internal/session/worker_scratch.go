@@ -201,6 +201,36 @@ func (i *Instance) CleanupWorkerScratchConfigDir() {
 	i.WorkerScratchConfigDir = ""
 }
 
+// prepareSpawnConfigForRestart unifies the spawn-env preparation that
+// every Restart() sub-path needs (issue #922). Before this helper, the
+// respawn-pane branch in Restart() skipped worker-scratch preparation
+// while the recreate fallback ran it — so the same session restarted
+// via different conditions could land in different CLAUDE_CONFIG_DIRs.
+// Calling this helper once at the top of Restart() means both sub-paths
+// see identical config-resolution state.
+func (i *Instance) prepareSpawnConfigForRestart() {
+	i.prepareWorkerScratchConfigDirForSpawn()
+}
+
+// applyWorkerScratchOverride is the single seam where the worker-scratch
+// CLAUDE_CONFIG_DIR replaces the resolved one. Returns the effective
+// config dir to use. Centralising the override in one helper means both
+// the inline (`CLAUDE_CONFIG_DIR=...`) and the bash-export
+// (`export CLAUDE_CONFIG_DIR=...`) command-build branches log the swap
+// with identical wording — issue #922 closed the silent-override hole
+// by making this the only place the swap can happen.
+func (i *Instance) applyWorkerScratchOverride(resolvedConfigDir string) string {
+	if i.WorkerScratchConfigDir == "" {
+		return resolvedConfigDir
+	}
+	sessionLog.Info("worker_scratch_override",
+		slog.String("instance_id", i.ID),
+		slog.String("resolved_config_dir", resolvedConfigDir),
+		slog.String("worker_scratch_config_dir", i.WorkerScratchConfigDir),
+	)
+	return i.WorkerScratchConfigDir
+}
+
 // prepareWorkerScratchConfigDirForSpawn is the spawn-path wrapper
 // around EnsureWorkerScratchConfigDir. Called from Start(),
 // StartWithMessage(), and the restart fallback path. Best-effort —

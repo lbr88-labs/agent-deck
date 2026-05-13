@@ -624,16 +624,11 @@ func (i *Instance) buildClaudeCommandWithMessage(baseCommand, message string) st
 	// Also skip if using a custom command (alias handles config dir)
 	configDirPrefix := ""
 	if !hasCustomCommand && IsClaudeConfigDirExplicitForInstance(i) {
-		configDir := GetClaudeConfigDirForInstance(i)
-		// Worker scratch dir override: if a per-instance scratch
-		// CLAUDE_CONFIG_DIR has been prepared (issue #59, v1.7.68),
-		// route the claude binary through it so it loads the mutated
-		// settings.json with the telegram plugin pinned off. Conductors
-		// and explicit channel owners leave WorkerScratchConfigDir
-		// empty and use the ambient profile — see worker_scratch.go.
-		if i.WorkerScratchConfigDir != "" {
-			configDir = i.WorkerScratchConfigDir
-		}
+		// Worker scratch dir override: see applyWorkerScratchOverride
+		// (worker_scratch.go). Issue #922 routed every spawn-construction
+		// branch through this seam so the override emits a single INFO
+		// log line instead of being silent.
+		configDir := i.applyWorkerScratchOverride(GetClaudeConfigDirForInstance(i))
 		configDirPrefix = fmt.Sprintf("CLAUDE_CONFIG_DIR=%s ", configDir)
 	}
 
@@ -758,15 +753,10 @@ func (i *Instance) buildClaudeCommandWithMessage(baseCommand, message string) st
 func (i *Instance) buildBashExportPrefix() string {
 	prefix := fmt.Sprintf("export AGENTDECK_INSTANCE_ID=%s; ", i.ID)
 	if IsClaudeConfigDirExplicitForInstance(i) {
-		configDir := GetClaudeConfigDirForInstance(i)
-		// Worker scratch dir override (issue #59, v1.7.68). Mirrors the
-		// same override in the inline CLAUDE_CONFIG_DIR= prefix path
-		// above — both must route workers through the scratch dir so
-		// the telegram plugin is pinned off regardless of which
-		// command-build branch runs.
-		if i.WorkerScratchConfigDir != "" {
-			configDir = i.WorkerScratchConfigDir
-		}
+		// Worker scratch dir override: see applyWorkerScratchOverride
+		// (worker_scratch.go). Issue #922 unified the override + INFO
+		// log emission across every spawn-construction branch.
+		configDir := i.applyWorkerScratchOverride(GetClaudeConfigDirForInstance(i))
 		prefix += fmt.Sprintf("export CLAUDE_CONFIG_DIR=%s; ", configDir)
 	}
 	return prefix
@@ -4458,6 +4448,15 @@ func (i *Instance) Restart() error {
 	// Skip if MCP dialog just wrote the config (avoids race condition).
 	i.prepareRestartMCPConfig()
 
+	// Issue #922: prepare worker-scratch CLAUDE_CONFIG_DIR for every
+	// restart sub-path (respawn-pane AND recreate-tmux fallback) before
+	// branching. Previously only the recreate fallback called this — the
+	// respawn-pane branch reused whatever WorkerScratchConfigDir happened
+	// to be on the in-memory instance, so a CLI restart that loaded the
+	// instance fresh from storage could end up with stale or missing
+	// scratch state and silently swap the user's per-group config_dir.
+	i.prepareSpawnConfigForRestart()
+
 	// If Claude session with known ID AND tmux session exists, use respawn-pane.
 	if IsClaudeCompatible(i.Tool) && i.ClaudeSessionID != "" && i.tmuxSession != nil && i.tmuxSession.Exists() {
 		resumeCmd, containerName, err := i.prepareCommand(i.buildClaudeResumeCommand())
@@ -4853,16 +4852,11 @@ func (i *Instance) buildClaudeResumeCommand() string {
 	// Also skip if using a custom command (alias handles config dir)
 	configDirPrefix := ""
 	if !hasCustomCommand && IsClaudeConfigDirExplicitForInstance(i) {
-		configDir := GetClaudeConfigDirForInstance(i)
-		// Worker scratch dir override: if a per-instance scratch
-		// CLAUDE_CONFIG_DIR has been prepared (issue #59, v1.7.68),
-		// route the claude binary through it so it loads the mutated
-		// settings.json with the telegram plugin pinned off. Conductors
-		// and explicit channel owners leave WorkerScratchConfigDir
-		// empty and use the ambient profile — see worker_scratch.go.
-		if i.WorkerScratchConfigDir != "" {
-			configDir = i.WorkerScratchConfigDir
-		}
+		// Worker scratch dir override: see applyWorkerScratchOverride
+		// (worker_scratch.go). Issue #922 routed every spawn-construction
+		// branch through this seam so the override emits a single INFO
+		// log line instead of being silent.
+		configDir := i.applyWorkerScratchOverride(GetClaudeConfigDirForInstance(i))
 		configDirPrefix = fmt.Sprintf("CLAUDE_CONFIG_DIR=%s ", configDir)
 	}
 
