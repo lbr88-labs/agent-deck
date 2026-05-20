@@ -381,9 +381,9 @@ type Home struct {
 
 	// Cached status counts (invalidated on instance changes)
 	cachedStatusCounts struct {
-		running, waiting, idle, errored int
-		valid                           atomic.Bool // THREAD-SAFE: accessed from main and worker goroutines
-		timestamp                       time.Time   // For time-based expiration
+		running, waiting, idle, stopped, errored int
+		valid                                    atomic.Bool // THREAD-SAFE: accessed from main and worker goroutines
+		timestamp                                time.Time   // For time-based expiration
 	}
 
 	// Status-transition tracker: emits enriched status_changed INFO,
@@ -9730,13 +9730,14 @@ func (h *Home) importSessions() tea.Msg {
 // Cache expires after 500ms to balance freshness with performance
 // PERFORMANCE: Increased from 100ms to 500ms - status changes are rare
 // during UI interaction, and longer cache reduces View() overhead
-func (h *Home) countSessionStatuses() (running, waiting, idle, errored int) {
+func (h *Home) countSessionStatuses() (running, waiting, idle, stopped, errored int) {
 	// Return cached values if valid and not expired
 	const cacheDuration = 500 * time.Millisecond
 	if h.cachedStatusCounts.valid.Load() &&
 		time.Since(h.cachedStatusCounts.timestamp) < cacheDuration {
 		return h.cachedStatusCounts.running, h.cachedStatusCounts.waiting,
-			h.cachedStatusCounts.idle, h.cachedStatusCounts.errored
+			h.cachedStatusCounts.idle, h.cachedStatusCounts.stopped,
+			h.cachedStatusCounts.errored
 	}
 
 	// Compute counts
@@ -9753,7 +9754,14 @@ func (h *Home) countSessionStatuses() (running, waiting, idle, errored int) {
 			waiting++
 		case session.StatusIdle:
 			idle++
-		case session.StatusError, session.StatusStopped:
+		case session.StatusStopped:
+			// Issue #953 (re-opened): manually-stopped sessions get their
+			// own bucket so the header counter does not slander them as
+			// errors. StatusStopped reaches here only via i.Kill()'s
+			// canonical contract (see internal/session/instance.go) —
+			// crashes still surface as StatusError below.
+			stopped++
+		case session.StatusError:
 			errored++
 		}
 	}
@@ -9773,7 +9781,9 @@ func (h *Home) countSessionStatuses() (running, waiting, idle, errored int) {
 				waiting++
 			case "idle":
 				idle++
-			case "error", "stopped":
+			case "stopped":
+				stopped++
+			case "error":
 				errored++
 			}
 		}
@@ -9784,16 +9794,17 @@ func (h *Home) countSessionStatuses() (running, waiting, idle, errored int) {
 	h.cachedStatusCounts.running = running
 	h.cachedStatusCounts.waiting = waiting
 	h.cachedStatusCounts.idle = idle
+	h.cachedStatusCounts.stopped = stopped
 	h.cachedStatusCounts.errored = errored
 	h.cachedStatusCounts.valid.Store(true)
 	h.cachedStatusCounts.timestamp = time.Now()
-	return running, waiting, idle, errored
+	return running, waiting, idle, stopped, errored
 }
 
 // renderFilterBar renders the quick filter pills
-// Format: [All] [● Running 2] [◐ Waiting 1] [○ Idle 5] [✕ Error 1]
+// Format: [All] [● Running 2] [◐ Waiting 1] [○ Idle 5] [■ Stopped 1] [✕ Error 1]
 func (h *Home) renderFilterBar() string {
-	running, waiting, idle, errored := h.countSessionStatuses()
+	running, waiting, idle, stopped, errored := h.countSessionStatuses()
 
 	// Pill styling
 	activePillStyle := lipgloss.NewStyle().
@@ -9887,6 +9898,28 @@ func (h *Home) renderFilterBar() string {
 			Foreground(ColorText).
 			Background(ColorSurface).
 			Padding(0, 1).Render(idleLabel))
+	}
+
+	// Stopped pill (issue #953): manually-stopped sessions deserve their own
+	// affordance — they're not errors, they're intentional. Render-only-if
+	// non-zero or actively filtered, mirroring the error pill's pattern, so
+	// the bar stays compact when no stopped sessions exist.
+	if stopped > 0 || h.statusFilter == session.StatusStopped {
+		stoppedLabel := fmt.Sprintf("■ %d", stopped)
+		if h.statusFilter == session.StatusStopped {
+			pills = append(pills, lipgloss.NewStyle().
+				Foreground(ColorBg).
+				Background(ColorTextDim).
+				Bold(true).
+				Padding(0, 1).Render(stoppedLabel))
+		} else if isActive && h.activeFilterExcludes[session.StatusStopped] {
+			pills = append(pills, dimPillStyle.Render(stoppedLabel))
+		} else if stopped > 0 {
+			pills = append(pills, lipgloss.NewStyle().
+				Foreground(ColorTextDim).
+				Background(ColorSurface).
+				Padding(0, 1).Render(stoppedLabel))
+		}
 	}
 
 	if errored > 0 || h.statusFilter == session.StatusError {
@@ -10052,7 +10085,7 @@ func (h *Home) View() string {
 	// HEADER BAR
 	// ═══════════════════════════════════════════════════════════════════
 	// Calculate real session status counts for logo and stats
-	running, waiting, idle, errored := h.countSessionStatuses()
+	running, waiting, idle, stopped, errored := h.countSessionStatuses()
 	logo := RenderLogoCompact(running, waiting, idle)
 
 	titleStyle := lipgloss.NewStyle().
@@ -10096,6 +10129,14 @@ func (h *Home) View() string {
 		statsParts = append(
 			statsParts,
 			lipgloss.NewStyle().Foreground(ColorText).Render(fmt.Sprintf("○ %d idle", idle)),
+		)
+	}
+	if stopped > 0 {
+		// Issue #953: stopped sessions get their own segment so users can see
+		// at a glance how many sessions are intentionally off vs. errored.
+		statsParts = append(
+			statsParts,
+			lipgloss.NewStyle().Foreground(ColorTextDim).Render(fmt.Sprintf("■ %d stopped", stopped)),
 		)
 	}
 	if errored > 0 {
@@ -14241,7 +14282,7 @@ func (h *Home) renderGroupPreview(group *session.Group, width, height int) strin
 	b.WriteString("\n\n")
 
 	// Status breakdown with inline badges
-	running, waiting, idle, errored := 0, 0, 0, 0
+	running, waiting, idle, stopped, errored := 0, 0, 0, 0, 0
 	for _, sess := range group.Sessions {
 		switch sess.Status {
 		case session.StatusRunning:
@@ -14250,7 +14291,11 @@ func (h *Home) renderGroupPreview(group *session.Group, width, height int) strin
 			waiting++
 		case session.StatusIdle:
 			idle++
-		case session.StatusError, session.StatusStopped:
+		case session.StatusStopped:
+			// Issue #953: keep stopped separate from errored in the group
+			// preview panel for the same reason as the header counter.
+			stopped++
+		case session.StatusError:
 			errored++
 		}
 	}
@@ -14271,6 +14316,9 @@ func (h *Home) renderGroupPreview(group *session.Group, width, height int) strin
 	}
 	if idle > 0 {
 		statuses = append(statuses, lipgloss.NewStyle().Foreground(ColorText).Render(fmt.Sprintf("○ %d idle", idle)))
+	}
+	if stopped > 0 {
+		statuses = append(statuses, lipgloss.NewStyle().Foreground(ColorTextDim).Render(fmt.Sprintf("■ %d stopped", stopped)))
 	}
 	if errored > 0 {
 		statuses = append(statuses, lipgloss.NewStyle().Foreground(ColorRed).Render(fmt.Sprintf("✕ %d error", errored)))
