@@ -7,6 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.9.24] - 2026-05-20
+
+A second hotfix wave on top of v1.9.23, also same-day: five user-feedback fixes from @ddorman-dn (covering the remote-session surface — Shift+Enter, preview pane + cost/usage, latency markers, insert-mode perf), the re-close of the long-running #953 stopped-status bucket bug from @halfmu, plus two internal build/lint hotfixes that kept `main` green. v1.9.24 is the **nineteenth release cut under the Option A pipeline** ([#981](https://github.com/asheshgoplani/agent-deck/pull/981) in v1.9.6); the local release worker stops at `git push origin <tag>` and `.github/workflows/release.yml` is the single source of truth for `goreleaser release --clean`.
+
+### Added
+
+- **Remote session latency markers in header** ([PR #1106](https://github.com/asheshgoplani/agent-deck/pull/1106), closes [#1103](https://github.com/asheshgoplani/agent-deck/issues/1103), credit @ddorman-dn). The TUI header now renders latency markers for remote sessions so the user can see SSH/transport delay at a glance instead of guessing why a remote pane is lagging. Credit @ddorman-dn for the request and real-user testing.
+
+### Fixed
+
+- **Shift+Enter handles remote sessions + opens iTerm tab by default** ([PR #1105](https://github.com/asheshgoplani/agent-deck/pull/1105), closes [#1100](https://github.com/asheshgoplani/agent-deck/issues/1100), follow-up to [#1098](https://github.com/asheshgoplani/agent-deck/pull/1098), credit @ddorman-dn). The Shift+Enter chord wired in #1098 didn't cover remote sessions and opened a new iTerm window instead of a tab. Fix routes remote sessions through the same dispatcher and switches the default launcher behavior to a new tab. Credit @ddorman-dn for the real-user report.
+
+- **Remote session preview pane + cost/usage propagation** ([PR #1107](https://github.com/asheshgoplani/agent-deck/pull/1107), closes [#1101](https://github.com/asheshgoplani/agent-deck/issues/1101), credit @ddorman-dn). Remote sessions weren't rendering content in the preview pane and their cost/usage counters never reached the UI. Fix restores both code paths so remote sessions look the same as local ones in the Sessions list. Credit @ddorman-dn for the real-user report.
+
+- **Insert mode actual perf fix + remote-session support** ([PR #1110](https://github.com/asheshgoplani/agent-deck/pull/1110), closes [#1102](https://github.com/asheshgoplani/agent-deck/issues/1102), follow-up to [#1096](https://github.com/asheshgoplani/agent-deck/pull/1096), credit @ddorman-dn). The insert-mode batching in #1096 helped local sessions but didn't address the actual latency root cause and skipped remote sessions entirely. New `internal/tmux/keysender.go` + `internal/session/remote_keysender.go` deliver real per-keystroke throughput and route remote sessions through the same path. Pinned by `internal/ui/issue1102_insert_perf_test.go` and `internal/session/issue1102_insert_remote_test.go`. Credit @ddorman-dn for the real-user report.
+
+- **Status line counter buckets stopped sessions separately** ([PR #1108](https://github.com/asheshgoplani/agent-deck/pull/1108), re-closes [#953](https://github.com/asheshgoplani/agent-deck/issues/953), credit @halfmu). The status-line session counter was still lumping stopped sessions into the active count after the persistence fix in #1072, defeating the point of the stopped state at a glance. Fix gives stopped sessions their own bucket in the counter. Credit @halfmu for staying on this one.
+
+### Internal
+
+- **Restore missing closing brace + gofmt in `userconfig`** ([PR #1109](https://github.com/asheshgoplani/agent-deck/pull/1109)). Hotfix for a red `main` introduced by an earlier merge; build/lint-only, no behavior change.
+- **Rename `stripANSI` → `stripANSILatency` in latency test** ([PR #1111](https://github.com/asheshgoplani/agent-deck/pull/1111)). Resolves a duplicate-symbol build break with `eval_smoke`; test-only, no behavior change.
+
 ## [1.9.23] - 2026-05-20
 
 A same-day hotfix wave on top of v1.9.22: three TUI regressions surfaced by real-user testing from @ddorman-dn, plus one small feature ask from the same reporter. All four community-credited. v1.9.23 is the **eighteenth release cut under the Option A pipeline** ([#981](https://github.com/asheshgoplani/agent-deck/pull/981) in v1.9.6); the local release worker stops at `git push origin <tag>` and `.github/workflows/release.yml` is the single source of truth for `goreleaser release --clean`.

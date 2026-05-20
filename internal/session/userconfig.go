@@ -202,11 +202,12 @@ type UISettings struct {
 	// values: "tab", "window". Empty defaults to "tab" (iTerm's natural
 	// UX). Issue #1100, follow-up to #1098 — credit @ddorman-dn.
 	ITermOpenAs string `toml:"iterm_open_as"`
-// RemoteLatencyRefreshSecs sets how often the TUI re-measures the
+	// RemoteLatencyRefreshSecs sets how often the TUI re-measures the
 	// round-trip latency to each configured remote (issue #1103). Valid
 	// range: 2-300. Default: matches [system_stats].refresh_seconds (5s)
 	// so the latency marker ticks alongside CPU/RAM/load.
-	RemoteLatencyRefreshSecs int `toml:"remote_latency_refresh_secs"`}
+	RemoteLatencyRefreshSecs int `toml:"remote_latency_refresh_secs"`
+}
 
 // DefaultPreviewPct is the default preview-pane width percentage.
 // Matches the historical hardcoded 0.35 sessions / 0.65 preview split.
@@ -271,7 +272,8 @@ func (u UISettings) GetRemoteLatencyRefreshSecs(fallbackSecs int) int {
 	if val > 300 {
 		val = 300
 	}
-	return val}
+	return val
+}
 
 // WebSettings configures the `agent-deck web` HTTP server.
 type WebSettings struct {

@@ -466,7 +466,7 @@ type Home struct {
 	lastRemoteLatencyFetch  time.Time
 	remoteLatencyFetchBusy  bool
 	remoteLatencyRefreshSec int // resolved once at construction
-// #1101: remote cost summaries fetched alongside session listings so the
+	// #1101: remote cost summaries fetched alongside session listings so the
 	// status-line cost segment reflects spend on every configured remote, not
 	// just events written to the local cost_events table.
 	remoteCosts   map[string]*costs.RemoteCostSummary // remoteName -> summary

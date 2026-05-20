@@ -182,4 +182,3 @@ func TestIssue953_FilterBar_HasStoppedPill(t *testing.T) {
 		t.Errorf("filter bar shows error pill even though errored == 0: %s", bar)
 	}
 }
-
