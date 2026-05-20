@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.9.22] - 2026-05-20
+
+A trio of substantive PRs land on top of v1.9.21: two community-credited features (per-session account profile slot, web/TUI keyboard parity) plus the production wiring fix that finally closes the long-running #965 MCP-child-reap saga. v1.9.22 is the **seventeenth release cut under the Option A pipeline** ([#981](https://github.com/asheshgoplani/agent-deck/pull/981) in v1.9.6); the local release worker stops at `git push origin <tag>` and `.github/workflows/release.yml` is the single source of truth for `goreleaser release --clean`.
+
+### Added
+
+- **Per-session account profile slot** ([PR #1089](https://github.com/asheshgoplani/agent-deck/pull/1089), closes [#924](https://github.com/asheshgoplani/agent-deck/issues/924), credit @bautrey). Each session now carries an `account` field that selects which agent-account profile to use at spawn time, so a single agent-deck instance can drive multiple Claude/Codex/Gemini accounts side-by-side without manual env-juggling. MVP wires the field through the session model (`internal/session/storage.go`, `internal/session/mutators.go`, `internal/statedb/statedb.go`), the spawn pipeline (`internal/session/claude.go`, `internal/session/instance.go`), and the CLI (`cmd/agent-deck/session_cmd.go`). Pinned by `internal/session/issue924_account_field_test.go` (field round-trips through storage + mutators) and `internal/session/issue924_account_switch_test.go` (switching accounts mid-session is reflected in the next spawn). Credit @bautrey for the original implementation and reviews.
+
+- **Web/TUI keyboard parity for top-10 bindings + `?` overlay** ([PR #1090](https://github.com/asheshgoplani/agent-deck/pull/1090), closes [#780](https://github.com/asheshgoplani/agent-deck/issues/780) MVP, credit @JMBattista). The web UI now responds to the same top-10 keystrokes as the TUI (session navigation, start/stop, group focus, command palette) and ships a `?` overlay listing every binding inline. Implementation lands in `internal/web/static/app/KeyboardShortcuts.js`, `internal/web/static/app/AppShell.js`, `internal/web/static/app/CommandPalette.js`, and `internal/web/static/app/Topbar.js`, with styling in `app.css`. Pinned by `tests/web/e2e/keyboard-parity.spec.js` (Playwright) with golden screenshots for desktop + tablet (`tests/web/screenshots/keyboard-parity.spec.js/`). Credit @JMBattista for the original implementation.
+
+### Fixed
+
+- **Complete #965 production wiring: `Instance.Kill` now reaps MCP children correctly** ([PR #1088](https://github.com/asheshgoplani/agent-deck/pull/1088), closes [#1086](https://github.com/asheshgoplani/agent-deck/issues/1086)). The MCP-child-reap path landed in #965 but never wired into the production `Instance.Kill` callsite, leaving orphaned MCP child processes on session stop in real-world use. Fix hardens reap with a **single-snapshot discovery + post-SIGKILL verify** loop (`internal/session/mcp_child_reap.go`) and wires it into `Instance.Kill` (`internal/session/instance.go`). The CI-gated regression test that was skipped in v1.9.21 ([PR #1085](https://github.com/asheshgoplani/agent-deck/pull/1085)) is un-skipped here (`internal/session/issue965_wiring_test.go`), restoring the gate against future regressions of the same shape.
+
 ## [1.9.21] - 2026-05-20
 
 A security + maintenance wave on top of v1.9.20. The repo gains a full PR review pipeline (CodeQL, CodeRabbit, govulncheck strict, golangci-lint, Dependabot, diff-scope guard, CODEOWNERS, SECURITY.md) and the Go toolchain jumps from 1.24 to 1.25.10 — closing 35 stdlib CVEs in one move. Two community-credited bug fixes land alongside (rename dialog focus, StatusStopped persistence), plus the routine sweep of GitHub Actions and Bubble Tea dependency bumps. v1.9.21 is the **sixteenth release cut under the Option A pipeline** ([#981](https://github.com/asheshgoplani/agent-deck/pull/981) in v1.9.6); the local release worker stops at `git push origin <tag>` and `.github/workflows/release.yml` is the single source of truth for `goreleaser release --clean`.
