@@ -7,6 +7,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.9.21] - 2026-05-20
+
+A security + maintenance wave on top of v1.9.20. The repo gains a full PR review pipeline (CodeQL, CodeRabbit, govulncheck strict, golangci-lint, Dependabot, diff-scope guard, CODEOWNERS, SECURITY.md) and the Go toolchain jumps from 1.24 to 1.25.10 — closing 35 stdlib CVEs in one move. Two community-credited bug fixes land alongside (rename dialog focus, StatusStopped persistence), plus the routine sweep of GitHub Actions and Bubble Tea dependency bumps. v1.9.21 is the **sixteenth release cut under the Option A pipeline** ([#981](https://github.com/asheshgoplani/agent-deck/pull/981) in v1.9.6); the local release worker stops at `git push origin <tag>` and `.github/workflows/release.yml` is the single source of truth for `goreleaser release --clean`.
+
+### Security
+
+- **Full PR review pipeline** ([PR #1052](https://github.com/asheshgoplani/agent-deck/pull/1052)). CodeQL static analysis, Dependabot for Go modules + GitHub Actions, govulncheck (now strict-fail), golangci-lint, CODEOWNERS, SECURITY.md, and `.coderabbit.yaml` all land together. Every PR is now reviewed by both CodeRabbit and CodeQL before merge; vulnerable dependencies fail CI instead of warning.
+- **Diff-scope guard blocks runaway PRs** ([PR #1053](https://github.com/asheshgoplani/agent-deck/pull/1053)). A PR touching >200 files now fails the diff-scope check, forcing a split. Catches accidental vendor commits, mass renames without review, and bot-generated megadiffs at the gate.
+- **Dependabot grouping restricted to minor+patch only** ([PR #1058](https://github.com/asheshgoplani/agent-deck/pull/1058)). Major version bumps no longer get bundled with safe updates; each major lands as its own reviewable PR.
+- **Go toolchain bumped 1.24 → 1.25.10** ([PR #1065](https://github.com/asheshgoplani/agent-deck/pull/1065), closes [#1054](https://github.com/asheshgoplani/agent-deck/issues/1054)). Closes **35 Go stdlib CVEs** in one move. govulncheck is now strict-fail in CI against this toolchain.
+
+### Fixed
+
+- **Rename group dialog focuses the name input on open** ([PR #1071](https://github.com/asheshgoplani/agent-deck/pull/1071), closes [#1068](https://github.com/asheshgoplani/agent-deck/issues/1068), credit @ddorman-dn). The rename dialog previously opened without keyboard focus on the text input, so the first keystrokes either no-op'd or hit the underlying list. Fix lands in `internal/ui/group_dialog.go`, pinned by `internal/ui/issue1068_rename_focus_test.go`.
+- **`StatusStopped` persists across reloads** ([PR #1072](https://github.com/asheshgoplani/agent-deck/pull/1072), closes [#953](https://github.com/asheshgoplani/agent-deck/issues/953), credit @halfmu). Manually stopped sessions had their `StatusStopped` flipped back on the next state reload, defeating the user's stop intent. The instance now preserves `StatusStopped` through reload (`internal/session/instance.go`), pinned by `internal/session/issue953_stop_persists_test.go`.
+
+### Changed
+
+- **`charmbracelet/bubbles` 0.21.0 → 1.0.0** ([PR #1059](https://github.com/asheshgoplani/agent-deck/pull/1059)). Stable 1.x of the Bubble Tea component library.
+- **`actions/checkout` v4 → v6** ([PR #1061](https://github.com/asheshgoplani/agent-deck/pull/1061)).
+- **`actions/setup-go` v5 → v6** ([PR #1063](https://github.com/asheshgoplani/agent-deck/pull/1063)).
+- **`actions/setup-python` v5 → v6** ([PR #1064](https://github.com/asheshgoplani/agent-deck/pull/1064)).
+- **`actions/deploy-pages` v4 → v5** ([PR #1060](https://github.com/asheshgoplani/agent-deck/pull/1060)).
+
 ## [1.9.20] - 2026-05-19
 
 Four merged community-PR takeovers on top of v1.9.19, all landing in a single wave: first-class copilot session detection, a walltime regression suite for cold start + group lifecycle, watcher routed-event dispatch into the conductor's tmux pane, and conductor heartbeat pausing after inactivity. v1.9.20 is the **fifteenth release cut under the Option A pipeline** ([#981](https://github.com/asheshgoplani/agent-deck/pull/981) in v1.9.6); the local release worker stops at `git push origin <tag>` and `.github/workflows/release.yml` is the single source of truth for `goreleaser release --clean`.
