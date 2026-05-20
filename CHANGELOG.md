@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.9.23] - 2026-05-20
+
+A same-day hotfix wave on top of v1.9.22: three TUI regressions surfaced by real-user testing from @ddorman-dn, plus one small feature ask from the same reporter. All four community-credited. v1.9.23 is the **eighteenth release cut under the Option A pipeline** ([#981](https://github.com/asheshgoplani/agent-deck/pull/981) in v1.9.6); the local release worker stops at `git push origin <tag>` and `.github/workflows/release.yml` is the single source of truth for `goreleaser release --clean`.
+
+### Added
+
+- **Configurable Sessions/Preview split** ([PR #1099](https://github.com/asheshgoplani/agent-deck/pull/1099), closes [#1092](https://github.com/asheshgoplani/agent-deck/issues/1092), credit @ddorman-dn). The TUI's left/right pane ratio between the Sessions list and the Preview pane is now user-configurable via `userconfig`, persisted across runs and exposed through a new keybinding. Implementation lands in `internal/ui/split_config.go`, `internal/ui/home.go`, `internal/ui/help.go`, and `internal/session/userconfig.go`, pinned by `internal/ui/issue1092_split_test.go`. Credit @ddorman-dn for the request and real-user testing.
+
+### Fixed
+
+- **SSH remote sessions get the claude-specific render** ([PR #1095](https://github.com/asheshgoplani/agent-deck/pull/1095), closes [#1091](https://github.com/asheshgoplani/agent-deck/issues/1091), follow-up to [#1073](https://github.com/asheshgoplani/agent-deck/pull/1073), credit @ddorman-dn). Sessions started against an SSH remote were falling back to the generic render path instead of the claude-specific one introduced in #1073, breaking the preview output for remote claude sessions. Fix routes SSH remotes through the same detection branch as local claude sessions. Credit @ddorman-dn for the real-user report.
+
+- **Insert mode supports Backspace, arrow keys, control keys + batches for latency** ([PR #1096](https://github.com/asheshgoplani/agent-deck/pull/1096), closes [#1094](https://github.com/asheshgoplani/agent-deck/issues/1094), credit @ddorman-dn). Insert mode previously dropped Backspace, the arrow keys, and several control keys, and per-keystroke writes added perceptible latency on slower terminals. The keyboard layer now passes those keys through and batches writes for smoother input. Implementation in `internal/ui/keyboard_compat.go` and `internal/ui/home.go`, pinned by `internal/ui/issue1094_insert_mode_ux_test.go`. Follow-up [PR #1097](https://github.com/asheshgoplani/agent-deck/pull/1097) cleaned up three SA4006 dead assignments from the test that broke `main` CI. Credit @ddorman-dn for the real-user report.
+
+- **Shift+Enter wired to the iTerm launcher on darwin** ([PR #1098](https://github.com/asheshgoplani/agent-deck/pull/1098), closes [#1093](https://github.com/asheshgoplani/agent-deck/issues/1093), follow-up to [#1077](https://github.com/asheshgoplani/agent-deck/pull/1077), credit @ddorman-dn). The Shift+Enter keybinding to launch the active session in iTerm landed in #1077 but never reached the darwin dispatcher, so the chord was a no-op on macOS. Fix wires the binding through to the iTerm launcher on darwin only, pinned by `internal/ui/issue1093_shift_enter_test.go`. Credit @ddorman-dn for the real-user report.
+
 ## [1.9.22] - 2026-05-20
 
 A trio of substantive PRs land on top of v1.9.21: two community-credited features (per-session account profile slot, web/TUI keyboard parity) plus the production wiring fix that finally closes the long-running #965 MCP-child-reap saga. v1.9.22 is the **seventeenth release cut under the Option A pipeline** ([#981](https://github.com/asheshgoplani/agent-deck/pull/981) in v1.9.6); the local release worker stops at `git push origin <tag>` and `.github/workflows/release.yml` is the single source of truth for `goreleaser release --clean`.

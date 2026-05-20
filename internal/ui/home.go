@@ -504,11 +504,12 @@ type Home struct {
 	insertBuf           strings.Builder
 	insertFlushPending  bool
 	insertBatchDuration time.Duration
-// openInNewWindowSink is an optional override used by tests to capture
+	// openInNewWindowSink is an optional override used by tests to capture
 	// Shift+Enter dispatches without spawning a real iTerm2 window. When
 	// nil, the dispatch calls terminal.OpenSessionInNewWindow directly.
 	// See issue #1093.
-	openInNewWindowSink func(req terminal.AttachRequest) error}
+	openInNewWindowSink func(req terminal.AttachRequest) error
+}
 
 // reloadState preserves UI state during storage reload
 type reloadState struct {
