@@ -7,6 +7,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.9.25] - 2026-05-21
+
+A multi-track follow-up to v1.9.24: two more remote-session fixes from @ddorman-dn (closing the #1112 cluster + the screen-scaling / insert-buffer regression #1113), the iTerm badge fix for #1114 from @tarekrached, and a multi-repo correctness fix + refactor from @spawnia restoring `.worktreeinclude` and per-repo setup. On top of the bug bucket, the **Skills management surface** lands in the web UI, closing the MISSING rows for Skills in `PARITY_MATRIX.md`. v1.9.25 is the **twentieth release cut under the Option A pipeline** ([#981](https://github.com/asheshgoplani/agent-deck/pull/981) in v1.9.6); the local release worker stops at `git push origin <tag>` and `.github/workflows/release.yml` is the single source of truth for `goreleaser release --clean`.
+
+### Added
+
+- **Skills management endpoints + Web UI** ([PR #1122](https://github.com/asheshgoplani/agent-deck/pull/1122), closes the Skills MISSING rows in `PARITY_MATRIX.md`). The web UI gains a full Skills surface: list/attach/detach pool skills, view SKILL.md contents, and manage user vs pool scope — mirroring the CLI/TUI affordances so the web client is no longer a second-class citizen for skill workflows. Endpoints land in `internal/web/skills_handlers.go` with the SPA wiring in `internal/web/static/app/SkillsPanel.js` and `internal/web/static/app/AppShell.js`. Pinned by `internal/web/skills_handlers_test.go` and `tests/web/e2e/skills-panel.spec.js`.
+
+### Fixed
+
+- **iTerm badge updates route through the attach process** ([PR #1116](https://github.com/asheshgoplani/agent-deck/pull/1116), closes [#1114](https://github.com/asheshgoplani/agent-deck/issues/1114), credit @tarekrached). Renaming a session left the iTerm badge stuck on the old name because the badge escape was emitted from the wrong process and never reached the user's terminal. Fix routes the badge update through the attach process so iTerm picks it up on the next paint. Pinned by `internal/tmux/issue1114_badge_test.go`. Credit @tarekrached for the report and patch.
+
+- **Multi-repo worktrees run `.worktreeinclude` and the setup script per repo** ([PR #1118](https://github.com/asheshgoplani/agent-deck/pull/1118), credit @spawnia). Multi-repo worktree creation was skipping `.worktreeinclude` processing and the per-repo setup hook for every repo after the first, leaving auxiliary repos in a half-initialized state. Fix iterates the full repo set so each one gets its own include resolution + setup script invocation. Credit @spawnia for the report and patch.
+
+- **Remote sessions: waiting-status + arrow keys + insert perf** ([PR #1120](https://github.com/asheshgoplani/agent-deck/pull/1120), closes [#1112](https://github.com/asheshgoplani/agent-deck/issues/1112), follow-ups to [#1102](https://github.com/asheshgoplani/agent-deck/issues/1102) / [#1110](https://github.com/asheshgoplani/agent-deck/pull/1110), credit @ddorman-dn). The remote-session surface in v1.9.24 still had three rough edges: the waiting-status indicator never updated, arrow keys weren't reaching the remote pty, and insert-mode perf was slower than the local fix in #1110. This PR wires waiting-status detection through the remote codepath, threads the arrow-key sequences through the remote keysender, and lifts the local insert-mode batching into the remote path so latency now matches local. Credit @ddorman-dn for the real-user report.
+
+- **Screen scaling at narrow widths + insert buffer stale on session switch** ([PR #1123](https://github.com/asheshgoplani/agent-deck/pull/1123), closes [#1113](https://github.com/asheshgoplani/agent-deck/issues/1113), credit @ddorman-dn). Two coupled UI bugs: narrow terminals were laying out columns at the wrong width (overflowing the Sessions list), and the insert-mode keystroke buffer kept the previous session's pending keys when the user switched sessions, so the first keystroke into a new session looked like garbage. Fix recomputes the scaling on resize and resets the insert buffer at the session-switch boundary. Credit @ddorman-dn for the real-user report.
+
+### Internal
+
+- **golangci-lint v2 pinned in the Makefile** ([PR #1119](https://github.com/asheshgoplani/agent-deck/pull/1119), credit @spawnia). The repo's `.golangci.yml` has been v2 for a while, but the Makefile was still installing the v1 linter, so contributors hit confusing errors locally. Fix installs golangci-lint v2 to match the config. Build/lint-only, no behavior change. Credit @spawnia for the patch.
+
+- **Extract `CreateMultiRepoWorktrees` into a testable function** ([PR #1121](https://github.com/asheshgoplani/agent-deck/pull/1121), credit @spawnia). Multi-repo worktree creation was inlined in the CLI command, which made it impossible to unit-test the #1118 fix above. This refactor extracts the orchestration into `CreateMultiRepoWorktrees` with its own test, locking the behavior in place. Refactor-only, no behavior change. Credit @spawnia for the patch.
+
 ## [1.9.24] - 2026-05-20
 
 A second hotfix wave on top of v1.9.23, also same-day: five user-feedback fixes from @ddorman-dn (covering the remote-session surface — Shift+Enter, preview pane + cost/usage, latency markers, insert-mode perf), the re-close of the long-running #953 stopped-status bucket bug from @halfmu, plus two internal build/lint hotfixes that kept `main` green. v1.9.24 is the **nineteenth release cut under the Option A pipeline** ([#981](https://github.com/asheshgoplani/agent-deck/pull/981) in v1.9.6); the local release worker stops at `git push origin <tag>` and `.github/workflows/release.yml` is the single source of truth for `goreleaser release --clean`.
