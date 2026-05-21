@@ -364,6 +364,49 @@ func (s *fixtureStore) UndoDelete() (string, error) {
 	return restored.ID, nil
 }
 
+// UpdateSession implements web.SessionMutator. Mirrors the production path:
+// validates field names against a small allowlist and applies the value to
+// the in-memory MenuSession DTO. Restart-required fields are tracked with
+// the same policy as session.RestartPolicyFor so e2e tests can assert the
+// restartRequired flag without booting a real session.
+func (s *fixtureStore) UpdateSession(id string, updates map[string]string) ([]string, bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	sess, ok := s.sessions[id]
+	if !ok {
+		return nil, false, fmt.Errorf("session not found: %s", id)
+	}
+	changed := make([]string, 0, len(updates))
+	restartRequired := false
+	for field, value := range updates {
+		var oldValue string
+		switch field {
+		case session.FieldTitle:
+			oldValue = sess.Title
+			sess.Title = value
+		case session.FieldTool:
+			oldValue = sess.Tool
+			sess.Tool = value
+		case session.FieldNotes, session.FieldColor, session.FieldExtraArgs,
+			session.FieldPlugins, session.FieldChannels,
+			session.FieldSkipPermissions, session.FieldAutoMode:
+			// Fixture DTO doesn't carry these; treat as accepted no-op so
+			// tests can verify the round-trip without expanding MenuSession.
+			oldValue = value
+		default:
+			return nil, false, fmt.Errorf("invalid field: %s", field)
+		}
+		if oldValue == value {
+			continue
+		}
+		changed = append(changed, field)
+		if session.RestartPolicyFor(field) == session.FieldRestartRequired {
+			restartRequired = true
+		}
+	}
+	return changed, restartRequired, nil
+}
+
 func (s *fixtureStore) ForkSession(parentID string) (string, error) {
 	s.mu.Lock()
 	parent, ok := s.sessions[parentID]

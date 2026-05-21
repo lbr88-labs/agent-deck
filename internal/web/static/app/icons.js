@@ -42,6 +42,8 @@ export const ICONS = {
   send:    'M22 2L11 13 M22 2l-7 20-4-9-9-4 20-7z',
   book:    'M4 4h12a4 4 0 014 4v12H8a4 4 0 01-4-4z M4 4v16',
   term:    'M4 4h16v16H4z M8 9l3 3-3 3 M13 15h4',
+  // edit (pencil) — used by Sidebar SessionItem to open EditSessionDialog.
+  edit:    'M12 20h9 M16.5 3.5a2.121 2.121 0 013 3L7 19l-4 1 1-4 12.5-12.5z',
 }
 
 export function Dot({ status, size = 7 }) {

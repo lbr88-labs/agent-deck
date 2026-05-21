@@ -22,12 +22,13 @@ const EXPECTED_ACTION_ROWS = 48
 // Probeable = MISSING rows that inferMissingProbe() maps to a URL. Decremented
 // as endpoints land and their matrix rows flip MISSING → Present:
 //   15 (PR-A #804) → 9 (#1124 skills+MCP, 6 closed) → 7 (#1129 Close + Undo
-//   Delete, 2 closed) → 6 (#1126/#1153 Finish worktree, 1 closed).
+//   Delete, 2 closed) → 6 (#1126/#1153 Finish worktree, 1 closed) → 5 (#1132
+//   PATCH /sessions/{id} + Edit dialog, "Edit session settings" closed).
 // #1129 flipped the close/undelete rows but missed this decrement (9→7), so the
 // pin was stuck 2 high and the suite went red on every later PR. Re-baselined to
 // the true count: Restart fresh, Rename session, Move session to group, Edit
-// session settings, Edit notes inline, Mark session unread.
-const EXPECTED_PROBEABLE_MISSING = 6
+// notes inline, Mark session unread.
+const EXPECTED_PROBEABLE_MISSING = 5
 
 test.describe.configure({ mode: 'serial' })
 
