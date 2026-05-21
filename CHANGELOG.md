@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.9.28] - 2026-05-21
+
+A single-fix follow-up to v1.9.27 closing the Claude `/clear` rebind persistence gap reported in [#1138](https://github.com/asheshgoplani/agent-deck/issues/1138). v1.9.28 is the **twenty-third release cut under the Option A pipeline** ([#981](https://github.com/asheshgoplani/agent-deck/pull/981) in v1.9.6); the local release worker stops at `git push origin <tag>` and `.github/workflows/release.yml` is the single source of truth for `goreleaser release --clean`.
+
+### Fixed
+
+- **Claude session-id rebind now persisted to SQLite after `/clear`** ([PR #1140](https://github.com/asheshgoplani/agent-deck/pull/1140), fixes [#1138](https://github.com/asheshgoplani/agent-deck/issues/1138), credit @tarekrached). When a Claude tile ran `/clear` and rebound to a fresh session-id, the in-memory `Instance` updated but `state.db` kept pinning the pre-`/clear` UUID in `tool_data.claude_session_id` forever. Third-party consumers that join on `tool_data` (e.g. claudopticon) saw stale UUIDs and could not follow the live conversation. Fix persists the rebind through to SQLite at the moment of rebind, with a 398-line regression test (`internal/session/instance_rebind_persist_test.go`) pinning the invariant.
+
 ## [1.9.27] - 2026-05-21
 
 A telegram-reliability double-fix release on top of v1.9.26, hardening the recurring telegram MCP drop on conductor restart. v1.9.27 is the **twenty-second release cut under the Option A pipeline** ([#981](https://github.com/asheshgoplani/agent-deck/pull/981) in v1.9.6); the local release worker stops at `git push origin <tag>` and `.github/workflows/release.yml` is the single source of truth for `goreleaser release --clean`.
