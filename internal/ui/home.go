@@ -8566,13 +8566,8 @@ func (h *Home) createSessionInGroupWithWorktreeAndOptions(
 				if err := os.MkdirAll(filepath.Dir(worktreePath), 0o755); err != nil {
 					return sessionCreatedMsg{err: fmt.Errorf("failed to create parent directory: %w", err), tempID: tempID}
 				}
-				var setupBuf bytes.Buffer
-				setupErr, err := git.CreateWorktreeWithSetup(worktreeRepoRoot, worktreePath, worktreeBranch, &setupBuf, &setupBuf, session.GetWorktreeSettings().SetupTimeout())
-				if err != nil {
+				if err := createWorktreeWithSetupAndLog(worktreeRepoRoot, worktreePath, worktreeBranch); err != nil {
 					return sessionCreatedMsg{err: fmt.Errorf("failed to create worktree: %w", err), tempID: tempID}
-				}
-				if setupErr != nil {
-					uiLog.Warn("worktree_setup_script_failed", slog.String("error", setupErr.Error()), slog.String("output", setupBuf.String()))
 				}
 			}
 			path = worktreePath
@@ -8670,7 +8665,7 @@ func (h *Home) createSessionInGroupWithWorktreeAndOptions(
 							}
 							continue
 						}
-						if err := git.CreateWorktree(repoRoot, wtPath, worktreeBranch); err != nil {
+						if err := createWorktreeWithSetupAndLog(repoRoot, wtPath, worktreeBranch); err != nil {
 							uiLog.Warn("multi_repo_worktree_create_fail", slog.String("path", p), slog.String("error", err.Error()))
 							_ = os.Symlink(p, wtPath)
 							if i == 0 {
@@ -8754,6 +8749,21 @@ func (h *Home) createSessionInGroupWithWorktreeAndOptions(
 		uiLog.Info("session_create_succeeded", slog.String("id", inst.ID))
 		return sessionCreatedMsg{instance: inst, tempID: tempID}
 	}
+}
+
+// createWorktreeWithSetupAndLog creates a worktree, runs .worktreeinclude and
+// worktree-setup.sh, and logs setup failures. Returns only the creation error;
+// setup failures are non-fatal and logged to uiLog.
+func createWorktreeWithSetupAndLog(repoRoot, wtPath, branch string) error {
+	var buf bytes.Buffer
+	setupErr, err := git.CreateWorktreeWithSetup(repoRoot, wtPath, branch, &buf, &buf, session.GetWorktreeSettings().SetupTimeout())
+	if err != nil {
+		return err
+	}
+	if setupErr != nil {
+		uiLog.Warn("worktree_setup_script_failed", slog.String("error", setupErr.Error()), slog.String("output", buf.String()))
+	}
+	return nil
 }
 
 // createSessionTool maps a free-form command to (tool, command). Built-in
@@ -9127,13 +9137,8 @@ func (h *Home) forkSessionCmdWithOptions(
 				if err := os.MkdirAll(filepath.Dir(opts.WorktreePath), 0o755); err != nil {
 					return sessionForkedMsg{err: fmt.Errorf("failed to create directory: %w", err), sourceID: sourceID}
 				}
-				var setupBuf bytes.Buffer
-				setupErr, err := git.CreateWorktreeWithSetup(opts.WorktreeRepoRoot, opts.WorktreePath, opts.WorktreeBranch, &setupBuf, &setupBuf, session.GetWorktreeSettings().SetupTimeout())
-				if err != nil {
+				if err := createWorktreeWithSetupAndLog(opts.WorktreeRepoRoot, opts.WorktreePath, opts.WorktreeBranch); err != nil {
 					return sessionForkedMsg{err: fmt.Errorf("worktree creation failed: %w", err), sourceID: sourceID}
-				}
-				if setupErr != nil {
-					uiLog.Warn("worktree_setup_script_failed", slog.String("error", setupErr.Error()), slog.String("output", setupBuf.String()))
 				}
 			}
 		}
