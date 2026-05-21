@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.9.27] - 2026-05-21
+
+A telegram-reliability double-fix release on top of v1.9.26, hardening the recurring telegram MCP drop on conductor restart. v1.9.27 is the **twenty-second release cut under the Option A pipeline** ([#981](https://github.com/asheshgoplani/agent-deck/pull/981) in v1.9.6); the local release worker stops at `git push origin <tag>` and `.github/workflows/release.yml` is the single source of truth for `goreleaser release --clean`.
+
+### Fixed
+
+- **Recurring telegram MCP drops on conductor restart** ([PR #1136](https://github.com/asheshgoplani/agent-deck/pull/1136), [PR #1137](https://github.com/asheshgoplani/agent-deck/pull/1137), fixes [#1134](https://github.com/asheshgoplani/agent-deck/issues/1134), [#1138](https://github.com/asheshgoplani/agent-deck/issues/1138)). Two-layer defense: scratch `settings.json` is force-corrected on every spawn (#1137) so a channel-owning conductor session can never start with the telegram plugin disabled, plus a post-spawn health warning if the plugin fails to load. The initial fix in #1136 wrote `settings.json` correctly on session creation but did not enforce the invariant on subsequent spawns; #1137 closes that gap with a 4th gate that re-validates on every spawn.
+
+### Added
+
+- **`agent-deck telegram-doctor` CLI** ([PR #1137](https://github.com/asheshgoplani/agent-deck/pull/1137)). New runtime health-monitoring command that audits the telegram plugin across all conductor sessions — reports per-session plugin status, settings.json correctness, and surfaces drift between expected and live state. Backed by a CI regression workflow (`.github/workflows/telegram-reliability.yml`) that pins the invariants going forward.
+
 ## [1.9.26] - 2026-05-21
 
 A same-day web UI feature parity wave on top of v1.9.25, focused on the `PARITY_MATRIX.md` gap list: the Children panel flips from stub to functional, 30 session state fields land on `MenuSession` JSON (unblocking the Edit-dialog stream), and the non-destructive Close + Undo Delete lifecycle ops reach parity with the TUI's Shift+D / Ctrl+Z. v1.9.26 is the **twenty-first release cut under the Option A pipeline** ([#981](https://github.com/asheshgoplani/agent-deck/pull/981) in v1.9.6); the local release worker stops at `git push origin <tag>` and `.github/workflows/release.yml` is the single source of truth for `goreleaser release --clean`.
