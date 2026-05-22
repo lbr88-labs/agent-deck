@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.9.30] - 2026-05-22
+
+A 5-fix improvement-cycle release on top of v1.9.29, closing four production-observable issues plus one Web UI parity gap. v1.9.30 is the **twenty-fifth release cut under the Option A pipeline** ([#981](https://github.com/asheshgoplani/agent-deck/pull/981) in v1.9.6); the local release worker stops at `git push origin <tag>` and `.github/workflows/release.yml` is the single source of truth for `goreleaser release --clean`.
+
+### Fixed
+
+- **Explicit `--session-id` preserved in multi-session-per-cwd JSONL routing** ([PR #1148](https://github.com/asheshgoplani/agent-deck/pull/1148), closes [#1147](https://github.com/asheshgoplani/agent-deck/issues/1147), credit [@KrE80r](https://github.com/KrE80r)'s RCA). When two child sessions shared a cwd, the second session's explicit `--session-id` flag was silently overwritten by the first session's id, causing JSONL transcript hijack between unrelated agents. Fix preserves the caller-provided session-id verbatim through the multi-session-per-cwd path so each session writes to its own JSONL.
+
+- **Lefthook pre-push race between css-verify and lint** ([PR #1151](https://github.com/asheshgoplani/agent-deck/pull/1151), closes [#1146](https://github.com/asheshgoplani/agent-deck/issues/1146)). The recurring v1.9.x release pain — pre-push hooks intermittently failing because css-verify and lint shared a working tree and stomped each other's intermediate artifacts. Fix serializes the two pre-push commands so they never run concurrently, removing the race that has bitten multiple recent release attempts.
+
+- **All `TELEGRAM_*` env vars stripped from child sessions** ([PR #1152](https://github.com/asheshgoplani/agent-deck/pull/1152), closes [#1133](https://github.com/asheshgoplani/agent-deck/issues/1133)). Paired with the telegram reliability work in #1137: child sessions were inheriting conductor-scoped `TELEGRAM_*` env vars (including `TELEGRAM_STATE_DIR` and bot token), causing children to inadvertently bind to the parent's telegram channel. Fix scrubs every `TELEGRAM_*` env var from the child env before spawn so channel ownership stays with the conductor that registered it.
+
+- **GitHub releases API calls authenticated to avoid anonymous rate limit** ([PR #1154](https://github.com/asheshgoplani/agent-deck/pull/1154), closes [#1150](https://github.com/asheshgoplani/agent-deck/issues/1150), credit [@DaniFdz](https://github.com/DaniFdz)). The update checker hit GitHub's 60-req/hour anonymous rate limit on shared NAT egress IPs, leaving users on the same network unable to receive update notifications. Fix sends `GITHUB_TOKEN` (when present) as a `Bearer` auth header, raising the cap to 5000 req/hour for token-holders and degrading gracefully to anonymous when no token is set.
+
+### Added
+
+- **Web UI `worktree-finish` endpoint + UI** ([PR #1153](https://github.com/asheshgoplani/agent-deck/pull/1153), closes [#1126](https://github.com/asheshgoplani/agent-deck/issues/1126)). Closes a `PARITY_MATRIX.md` gap: the TUI's worktree-finish action (merge child branch back, clean up worktree) had no Web UI equivalent. New endpoint `POST /api/sessions/{id}/worktree/finish` plus a Sidebar control bring the Web view to parity. Pinned by `internal/web/issue1126_worktree_finish_test.go` (227 LOC) and `tests/web/e2e/worktree-finish.spec.js`.
+
 ## [1.9.29] - 2026-05-21
 
 A 3-fix follow-up to v1.9.28 closing out the recursive self-improvement → file-issue → TDD-fix cycle that surfaced three production-observable gaps. v1.9.29 is the **twenty-fourth release cut under the Option A pipeline** ([#981](https://github.com/asheshgoplani/agent-deck/pull/981) in v1.9.6); the local release worker stops at `git push origin <tag>` and `.github/workflows/release.yml` is the single source of truth for `goreleaser release --clean`.
