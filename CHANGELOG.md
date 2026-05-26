@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [1.9.34] - 2026-05-26
+## [1.9.35] - 2026-05-26
 
 Two community contributions: a configurable default model for new Claude sessions ([#1172](https://github.com/asheshgoplani/agent-deck/issues/1172), credit [@marekaf](https://github.com/marekaf)) and a tmux pane that now fills the full terminal width when a Claude session opens ([#1167](https://github.com/asheshgoplani/agent-deck/issues/1167), credit [@OrNatanAxon](https://github.com/OrNatanAxon)). As always the local release worker stops at `git push origin <tag>` and `.github/workflows/release.yml` is the single source of truth for `goreleaser release --clean`.
 
