@@ -1,0 +1,9 @@
+{
+  "generated": "2026-05-26T12:48:21Z",
+  "videos": [
+    {"capability":"echo-roundtrip","webm":"echo-roundtrip.webm","gif":"echo-roundtrip.gif","seconds":36.9,"bytes":402930},
+    {"capability":"lifecycle-fork","webm":"lifecycle-fork.webm","gif":"lifecycle-fork.gif","seconds":19.8,"bytes":199468},
+    {"capability":"lifecycle-launch","webm":"lifecycle-launch.webm","gif":"lifecycle-launch.gif","seconds":25.0,"bytes":217774},
+    {"capability":"lifecycle-stop","webm":"lifecycle-stop.webm","gif":"lifecycle-stop.gif","seconds":29.4,"bytes":236581}
+  ]
+}
