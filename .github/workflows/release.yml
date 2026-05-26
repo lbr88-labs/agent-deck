@@ -8,6 +8,17 @@ on:
   push:
     tags:
       - 'v*'
+  # Manual escape hatch. A standalone tag re-push does not reliably re-fire
+  # the tag-push event when the ref->SHA mapping is unchanged (GitHub
+  # suppresses the duplicate event), which left v1.9.36 tagged but never
+  # published. Dispatch this against `main` with the tag to publish, e.g.
+  # `gh workflow run release.yml --ref main -f tag=v1.9.36`.
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Tag to publish (e.g. v1.9.36). Must already exist.'
+        required: true
+        type: string
 
 # Serialize publish per tag. If a duplicate run is queued for the same tag
 # (e.g. local worker accidentally re-publishes), goreleaser would race with
@@ -23,10 +34,16 @@ permissions:
 jobs:
   release:
     runs-on: ubuntu-latest
+    # Tag-push runs use the pushed tag; manual dispatch supplies it explicitly.
+    env:
+      REF_NAME: ${{ inputs.tag || github.ref_name }}
     steps:
       - name: Checkout
         uses: actions/checkout@v6
         with:
+          # Check out the tag itself so GoReleaser sees the version tag at HEAD,
+          # even when dispatched against main.
+          ref: ${{ inputs.tag || github.ref_name }}
           fetch-depth: 0
 
       - name: Set up Go
@@ -36,7 +53,7 @@ jobs:
 
       - name: Validate tag matches code version
         run: |
-          TAG="${GITHUB_REF_NAME#v}"
+          TAG="${REF_NAME#v}"
           CODE=$(grep 'var Version' cmd/agent-deck/main.go | head -1 | sed 's/.*= "\([^"]*\)".*/\1/')
           if [ "$TAG" != "$CODE" ]; then
             echo "ERROR: Tag v$TAG does not match code Version $CODE"
@@ -80,10 +97,10 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          VERSION="${GITHUB_REF_NAME#v}"
-          echo "Validating assets for release ${GITHUB_REF_NAME} (version ${VERSION})..."
+          VERSION="${REF_NAME#v}"
+          echo "Validating assets for release ${REF_NAME} (version ${VERSION})..."
 
-          ASSETS=$(gh api "repos/${{ github.repository }}/releases/tags/${GITHUB_REF_NAME}" --jq '.assets[].name')
+          ASSETS=$(gh api "repos/${{ github.repository }}/releases/tags/${REF_NAME}" --jq '.assets[].name')
 
           EXPECTED=(
             "agent-deck_${VERSION}_darwin_amd64.tar.gz"
