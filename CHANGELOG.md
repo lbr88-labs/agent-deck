@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.9.42] - 2026-05-28
+
+### Fixed
+
+- **Attached-skills API now emits camelCase JSON** so the web UI can read attached-skill fields ([#1211](https://github.com/asheshgoplani/agent-deck/issues/1211)). `ProjectSkillAttachment` previously lacked `json:` tags, so the API emitted PascalCase while the frontend reads camelCase, and attached skills wouldn't display.
+
+### Internal
+
+- Web parity guards re-baselined and the skills-service wired into the test fixture.
+
 ## [1.9.41] - 2026-05-27
 
 ### Security
