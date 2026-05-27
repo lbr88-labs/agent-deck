@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.9.37] - 2026-05-27
+
+### Fixed
+
+- **`worktree.default_enabled` now falls back to a normal session on non-git directories instead of failing** ([#1185](https://github.com/asheshgoplani/agent-deck/issues/1185), thanks @marekaf). When the default-worktree setting was on and you created a session in a directory that isn't a git repo, creation errored; it now degrades gracefully to a plain session.
+- **New-session dialog "Type custom path/model" inputs now accept typed input** ([#1190](https://github.com/asheshgoplani/agent-deck/issues/1190), thanks @marekaf). Selecting the custom path or model option kept focus on the list instead of the text field, so keystrokes were swallowed (root cause [#1023](https://github.com/asheshgoplani/agent-deck/issues/1023)).
+
+### Added
+
+- **Capability-level E2E test suite** — lifecycle (launch/stop/fork) and echo-agent round-trip coverage with a snapshot dashboard ([#1191](https://github.com/asheshgoplani/agent-deck/issues/1191), [#1193](https://github.com/asheshgoplani/agent-deck/issues/1193), [#1194](https://github.com/asheshgoplani/agent-deck/issues/1194)).
+
+### Changed
+
+- Go dependency bumps (go-minor-patch group, [#1180](https://github.com/asheshgoplani/agent-deck/issues/1180)).
+- Release workflow gained a `workflow_dispatch` escape hatch for publishing a tag manually.
+
 ## [1.9.36] - 2026-05-26
 
 Two inter-agent comms backbone fixes that make conductor↔worker signalling trustworthy. As always the local release worker stops at `git push origin <tag>` and `.github/workflows/release.yml` is the single source of truth for `goreleaser release --clean`.
