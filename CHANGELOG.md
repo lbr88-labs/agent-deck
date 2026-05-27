@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.9.39] - 2026-05-27
+
+### Fixed
+
+- **Typing into a session now echoes in ~60ms instead of lagging up to ~2s** ([#1131](https://github.com/asheshgoplani/agent-deck/issues/1131), thanks @ddorman-dn). The insert-mode preview pane refreshes immediately after each keystroke instead of only on the 2s background tick.
+
 ## [1.9.38] - 2026-05-27
 
 ### Fixed (CRITICAL / data loss)
