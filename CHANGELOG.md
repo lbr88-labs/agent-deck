@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.9.41] - 2026-05-27
+
+### Security
+
+- **Web: unauthenticated non-loopback bind is now refused** ([#1209](https://github.com/asheshgoplani/agent-deck/issues/1209)). Binding a non-loopback address now requires a token (closes the unauthenticated-RCE gap); use `--insecure-bind` to override explicitly. The terminal bridge is token-gated and query-string tokens are rejected.
+- **Remote: `remote update` verifies the release asset's SHA-256 before deploying** ([#1207](https://github.com/asheshgoplani/agent-deck/issues/1207)). Adds a safe SSH host-key stance with no insecure host-key bypass.
+- **install.sh verifies the downloaded binary's SHA-256 before install** ([#1210](https://github.com/asheshgoplani/agent-deck/issues/1210)). Adds a skill-migration `RemoveAll` path-containment guard, passes the webhook secret via env instead of a CLI flag, and shell-quotes spawn args (no injection via session/dir names).
+
 ## [1.9.40] - 2026-05-27
 
 ### Added
