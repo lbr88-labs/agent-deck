@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.9.38] - 2026-05-27
+
+### Fixed (CRITICAL / data loss)
+
+- **Dismissing a session created via `worktree_reuse` no longer deletes the user's original repository** ([#1200](https://github.com/asheshgoplani/agent-deck/issues/1200), thanks @mic-web). The dismiss path could run `os.RemoveAll` on the user's original repo; worktree removal is now guarded to only delete agent-deck-created worktrees under the managed dir.
+
 ## [1.9.37] - 2026-05-27
 
 ### Fixed
