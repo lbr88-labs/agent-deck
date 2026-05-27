@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.9.40] - 2026-05-27
+
+### Added
+
+- **Opt-in `[shell] exit_to_shell` — exit your agent, drop to a shell, then resume the same session** ([#1161](https://github.com/asheshgoplani/agent-deck/issues/1161), thanks @Djeeteg007). When enabled, exiting your agent (e.g. `/exit`) drops you to an interactive shell at the same cwd so you can run `aws-vault`/`direnv`/etc., then resume the same session with full context preserved (default off).
+
 ## [1.9.39] - 2026-05-27
 
 ### Fixed
