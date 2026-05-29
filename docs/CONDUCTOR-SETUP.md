@@ -317,6 +317,26 @@ agent-deck conductor teardown <name> --remove   # stop and delete dir + session
 agent-deck conductor teardown --all --remove    # nuke every conductor in this profile
 ```
 
+### 7. "Sessions keep dropping into `/login` (401 loop) — do NOT `/login` inside a managed session"
+
+Managed claude sessions share one OAuth token: agent-deck symlinks each
+session's scratch `$CLAUDE_CONFIG_DIR/.credentials.json` to the canonical
+profile credentials (e.g. `~/.claude-work/.credentials.json`). **Log in once,
+in the canonical profile, and every session inherits it through that symlink.**
+
+If you run `/login` *inside* a managed session, Claude replaces the symlink
+with a real-file **copy** of the token. Anthropic rotates the refresh token on
+each refresh, so that copy `401`s on the next rotation — and the fresh token
+you just minted is stranded in scratch instead of reaching canonical, so the
+other sessions stay stale too. This was the 2026-05-29 work-profile 401 storm
+(issue #1222).
+
+agent-deck now self-heals this: on the next session **start / restart**, the
+scratch seeding re-asserts the symlink, and if your in-session login was newer
+than canonical it is promoted to canonical first so it propagates to every
+session. But the clean habit is: **never `/login` inside a managed session** —
+do it once in the canonical profile.
+
 ---
 
 ## Running several conductors
