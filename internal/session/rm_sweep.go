@@ -33,8 +33,8 @@ import (
 // Each rewrite is atomic (temp file + rename). A no-op for absent files,
 // empty inboxes, or inboxes that contain no matching lines.
 //
-// Issue #910 — without this sweep, the conductor replays
-// deferred_target_busy events for children that have been removed.
+// Issue #910 — without this sweep, the conductor replays persisted inbox
+// events for children that have been removed.
 func SweepInboxesForChildSession(childSessionID string) (int, error) {
 	if strings.TrimSpace(childSessionID) == "" {
 		return 0, errors.New("inbox sweep: empty child session id")
@@ -49,6 +49,44 @@ func SweepInboxesForChildSession(childSessionID string) (int, error) {
 		return 0, err
 	}
 
+	totalDropped, err := sweepInboxFilesForChild(dir, entries, childSessionID)
+	if err != nil {
+		return totalDropped, err
+	}
+
+	// Issue #1225: sweep the rest of the child's outbox footprint so a reused id
+	// can't inherit stale state and per-parent ledgers don't leak. Best-effort —
+	// these never fail the rm.
+	_ = os.Remove(DeadLetterPathFor(childSessionID)) // dead-lettered records
+	ForgetConsumedTurnsForChild(childSessionID)      // consumed-turn ledgers (this id as a CHILD)
+	ResetStopBlockBudget(childSessionID)             // Stop-hook block budget (if it was a parent)
+	sweepParentSideArtifacts(childSessionID)         // audit B5: this id's OWN parent-side files
+
+	return totalDropped, nil
+}
+
+// sweepParentSideArtifacts removes the per-PARENT files keyed by this id, for
+// the case where the removed session was itself a conductor/parent (audit B5):
+// its own inbox, in-flight drain WAL, and consumed-turns ledger. Without this
+// the line-level child sweep above never reaches them (they are keyed by the
+// parent id, not by a child_session_id), so they leaked on every parent removal.
+// Best-effort: missing files are not an error.
+func sweepParentSideArtifacts(parentID string) {
+	inboxWriteMu.Lock()
+	_ = os.Remove(InboxPathFor(parentID))
+	delete(inboxFingerprintCache, InboxPathFor(parentID))
+	_ = os.Remove(inboxInflightPathFor(parentID))
+	inboxWriteMu.Unlock()
+
+	consumedTurnsMu.Lock()
+	_ = os.Remove(consumedTurnsPathFor(parentID))
+	consumedTurnsMu.Unlock()
+}
+
+// sweepInboxFilesForChild rewrites every inbox file dropping the child's lines,
+// holding inboxWriteMu for the duration. Split out so the broader outbox-artifact
+// cleanup in SweepInboxesForChildSession runs without the inbox lock held.
+func sweepInboxFilesForChild(dir string, entries []os.DirEntry, childSessionID string) (int, error) {
 	inboxWriteMu.Lock()
 	defer inboxWriteMu.Unlock()
 
@@ -86,7 +124,7 @@ func sweepOneInboxLocked(path, childSessionID string) (int, error) {
 	var kept [][]byte
 	var dropped int
 	scanner := bufio.NewScanner(f)
-	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
+	scanner.Buffer(make([]byte, 0, 64*1024), maxInboxLineBytes)
 	for scanner.Scan() {
 		raw := scanner.Bytes()
 		if len(strings.TrimSpace(string(raw))) == 0 {
