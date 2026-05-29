@@ -70,6 +70,19 @@ type TransitionNotificationEvent struct {
 	// finished event. Unused for transition events.
 	DoneStatus  string `json:"done_status,omitempty"`
 	DoneSummary string `json:"done_summary,omitempty"`
+
+	// TurnFingerprint identifies a child's completed turn for exactly-once
+	// consumer effects (issue #1225). Coarser than EventFingerprint (which
+	// keys on emit-instant so retries collapse): two emits of the SAME turn
+	// share a TurnFingerprint, so a parent that drains the durable outbox acts
+	// on the turn exactly once even across a daemon restart that re-stamps
+	// Timestamp. Format: "<child_id>@<turn-signal-hash>".
+	TurnFingerprint string `json:"turn_fingerprint,omitempty"`
+
+	// Attempts counts producer commit attempts against an unresolvable target
+	// before the record is moved to the dead-letter store (issue #1225). Bounds
+	// the old dropped_no_target ~1/sec runaway to a terminal state.
+	Attempts int `json:"attempts,omitempty"`
 }
 
 // transitionKindFinished marks a TransitionNotificationEvent as a worker-
