@@ -1,6 +1,7 @@
 package session
 
 import (
+	"context"
 	"log/slog"
 	"os/exec"
 	"time"
@@ -136,16 +137,33 @@ func sendWakeNudge(parent *Instance, profile string) error {
 	return nil
 }
 
+// wakeNudgeSendTimeout bounds the detached wake-nudge subprocess. --no-wait
+// already returns fast, so 5s is generous; the bound exists purely so a wedged
+// agent-deck binary (e.g. stuck on SQLite/tmux) is reaped instead of leaking the
+// dispatch goroutine indefinitely (PR #1230 audit). A timed-out send is harmless
+// like any dropped nudge — the record still drains on the next turn/heartbeat.
+const wakeNudgeSendTimeout = 5 * time.Second
+
+// wakeNudgeExec runs the resolved command under ctx. It is a package var so a
+// test can substitute a spy and assert the deadline/args without spawning a real
+// process; production runs the real bounded subprocess.
+var wakeNudgeExec = func(ctx context.Context, bin string, args ...string) error {
+	return exec.CommandContext(ctx, bin, args...).Run()
+}
+
 // sendWakeNudgeNoWait shells out to `agent-deck [-p profile] session send <ref>
 // <msg> --no-wait -q`. --no-wait keeps it fire-and-forget: it neither blocks for
 // the agent's ready state nor waits for a reply, so it returns fast even if the
-// pane is wedged.
+// pane is wedged. The context deadline is a belt-and-suspenders backstop for the
+// case where even the subprocess itself hangs.
 func sendWakeNudgeNoWait(profile, ref string) error {
+	ctx, cancel := context.WithTimeout(context.Background(), wakeNudgeSendTimeout)
+	defer cancel()
 	bin := agentDeckBinaryPath()
 	args := []string{}
 	if profile != "" {
 		args = append(args, "-p", profile)
 	}
 	args = append(args, "session", "send", ref, wakeNudgeMessage, "--no-wait", "-q")
-	return exec.Command(bin, args...).Run()
+	return wakeNudgeExec(ctx, bin, args...)
 }

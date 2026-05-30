@@ -154,6 +154,27 @@ func TestIssue1225_NudgeSendErrorIsHarmless(t *testing.T) {
 	}
 }
 
+// The PRODUCTION default wiring (not a test spy) is fully populated and routes
+// its idle probe through the conductor-scoped gate end-to-end: a conductor-
+// prefixed title is nudgeable only when idle, a busy conductor and a
+// non-conductor leaf are not. This guards against a future refactor silently
+// swapping defaultWakeNudgeWiring's isIdle for an unscoped probe.
+func TestIssue1225_DefaultWiringUsesConductorIdleGate(t *testing.T) {
+	w := defaultWakeNudgeWiring()
+	if w == nil || w.nudger == nil || w.now == nil || w.isIdle == nil || w.send == nil {
+		t.Fatalf("default wiring must populate every hook, got %+v", w)
+	}
+	if !w.isIdle(&Instance{ID: "c", Title: "conductor-x", Status: StatusIdle}) {
+		t.Fatal("default wiring must nudge an idle conductor")
+	}
+	if w.isIdle(&Instance{ID: "c", Title: "conductor-x", Status: StatusRunning}) {
+		t.Fatal("default wiring must NOT nudge a busy conductor (send-keys would only queue)")
+	}
+	if w.isIdle(&Instance{ID: "l", Title: "worker", Status: StatusIdle}) {
+		t.Fatal("default wiring must NOT nudge a non-conductor leaf (no inbox drain → noise)")
+	}
+}
+
 // The production idle-probe is conductor-scoped (only conductors drain an inbox)
 // and only green when the pane is idle/waiting (not mid-turn).
 func TestIssue1225_ParentIsNudgeableIdle(t *testing.T) {
