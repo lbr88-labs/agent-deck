@@ -636,9 +636,12 @@ func (n NotificationsConfig) GetTransitionEventsEnabled() bool {
 
 // InstanceSettings configures multiple agent-deck instance behavior
 type InstanceSettings struct {
-	// AllowMultiple allows running multiple agent-deck TUI instances for the same profile
-	// When true (default), multiple instances can run, but only the first (primary) manages the notification bar
-	// When false, only one instance can run per profile
+	// AllowMultiple allows running multiple agent-deck TUI instances for the same profile.
+	// When false (default), only one instance can run per profile — a safe default that
+	// prevents concurrent reviver/restart loops from tearing down each other's live
+	// sessions (issue #1246). When true (explicit opt-in), multiple instances can run,
+	// but only the first (primary) manages the notification bar — useful for multi-pane
+	// workflows (e.g. PC + phone-over-SSH).
 	AllowMultiple *bool `toml:"allow_multiple"`
 
 	// FollowCwdOnAttach updates the session's ProjectPath from tmux pane_current_path
@@ -647,10 +650,14 @@ type InstanceSettings struct {
 	FollowCwdOnAttach *bool `toml:"follow_cwd_on_attach"`
 }
 
-// GetAllowMultiple returns whether multiple instances are allowed, defaulting to true
+// GetAllowMultiple returns whether multiple instances are allowed, defaulting to false.
+// Single-instance-per-profile is the safe default: it engages the primary-election gate
+// so a second instance is rejected, preventing concurrent reviver/restart loops from
+// tearing down each other's live sessions (issue #1246). Multi-instance is an explicit
+// opt-in via allow_multiple = true.
 func (i *InstanceSettings) GetAllowMultiple() bool {
 	if i.AllowMultiple == nil {
-		return true // Default: allow multiple instances (better UX for multi-pane workflows)
+		return false // Default: single instance per profile (prevents concurrent tear-down)
 	}
 	return *i.AllowMultiple
 }
@@ -2763,8 +2770,14 @@ func CreateExampleConfig() error {
 # detach = "ctrl+d"   # PTY-attach detach key, default ctrl+q (issue #434).
                       # Alias [tmux].detach_key exists; [hotkeys].detach wins.
 
-# Attach-return project path sync (optional)
+# Instance behavior (optional)
 # [instances]
+# allow_multiple = false   # Default: one agent-deck per profile (single-instance gate).
+                           # A second instance is rejected to prevent concurrent
+                           # reviver/restart loops from tearing down each other's live
+                           # sessions (issue #1246). Set true to opt in to multiple
+                           # instances (e.g. PC + phone-over-SSH); the first instance
+                           # (primary) owns the notification bar.
 # follow_cwd_on_attach = true
 
 # Preview settings (optional)

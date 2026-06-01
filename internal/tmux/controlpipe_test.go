@@ -351,7 +351,7 @@ func TestPipeManager_ConnectCleansStaleClients(t *testing.T) {
 }
 
 // TestKillStaleControlClients_PreservesLiveSibling is the #927 regression
-// guard. With allow_multiple=true (default), two simultaneous agent-deck
+// guard. With allow_multiple=true (opt-in), two simultaneous agent-deck
 // TUIs share a tmux server and each spawns its own control-mode client per
 // session. Before the fix, each TUI's killStaleControlClients sweep treated
 // the OTHER TUI's clients as orphans and SIGTERM'd them — both pipes
