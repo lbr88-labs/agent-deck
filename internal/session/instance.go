@@ -3152,6 +3152,15 @@ func (i *Instance) sendMessageWhenReady(message string) error {
 				return fmt.Errorf("failed to send message: %w", err)
 			}
 
+			// The verify loop below keys off Claude-specific signals (an
+			// "active" transition, composer glyph, unsent-paste markers). Non-
+			// Claude tools never surface those, so the loop false-negatives a
+			// delivered message and Enter-spams the composer; skip it for every
+			// non-Claude tool (#1238 — generalizes #1228's codex-only skip).
+			if !UsesClaudeDeliveryVerify(i.Tool) {
+				return nil
+			}
+
 			// Verify the agent accepted Enter and began processing.
 			// Strategy:
 			// - If unsent prompt is visible, press Enter again immediately.

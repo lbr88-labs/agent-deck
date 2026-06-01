@@ -2077,6 +2077,18 @@ func IsClaudeCompatible(toolName string) bool {
 	return false
 }
 
+// UsesClaudeDeliveryVerify reports whether the Claude-tuned post-send delivery
+// verification (issue #876) should be applied for this tool. That verify keys
+// off Claude-specific TUI signals — an "active" status transition, the composer
+// glyph, and unsent-paste markers. Only Claude-compatible tools surface those;
+// every other tool (codex #1205, codewhale/deepseek #1238, gemini #876,
+// opencode, and custom CLIs) would false-negative the verify and be reported as
+// a silent drop despite successful delivery. Those tools therefore skip the
+// Claude-tuned verify. This is the general superset of #1228's codex-only skip.
+func UsesClaudeDeliveryVerify(toolName string) bool {
+	return IsClaudeCompatible(toolName)
+}
+
 // IsCodexCompatible returns true if the tool is "codex" or a custom tool
 // whose underlying command is "codex". Use this for capability gates
 // where custom tools wrapping Codex should get full Codex functionality
