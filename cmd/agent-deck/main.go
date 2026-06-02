@@ -124,7 +124,12 @@ func promptForUpdate() bool {
 	}
 
 	fmt.Println()
-	if err := update.PerformUpdate(info.DownloadURL); err != nil {
+	release, err := update.FetchReleaseByTag(info.LatestVersion)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Update failed: failed to fetch release info: %v\n", err)
+		return false
+	}
+	if err := update.PerformVerifiedUpdate(release, runtime.GOOS, runtime.GOARCH); err != nil {
 		fmt.Fprintf(os.Stderr, "Update failed: %v\n", err)
 		return false
 	}
@@ -2701,7 +2706,12 @@ func handleUpdate(args []string) {
 			os.Exit(1)
 		}
 	} else {
-		if err := update.PerformUpdate(info.DownloadURL); err != nil {
+		release, err := update.FetchReleaseByTag(info.LatestVersion)
+		if err != nil {
+			fmt.Printf("Error installing update: failed to fetch release info: %v\n", err)
+			os.Exit(1)
+		}
+		if err := update.PerformVerifiedUpdate(release, runtime.GOOS, runtime.GOARCH); err != nil {
 			fmt.Printf("Error installing update: %v\n", err)
 			os.Exit(1)
 		}
@@ -2791,7 +2801,7 @@ func handleUpdateToSpecificVersion(requested string, checkOnly bool) {
 	}
 
 	fmt.Println()
-	if err := update.PerformUpdate(downloadURL); err != nil {
+	if err := update.PerformVerifiedUpdate(release, runtime.GOOS, runtime.GOARCH); err != nil {
 		fmt.Printf("Error installing v%s: %v\n", targetVersion, err)
 		os.Exit(1)
 	}
