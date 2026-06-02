@@ -27,6 +27,34 @@ func cellWidth(s string) int {
 	return ansi.StringWidth(s)
 }
 
+// fitCellWidth returns s truncated or space-padded so it occupies exactly width
+// terminal cells, measured by cellWidth (ansi cells, keycap-aware).
+//
+// Used by clampViewToViewport on the final, already-joined frame so every row
+// fully overwrites the previous frame's row on incremental redraw. Without the
+// pad, when a shorter line replaces a longer one the terminal keeps the stale
+// trailing glyphs — the iTerm2 "ghost line" artifact on session-list scroll
+// (#607 row-offset drift class). Truncation reuses cellTruncate so keycap
+// clusters (#937) are cut at their true 2-cell width.
+//
+// This stays on cellWidth deliberately: clampViewToViewport runs AFTER
+// lipgloss.JoinHorizontal, so it is a terminal-cell safety net, not part of the
+// JoinHorizontal width-measurement path. The pre-join equalizer ensureExactWidth
+// must NOT use cellWidth — it has to agree with lipgloss.Width (see #182).
+func fitCellWidth(s string, width int) string {
+	if width <= 0 {
+		return ""
+	}
+	w := cellWidth(s)
+	if w > width {
+		return cellTruncate(s, width, "")
+	}
+	if w < width {
+		return s + strings.Repeat(" ", width-w)
+	}
+	return s
+}
+
 // cellTruncate returns a prefix of s whose cellWidth is <= width, appending
 // tail (also measured by cellWidth) if any truncation occurred.
 //

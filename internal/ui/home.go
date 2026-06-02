@@ -10847,9 +10847,14 @@ func clampViewToViewport(content string, width, height int) string {
 		// terminal cell count. Any line that slips past upstream gates
 		// with a #️⃣ 0️⃣–9️⃣ *️⃣ glyph would otherwise overflow into the
 		// next row here — exactly @jennings's pane-content drift report.
-		if cellWidth(line) > width {
-			lines[i] = cellTruncate(line, width, "")
-		}
+		//
+		// Also PAD short lines to exactly width (not just truncate long
+		// ones): on incremental redraw a shorter line must overwrite the
+		// full previous row, else the terminal keeps the stale trailing
+		// glyphs — the iTerm2 "ghost line" artifact on session-list scroll
+		// (#607 row-offset drift). fitCellWidth does both, on cellWidth so
+		// this post-join clamp stays a true terminal-cell net.
+		lines[i] = fitCellWidth(line, width)
 	}
 
 	return strings.Join(lines, "\n")
