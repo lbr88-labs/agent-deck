@@ -13,9 +13,36 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
 	"time"
 )
+
+// callRecorder collects token-endpoint requests under a mutex. The httptest
+// server invokes its handler in a separate goroutine, so the slice append must
+// be synchronized against the test goroutine's reads (else -race flags it).
+type callRecorder struct {
+	mu    sync.Mutex
+	calls []map[string]string
+}
+
+func (r *callRecorder) add(c map[string]string) {
+	r.mu.Lock()
+	r.calls = append(r.calls, c)
+	r.mu.Unlock()
+}
+
+func (r *callRecorder) len() int {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return len(r.calls)
+}
+
+func (r *callRecorder) at(i int) map[string]string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.calls[i]
+}
 
 // writeCreds writes a credentials document with a claudeAiOauth block plus an
 // arbitrary extra top-level key, to prove unknown fields survive a round-trip.
@@ -55,15 +82,15 @@ func readOAuth(t *testing.T, path string) map[string]any {
 // mockTokenServer returns an httptest server that rotates the token, recording
 // every request it received so tests can assert the request shape (and that it
 // was or was not called).
-func mockTokenServer(t *testing.T, newAccess, newRefresh string, expiresIn int) (*httptest.Server, *[]map[string]string) {
+func mockTokenServer(t *testing.T, newAccess, newRefresh string, expiresIn int) (*httptest.Server, *callRecorder) {
 	t.Helper()
-	var calls []map[string]string
+	rec := &callRecorder{}
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if err := r.ParseForm(); err != nil {
 			http.Error(w, "bad form", http.StatusBadRequest)
 			return
 		}
-		calls = append(calls, map[string]string{
+		rec.add(map[string]string{
 			"grant_type":    r.Form.Get("grant_type"),
 			"refresh_token": r.Form.Get("refresh_token"),
 			"client_id":     r.Form.Get("client_id"),
@@ -76,7 +103,7 @@ func mockTokenServer(t *testing.T, newAccess, newRefresh string, expiresIn int) 
 		})
 	}))
 	t.Cleanup(srv.Close)
-	return srv, &calls
+	return srv, rec
 }
 
 func fixedNow() func() time.Time {
@@ -113,10 +140,10 @@ func TestRefreshIfNeeded_RefreshesWhenNearExpiry(t *testing.T) {
 	}
 
 	// Endpoint was called exactly once with the correct grant + rotating token.
-	if len(*calls) != 1 {
-		t.Fatalf("expected exactly 1 token request; got %d", len(*calls))
+	if calls.len() != 1 {
+		t.Fatalf("expected exactly 1 token request; got %d", calls.len())
 	}
-	c := (*calls)[0]
+	c := calls.at(0)
 	if c["grant_type"] != "refresh_token" {
 		t.Fatalf("grant_type = %q; want refresh_token", c["grant_type"])
 	}
@@ -174,8 +201,8 @@ func TestRefreshIfNeeded_SkipsWhenFarFromExpiry(t *testing.T) {
 	if res.Refreshed {
 		t.Fatal("expected Refreshed=false when far from expiry")
 	}
-	if len(*calls) != 0 {
-		t.Fatalf("token endpoint must NOT be called when far from expiry; got %d calls", len(*calls))
+	if calls.len() != 0 {
+		t.Fatalf("token endpoint must NOT be called when far from expiry; got %d calls", calls.len())
 	}
 	after, err := os.ReadFile(credPath)
 	if err != nil {
@@ -279,10 +306,11 @@ func TestRefreshIfNeeded_EndpointErrorLeavesCanonicalUntouched(t *testing.T) {
 }
 
 // (6) The proper-lockfile-compatible lock is released after a successful
-// refresh (no leaked lock dir at realpath(cred)+".lock").
+// refresh — no leaked lock dir at Claude's lock path (the CONFIG_DIR sibling).
 func TestRefreshIfNeeded_ReleasesLock(t *testing.T) {
 	now := fixedNow()
-	credPath := filepath.Join(t.TempDir(), ".credentials.json")
+	configDir := t.TempDir()
+	credPath := filepath.Join(configDir, ".credentials.json")
 	writeCreds(t, credPath, map[string]any{
 		"accessToken": "old", "refreshToken": "rt", "clientId": "c",
 		"expiresAt": float64(now().Add(time.Minute).UnixMilli()),
@@ -293,8 +321,40 @@ func TestRefreshIfNeeded_ReleasesLock(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("RefreshIfNeeded: %v", err)
 	}
-	if _, err := os.Stat(credPath + ".lock"); !os.IsNotExist(err) {
-		t.Fatalf("lock dir must be released after refresh; stat err = %v", err)
+	lockPath, err := claudeLockPath(credPath)
+	if err != nil {
+		t.Fatalf("claudeLockPath: %v", err)
+	}
+	if _, err := os.Stat(lockPath); !os.IsNotExist(err) {
+		t.Fatalf("lock dir %s must be released after refresh; stat err = %v", lockPath, err)
+	}
+}
+
+// (8) BLOCKER regression: the daemon must lock the SAME path Claude locks on its
+// OAuth-refresh path. Verified in the shipped binary: Claude calls
+// proper-lockfile lock() with the CONFIG_DIR, so the lock dir is
+// realpath(CONFIG_DIR)+".lock" — a SIBLING of the profile dir, NOT
+// <profile>/.credentials.json.lock. A mismatch means the daemon and a running
+// session could refresh simultaneously and burn the rotating token.
+func TestClaudeLockPath_IsConfigDirSibling(t *testing.T) {
+	configDir := t.TempDir()
+	credPath := filepath.Join(configDir, ".credentials.json")
+
+	got, err := claudeLockPath(credPath)
+	if err != nil {
+		t.Fatalf("claudeLockPath: %v", err)
+	}
+	resolvedDir, err := filepath.EvalSymlinks(configDir)
+	if err != nil {
+		t.Fatalf("evalsymlinks: %v", err)
+	}
+	want := resolvedDir + ".lock"
+	if got != want {
+		t.Fatalf("lock path = %q; want CONFIG_DIR sibling %q", got, want)
+	}
+	// Explicitly NOT the credentials-file lock.
+	if got == credPath+".lock" {
+		t.Fatalf("lock path must NOT be the credentials-file lock (%s); Claude locks the CONFIG_DIR", got)
 	}
 }
 

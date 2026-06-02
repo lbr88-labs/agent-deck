@@ -7,6 +7,27 @@ import (
 	"time"
 )
 
+// claudeLockPath returns the exact lockfile path Claude Code locks on its
+// OAuth-refresh path, so the daemon serializes against Claude's own writes.
+//
+// Verified in the shipped binary (cli.js): the refresh path calls
+// proper-lockfile's lock() with the CONFIG_DIR (the dir holding
+// .credentials.json), with no options. proper-lockfile resolves realpath() of
+// its argument (realpath:true by default) and appends ".lock", so the lock dir
+// is `realpath(CONFIG_DIR)+".lock"` — a SIBLING of the profile dir
+// (e.g. ~/.claude.lock), NOT ~/.claude/.credentials.json.lock.
+//
+// credPath is the credentials FILE path; its parent dir is the CONFIG_DIR.
+// EvalSymlinks resolves the dir's realpath (the dir always exists here).
+func claudeLockPath(credPath string) (string, error) {
+	configDir := filepath.Dir(credPath)
+	resolved, err := filepath.EvalSymlinks(configDir)
+	if err != nil {
+		return "", err
+	}
+	return resolved + ".lock", nil
+}
+
 // acquireLock takes a proper-lockfile-compatible lock so the refresh daemon
 // serializes against Claude Code's own credential writes. proper-lockfile (the
 // npm package Claude uses) represents a held lock as a DIRECTORY at

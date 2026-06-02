@@ -50,10 +50,13 @@ RestartSec=30
 # The token files are 0600 secrets; keep the process unprivileged and sandboxed.
 NoNewPrivileges=true
 ProtectSystem=strict
-ProtectHome=read-only
-# It must WRITE the canonical credentials under the two profile dirs.
-ReadWritePaths=%h/.claude %h/.claude-work
 PrivateTmp=true
+# It must WRITE the canonical credentials under the profile dirs AND create the
+# proper-lockfile lock dir Claude uses, which is a SIBLING of each profile dir
+# in $HOME (realpath(CONFIG_DIR)+".lock", e.g. ~/.claude.lock). Because that
+# lock is created at runtime directly in $HOME, the whole home must be writable;
+# ProtectSystem=strict still keeps the rest of the filesystem read-only.
+ReadWritePaths=%h
 
 [Install]
 WantedBy=default.target

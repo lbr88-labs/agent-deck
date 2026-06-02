@@ -63,8 +63,8 @@ func TestRun_RefreshesImmediatelyThenStopsOnCancel(t *testing.T) {
 		t.Fatal("Run did not return after context cancel")
 	}
 
-	if len(*calls) < 1 {
-		t.Fatalf("expected at least one token request from the immediate tick; got %d", len(*calls))
+	if calls.len() < 1 {
+		t.Fatalf("expected at least one token request from the immediate tick; got %d", calls.len())
 	}
 	if !results[0].Refreshed {
 		t.Fatalf("immediate tick should have refreshed the near-expiry token")

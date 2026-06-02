@@ -134,15 +134,25 @@ type tokenResponse struct {
 // half-write the only token. Unknown fields (subscriptionType, rateLimitTier,
 // and any extra keys) are preserved verbatim across the round-trip.
 func RefreshIfNeeded(credPath string, cfg RefreshConfig) (RefreshResult, error) {
-	// Resolve symlinks so the lock path matches the one Claude derives via
-	// realpath() — symlinked scratch creds and the canonical file then share
-	// a single lock.
+	// Resolve symlinks so we read/write the canonical file even when credPath
+	// is a symlink to it.
 	realPath := credPath
 	if rp, err := filepath.EvalSymlinks(credPath); err == nil {
 		realPath = rp
 	}
 
-	release, err := acquireLock(realPath+".lock", httpTimeout+5*time.Second)
+	// Lock the SAME path Claude Code locks on its OAuth-refresh path so the
+	// daemon and any running session never refresh at the same instant.
+	// Verified in the shipped binary: the refresh path calls
+	// proper-lockfile's lock() with the CONFIG_DIR (Y7()), NOT the
+	// credentials file — so the lock dir is realpath(CONFIG_DIR)+".lock"
+	// (e.g. ~/.claude.lock), a sibling of the profile dir. Matching it
+	// exactly is what makes the cross-process serialization real.
+	lockPath, err := claudeLockPath(credPath)
+	if err != nil {
+		return RefreshResult{}, fmt.Errorf("resolve credentials lock path: %w", err)
+	}
+	release, err := acquireLock(lockPath, httpTimeout+5*time.Second)
 	if err != nil {
 		return RefreshResult{}, fmt.Errorf("acquire credentials lock: %w", err)
 	}
