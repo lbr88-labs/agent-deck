@@ -7,6 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.9.46] - 2026-06-02
+
+### Added
+
+- **`include_cwd_prefix` display toggle** ([#1221](https://github.com/asheshgoplani/agent-deck/issues/1221) / [#1229](https://github.com/asheshgoplani/agent-deck/pull/1229)). A configurable toggle controls whether the working-directory prefix is shown in session display, letting users opt out of the cwd prefix where it adds noise.
+- **Claude Opus 4.8 in the model catalog** ([#1241](https://github.com/asheshgoplani/agent-deck/issues/1241) / [#1242](https://github.com/asheshgoplani/agent-deck/pull/1242)). `claude-opus-4-8` is added to `MODEL_ID_CATALOG` so the latest Opus model is selectable and resolves correctly throughout the UI.
+- **SLSA build-provenance attestation with fail-closed verification** ([#1159](https://github.com/asheshgoplani/agent-deck/issues/1159) / [#1250](https://github.com/asheshgoplani/agent-deck/pull/1250)). Release artifacts now carry SLSA build provenance, and artifact verification is fail-closed — an unattested or tampered artifact is rejected rather than silently accepted.
+- **Tier-1 WARM performance suite** ([#1234](https://github.com/asheshgoplani/agent-deck/issues/1234) / [#1251](https://github.com/asheshgoplani/agent-deck/pull/1251)). A warm-path performance test suite with corrected warm measurement, guarding the hot code paths against regression.
+
+### Changed
+
+- **Single-instance per profile is now the default** ([#1246](https://github.com/asheshgoplani/agent-deck/issues/1246) / [#1247](https://github.com/asheshgoplani/agent-deck/pull/1247)). `allow_multiple` now defaults to `false`, so a profile runs a single instance by default. This stops concurrent instances from tearing each other down.
+- **Bumped all deprecated GitHub Actions** ([#991](https://github.com/asheshgoplani/agent-deck/issues/991) / [#1249](https://github.com/asheshgoplani/agent-deck/pull/1249)). Every deprecated Action across the CI workflows (including perf-smoke and lighthouse-ci) is upgraded to a supported version, keeping the pipelines from breaking on runner deprecations.
+- **Stabilized the Playwright e2e suite** ([#1236](https://github.com/asheshgoplani/agent-deck/pull/1236) / [#1248](https://github.com/asheshgoplani/agent-deck/pull/1248)). Broken Playwright specs on main are repaired and desktop-coupled specs gain phone-viewport applicability guards, so the e2e suite runs green across viewports.
+
+### Fixed
+
+- **Durable, subscription-safe credentials (clean-symlink + keep-warm daemon)** ([#1222](https://github.com/asheshgoplani/agent-deck/issues/1222) / [#1253](https://github.com/asheshgoplani/agent-deck/pull/1253)). Credentials are managed via a clean symlink (dropping the fragile mtime-promote step) and a keep-warm refresh daemon, making multi-session use subscription-safe without an API key and eliminating the credential loss that drove the work-profile re-login loop.
+- **Tool-aware post-send verification** ([#1238](https://github.com/asheshgoplani/agent-deck/issues/1238) / [#1205](https://github.com/asheshgoplani/agent-deck/issues/1205) / [#876](https://github.com/asheshgoplani/agent-deck/issues/876) / [#1245](https://github.com/asheshgoplani/agent-deck/pull/1245)). Post-send verification is now tool-aware, so sends to non-Claude tools are no longer reported as false-negative drops.
+- **Hook-handler graceful degradation on missing `PROJECT_DIR`** ([#1233](https://github.com/asheshgoplani/agent-deck/issues/1233) / [#1243](https://github.com/asheshgoplani/agent-deck/pull/1243)). A missing `PROJECT_DIR` now degrades gracefully instead of emitting a FATAL on every call.
+- **iTerm2 ghost-lines** ([#1240](https://github.com/asheshgoplani/agent-deck/issues/1240) / [#1252](https://github.com/asheshgoplani/agent-deck/pull/1252)). Ghost-lines under iTerm2 are prevented without regressing panel width-measurement.
+
 ## [1.9.45] - 2026-05-30
 
 ### Added
