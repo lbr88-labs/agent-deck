@@ -140,50 +140,35 @@ func readExistingLocalMCPServers(mcpFile string) map[string]json.RawMessage {
 	return config.MCPServers
 }
 
-// WriteMCPJsonFromConfig writes enabled MCPs from config.toml to project's .mcp.json
-// It preserves any existing entries not managed by agent-deck (not defined in config.toml)
-func WriteMCPJsonFromConfig(projectPath string, enabledNames []string) error {
-	if !GetManageMCPJson() {
-		mcpCatLog.Debug("mcp_json_management_disabled", slog.String("path", projectPath))
-		return nil
-	}
-
-	mcpFile := filepath.Join(projectPath, ".mcp.json")
+// WriteMergedMcpJSONFile writes enabled MCPs from config.toml to mcpFile using the
+// Claude/Cursor JSON shape {"mcpServers":{...}}. It preserves entries not defined in
+// config.toml. When pluginPinClaudeProfile is non-empty (Claude project .mcp.json),
+// refreshes stale plugin version pins before merging (#960).
+func WriteMergedMcpJSONFile(mcpFile string, enabledNames []string, pluginPinClaudeProfile string) error {
 	availableMCPs := GetAvailableMCPs()
-	pool := GetGlobalPool() // Get pool instance (may be nil)
+	pool := GetGlobalPool()
 
-	// #960: refresh stale plugin-cache version pins in the file on disk before
-	// the merge reads it. Preserved (non-catalog) entries are reused verbatim
-	// (#146), so without this step a `claude plugin upgrade` leaves the old
-	// version path baked into .mcp.json forever and /mcp reconnect silently
-	// keeps loading the outdated plugin.
-	if profile := GetClaudeConfigDir(); profile != "" {
-		if _, err := RefreshStalePluginPins(mcpFile, []string{profile}); err != nil {
+	if pluginPinClaudeProfile != "" {
+		if _, err := RefreshStalePluginPins(mcpFile, []string{pluginPinClaudeProfile}); err != nil {
 			mcpCatLog.Warn("plugin_pin_refresh_failed", "path", mcpFile, "error", err)
 		}
 	}
 
-	// Read existing .mcp.json to preserve entries not managed by agent-deck (#146)
 	existingServers := readExistingLocalMCPServers(mcpFile)
-
-	// Build agent-deck managed MCP entries
 	agentDeckServers := make(map[string]MCPServerConfig)
 
 	for _, name := range enabledNames {
 		if def, ok := availableMCPs[name]; ok {
-			// Check if this is an HTTP/SSE MCP (has URL configured)
 			if def.URL != "" {
-				// Start HTTP server if configured
 				if def.HasAutoStartServer() {
 					if err := StartHTTPServer(name, &def); err != nil {
 						mcpCatLog.Warn("http_server_start_failed", slog.String("mcp", name), slog.String("scope", "local"), slog.Any("error", err))
-						// Continue anyway - server might be external or user will troubleshoot
 					}
 				}
 
 				transport := def.Transport
 				if transport == "" {
-					transport = "http" // default to http if URL is set
+					transport = "http"
 				}
 				agentDeckServers[name] = MCPServerConfig{
 					Type:    transport,
@@ -194,13 +179,11 @@ func WriteMCPJsonFromConfig(projectPath string, enabledNames []string) error {
 				continue
 			}
 
-			// Try to use pool socket for this MCP (stdio only)
 			if socketCfg, used := tryPoolSocket(pool, name, "local"); used {
 				agentDeckServers[name] = socketCfg
 				continue
 			}
 
-			// Fallback to stdio mode (pool disabled, excluded, or socket failed with fallback enabled)
 			args := def.Args
 			if args == nil {
 				args = []string{}
@@ -219,7 +202,6 @@ func WriteMCPJsonFromConfig(projectPath string, enabledNames []string) error {
 		}
 	}
 
-	// Merge: preserve non-agent-deck entries, then add agent-deck entries (#146)
 	mergedServers := make(map[string]json.RawMessage)
 	for name, raw := range existingServers {
 		if _, managed := availableMCPs[name]; !managed {
@@ -244,21 +226,32 @@ func WriteMCPJsonFromConfig(projectPath string, enabledNames []string) error {
 
 	data, err := json.MarshalIndent(finalConfig, "", "  ")
 	if err != nil {
-		return fmt.Errorf("failed to marshal .mcp.json: %w", err)
+		return fmt.Errorf("failed to marshal mcp json: %w", err)
 	}
 
-	// Atomic write
 	tmpPath := mcpFile + ".tmp"
 	if err := os.WriteFile(tmpPath, data, 0644); err != nil {
-		return fmt.Errorf("failed to write .mcp.json: %w", err)
+		return fmt.Errorf("failed to write mcp json temp: %w", err)
 	}
 
 	if err := os.Rename(tmpPath, mcpFile); err != nil {
 		os.Remove(tmpPath)
-		return fmt.Errorf("failed to save .mcp.json: %w", err)
+		return fmt.Errorf("failed to save mcp json: %w", err)
 	}
 
 	return nil
+}
+
+// WriteMCPJsonFromConfig writes enabled MCPs from config.toml to project's .mcp.json
+// It preserves any existing entries not managed by agent-deck (not defined in config.toml)
+func WriteMCPJsonFromConfig(projectPath string, enabledNames []string) error {
+	if !GetManageMCPJson() {
+		mcpCatLog.Debug("mcp_json_management_disabled", slog.String("path", projectPath))
+		return nil
+	}
+
+	mcpFile := filepath.Join(projectPath, ".mcp.json")
+	return WriteMergedMcpJSONFile(mcpFile, enabledNames, GetClaudeConfigDir())
 }
 
 // WriteGlobalMCP adds or removes MCPs from Claude's global config

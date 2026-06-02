@@ -6297,13 +6297,15 @@ func (i *Instance) RefreshLiveSessionIDs() {
 }
 
 // GetMCPInfo returns MCP server information for this session
-// Returns nil if not a Claude or Gemini session
+// Returns nil if not a Claude, Gemini, or Cursor session
 func (i *Instance) GetMCPInfo() *MCPInfo {
 	switch {
 	case IsClaudeCompatible(i.Tool):
 		return GetMCPInfo(i.ProjectPath)
 	case i.Tool == "gemini":
 		return GetGeminiMCPInfo(i.ProjectPath)
+	case i.Tool == "cursor":
+		return GetCursorMCPInfo(i.ProjectPath)
 	default:
 		return nil
 	}
@@ -6313,12 +6315,12 @@ func (i *Instance) GetMCPInfo() *MCPInfo {
 // This should be called when a session starts or restarts, so we can track
 // which MCPs are actually loaded in the running Claude session vs just configured
 func (i *Instance) CaptureLoadedMCPs() {
-	if !IsClaudeCompatible(i.Tool) {
+	if !IsClaudeCompatible(i.Tool) && i.Tool != "cursor" {
 		i.LoadedMCPNames = nil
 		return
 	}
 
-	mcpInfo := GetMCPInfo(i.ProjectPath)
+	mcpInfo := i.GetMCPInfo()
 	if mcpInfo == nil {
 		i.LoadedMCPNames = nil
 		return
@@ -6332,6 +6334,38 @@ func (i *Instance) CaptureLoadedMCPs() {
 // Otherwise, MCPs will use stdio configs (npx ...)
 // Returns error if .mcp.json write fails
 func (i *Instance) regenerateMCPConfig() error {
+	if i.Tool == "cursor" {
+		ClearCursorMCPCache(i.ProjectPath)
+		mcpInfo := i.GetMCPInfo()
+		if mcpInfo == nil || !mcpInfo.HasAny() {
+			return nil
+		}
+
+		switch GetMCPDefaultScope() {
+		case "global", "user":
+			globalMCPs := mcpInfo.Global
+			if len(globalMCPs) == 0 {
+				return nil
+			}
+			if err := i.WriteGlobalMCPConfig(globalMCPs); err != nil {
+				mcpLog.Debug("regen_cursor_global_mcp_failed", slog.String("error", err.Error()))
+				return fmt.Errorf("failed to regenerate Cursor global MCP config: %w", err)
+			}
+			mcpLog.Debug("regen_cursor_global_mcp_succeeded", slog.String("title", i.Title), slog.Int("mcp_count", len(globalMCPs)))
+		default:
+			localMCPs := mcpInfo.Local()
+			if len(localMCPs) == 0 {
+				return nil
+			}
+			if err := i.WriteLocalMCPConfig(localMCPs); err != nil {
+				mcpLog.Debug("regen_cursor_project_mcp_failed", slog.String("error", err.Error()))
+				return fmt.Errorf("failed to regenerate .cursor/mcp.json: %w", err)
+			}
+			mcpLog.Debug("regen_cursor_project_mcp_succeeded", slog.String("title", i.Title), slog.Int("mcp_count", len(localMCPs)))
+		}
+		return nil
+	}
+
 	ClearMCPCache(i.ProjectPath) // Force fresh read from disk (not stale 30s cache)
 	mcpInfo := GetMCPInfo(i.ProjectPath)
 	if mcpInfo == nil {

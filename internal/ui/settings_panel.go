@@ -1018,7 +1018,7 @@ func (s *SettingsPanel) View() string {
 	mcpKey := actionHotkey(hotkeys, hotkeyMCPManager)
 	mcpHint := "  MCP Manager hotkey is unbound."
 	if mcpKey != "" {
-		mcpHint = fmt.Sprintf("  Press %s on any Claude/Gemini session to attach MCPs.", mcpKey)
+		mcpHint = fmt.Sprintf("  Press %s on any Claude, Gemini, or Cursor session to attach MCPs.", mcpKey)
 	}
 	content.WriteString(dimStyle.Render(mcpHint))
 	content.WriteString("\n\n")

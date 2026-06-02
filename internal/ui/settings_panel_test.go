@@ -1014,11 +1014,15 @@ func TestSettingsPanel_ViewUsesConfiguredMCPHotkeyHint(t *testing.T) {
 	setSettingsPanelHotkeyConfigForTest(t, "[hotkeys]\nmcp_manager = \"ctrl+m\"\n")
 
 	panel := NewSettingsPanel()
-	panel.SetSize(100, 80)
+	// Tall viewport so the MCP hint (below many settings rows) is not clipped by scroll windowing.
+	panel.SetSize(120, 200)
 	panel.Show()
+	panel.cursor = int(SettingStatsShowLoad)
 
 	view := panel.View()
-	if !containsString(view, "Press ctrl+m on any Claude/Gemini session to attach MCPs.") {
+	// Hint may wrap across dialog lines; assert on stable fragments rather than one contiguous string.
+	if !containsString(view, "Press ctrl+m on any Claude, Gemini, or Cursor session") ||
+		!containsString(view, "attach MCPs") {
 		t.Fatalf("settings view should show configured MCP key hint, got %q", view)
 	}
 }

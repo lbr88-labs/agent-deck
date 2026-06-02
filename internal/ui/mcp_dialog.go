@@ -44,7 +44,7 @@ type MCPItem struct {
 	HasServerCfg bool   // True if HTTP MCP has [mcps.X.server] config
 }
 
-// MCPDialog handles MCP management for Claude and Gemini sessions
+// MCPDialog handles MCP management for Claude, Gemini, and Cursor Agent CLI sessions
 type MCPDialog struct {
 	visible     bool
 	width       int
@@ -197,6 +197,53 @@ func (m *MCPDialog) Show(projectPath string, sessionID string, tool string) erro
 				})
 			}
 		}
+	} else if tool == "cursor" {
+		// Cursor Agent CLI: project .cursor/mcp.json (local) + ~/.cursor/mcp.json (global)
+		mcpInfo := session.GetCursorMCPInfo(projectPath)
+		localAttachedNames := make(map[string]bool)
+		for _, name := range mcpInfo.Local() {
+			localAttachedNames[name] = true
+		}
+		globalAttachedNames := make(map[string]bool)
+		for _, name := range mcpInfo.Global {
+			globalAttachedNames[name] = true
+		}
+
+		for _, name := range allNames {
+			item := itemsMap[name]
+			if localAttachedNames[name] {
+				m.localAttached = append(m.localAttached, item)
+			} else if !globalAttachedNames[name] {
+				m.localAvailable = append(m.localAvailable, item)
+			}
+		}
+		for name := range localAttachedNames {
+			if !poolNames[name] {
+				m.localAttached = append(m.localAttached, MCPItem{
+					Name:        name,
+					Description: "(not in config.toml)",
+					IsOrphan:    true,
+				})
+			}
+		}
+
+		for _, name := range allNames {
+			item := itemsMap[name]
+			if globalAttachedNames[name] {
+				m.globalAttached = append(m.globalAttached, item)
+			} else {
+				m.globalAvailable = append(m.globalAvailable, item)
+			}
+		}
+		for name := range globalAttachedNames {
+			if !poolNames[name] {
+				m.globalAttached = append(m.globalAttached, MCPItem{
+					Name:        name,
+					Description: "(not in config.toml)",
+					IsOrphan:    true,
+				})
+			}
+		}
 	} else {
 		// Claude: Load LOCAL attached from .mcp.json
 		localAttachedNames := make(map[string]bool)
@@ -289,9 +336,16 @@ func (m *MCPDialog) Show(projectPath string, sessionID string, tool string) erro
 
 	m.visible = true
 	m.projectPath = projectPath
-	// Gemini only has global scope, Claude uses configured default
+	// Gemini only has global scope; Cursor uses LOCAL+GLOBAL (no USER); Claude uses all three
 	if tool == "gemini" {
 		m.scope = MCPScopeGlobal
+	} else if tool == "cursor" {
+		switch session.GetMCPDefaultScope() {
+		case "global", "user":
+			m.scope = MCPScopeGlobal
+		default:
+			m.scope = MCPScopeLocal
+		}
 	} else {
 		switch session.GetMCPDefaultScope() {
 		case "global":
@@ -547,6 +601,33 @@ func (m *MCPDialog) Apply() error {
 		return nil
 	}
 
+	if m.tool == "cursor" {
+		if m.localChanged {
+			enabledNames := make([]string, len(m.localAttached))
+			for i, item := range m.localAttached {
+				enabledNames[i] = item.Name
+			}
+			if err := session.WriteLocalMCPConfigForTool(m.tool, m.projectPath, enabledNames); err != nil {
+				m.err = err
+				return err
+			}
+		}
+		if m.globalChanged {
+			enabledNames := make([]string, len(m.globalAttached))
+			for i, item := range m.globalAttached {
+				enabledNames[i] = item.Name
+			}
+			if err := session.WriteGlobalMCPConfigForTool(m.tool, enabledNames); err != nil {
+				m.err = err
+				return err
+			}
+		}
+		if m.localChanged || m.globalChanged {
+			session.InvalidateProjectMCPIntegrationsCache(m.projectPath)
+		}
+		return nil
+	}
+
 	// Claude: Apply LOCAL changes
 	if m.localChanged {
 		// Get names of attached MCPs
@@ -619,7 +700,17 @@ func (m *MCPDialog) Update(msg tea.KeyMsg) (*MCPDialog, tea.Cmd) {
 	case "tab":
 		// Switch scope: LOCAL -> GLOBAL -> USER -> LOCAL (Claude only)
 		// Gemini only has global scope, so Tab does nothing
-		if m.tool != "gemini" {
+		// Cursor: LOCAL <-> GLOBAL only
+		if m.tool == "gemini" {
+			// no-op
+		} else if m.tool == "cursor" {
+			switch m.scope {
+			case MCPScopeLocal:
+				m.scope = MCPScopeGlobal
+			case MCPScopeGlobal:
+				m.scope = MCPScopeLocal
+			}
+		} else {
 			switch m.scope {
 			case MCPScopeLocal:
 				m.scope = MCPScopeGlobal
@@ -674,17 +765,36 @@ func (m *MCPDialog) View() string {
 
 	// Title varies by tool
 	title := "MCP Manager"
-	if m.tool == "gemini" {
+	switch m.tool {
+	case "gemini":
 		title = "MCP Manager (Gemini)"
+	case "cursor":
+		title = "MCP Manager (Cursor)"
 	}
 
-	// Scope tabs - Gemini only has global
+	// Scope tabs - Gemini only global; Cursor LOCAL+GLOBAL; Claude all three
 	var tabs string
-	if m.tool == "gemini" {
-		// Gemini: Only show GLOBAL (centered)
+	switch m.tool {
+	case "gemini":
 		globalTab := lipgloss.NewStyle().Bold(true).Foreground(ColorAccent).Render("[GLOBAL]")
 		tabs = "──────────────── " + globalTab + " ────────────────"
-	} else {
+	case "cursor":
+		localTab := "LOCAL"
+		globalTab := "GLOBAL"
+		localStyle := lipgloss.NewStyle().Foreground(ColorTextDim)
+		globalStyle := lipgloss.NewStyle().Foreground(ColorTextDim)
+		switch m.scope {
+		case MCPScopeLocal:
+			localStyle = lipgloss.NewStyle().Bold(true).Foreground(ColorAccent)
+			localTab = "[" + localTab + "]"
+			globalTab = " " + globalTab + " "
+		case MCPScopeGlobal:
+			globalStyle = lipgloss.NewStyle().Bold(true).Foreground(ColorAccent)
+			localTab = " " + localTab + " "
+			globalTab = "[" + globalTab + "]"
+		}
+		tabs = localStyle.Render(localTab) + " ─────────── " + globalStyle.Render(globalTab)
+	default:
 		// Claude: Show LOCAL/GLOBAL/USER tabs
 		localTab := "LOCAL"
 		globalTab := "GLOBAL"
@@ -744,9 +854,23 @@ func (m *MCPDialog) View() string {
 
 	// Scope description
 	var scopeDesc string
-	if m.tool == "gemini" {
+	switch m.tool {
+	case "gemini":
 		scopeDesc = DimStyle.Render("Writes to: ~/.gemini/settings.json")
-	} else {
+	case "cursor":
+		switch m.scope {
+		case MCPScopeLocal:
+			if !session.GetManageMCPJson() {
+				scopeDesc = lipgloss.NewStyle().Foreground(ColorYellow).Render("⚠ .cursor/mcp.json management disabled (manage_mcp_json = false in config.toml)")
+			} else {
+				scopeDesc = DimStyle.Render("Writes to: .cursor/mcp.json (project, Cursor Agent CLI)")
+			}
+		case MCPScopeGlobal:
+			scopeDesc = DimStyle.Render("Writes to: ~/.cursor/mcp.json (global, Cursor Agent CLI)")
+		default:
+			scopeDesc = ""
+		}
+	default:
 		switch m.scope {
 		case MCPScopeLocal:
 			if !session.GetManageMCPJson() {
@@ -770,9 +894,12 @@ func (m *MCPDialog) View() string {
 	// Hint with consistent styling
 	hintStyle := lipgloss.NewStyle().Foreground(ColorComment)
 	var hint string
-	if m.tool == "gemini" {
+	switch m.tool {
+	case "gemini":
 		hint = hintStyle.Render("←→ column │ Type jump │ Space move │ Enter apply │ Esc cancel")
-	} else {
+	case "cursor":
+		hint = hintStyle.Render("Tab scope │ ←→ column │ Type jump │ Space move │ Enter apply │ Esc cancel")
+	default:
 		hint = hintStyle.Render("Tab scope │ ←→ column │ Type jump │ Space move │ Enter apply │ Esc cancel")
 	}
 	if m.typeJumpBuf != "" && time.Now().Before(m.typeJumpUntil) {

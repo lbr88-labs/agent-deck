@@ -252,7 +252,10 @@ func handleMCPAttached(profile string, args []string) {
 	}
 
 	// Get MCP info for this session
-	mcpInfo := session.GetMCPInfo(inst.ProjectPath)
+	mcpInfo := inst.GetMCPInfo()
+	if mcpInfo == nil {
+		mcpInfo = &session.MCPInfo{}
+	}
 	globalMCPs := mcpInfo.Global
 	projectMCPs := mcpInfo.Project
 	localMCPs := mcpInfo.Local() // Call method for backward compatibility
@@ -299,7 +302,10 @@ func handleMCPAttached(profile string, args []string) {
 
 	if len(localMCPs) > 0 {
 		hasAny = true
-		mcpPath := filepath.Join(inst.ProjectPath, ".mcp.json")
+		mcpPath := inst.MCPLocalConfigPath()
+		if mcpPath == "" {
+			mcpPath = filepath.Join(inst.ProjectPath, ".mcp.json")
+		}
 		fmt.Printf("LOCAL (%s):\n", FormatPath(mcpPath))
 		for _, name := range localMCPs {
 			fmt.Printf("  %s %s\n", bulletSymbol, name)
@@ -309,8 +315,10 @@ func handleMCPAttached(profile string, args []string) {
 
 	if len(globalMCPs) > 0 {
 		hasAny = true
-		configDir := session.GetClaudeConfigDir()
-		configPath := filepath.Join(configDir, ".claude.json")
+		configPath := inst.MCPGlobalConfigPath()
+		if configPath == "" {
+			configPath = filepath.Join(session.GetClaudeConfigDir(), ".claude.json")
+		}
 		fmt.Printf("GLOBAL (%s):\n", FormatPath(configPath))
 		for _, name := range globalMCPs {
 			fmt.Printf("  %s %s\n", bulletSymbol, name)
@@ -415,45 +423,45 @@ func handleMCPAttach(profile string, args []string) {
 
 	// Attach the MCP
 	if *global {
-		// Add to global config
-		currentGlobal := session.GetGlobalMCPNames()
-		// Check if already attached
+		mcpInfo := inst.GetMCPInfo()
+		if mcpInfo == nil {
+			mcpInfo = &session.MCPInfo{}
+		}
+		currentGlobal := mcpInfo.Global
 		for _, name := range currentGlobal {
 			if name == mcpName {
 				out.Error(fmt.Sprintf("MCP '%s' is already attached globally", mcpName), ErrCodeAlreadyExists)
 				os.Exit(1)
 			}
 		}
-		// Add to list
 		newGlobal := append(currentGlobal, mcpName)
-		if err := session.WriteGlobalMCP(newGlobal); err != nil {
-			out.Error(fmt.Sprintf("failed to write global config: %v", err), ErrCodeInvalidOperation)
+		if err := inst.WriteGlobalMCPConfig(newGlobal); err != nil {
+			out.Error(fmt.Sprintf("failed to write global MCP config: %v", err), ErrCodeInvalidOperation)
 			os.Exit(1)
 		}
 	} else {
-		// Add to local .mcp.json
-		mcpInfo := session.GetMCPInfo(inst.ProjectPath)
-		// Check if already attached locally
+		mcpInfo := inst.MCPInfoForLocalAttach()
+		if mcpInfo == nil {
+			mcpInfo = &session.MCPInfo{}
+		}
 		for _, name := range mcpInfo.Local() {
 			if name == mcpName {
 				out.Error(fmt.Sprintf("MCP '%s' is already attached locally", mcpName), ErrCodeAlreadyExists)
 				os.Exit(1)
 			}
 		}
-		// Add to local MCPs
 		newLocal := append(mcpInfo.Local(), mcpName)
-		if err := session.WriteMCPJsonFromConfig(inst.ProjectPath, newLocal); err != nil {
-			out.Error(fmt.Sprintf("failed to write .mcp.json: %v", err), ErrCodeInvalidOperation)
+		if err := inst.WriteLocalMCPConfig(newLocal); err != nil {
+			out.Error(fmt.Sprintf("failed to write local MCP config: %v", err), ErrCodeInvalidOperation)
 			os.Exit(1)
 		}
 	}
 
-	// Clear MCP cache for this project
-	session.ClearMCPCache(inst.ProjectPath)
+	inst.InvalidateProjectMCPIntegrationsCache()
 
 	// Restart if requested
 	restarted := false
-	if *restart && (session.IsClaudeCompatible(inst.Tool) || inst.Tool == "gemini") {
+	if *restart && inst.SupportsMCPAgentRestart() {
 		if err := inst.Restart(); err != nil {
 			// Don't fail the whole operation, just warn
 			if !*jsonOutput && !quietMode {
@@ -463,8 +471,8 @@ func handleMCPAttach(profile string, args []string) {
 			restarted = true
 			// Auto-continue: wait for Claude/Gemini to initialize, then send continue message
 			time.Sleep(2 * time.Second)
-			if tmuxSess := inst.GetTmuxSession(); tmuxSess != nil {
-				// Send "continue" and Enter to resume the conversation
+			if tmuxSess := inst.GetTmuxSession(); tmuxSess != nil && inst.Tool != "cursor" {
+				// Claude/Gemini only — Cursor restart already resumes the agent session.
 				_ = tmuxSess.SendKeysAndEnter("continue")
 			}
 		}
@@ -558,8 +566,11 @@ func handleMCPDetach(profile string, args []string) {
 
 	// Detach the MCP
 	if *global {
-		// Remove from global config
-		currentGlobal := session.GetGlobalMCPNames()
+		mcpInfo := inst.GetMCPInfo()
+		if mcpInfo == nil {
+			mcpInfo = &session.MCPInfo{}
+		}
+		currentGlobal := mcpInfo.Global
 		found := false
 		newGlobal := make([]string, 0, len(currentGlobal))
 		for _, name := range currentGlobal {
@@ -573,13 +584,15 @@ func handleMCPDetach(profile string, args []string) {
 			out.Error(fmt.Sprintf("MCP '%s' is not attached globally", mcpName), ErrCodeNotFound)
 			os.Exit(2)
 		}
-		if err := session.WriteGlobalMCP(newGlobal); err != nil {
-			out.Error(fmt.Sprintf("failed to write global config: %v", err), ErrCodeInvalidOperation)
+		if err := inst.WriteGlobalMCPConfig(newGlobal); err != nil {
+			out.Error(fmt.Sprintf("failed to write global MCP config: %v", err), ErrCodeInvalidOperation)
 			os.Exit(1)
 		}
 	} else {
-		// Remove from local .mcp.json
-		mcpInfo := session.GetMCPInfo(inst.ProjectPath)
+		mcpInfo := inst.MCPInfoForLocalAttach()
+		if mcpInfo == nil {
+			mcpInfo = &session.MCPInfo{}
+		}
 		found := false
 		localMCPs := mcpInfo.Local()
 		newLocal := make([]string, 0, len(localMCPs))
@@ -594,18 +607,17 @@ func handleMCPDetach(profile string, args []string) {
 			out.Error(fmt.Sprintf("MCP '%s' is not attached locally", mcpName), ErrCodeNotFound)
 			os.Exit(2)
 		}
-		if err := session.WriteMCPJsonFromConfig(inst.ProjectPath, newLocal); err != nil {
-			out.Error(fmt.Sprintf("failed to write .mcp.json: %v", err), ErrCodeInvalidOperation)
+		if err := inst.WriteLocalMCPConfig(newLocal); err != nil {
+			out.Error(fmt.Sprintf("failed to write local MCP config: %v", err), ErrCodeInvalidOperation)
 			os.Exit(1)
 		}
 	}
 
-	// Clear MCP cache for this project
-	session.ClearMCPCache(inst.ProjectPath)
+	inst.InvalidateProjectMCPIntegrationsCache()
 
 	// Restart if requested
 	restarted := false
-	if *restart && (session.IsClaudeCompatible(inst.Tool) || inst.Tool == "gemini") {
+	if *restart && inst.SupportsMCPAgentRestart() {
 		if err := inst.Restart(); err != nil {
 			// Don't fail the whole operation, just warn
 			if !*jsonOutput && !quietMode {
@@ -615,8 +627,8 @@ func handleMCPDetach(profile string, args []string) {
 			restarted = true
 			// Auto-continue: wait for Claude/Gemini to initialize, then send continue message
 			time.Sleep(2 * time.Second)
-			if tmuxSess := inst.GetTmuxSession(); tmuxSess != nil {
-				// Send "continue" and Enter to resume the conversation
+			if tmuxSess := inst.GetTmuxSession(); tmuxSess != nil && inst.Tool != "cursor" {
+				// Claude/Gemini only — Cursor restart already resumes the agent session.
 				_ = tmuxSess.SendKeysAndEnter("continue")
 			}
 		}

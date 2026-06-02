@@ -243,7 +243,7 @@ func (h *HelpOverlay) View() string {
 				{closeKey, "Close session process"},
 				{undoKey, "Undo delete"},
 				{moveKey, "Move to group"},
-				{mcpKey, "MCP Manager (Claude/Gemini)"},
+				{mcpKey, "MCP Manager (Claude/Gemini/Cursor)"},
 				{pluginKey, "Plugin Manager (Claude — RFC PLUGIN_ATTACH.md)"},
 				{skillsKey, "Skills Manager"},
 				{"$", "Cost Dashboard"},
