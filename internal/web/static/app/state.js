@@ -82,6 +82,12 @@ export const confirmDialogSignal = signal(null)
 // groupNameDialogSignal: null or { mode: 'create'|'rename', groupPath: string, currentName: string, onSubmit: function }
 export const groupNameDialogSignal = signal(null)
 
+// editSessionDialogSignal: null or { sessionId: string }
+// Mirrors the TUI EditSessionDialog (internal/ui/edit_session_dialog.go) —
+// opens a modal that PATCHes /api/sessions/{id}. Closes "Edit session
+// settings" MISSING row in tests/web/PARITY_MATRIX.md.
+export const editSessionDialogSignal = signal(null)
+
 // WebSocket connection state for terminal: 'disconnected' | 'connecting' | 'connected' | 'error'
 export const wsStateSignal = signal('disconnected')
 

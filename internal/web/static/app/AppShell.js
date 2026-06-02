@@ -34,6 +34,7 @@ import {
   railSignal, profileSignal,
 } from './uiState.js'
 import { CreateSessionDialog } from './CreateSessionDialog.js'
+import { EditSessionDialog } from './EditSessionDialog.js'
 import { ConfirmDialog } from './ConfirmDialog.js'
 import { GroupNameDialog } from './GroupNameDialog.js'
 import { ToastContainer, addToast } from './Toast.js'
@@ -318,6 +319,7 @@ export function AppShell() {
       <${MobileTabs}/>
 
       ${showCreateSession && html`<${CreateSessionDialog}/>`}
+      <${EditSessionDialog}/>
       ${confirmData && html`<${ConfirmDialog} ...${confirmData}/>`}
       ${groupNameData && html`<${GroupNameDialog} ...${groupNameData}/>`}
 

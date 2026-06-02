@@ -114,6 +114,14 @@ type SessionMutator interface {
 	// when the stack is empty and ErrUndoExpired when the most recent
 	// entry is older than the window — the handler maps both to 404.
 	UndoDelete() (string, error)
+	// UpdateSession applies one or more field edits to a session. updates maps
+	// session.Field* constants (raw strings — see internal/session/mutators.go)
+	// to their string-encoded new values; bools are "true"/"false". Returns the
+	// list of fields that actually changed (a no-op subset is permitted; only
+	// fields whose new value differs from the stored value are reported) and
+	// whether any updated field requires a restart to take effect. Validation
+	// errors (unknown field, invalid value) leave the session unchanged.
+	UpdateSession(sessionID string, updates map[string]string) (updatedFields []string, restartRequired bool, err error)
 	CreateGroup(name, parentPath string) (string, error)
 	RenameGroup(groupPath, newName string) error
 	DeleteGroup(groupPath string) error

@@ -433,6 +433,42 @@ func (s *parityStore) DeleteSession(id string) error {
 	return nil
 }
 
+func (s *parityStore) UpdateSession(id string, updates map[string]string) ([]string, bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	sess, ok := s.sessions[id]
+	if !ok {
+		return nil, false, errNotFound(id)
+	}
+	changed := make([]string, 0, len(updates))
+	restartRequired := false
+	for field, value := range updates {
+		var oldValue string
+		switch field {
+		case session.FieldTitle:
+			oldValue = sess.Title
+			sess.Title = value
+		case session.FieldTool:
+			oldValue = sess.Tool
+			sess.Tool = value
+		case session.FieldNotes, session.FieldColor, session.FieldExtraArgs,
+			session.FieldPlugins, session.FieldChannels,
+			session.FieldSkipPermissions, session.FieldAutoMode:
+			oldValue = value
+		default:
+			return nil, false, parityErr("invalid field: " + field)
+		}
+		if oldValue == value {
+			continue
+		}
+		changed = append(changed, field)
+		if session.RestartPolicyFor(field) == session.FieldRestartRequired {
+			restartRequired = true
+		}
+	}
+	return changed, restartRequired, nil
+}
+
 func (s *parityStore) ForkSession(parentID string) (string, error) {
 	s.mu.Lock()
 	parent, ok := s.sessions[parentID]

@@ -269,6 +269,73 @@ func (m *WebMutator) ForkSession(id string) (string, error) {
 	return forked.ID, nil
 }
 
+// UpdateSession applies one or more field edits via session.SetField (the
+// same path the TUI EditSessionDialog uses) and persists. Returns the list
+// of fields that actually changed and whether any change requires a restart.
+//
+// instancesMu is held only across the SetField loop — postCommits and the
+// storage flush run after unlock, mirroring the TUI's home.go edit handler
+// so slow tmux subprocesses don't stall the status worker.
+func (m *WebMutator) UpdateSession(id string, updates map[string]string) ([]string, bool, error) {
+	if len(updates) == 0 {
+		return nil, false, nil
+	}
+	m.h.instancesMu.RLock()
+	inst := m.h.instanceByID[id]
+	m.h.instancesMu.RUnlock()
+	if inst == nil {
+		return nil, false, fmt.Errorf("session not found: %s", id)
+	}
+
+	changed := make([]string, 0, len(updates))
+	restartRequired := false
+	var postCommits []func()
+
+	m.h.instancesMu.Lock()
+	for field, value := range updates {
+		oldValue, postCommit, err := session.SetField(inst, field, value, nil)
+		if err != nil {
+			m.h.instancesMu.Unlock()
+			return nil, false, err
+		}
+		if oldValue == value {
+			continue
+		}
+		changed = append(changed, field)
+		if postCommit != nil {
+			postCommits = append(postCommits, postCommit)
+		}
+		if session.RestartPolicyFor(field) == session.FieldRestartRequired {
+			restartRequired = true
+		}
+	}
+	m.h.instancesMu.Unlock()
+
+	for _, fn := range postCommits {
+		fn()
+	}
+
+	if len(changed) == 0 {
+		return nil, false, nil
+	}
+
+	storage, err := session.NewStorageWithProfile(m.h.profile)
+	if err != nil {
+		return nil, false, fmt.Errorf("open storage: %w", err)
+	}
+	defer storage.Close()
+
+	m.h.instancesMu.RLock()
+	instances := make([]*session.Instance, len(m.h.instances))
+	copy(instances, m.h.instances)
+	m.h.instancesMu.RUnlock()
+
+	if err := storage.SaveWithGroups(instances, m.h.groupTree); err != nil {
+		return nil, false, fmt.Errorf("save session: %w", err)
+	}
+	return changed, restartRequired, nil
+}
+
 // CreateGroup creates a new group (or subgroup if parentPath is non-empty) and
 // persists the group tree to storage.
 func (m *WebMutator) CreateGroup(name, parentPath string) (string, error) {

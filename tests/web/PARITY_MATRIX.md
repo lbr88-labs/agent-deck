@@ -45,7 +45,7 @@ Every keyboard action in the TUI that mutates state or navigates must have a web
 | List skills (catalog) | `internal/ui/home.go:6015` (`s` key → SkillDialog) | GET `/api/skills` | `SkillsPane.js` catalog column | `tests/web/e2e/skills.spec.js` | Mirrors `session.ListAvailableSkills` |
 | List skills (attached) | `internal/ui/home.go:6015` (`s` key → SkillDialog) | GET `/api/sessions/{id}/skills` | `SkillsPane.js` attached column | `tests/web/e2e/skills.spec.js` | Mirrors `session.GetAttachedProjectSkills(projectPath)` |
 | **SETTINGS & DISPLAY** |
-| Edit session settings | `internal/ui/home.go:5953` (`P`/`shift+p` → EditSessionDialog) | MISSING | `SetField` (indirect) | N/A | Title, color, notes, tool options, channels |
+| Edit session settings | `internal/ui/home.go:5953` (`P`/`shift+p` → EditSessionDialog) | PATCH `/api/sessions/{id}` | `UpdateSession` (delegates to `session.SetField`) | `handlers_sessions_test.go` + `tests/web/e2e/edit-session.spec.js` | Title, color, notes, tool, extra-args, plugins, channels, skip-permissions, auto-mode. Returns `restartRequired` for restart-policy fields. Web UI: `EditSessionDialog.js` + Sidebar Edit button. |
 | Edit multi-repo paths | `internal/ui/home.go:5942` (`p` → EditPathsDialog) | MISSING | N/A | N/A | Multi-repo session paths |
 | Edit notes inline | `internal/ui/home.go:6548` (`e` key) | MISSING | N/A | N/A | TUI-only textarea editor |
 | Toggle YOLO mode | `internal/ui/home.go:6418` (`y` key) | MISSING | N/A | N/A | Gemini/Codex only; requires restart |

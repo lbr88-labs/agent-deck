@@ -36,6 +36,36 @@ type RenameGroupRequest struct {
 	Name string `json:"name"`
 }
 
+// UpdateSessionRequest is the body for PATCH /api/sessions/{id}. Every field
+// is optional; only the fields present in the request body are updated.
+// Pointer types let the handler distinguish "not supplied" from "set to zero
+// value" — important for booleans, where a missing field must not silently
+// clear the flag.
+//
+// Field names mirror session.Field* constants so the handler can dispatch
+// directly through session.SetField without a translation table.
+type UpdateSessionRequest struct {
+	Title           *string `json:"title,omitempty"`
+	Notes           *string `json:"notes,omitempty"`
+	Color           *string `json:"color,omitempty"`
+	Tool            *string `json:"tool,omitempty"`
+	ExtraArgs       *string `json:"extraArgs,omitempty"`
+	Plugins         *string `json:"plugins,omitempty"`
+	Channels        *string `json:"channels,omitempty"`
+	SkipPermissions *bool   `json:"skipPermissions,omitempty"`
+	AutoMode        *bool   `json:"autoMode,omitempty"`
+}
+
+// UpdateSessionResponse confirms a PATCH succeeded. RestartRequired is true
+// when any updated field only takes effect on next launch (tool, extra-args,
+// plugins, skip-permissions, auto-mode). Clients use it to prompt before/after
+// issuing a separate POST .../restart.
+type UpdateSessionResponse struct {
+	SessionID       string   `json:"sessionId"`
+	UpdatedFields   []string `json:"updatedFields"`
+	RestartRequired bool     `json:"restartRequired"`
+}
+
 // SessionActionResponse is returned by session action endpoints.
 type SessionActionResponse struct {
 	SessionID string         `json:"sessionId"`
