@@ -30,10 +30,14 @@ concurrency:
 
 permissions:
   contents: write
+  # Sigstore OIDC + GitHub artifact attestation (SLSA build provenance).
+  id-token: write
+  attestations: write
 
 jobs:
   release:
     runs-on: ubuntu-latest
+    timeout-minutes: 90
     # Tag-push runs use the pushed tag; manual dispatch supplies it explicitly.
     env:
       REF_NAME: ${{ inputs.tag || github.ref_name }}
@@ -50,6 +54,10 @@ jobs:
         uses: actions/setup-go@v6
         with:
           go-version-file: go.mod
+          # Disable the module cache in this write-permission workflow: a
+          # poisoned cache entry could otherwise influence the very build we
+          # then sign provenance for.
+          cache: false
 
       - name: Validate tag matches code version
         run: |
@@ -65,12 +73,14 @@ jobs:
       # ubuntu-latest by default; install here so `go test ./...` doesn't
       # false-fail on the non-title-lock zoxide_picker_test suite.
       - name: Install zoxide
+        timeout-minutes: 5
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y zoxide
           zoxide --version
 
       - name: Run tests
+        timeout-minutes: 25
         run: go test -race -timeout 20m ./...
 
       # Evaluator harness full tier. Blocking — a release that fails eval
@@ -79,12 +89,14 @@ jobs:
       # a longer timeout so smoke coverage is enforced at the release gate
       # too, not just on PRs.
       - name: Run eval harness (full tier)
+        timeout-minutes: 10
         env:
           GOTOOLCHAIN: go1.25.10
         run: |
           go test -tags 'eval_smoke eval_full' -race -count=1 -timeout 6m ./tests/eval/... ./internal/ui/...
 
       - name: Run GoReleaser
+        timeout-minutes: 15
         uses: goreleaser/goreleaser-action@v6
         with:
           version: '~> v2'
@@ -94,6 +106,7 @@ jobs:
           HOMEBREW_TAP_GITHUB_TOKEN: ${{ secrets.HOMEBREW_TAP_GITHUB_TOKEN }}
 
       - name: Validate release assets
+        timeout-minutes: 5
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
@@ -136,3 +149,83 @@ jobs:
           ASSET_COUNT=$(echo "$ASSETS" | wc -l | tr -d ' ')
           echo "All ${#EXPECTED[@]} platform tarballs and checksums.txt verified successfully."
           echo "Total assets in release: ${ASSET_COUNT}"
+
+      # SLSA build provenance: attest the published artifacts so consumers can
+      # cryptographically verify they were built by this repo's CI from the
+      # tagged source (`gh attestation verify`, see SECURITY.md).
+      #
+      # An attestation is a SIGNED claim — attesting an incomplete or corrupt
+      # set is worse than not attesting, because consumers trust it. So this
+      # step downloads every expected artifact, fails the moment any single
+      # download fails or yields an empty file, verifies each tarball against
+      # the published SHA-256 checksum, and asserts an exact artifact count
+      # BEFORE the attest step runs. Anything off → fail closed, no signature.
+      - name: Download and verify release artifacts for attestation
+        timeout-minutes: 5
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          VERSION="${REF_NAME#v}"
+          mkdir -p dist-attest
+
+          # Keep in lockstep with the EXPECTED list in "Validate release
+          # assets" above and with .goreleaser's archive matrix.
+          ARTIFACTS=(
+            "agent-deck_${VERSION}_darwin_amd64.tar.gz"
+            "agent-deck_${VERSION}_darwin_arm64.tar.gz"
+            "agent-deck_${VERSION}_linux_amd64.tar.gz"
+            "agent-deck_${VERSION}_linux_arm64.tar.gz"
+          )
+
+          # Download each artifact (plus checksums.txt) one at a time, checking
+          # each individually. A loop without these checks could attest a
+          # partial set — the #1159 defect this step exists to prevent.
+          for asset in "${ARTIFACTS[@]}" "checksums.txt"; do
+            echo "Downloading ${asset}..."
+            if ! gh release download "${REF_NAME}" \
+                --repo "${REPO}" \
+                --pattern "${asset}" \
+                --dir dist-attest; then
+              echo "ERROR: failed to download ${asset} for attestation — failing closed"
+              exit 1
+            fi
+            if [[ ! -s "dist-attest/${asset}" ]]; then
+              echo "ERROR: ${asset} is missing or empty after download — failing closed"
+              exit 1
+            fi
+          done
+
+          # Verify every downloaded tarball against the published checksum
+          # before attesting. We filter checksums.txt to the assets we hold so
+          # that unrelated entries don't make `sha256sum -c` fail on a missing
+          # file, and we fail closed if any expected entry is absent.
+          echo "Verifying SHA-256 checksums..."
+          (
+            cd dist-attest
+            for asset in "${ARTIFACTS[@]}"; do
+              if ! line=$(grep -- "  ${asset}$" checksums.txt); then
+                echo "ERROR: ${asset} has no entry in checksums.txt — failing closed"
+                exit 1
+              fi
+              echo "${line}" | sha256sum -c -
+            done
+          )
+
+          # Final guard: exactly the platform tarballs + checksums.txt, nothing
+          # missing and nothing extra, before we hand the directory to attest.
+          EXPECTED_COUNT=$(( ${#ARTIFACTS[@]} + 1 ))
+          ACTUAL_COUNT=$(find dist-attest -maxdepth 1 -type f | wc -l | tr -d ' ')
+          if [[ "${ACTUAL_COUNT}" -ne "${EXPECTED_COUNT}" ]]; then
+            echo "ERROR: expected ${EXPECTED_COUNT} artifacts to attest, found ${ACTUAL_COUNT} — failing closed"
+            find dist-attest -maxdepth 1 -type f
+            exit 1
+          fi
+          echo "Verified ${#ARTIFACTS[@]} tarballs against checksums.txt; ready to attest."
+
+      - name: Attest build provenance
+        timeout-minutes: 10
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: 'dist-attest/*'
