@@ -2016,7 +2016,7 @@ func handleSessionSend(profile string, args []string) {
 			os.Exit(1)
 		}
 	} else {
-		if err := sendWithRetry(tmuxSess, message, false); err != nil {
+		if err := sendWithRetry(tmuxSess, message, skipClaudeDeliveryVerify(inst.Tool)); err != nil {
 			out.Error(fmt.Sprintf("failed to send message: %v", err), ErrCodeInvalidOperation)
 			os.Exit(1)
 		}
@@ -2135,6 +2135,17 @@ func sendWithRetry(tmuxSess *tmux.Session, message string, skipVerify bool) erro
 	return sendWithRetryTarget(tmuxSess, message, skipVerify, defaultSendOptions())
 }
 
+// skipClaudeDeliveryVerify reports whether the Claude-tuned post-send delivery
+// verification (issue #876) should be skipped for tool. The verify keys off
+// Claude-specific TUI signals (an "active" transition, the composer glyph,
+// unsent-paste markers); non-Claude tools never surface those, so running it
+// false-negatives a delivered message as "dropped silently" (#1238, #1205,
+// #876). Claude tools keep the verify; every non-Claude tool skips it — the
+// general superset of #1228's codex-only skip.
+func skipClaudeDeliveryVerify(tool string) bool {
+	return !session.UsesClaudeDeliveryVerify(tool)
+}
+
 // draftSender is implemented by *tmux.Session for the --draft path.
 type draftSender interface {
 	SendKeysChunked(string) error
@@ -2232,7 +2243,7 @@ func sendNoWait(target sendRetryTarget, tool, message string) error {
 			time.Sleep(500 * time.Millisecond)
 		}
 	}
-	return sendWithRetryTarget(target, message, false, noWaitSendOptions())
+	return sendWithRetryTarget(target, message, skipClaudeDeliveryVerify(tool), noWaitSendOptions())
 }
 
 type sendRetryTarget interface {
