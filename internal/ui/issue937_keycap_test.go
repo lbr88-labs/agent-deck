@@ -4,6 +4,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
 )
 
@@ -274,5 +275,88 @@ func Test_Issue937v2_CellTruncate_PreservesAnsiBoundariesAndKeycap(t *testing.T)
 				)
 			}
 		})
+	}
+}
+
+// Test_clampViewToViewport_PadsEveryRow guards the iTerm2 ghost-line fix: the
+// final viewport clamp must PAD short rows to full width (not only truncate
+// long ones) so incremental redraw overwrites the previous frame's stale
+// trailing glyphs without resorting to tea.ClearScreen / flicker (#607).
+func Test_clampViewToViewport_PadsEveryRow(t *testing.T) {
+	const width, height = 30, 3
+	in := strings.Join([]string{
+		strings.Repeat("X", width), // already exactly width
+		"short",                    // must be padded out to width
+		"",                         // blank line must also fill the row
+	}, "\n")
+
+	out := clampViewToViewport(in, width, height)
+	lines := strings.Split(out, "\n")
+	if len(lines) != height {
+		t.Fatalf("want %d lines, got %d", height, len(lines))
+	}
+	for i, line := range lines {
+		if got := cellWidth(line); got != width {
+			t.Fatalf("line %d cellWidth = %d; want %d (every row must fill the viewport so stale glyphs are overwritten)", i, got, width)
+		}
+	}
+}
+
+// Test_ensureExactWidth_PanelAlignment_Emoji locks the #182 contract that
+// PR #1240 broke: ensureExactWidth must equalize panel rows using the SAME
+// width basis lipgloss.JoinHorizontal uses internally — lipgloss.Width — so
+// emoji/keycap rows stay column-aligned after the join.
+//
+// If ensureExactWidth is re-pointed at a different measurement (cellWidth /
+// ansi.StringWidth, as #1240 did) that can disagree with lipgloss.Width on a
+// glyph, JoinHorizontal pads every line to the wider figure, the joined frame
+// overflows the terminal, lines wrap, and Bubble Tea cursor drift / stacked
+// content returns. This test asserts the alignment invariant directly so the
+// swap cannot silently reland.
+func Test_ensureExactWidth_PanelAlignment_Emoji(t *testing.T) {
+	const leftWidth, rightWidth = 18, 14
+
+	// Panel rows mixing plain text, wide emoji and keycap clusters. All are
+	// <= the target width, so the contract under test is "pad every row to
+	// exactly <width> lipgloss cells".
+	left := ensureExactWidth(strings.Join([]string{
+		"session-one",
+		"deploy 🚀",
+		"build #️⃣1",
+		"",
+	}, "\n"), leftWidth)
+	right := ensureExactWidth(strings.Join([]string{
+		"PREVIEW ✅",
+		"ok 1️⃣2️⃣3️⃣",
+		"idle",
+		"done",
+	}, "\n"), rightWidth)
+
+	// Contract 1: each equalized row measures exactly <width> by lipgloss.Width
+	// (the JoinHorizontal basis). A width basis that disagrees with lipgloss on
+	// any glyph would break this — which is precisely the assumption #182
+	// forbids relying on.
+	for _, p := range []struct {
+		name  string
+		body  string
+		width int
+	}{{"left", left, leftWidth}, {"right", right, rightWidth}} {
+		for i, line := range strings.Split(p.body, "\n") {
+			if got := lipgloss.Width(line); got != p.width {
+				t.Fatalf("%s row %d lipgloss.Width = %d; want %d — JoinHorizontal will misalign", p.name, i, got, p.width)
+			}
+		}
+	}
+
+	// Contract 2: the joined frame is rectangular — every visual row has the
+	// same lipgloss.Width and never exceeds leftWidth + sep + rightWidth (an
+	// overflow would wrap and reintroduce the scroll-drift artifact).
+	sep := " │ "
+	rows := strings.Split(lipgloss.JoinHorizontal(lipgloss.Top, left, sep, right), "\n")
+	wantWidth := leftWidth + lipgloss.Width(sep) + rightWidth
+	for i, r := range rows {
+		if got := lipgloss.Width(r); got != wantWidth {
+			t.Fatalf("joined row %d width = %d; want %d — panels not aligned (overflow ⇒ wrap ⇒ scroll drift)", i, got, wantWidth)
+		}
 	}
 }
