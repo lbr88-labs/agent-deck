@@ -1095,6 +1095,61 @@ func TestPreviewSettingsNotesOutputSplitDefaultsAndClamp(t *testing.T) {
 	}
 }
 
+// TestInstanceSettingsAllowMultipleDefault is the #1246 regression guard.
+// allow_multiple previously defaulted to TRUE, so two agent-deck instances
+// could run against one profile and their reviver/restart loops tore down
+// each other's live sessions. The safe default is single-instance per
+// profile: GetAllowMultiple() must default to FALSE so the primary-election
+// gate in main.go engages unless the user explicitly opts in.
+func TestInstanceSettingsAllowMultipleDefault(t *testing.T) {
+	settings := InstanceSettings{}
+	if settings.GetAllowMultiple() {
+		t.Fatal("GetAllowMultiple should default to false (single-instance per profile)")
+	}
+}
+
+// TestInstanceSettingsAllowMultipleExplicit verifies that multi-instance
+// remains available as an explicit opt-in (and that explicit false is
+// honored), so existing users who rely on multi-pane workflows are not
+// silently broken — they only need to set allow_multiple = true.
+func TestInstanceSettingsAllowMultipleExplicit(t *testing.T) {
+	enabled := true
+	settings := InstanceSettings{AllowMultiple: &enabled}
+	if !settings.GetAllowMultiple() {
+		t.Fatal("GetAllowMultiple should return explicit true (opt-in to multi-instance)")
+	}
+
+	disabled := false
+	settings.AllowMultiple = &disabled
+	if settings.GetAllowMultiple() {
+		t.Fatal("GetAllowMultiple should return explicit false")
+	}
+}
+
+// TestUserConfigParseAllowMultiple verifies that an existing config with an
+// explicit allow_multiple = true continues to parse and grant multi-instance,
+// so the default flip does not break users who set the flag deliberately.
+func TestUserConfigParseAllowMultiple(t *testing.T) {
+	dir := t.TempDir()
+	configPath := filepath.Join(dir, "config.toml")
+	content := `
+[instances]
+allow_multiple = true
+`
+	if err := os.WriteFile(configPath, []byte(content), 0644); err != nil {
+		t.Fatalf("Failed to write config file: %v", err)
+	}
+
+	var config UserConfig
+	if _, err := toml.DecodeFile(configPath, &config); err != nil {
+		t.Fatalf("Failed to decode: %v", err)
+	}
+
+	if !config.Instances.GetAllowMultiple() {
+		t.Fatal("instances.allow_multiple = true should parse as true (opt-in preserved)")
+	}
+}
+
 func TestInstanceSettingsFollowCwdOnAttach(t *testing.T) {
 	settings := InstanceSettings{}
 	if settings.GetFollowCwdOnAttach() {
