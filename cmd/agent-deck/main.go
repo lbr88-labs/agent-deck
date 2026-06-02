@@ -347,6 +347,9 @@ func main() {
 		case "feedback":
 			handleFeedback(args[1:])
 			return
+		case "creds-refresh":
+			handleCredsRefresh(args[1:])
+			return
 		case "debug-dump":
 			handleDebugDump()
 			return

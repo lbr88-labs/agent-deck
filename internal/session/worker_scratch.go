@@ -421,25 +421,40 @@ func mirrorProfileEntries(dest, source string) error {
 	return reassertCredentialSymlink(dest, source)
 }
 
-// reassertCredentialSymlink guarantees dest/.credentials.json is a symlink to
-// source/.credentials.json (the canonical profile credentials), healing the
-// in-session `/login` clobber described in issue #1222.
+// reassertCredentialSymlink guarantees dest/.credentials.json is a clean symlink
+// to source/.credentials.json (the single canonical profile credentials),
+// healing the in-session `/login` clobber described in issue #1222.
 //
 //   - dest entry is the correct symlink → left untouched (idempotent).
 //   - dest entry is absent → symlinked to canonical (when canonical exists).
 //   - dest entry is a symlink to the WRONG target → repointed to canonical.
-//   - dest entry is a real file STALE relative to canonical → replaced with
-//     the symlink; canonical is the source of truth and is left unchanged.
-//   - dest entry is a real file NEWER than canonical (a fresh in-session
-//     `/login`) → its contents are atomically promoted to canonical FIRST
-//     (temp+rename, 0600 token perms preserved, canonical never torn), THEN
-//     dest is replaced with the symlink — so the fresh token propagates to
-//     every symlinked session instead of being stranded in this scratch.
+//   - dest entry is a REAL FILE (the `/login` clobber, or any diverged copy) →
+//     force-replaced with a symlink to canonical, regardless of mtime.
+//     Canonical is NEVER overwritten.
+//   - dest entry is a real file but canonical is ABSENT → left intact, so the
+//     only token copy is not stranded behind a dangling symlink. The next
+//     start, once canonical exists, replaces it with the symlink.
+//
+// Why no mtime-promote (removed; see the OAuth root-cause memo and the
+// disassembly of Claude v2.1.159 in /tmp/oauth-fix/SUBSCRIPTION-FIX.md):
+// Anthropic OAuth uses single-use ROTATING refresh tokens, so a scratch copy's
+// mtime is NOT a "this token is newer/valid" signal. The previous code promoted
+// a strictly-newer scratch real-file to canonical, which could overwrite a good
+// canonical with a stale (or already-rotated-out) scratch token and fork a
+// second rotation chain — re-introducing the `invalid_grant` /login race for
+// every session sharing that profile. Claude re-reads .credentials.json on
+// expiry and serializes refreshes on a cross-process lock keyed by
+// realpath(); collapsing every scratch to ONE canonical symlink is what makes
+// that lock actually serialize the workers. The load-bearing invariant is
+// therefore "the scratch credentials must always be a symlink to the one
+// canonical file, never a real file", and we enforce it on every
+// spawn/start/restart here.
 //
 // WARNING for operators: do NOT run `/login` inside a managed agent-deck
-// session. Log in once in the canonical profile and every session inherits it
-// through this symlink. An in-session login is recovered here on the next
-// start, but only after a restart.
+// session — it writes a real file that diverges from canonical until the next
+// restart relinks it (the in-session token is dropped, NOT promoted). Log in
+// once in the canonical profile (e.g. `CLAUDE_CONFIG_DIR=~/.claude claude` →
+// /login) and every session inherits it through this symlink.
 func reassertCredentialSymlink(dest, source string) error {
 	target := filepath.Join(source, credentialsFileName)
 	linkPath := filepath.Join(dest, credentialsFileName)
@@ -468,32 +483,18 @@ func reassertCredentialSymlink(dest, source string) error {
 		return symlinkReplace(target, linkPath)
 	}
 
-	// dest is a REAL FILE (the `/login` clobber). Decide promote vs relink.
-	promote := false
-	ti, terr := os.Stat(target)
-	switch {
-	case terr != nil && os.IsNotExist(terr):
-		promote = true // canonical missing → scratch is the only copy
-	case terr != nil:
+	// dest is a REAL FILE — the `/login` clobber, or a diverged copy. Always
+	// force-replace it with a clean symlink to canonical; NEVER promote its
+	// contents (mtime is not a valid-token signal for rotating tokens).
+	if _, terr := os.Stat(target); terr != nil {
+		if os.IsNotExist(terr) {
+			// No canonical to point at — leave the only token copy intact
+			// rather than stranding it behind a dangling symlink. Once the
+			// user logs in to canonical, the next start relinks this.
+			return nil
+		}
 		return fmt.Errorf("stat canonical credentials: %w", terr)
-	default:
-		// Promote only when the scratch copy is strictly newer — a fresh
-		// in-session login. Equal/older is treated as stale (relink only).
-		promote = li.ModTime().After(ti.ModTime())
 	}
-
-	if promote {
-		data, rerr := os.ReadFile(linkPath)
-		if rerr != nil {
-			return fmt.Errorf("read scratch credentials for promote: %w", rerr)
-		}
-		// Atomic temp+rename into canonical: 0600 token perms preserved,
-		// canonical never torn even under a concurrent reader (G5/G1).
-		if err := atomicWriteFile(target, data, 0o600); err != nil {
-			return fmt.Errorf("promote scratch credentials to canonical: %w", err)
-		}
-	}
-
 	return symlinkReplace(target, linkPath)
 }
 

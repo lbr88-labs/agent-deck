@@ -123,52 +123,100 @@ func TestMirrorProfileEntries_CorrectCredentialSymlink_LeftAlone(t *testing.T) {
 	}
 }
 
-// (d) Promote-then-relink: a scratch real-file NEWER than canonical (a fresh
-// in-session /login) must be promoted to canonical FIRST (atomic, 0600
-// preserved), THEN scratch must be re-linked to canonical. This is what makes
-// an in-session login propagate to every other session.
-func TestMirrorProfileEntries_NewerScratchCredentials_PromotedThenRelinked(t *testing.T) {
+// (d) NO-PROMOTE (subscription OAuth fix): a scratch real-file even NEWER than
+// canonical (a diverged in-session /login, or an mtime-bumped stale copy) must
+// be force-replaced with a clean symlink to canonical, and canonical must NEVER
+// be overwritten. Binary disassembly of Claude v2.1.159 showed mtime is not a
+// valid-token signal for single-use rotating refresh tokens, so the old
+// mtime-promote could clobber a good canonical with a stale scratch token and
+// fork a second rotation chain. The single canonical token is the only source
+// of truth; in-session /login must be done in the canonical profile instead.
+func TestMirrorProfileEntries_NewerScratchCredentials_NeverPromoted(t *testing.T) {
 	source := t.TempDir()
 	dest := t.TempDir()
 
-	staleCanonical := `{"token":"old-canonical"}`
-	freshLogin := `{"token":"fresh-in-session-login"}`
+	canonical := `{"token":"canonical-source-of-truth"}`
+	divergedNewer := `{"token":"diverged-in-session-copy"}`
 	now := time.Now()
-	writeCredFile(t, filepath.Join(source, ".credentials.json"), staleCanonical, now.Add(-2*time.Hour))
-	// Scratch real-file is NEWER than canonical → fresh login, promote it.
-	writeCredFile(t, filepath.Join(dest, ".credentials.json"), freshLogin, now)
+	target := filepath.Join(source, ".credentials.json")
+	writeCredFile(t, target, canonical, now.Add(-2*time.Hour))
+	// Scratch real-file is NEWER than canonical — the old code would have
+	// promoted it. The fix must refuse to promote.
+	writeCredFile(t, filepath.Join(dest, ".credentials.json"), divergedNewer, now)
+
+	canonicalStatBefore, err := os.Stat(target)
+	if err != nil {
+		t.Fatalf("stat canonical: %v", err)
+	}
 
 	if err := mirrorProfileEntries(dest, source); err != nil {
 		t.Fatalf("mirrorProfileEntries: %v", err)
 	}
 
-	// Canonical now holds the fresh token (promoted).
-	target := filepath.Join(source, ".credentials.json")
+	// Canonical must be byte-for-byte unchanged — never overwritten by a
+	// newer scratch copy.
 	got, err := os.ReadFile(target)
 	if err != nil {
 		t.Fatalf("read canonical: %v", err)
 	}
-	if string(got) != freshLogin {
-		t.Fatalf("fresh in-session login must be promoted to canonical; got %q want %q", string(got), freshLogin)
+	if string(got) != canonical {
+		t.Fatalf("canonical must NEVER be overwritten by a newer scratch copy; got %q want %q", string(got), canonical)
 	}
-
-	// Canonical keeps 0600 token perms after the atomic promote.
-	fi, err := os.Stat(target)
+	canonicalStatAfter, err := os.Stat(target)
 	if err != nil {
-		t.Fatalf("stat canonical: %v", err)
+		t.Fatalf("stat canonical after: %v", err)
 	}
-	if perm := fi.Mode().Perm(); perm != 0o600 {
-		t.Fatalf("promoted canonical must be 0600; got %o", perm)
+	if !canonicalStatBefore.ModTime().Equal(canonicalStatAfter.ModTime()) {
+		t.Fatalf("canonical mtime changed (%v → %v): it was rewritten", canonicalStatBefore.ModTime(), canonicalStatAfter.ModTime())
 	}
 
-	// Scratch is re-linked to canonical, so it reads the promoted token.
+	// Scratch real-file is replaced by a clean symlink to canonical, so it
+	// now resolves to the single source-of-truth token.
 	assertIsSymlinkTo(t, filepath.Join(dest, ".credentials.json"), target)
 	viaLink, err := os.ReadFile(filepath.Join(dest, ".credentials.json"))
 	if err != nil {
 		t.Fatalf("read scratch via link: %v", err)
 	}
-	if string(viaLink) != freshLogin {
-		t.Fatalf("scratch link must resolve to promoted token; got %q", string(viaLink))
+	if string(viaLink) != canonical {
+		t.Fatalf("scratch link must resolve to canonical token; got %q", string(viaLink))
+	}
+}
+
+// (f) Canonical missing + scratch real-file: with no canonical to point at, the
+// reassert must leave the only token copy in place rather than stranding it
+// behind a dangling symlink (and it must still never write canonical). Once the
+// user logs in to canonical, the next start replaces this with a symlink.
+func TestMirrorProfileEntries_CanonicalMissing_RealFileLeftIntact(t *testing.T) {
+	source := t.TempDir()
+	dest := t.TempDir()
+
+	onlyCopy := `{"token":"stranded-but-only-copy"}`
+	scratchCred := filepath.Join(dest, ".credentials.json")
+	writeCredFile(t, scratchCred, onlyCopy, time.Now())
+	// No canonical credentials in source.
+
+	if err := mirrorProfileEntries(dest, source); err != nil {
+		t.Fatalf("mirrorProfileEntries: %v", err)
+	}
+
+	// Canonical must not have been created by a promote.
+	if _, err := os.Lstat(filepath.Join(source, ".credentials.json")); !os.IsNotExist(err) {
+		t.Fatalf("canonical must not be created when absent; lstat err = %v", err)
+	}
+	// The only token copy must survive as a real file.
+	fi, err := os.Lstat(scratchCred)
+	if err != nil {
+		t.Fatalf("lstat scratch cred: %v", err)
+	}
+	if fi.Mode()&os.ModeSymlink != 0 {
+		t.Fatal("scratch credentials must remain a real file when canonical is absent (no dangling symlink)")
+	}
+	got, err := os.ReadFile(scratchCred)
+	if err != nil {
+		t.Fatalf("read scratch cred: %v", err)
+	}
+	if string(got) != onlyCopy {
+		t.Fatalf("only token copy must be left intact; got %q want %q", string(got), onlyCopy)
 	}
 }
 
