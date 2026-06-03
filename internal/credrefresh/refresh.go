@@ -23,12 +23,12 @@
 package credrefresh
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
-	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -40,6 +40,12 @@ const (
 	// `claudeAiOauth` subscription flow), read from the shipped binary.
 	// #nosec G101 -- this is a public OAuth endpoint URL, not a credential.
 	DefaultTokenEndpoint = "https://platform.claude.com/v1/oauth/token"
+
+	// ClaudeCodeClientID is Claude Code's well-known public OAuth client_id,
+	// used as a fallback when the stored credentials omit `clientId`. The
+	// token endpoint rejects refresh requests without a client_id.
+	// #nosec G101 -- public OAuth client identifier, not a secret.
+	ClaudeCodeClientID = "9d1c250a-e61b-44d9-88ed-5944d1962f5e"
 
 	// DefaultThreshold is the early-refresh window: refresh when the access
 	// token expires within this much time. Access tokens live ~1h.
@@ -214,27 +220,32 @@ func readCredentials(path string) (map[string]any, map[string]any, error) {
 }
 
 // requestRefresh POSTs the rotating refresh token to the OAuth token endpoint
-// and returns the rotated tokens. It mirrors Claude's subscription refresh:
-// form-urlencoded grant_type/refresh_token/client_id/scope.
-func requestRefresh(cfg RefreshConfig, refreshToken, clientID string, scopes []string) (tokenResponse, error) {
-	form := url.Values{}
-	form.Set("grant_type", "refresh_token")
-	form.Set("refresh_token", refreshToken)
-	if clientID != "" {
-		form.Set("client_id", clientID)
+// and returns the rotated tokens. Anthropic's token endpoint requires a JSON
+// body (grant_type/refresh_token/client_id); a form-urlencoded body is
+// rejected with 400 "Invalid request format". The scopes argument is unused —
+// the refresh grant does not re-scope.
+func requestRefresh(cfg RefreshConfig, refreshToken, clientID string, _ []string) (tokenResponse, error) {
+	if clientID == "" {
+		clientID = ClaudeCodeClientID
 	}
-	if len(scopes) > 0 {
-		form.Set("scope", strings.Join(scopes, " "))
+
+	payload, err := json.Marshal(map[string]string{
+		"grant_type":    "refresh_token",
+		"refresh_token": refreshToken,
+		"client_id":     clientID,
+	})
+	if err != nil {
+		return tokenResponse{}, fmt.Errorf("marshal token request: %w", err)
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), httpTimeout)
 	defer cancel()
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, cfg.endpoint(), strings.NewReader(form.Encode()))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, cfg.endpoint(), bytes.NewReader(payload))
 	if err != nil {
 		return tokenResponse{}, fmt.Errorf("build token request: %w", err)
 	}
-	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "application/json")
 
 	resp, err := cfg.httpClient().Do(req)
