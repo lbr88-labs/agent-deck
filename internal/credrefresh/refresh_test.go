@@ -9,6 +9,7 @@ package credrefresh
 
 import (
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -82,19 +83,33 @@ func readOAuth(t *testing.T, path string) map[string]any {
 // mockTokenServer returns an httptest server that rotates the token, recording
 // every request it received so tests can assert the request shape (and that it
 // was or was not called).
+//
+// It mirrors Anthropic's real token endpoint: the body MUST be JSON. A
+// form-urlencoded body (the shipped-but-broken format) is rejected with a 400
+// "Invalid request format", so a regression to form encoding fails loudly
+// instead of silently succeeding (the original ParseForm mock accepted both).
 func mockTokenServer(t *testing.T, newAccess, newRefresh string, expiresIn int) (*httptest.Server, *callRecorder) {
 	t.Helper()
 	rec := &callRecorder{}
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if err := r.ParseForm(); err != nil {
-			http.Error(w, "bad form", http.StatusBadRequest)
+		if ct := r.Header.Get("Content-Type"); ct != "application/json" {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusBadRequest)
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"error":             "invalid_request",
+				"error_description": "Invalid request format",
+			})
+			return
+		}
+		var body map[string]string
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			http.Error(w, "bad json", http.StatusBadRequest)
 			return
 		}
 		rec.add(map[string]string{
-			"grant_type":    r.Form.Get("grant_type"),
-			"refresh_token": r.Form.Get("refresh_token"),
-			"client_id":     r.Form.Get("client_id"),
-			"scope":         r.Form.Get("scope"),
+			"grant_type":    body["grant_type"],
+			"refresh_token": body["refresh_token"],
+			"client_id":     body["client_id"],
 		})
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			"access_token":  newAccess,
@@ -153,9 +168,6 @@ func TestRefreshIfNeeded_RefreshesWhenNearExpiry(t *testing.T) {
 	if c["client_id"] != "client-xyz" {
 		t.Fatalf("client_id = %q; want client-xyz", c["client_id"])
 	}
-	if c["scope"] != "user:inference user:profile" {
-		t.Fatalf("scope = %q; want space-joined scopes", c["scope"])
-	}
 
 	// Canonical now holds the rotated tokens + recomputed expiry.
 	oauth := readOAuth(t, credPath)
@@ -168,6 +180,87 @@ func TestRefreshIfNeeded_RefreshesWhenNearExpiry(t *testing.T) {
 	wantExpiry := float64(now().Add(3600 * time.Second).UnixMilli())
 	if oauth["expiresAt"] != wantExpiry {
 		t.Fatalf("expiresAt = %v; want %v", oauth["expiresAt"], wantExpiry)
+	}
+}
+
+// (1b) Contract regression: requestRefresh MUST send a JSON body with
+// Content-Type: application/json and the three required fields. Anthropic's
+// token endpoint rejects a form-urlencoded body with 400 "Invalid request
+// format" (the shipped-but-inert v1.9.46 bug). This test captures the raw
+// outgoing request and asserts the wire format directly, so a regression to
+// form encoding fails here regardless of how a mock parses the body.
+func TestRequestRefresh_SendsJSONBody(t *testing.T) {
+	var (
+		gotContentType string
+		gotRawBody     []byte
+	)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotContentType = r.Header.Get("Content-Type")
+		gotRawBody, _ = io.ReadAll(r.Body)
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"access_token":  "a",
+			"refresh_token": "r",
+			"expires_in":    3600,
+		})
+	}))
+	t.Cleanup(srv.Close)
+
+	tok, err := requestRefresh(
+		RefreshConfig{TokenEndpoint: srv.URL, HTTPClient: srv.Client()},
+		"my-refresh-token", "client-abc", nil,
+	)
+	if err != nil {
+		t.Fatalf("requestRefresh: %v", err)
+	}
+	if tok.AccessToken != "a" || tok.RefreshToken != "r" {
+		t.Fatalf("unexpected token response: %+v", tok)
+	}
+
+	if gotContentType != "application/json" {
+		t.Fatalf("Content-Type = %q; want application/json", gotContentType)
+	}
+
+	// Body must be parseable JSON (a form-urlencoded body would not be) with
+	// all three required fields populated.
+	var body map[string]string
+	if err := json.Unmarshal(gotRawBody, &body); err != nil {
+		t.Fatalf("request body is not JSON (%q): %v", string(gotRawBody), err)
+	}
+	if body["grant_type"] != "refresh_token" {
+		t.Fatalf("grant_type = %q; want refresh_token", body["grant_type"])
+	}
+	if body["refresh_token"] != "my-refresh-token" {
+		t.Fatalf("refresh_token = %q; want my-refresh-token", body["refresh_token"])
+	}
+	if body["client_id"] != "client-abc" {
+		t.Fatalf("client_id = %q; want client-abc", body["client_id"])
+	}
+}
+
+// (1c) When the stored credentials omit clientId, requestRefresh falls back to
+// the well-known Claude Code public client_id — the endpoint requires one.
+func TestRequestRefresh_FallsBackToDefaultClientID(t *testing.T) {
+	var gotClientID string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body map[string]string
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		gotClientID = body["client_id"]
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"access_token": "a", "refresh_token": "r", "expires_in": 3600,
+		})
+	}))
+	t.Cleanup(srv.Close)
+
+	if _, err := requestRefresh(
+		RefreshConfig{TokenEndpoint: srv.URL, HTTPClient: srv.Client()},
+		"rt", "", nil,
+	); err != nil {
+		t.Fatalf("requestRefresh: %v", err)
+	}
+	if gotClientID != ClaudeCodeClientID {
+		t.Fatalf("client_id = %q; want fallback %q", gotClientID, ClaudeCodeClientID)
 	}
 }
 
