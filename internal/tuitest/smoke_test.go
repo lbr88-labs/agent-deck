@@ -20,7 +20,7 @@ func skipIfNoTmuxServer(t *testing.T) {
 	}
 }
 
-// buildBinary builds the agent-deck binary into a temp directory with GOTOOLCHAIN=go1.25.10.
+// buildBinary builds the agent-deck binary into a temp directory with GOTOOLCHAIN=go1.25.11.
 // Returns the path to the built binary.
 func buildBinary(t *testing.T) string {
 	t.Helper()
@@ -29,7 +29,7 @@ func buildBinary(t *testing.T) string {
 
 	cmd := exec.Command("go", "build", "-o", binPath, "./cmd/agent-deck")
 	cmd.Dir = repoRoot(t)
-	cmd.Env = append(os.Environ(), "GOTOOLCHAIN=go1.25.10")
+	cmd.Env = append(os.Environ(), "GOTOOLCHAIN=go1.25.11")
 
 	out, err := cmd.CombinedOutput()
 	if err != nil {
