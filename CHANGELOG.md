@@ -7,9 +7,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.9.47] - 2026-06-03
+
 ### Fixed
 
-- **`session send` silently failing in Claude Code vim normal mode** ([#1264](https://github.com/asheshgoplani/agent-deck/issues/1264)). When Claude Code's prompt was in vim NORMAL mode (the default state after a turn finishes with `"editorMode": "vim"`), the trailing Enter was interpreted as a navigation keystroke instead of submit, so messages were typed but never sent — and the send-verify retry loop's bare Enter nudges all no-op'd for the same reason. A new opt-in `[claude].vim_mode` knob gates an Escape + `i` insert-mode guarantee at the keysender layer, so every `SendEnter` / `SendKeysAndEnter` against a vim-mode target submits reliably. Off by default; non-vim Claude sessions and other tools are unaffected.
+- **The recurring "Please run /login" / 401 outage** ([#1266](https://github.com/asheshgoplani/agent-deck/pull/1266)). The keep-warm OAuth refresh daemon was sending its refresh request as `application/x-www-form-urlencoded`, which Anthropic rejects with a 400 — so the warm-keeping silently failed and tokens still expired. The refresh is now sent as a JSON body with a `client_id` fallback, plus a contract test to lock the request shape. Combined with the v1.9.46 clean-symlink reassert and keep-warm daemon, **one login per profile now persists** across multi-session use — no API key required.
+- **Skills-pane web regression: attached skills list never loaded on deep-link** ([#1270](https://github.com/asheshgoplani/agent-deck/pull/1270)). The web skills pane failed to render / lost row-click selection when opened directly; rendering and selection are restored.
+- **`session send` silently failing in Claude Code vim normal mode** ([#1264](https://github.com/asheshgoplani/agent-deck/issues/1264) / [#1271](https://github.com/asheshgoplani/agent-deck/pull/1271)). When Claude Code's prompt was in vim NORMAL mode (the default state after a turn finishes with `"editorMode": "vim"`), the trailing Enter was interpreted as a navigation keystroke instead of submit, so messages were typed but never sent — and the send-verify retry loop's bare Enter nudges all no-op'd for the same reason. A new opt-in `[claude].vim_mode` knob gates an Escape + `i` insert-mode guarantee at the keysender layer, so every `SendEnter` / `SendKeysAndEnter` against a vim-mode target submits reliably. Off by default; non-vim Claude sessions and other tools are unaffected.
+- **`fork --with-state` correctness on the vcs backend** ([#1029](https://github.com/asheshgoplani/agent-deck/issues/1029) / [#1051](https://github.com/asheshgoplani/agent-deck/issues/1051) / [#1263](https://github.com/asheshgoplani/agent-deck/pull/1263)). The #1029 fork-with-state correctness batch is reconciled onto the vcs backend abstraction so forking with state behaves correctly on the vcs backend.
+- **Remote deploy `ETXTBSY` on self-replacing binary** ([#1171](https://github.com/asheshgoplani/agent-deck/issues/1171) / [#1265](https://github.com/asheshgoplani/agent-deck/pull/1265)). Remote deploy now writes to a temp file and uses an atomic rename, avoiding the `ETXTBSY` error when replacing a running binary.
+- **Conductor stale `CLAUDE_SESSION_ID` recovery** ([#1237](https://github.com/asheshgoplani/agent-deck/pull/1237)). The conductor recovers from a stale `CLAUDE_SESSION_ID` via a disk scan, stopping raw JSON from leaking into chat.
+- **PEP 668 detection in Python dependency install** ([#1169](https://github.com/asheshgoplani/agent-deck/pull/1169)). `installPythonDeps` detects an externally-managed environment (PEP 668) and surfaces an actionable error instead of failing opaquely.
+- **SHA-256 verification on local self-update binary** ([#1219](https://github.com/asheshgoplani/agent-deck/pull/1219)). The self-update flow verifies the SHA-256 checksum of the downloaded binary before applying it.
+- **Full Slack message body delivered to conductor** ([#1223](https://github.com/asheshgoplani/agent-deck/pull/1223)). The watcher now delivers the full Slack message body to the conductor instead of a truncated subject.
+- **`launch-subagent` inherits parent session group** ([#1213](https://github.com/asheshgoplani/agent-deck/pull/1213)). Sub-agents launched via `launch-subagent` inherit the parent session's group by default.
+- **tmux transient-stall false-death** ([#1216](https://github.com/asheshgoplani/agent-deck/pull/1216)). Live sessions are no longer marked dead on transient tmux stalls.
+- **Dropdowns obscuring content in short terminals** ([#1244](https://github.com/asheshgoplani/agent-deck/pull/1244)). Dropdowns no longer overflow and obscure content in short terminal windows.
+- **Resume built-in Pi sessions** ([#1197](https://github.com/asheshgoplani/agent-deck/pull/1197)). Built-in Pi sessions resume correctly in Agent Deck.
+- **Hook-handler / test-isolation fixes** ([#1196](https://github.com/asheshgoplani/agent-deck/pull/1196) / [#1050](https://github.com/asheshgoplani/agent-deck/pull/1050) / [#1220](https://github.com/asheshgoplani/agent-deck/pull/1220)). User-config cache is cleared in plugin-catalog test helpers, isolated `TMUX_TMPDIR` uses a `/tmp` base on darwin, and skills e2e specs no longer fail on a collapsed sidebar in headless viewports.
+
+### Added
+
+- **First-class session support for Hermes Agent CLI** ([#1257](https://github.com/asheshgoplani/agent-deck/pull/1257)). Hermes Agent CLI is supported as a first-class session tool.
+- **Cursor Agent CLI MCP management** ([#1135](https://github.com/asheshgoplani/agent-deck/pull/1135)). Agent Deck can manage the Cursor Agent CLI `mcp.json` (both project and global scope).
+- **Web Edit session dialog** ([#1132](https://github.com/asheshgoplani/agent-deck/pull/1132)). The web UI gains `PATCH /sessions/{id}` and an Edit dialog, closing the "Edit session settings" gap in the parity matrix.
+- **Tool registry migration** ([#1258](https://github.com/asheshgoplani/agent-deck/issues/1258) / [#1261](https://github.com/asheshgoplani/agent-deck/pull/1261)). A tool registry migration prototype lays groundwork for unified tool definitions.
+- **Global `sync_title` toggle** ([#1255](https://github.com/asheshgoplani/agent-deck/pull/1255)). A global `sync_title` config disables session-name sync when not wanted.
+
+### Changed
+
+- **Bumped Go 1.25.10 → 1.25.11** ([#1262](https://github.com/asheshgoplani/agent-deck/issues/1262) / [#1267](https://github.com/asheshgoplani/agent-deck/pull/1267)). Go is bumped to 1.25.11 to clear reachable stdlib vulnerabilities GO-2026-5039 and GO-2026-5037. Also pulls in the go-minor-patch dependency group (3 updates) and bumps `actions/attest-build-provenance` from 2 to 4 ([#1268](https://github.com/asheshgoplani/agent-deck/pull/1268) / [#1269](https://github.com/asheshgoplani/agent-deck/pull/1269)).
+- **`launch_shell` env inheritance** ([#1218](https://github.com/asheshgoplani/agent-deck/issues/1218) / [#1231](https://github.com/asheshgoplani/agent-deck/pull/1231)). A new opt-in `[shell].launch_shell` option starts shell sessions through the user's login shell so they inherit the shell environment variables.
+- **Durable per-parent outbox-drain perf gate** ([#1235](https://github.com/asheshgoplani/agent-deck/pull/1235)). The durable per-parent outbox drain gains a performance gate (WARM walltime + Tier-2 fsync count) to guard against regression.
 
 ## [1.9.46] - 2026-06-02
 
