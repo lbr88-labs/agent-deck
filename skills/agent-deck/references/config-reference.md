@@ -76,6 +76,7 @@ auto_mode = false                  # Enable --permission-mode auto (classifier-b
 allow_dangerous_mode = false       # Enable --allow-dangerously-skip-permissions
 use_chrome = false                 # Enable --chrome
 use_teammate_mode = false          # Enable --teammate-mode tmux
+vim_mode = false                   # Force insert mode before each send (Claude Code "editorMode": "vim")
 extra_args = ["--agent", "reviewer"] # Extra Claude CLI flags
 env_file = "~/.claude.env"         # .env file specific to Claude sessions
 
@@ -92,6 +93,7 @@ config_dir = "~/.claude-work"      # Optional override for profile "work"
 | `allow_dangerous_mode` | bool | `false` | Adds `--allow-dangerously-skip-permissions`. Unlocks bypass as an option without activating it. Ignored when `dangerous_mode` or `auto_mode` is true. |
 | `use_chrome` | bool | `false` | Adds `--chrome` to Claude sessions and is remembered from the New Session dialog. |
 | `use_teammate_mode` | bool | `false` | Adds `--teammate-mode tmux` to Claude sessions and is remembered from the New Session dialog. |
+| `vim_mode` | bool | `false` | Set when the inner Claude Code prompt uses vim keybindings (`"editorMode": "vim"`). Each `session send` then prepends an Escape + `i` insert-mode guarantee so a message sent while the prompt is in vim NORMAL mode actually submits instead of being typed-but-unsent (issue #1264). Only affects Claude-compatible tools. |
 | `extra_args` | array of strings | `[]` | Extra Claude CLI flags remembered from the New Session dialog and appended to new/restarted Claude sessions. Do not store secrets here. |
 | `env_file` | string | `""` | A .env file sourced for Claude sessions only. Sourced after global `[shell].env_files`. See [Path Resolution](#path-resolution). |
 | `command` | string | `"claude"` | Override the binary/invocation (e.g., `"cdw"` for a wrapper that sets `CLAUDE_CONFIG_DIR`). |
