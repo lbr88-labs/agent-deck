@@ -44,7 +44,13 @@ export function SkillsPane() {
     }
   }
 
-  useEffect(() => { refresh() }, [selectedId])
+  // Depend on the *resolved* session id, not the raw selectedId. The menu
+  // model arrives via WebSocket after this pane mounts, so on a deep-link
+  // (/s/<id>) selectedId is set synchronously but `session` is still
+  // undefined on first render — refresh() would then fetch the catalog but
+  // skip the attached list (guarded by `if (session)`). Keying the effect
+  // on session?.id re-fires once the session resolves, mirroring McpPane.
+  useEffect(() => { refresh() }, [session && session.id])
 
   if (!session) {
     return html`
