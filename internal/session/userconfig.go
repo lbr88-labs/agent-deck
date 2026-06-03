@@ -916,6 +916,24 @@ type ClaudeSettings struct {
 	// otherwise sit frozen on the picker forever (closes #67).
 	// Default: true (nil = use default true, set false to disable).
 	AutoResumeSummary *bool `toml:"auto_resume_summary"`
+
+	// VimMode tells agent-deck the inner Claude Code prompt uses vim keybindings
+	// ("editorMode": "vim"). When true, every message send guarantees the
+	// composer is in insert mode (Escape + `i`) before delivering text/Enter, so
+	// a message sent while the prompt sits in vim NORMAL mode (the default state
+	// after a turn finishes) actually submits instead of being typed-but-unsent
+	// (issue #1264). Off by default — only enable for sessions running Claude
+	// Code with vim editor mode. Other tools and non-vim Claude are unaffected.
+	VimMode bool `toml:"vim_mode"`
+}
+
+// GetVimMode reports whether vim-mode insert-guard sends are enabled. Off by
+// default (issue #1264).
+func (c *ClaudeSettings) GetVimMode() bool {
+	if c == nil {
+		return false
+	}
+	return c.VimMode
 }
 
 // GetProfileClaudeConfigDir returns the profile-specific Claude config directory, if configured.

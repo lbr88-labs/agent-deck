@@ -623,6 +623,23 @@ func (i *Instance) applyLaunchSettingsFromConfig() {
 	settings := GetTmuxSettings()
 	i.tmuxSession.LaunchInUserScope = settings.GetLaunchInUserScope()
 	i.tmuxSession.LaunchAs = settings.GetLaunchAs()
+	i.applyVimModeFromConfig()
+}
+
+// applyVimModeFromConfig copies [claude].vim_mode onto the tmux session so the
+// keysender prepends an Escape + `i` insert-mode guarantee before each send.
+// Only meaningful for Claude-compatible tools; other tools never sit in a vim
+// composer, so we leave the flag at its zero value (false) for them to keep
+// their send path byte-identical (issue #1264).
+func (i *Instance) applyVimModeFromConfig() {
+	if i.tmuxSession == nil || !IsClaudeCompatible(i.Tool) {
+		return
+	}
+	cfg, _ := LoadUserConfig()
+	if cfg == nil {
+		return
+	}
+	i.tmuxSession.VimMode = cfg.Claude.GetVimMode()
 }
 
 // NewInstanceWithGroup creates a new session instance with explicit group

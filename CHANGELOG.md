@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **`session send` silently failing in Claude Code vim normal mode** ([#1264](https://github.com/asheshgoplani/agent-deck/issues/1264)). When Claude Code's prompt was in vim NORMAL mode (the default state after a turn finishes with `"editorMode": "vim"`), the trailing Enter was interpreted as a navigation keystroke instead of submit, so messages were typed but never sent — and the send-verify retry loop's bare Enter nudges all no-op'd for the same reason. A new opt-in `[claude].vim_mode` knob gates an Escape + `i` insert-mode guarantee at the keysender layer, so every `SendEnter` / `SendKeysAndEnter` against a vim-mode target submits reliably. Off by default; non-vim Claude sessions and other tools are unaffected.
+
 ## [1.9.46] - 2026-06-02
 
 ### Added
