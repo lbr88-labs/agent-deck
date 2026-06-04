@@ -71,6 +71,69 @@ func TestMaterializeWipFromParent_CopiesStagedUnstagedUntracked_RegressionFor102
 	}
 }
 
+func TestMaterializeWipFromParent_FromSubdirectoryKeepsRepoRelativeUntrackedPaths(t *testing.T) {
+	parent := t.TempDir()
+	createTestRepo(t, parent)
+
+	writeWipFile(t, parent, "a/tracked.txt", "tracked a\n")
+	writeWipFile(t, parent, "b/tracked.txt", "tracked b\n")
+	gitMustRun(t, parent, "add", ".")
+	gitMustRun(t, parent, "commit", "-m", "add tracked")
+
+	parentSubdir := filepath.Join(parent, "a")
+	writeWipFile(t, parent, "a/new-a.txt", "untracked a\n")
+	writeWipFile(t, parent, "b/new-b.txt", "untracked b\n")
+
+	parentStatusBefore := gitPorcelain(t, parent)
+
+	child := filepath.Join(t.TempDir(), "child")
+	if err := CreateWorktree(parent, child, "fork-1029-subdir"); err != nil {
+		t.Fatalf("CreateWorktree: %v", err)
+	}
+
+	if err := MaterializeWipFromParent(parentSubdir, child, false /* includeIgnored */); err != nil {
+		t.Fatalf("MaterializeWipFromParent: %v", err)
+	}
+
+	childStatus := gitPorcelain(t, child)
+	if childStatus != parentStatusBefore {
+		t.Fatalf("child status must mirror parent repo WIP when parent path is a subdirectory.\nparent:\n%s\nchild:\n%s",
+			parentStatusBefore, childStatus)
+	}
+
+	mustHaveWipFile(t, child, "a/new-a.txt", "untracked a\n")
+	mustHaveWipFile(t, child, "b/new-b.txt", "untracked b\n")
+	mustNotHaveWipFile(t, child, "new-a.txt")
+}
+
+func TestMaterializeWipFromParent_FromSubdirectoryKeepsRepoRelativeIgnoredPaths(t *testing.T) {
+	parent := t.TempDir()
+	createTestRepo(t, parent)
+
+	writeWipFile(t, parent, ".gitignore", "*.env\n")
+	writeWipFile(t, parent, "a/tracked.txt", "tracked a\n")
+	writeWipFile(t, parent, "b/tracked.txt", "tracked b\n")
+	gitMustRun(t, parent, "add", ".")
+	gitMustRun(t, parent, "commit", "-m", "add tracked and ignore")
+
+	parentSubdir := filepath.Join(parent, "a")
+	writeWipFile(t, parent, "a/secrets.env", "ignored a\n")
+	writeWipFile(t, parent, "b/secrets.env", "ignored b\n")
+
+	child := filepath.Join(t.TempDir(), "child")
+	if err := CreateWorktree(parent, child, "fork-1029-subdir-ignored"); err != nil {
+		t.Fatalf("CreateWorktree: %v", err)
+	}
+
+	if err := MaterializeWipFromParent(parentSubdir, child, true /* includeIgnored */); err != nil {
+		t.Fatalf("MaterializeWipFromParent: %v", err)
+	}
+
+	mustHaveWipFile(t, child, "a/secrets.env", "ignored a\n")
+	mustHaveWipFile(t, child, "b/secrets.env", "ignored b\n")
+	mustNotHaveWipFile(t, child, "secrets.env")
+}
+
 func writeWipFile(t *testing.T, dir, rel, content string) {
 	t.Helper()
 	full := filepath.Join(dir, rel)
@@ -108,6 +171,15 @@ func mustHaveWipFile(t *testing.T, dir, rel, want string) {
 	t.Helper()
 	if got := readWipFile(t, dir, rel); got != want {
 		t.Fatalf("%s content mismatch.\nwant: %q\ngot:  %q", rel, want, got)
+	}
+}
+
+func mustNotHaveWipFile(t *testing.T, dir, rel string) {
+	t.Helper()
+	if _, err := os.Stat(filepath.Join(dir, rel)); err == nil {
+		t.Fatalf("%s unexpectedly exists in %s", rel, dir)
+	} else if !os.IsNotExist(err) {
+		t.Fatalf("stat %s in %s: %v", rel, dir, err)
 	}
 }
 
