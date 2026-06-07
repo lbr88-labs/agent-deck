@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.9.49] - 2026-06-07
+
+### Added
+
+- **XDG base directory support, hardened** ([#1294](https://github.com/asheshgoplani/agent-deck/pull/1294), supersedes [#1281](https://github.com/asheshgoplani/agent-deck/pull/1281)). Agent Deck now honours the XDG base directory specification: configuration under `$XDG_CONFIG_HOME`, data under `$XDG_DATA_HOME`, and cache under `$XDG_CACHE_HOME`, with backward-compatible fallback to the legacy `~/.agent-deck` location. Includes a safe migration command, atomic copy, and uninstall backups.
+- **Smoother new-session keyboard navigation** ([#1295](https://github.com/asheshgoplani/agent-deck/pull/1295)). The new-session dialog gains smoother keyboard navigation, with an opt-in `[ui].new_session_enter_advances` config flag that lets Enter advance between fields.
+- **Lighter curated TUI footer** ([#1300](https://github.com/asheshgoplani/agent-deck/pull/1300), supersedes [#1289](https://github.com/asheshgoplani/agent-deck/pull/1289), credit [@JMBattista](https://github.com/JMBattista)). An opt-in `[ui] footer` setting renders a lighter, curated TUI footer.
+
 ## [1.9.48] - 2026-06-07
 
 ### Fixed
