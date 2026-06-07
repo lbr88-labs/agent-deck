@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Comprehensive quick fork with configurable defaults**. The TUI quick fork (`f`) now creates a new git worktree + branch, carries the parent's uncommitted working-tree state (including gitignored files), matches the parent's Docker isolation, and inherits the parent's Claude launch options — instead of a conversation-only fork. A new `[fork]` config section (`worktree`, `with_state`, `with_ignored`, `docker = "auto"|"on"|"off"`, `branch_prefix`, `inherit_from_parent`) makes these defaults configurable; unset keys default to the comprehensive behavior. **Behavior change:** the `Shift+F` fork dialog now opens pre-seeded from `[fork]` defaults (comprehensive, "tweak down") rather than honoring `[worktree].default_enabled` / `[docker].default_enabled`.
+- **Cross-tool fork parity (Claude / OpenCode / Pi / Codex)**. Forking now works consistently across Claude, OpenCode, Pi, and Codex (and Codex-compatible custom tools) from the TUI, CLI (`agent-deck session fork <id>`), and Web UI, routed through one shared tool-specific dispatcher. Adds Codex session forking (`codex fork <session-id>`), OpenCode CLI fork + worktree support, and Web fork affordances driven by backend forkability instead of hardcoded Claude checks.
+- **Fork quality + safety hardening**. `Shift+F` honors `[fork].branch_prefix`; OpenCode/Codex session-id mutators validate IDs and generated fork shell commands are shell-quoted; settings preserve `[fork]` on save; and real-binary fork evals now fail on tool fork errors instead of only checking worktree creation.
+
 ## [1.9.49] - 2026-06-07
 
 ### Added
