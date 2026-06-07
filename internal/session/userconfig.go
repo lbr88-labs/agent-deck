@@ -244,6 +244,22 @@ type UISettings struct {
 	// tool.
 	ShowOnlyInstalledTools bool `toml:"show_only_installed_tools"`
 
+	// Footer controls the style of the bottom hint bar. Valid values:
+	//   "full" (default)    — the historic verbose bar: filled key chips,
+	//                         width-adaptive, advertising every action. This is
+	//                         today's behavior and stays the default so the look
+	//                         never changes without an explicit opt-in.
+	//   "curated"           — lighter, dim inline text advertising only the
+	//                         actions relevant to the selected row, with the
+	//                         settings and help keys always last (opt-in).
+	//   "compact"           — force the abbreviated chip tier regardless of width.
+	//   "minimal"           — force the keys-only tier regardless of width.
+	// Empty or unknown values fall back to "full". This is purely a
+	// rendering preference (TUI UX initiative, item 1): no keybinding is
+	// added, removed, or changed — only what the footer advertises. Every
+	// action remains reachable by its key and is fully listed under help (?).
+	Footer string `toml:"footer"`
+
 	// NewSessionEnterAdvances controls what Enter does on the free-text
 	// Name/Branch fields of the new-session dialog (PR #1295). Default false
 	// preserves today's behavior: Enter from Name/Branch submits the form. When
@@ -271,6 +287,36 @@ const (
 	ITermOpenAsWindow  = "window"
 	DefaultITermOpenAs = ITermOpenAsTab
 )
+
+// Footer hint-bar styles. See UISettings.Footer.
+const (
+	FooterCurated = "curated"
+	FooterFull    = "full"
+	FooterCompact = "compact"
+	FooterMinimal = "minimal"
+	// DefaultFooter is the historic verbose bar ("full"). Keeping it as the
+	// default preserves today's look; curated/compact/minimal are opt-in via
+	// config.toml [ui] footer.
+	DefaultFooter = FooterFull
+)
+
+// GetFooter returns the configured footer style, normalized to one of the
+// known values. Empty or unknown input falls back to DefaultFooter
+// ("full"). Matching is case-insensitive so users may write "Full" or
+// "MINIMAL" in TOML.
+func (u UISettings) GetFooter() string {
+	switch strings.ToLower(strings.TrimSpace(u.Footer)) {
+	case FooterFull:
+		return FooterFull
+	case FooterCompact:
+		return FooterCompact
+	case FooterMinimal:
+		return FooterMinimal
+	case FooterCurated:
+		return FooterCurated
+	}
+	return DefaultFooter
+}
 
 // GetPreviewPct returns the configured preview percentage, clamped to
 // [MinPreviewPct, MaxPreviewPct]. Falls back to DefaultPreviewPct when
