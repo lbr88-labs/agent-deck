@@ -9383,7 +9383,7 @@ func (h *Home) quickCreateSession() tea.Cmd {
 	if tool == "" {
 		tool = "claude"
 	}
-	if command == "" {
+	if command == "" && tool != "shell" {
 		if tool == "cursor" {
 			command = "cursor agent"
 		} else {
@@ -9468,6 +9468,9 @@ func (h *Home) quickCreateSessionAt(projectPath string) tea.Cmd {
 		tool = "claude"
 	}
 	command := tool
+	if tool == "shell" {
+		command = ""
+	}
 
 	preferred := deriveSessionNameFromPath(projectPath)
 	h.instancesMu.RLock()
