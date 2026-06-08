@@ -13,6 +13,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Cross-tool fork parity (Claude / OpenCode / Pi / Codex)**. Forking now works consistently across Claude, OpenCode, Pi, and Codex (and Codex-compatible custom tools) from the TUI, CLI (`agent-deck session fork <id>`), and Web UI, routed through one shared tool-specific dispatcher. Adds Codex session forking (`codex fork <session-id>`), OpenCode CLI fork + worktree support, and Web fork affordances driven by backend forkability instead of hardcoded Claude checks.
 - **Fork quality + safety hardening**. `Shift+F` honors `[fork].branch_prefix`; OpenCode/Codex session-id mutators validate IDs and generated fork shell commands are shell-quoted; settings preserve `[fork]` on save; and real-binary fork evals now fail on tool fork errors instead of only checking worktree creation.
 
+## [1.9.50] - 2026-06-08
+
+### Fixed
+
+- **PTY exhaustion from test cleanup: TestMain defer leak plugged** ([#1310](https://github.com/asheshgoplani/agent-deck/pull/1310)). All 11 package `TestMain` functions that ended with `os.Exit(code)` while holding `defer cleanup()` registrations now route through a `runTestMain` helper so the defers actually run. This prevented tmux bootstrap servers and isolated TMUX_TMPDIR sockets from being killed on test binary exit, silently accumulating pty handles until the OS pty pool (`kern.tty.ptmx_max=511`) was exhausted. Adds an AST-level audit test and a behavioral sentinel test (drives the real `TestMain` exit path in a child process) to prevent regression.
+
+### Added
+
+- **Reproducible Flox dev environment** ([#1302](https://github.com/asheshgoplani/agent-deck/pull/1302)). Adds `.flox/env/manifest.toml` and `manifest.lock` pinning the full dev/test toolchain (Go, golangci-lint, tmux, jq, gh, Node.js 20, goreleaser, and the three agent CLIs) across macOS and Linux on both arm64 and x86_64. Activate with `flox activate` in any checkout.
+
 ## [1.9.49] - 2026-06-07
 
 ### Added
