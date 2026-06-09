@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.9.53] - 2026-06-09
+
+### Fixed
+
+- **Notify-daemon no longer rebinds stopped/removed sessions from a stale SessionEnd hook** ([#1352](https://github.com/asheshgoplani/agent-deck/pull/1352)). A late-arriving `SessionEnd` hook could re-bind a session that had already been stopped or removed, causing session-id collisions that led to `session output` reading the wrong pane, dropped child-completion notifications, and mis-delivered input. The daemon now ignores stale rebind requests for sessions that are no longer active. Closes [#1349](https://github.com/asheshgoplani/agent-deck/issues/1349).
+- **Create the notifier/bridge systemd log dir before start** ([#1347](https://github.com/asheshgoplani/agent-deck/pull/1347)). The conductor now creates the notifier/bridge log directory before launching the unit, avoiding a 209/STDOUT systemd crash-loop when the directory did not yet exist.
+- **Only inject `/opt/homebrew/bin` into generated systemd unit PATH on macOS** ([#1348](https://github.com/asheshgoplani/agent-deck/pull/1348)). The generated conductor systemd unit now adds `/opt/homebrew/bin` to `PATH` only on macOS, instead of unconditionally.
+
 ## [1.9.52] - 2026-06-09
 
 ### Fixed
