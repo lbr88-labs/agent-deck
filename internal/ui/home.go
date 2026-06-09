@@ -227,6 +227,7 @@ type Home struct {
 	feedbackState        *feedback.State       // Loaded at first show, avoids repeated disk I/O
 	feedbackSender       *feedback.Sender      // Sender constructed once in NewHome (Phase 3, per D-05)
 	watcherPanel         *WatcherPanel         // For showing watcher status and events
+	toolVisibilityPanel  *ToolVisibilityPanel  // Edits [ui].hidden_tools
 	watcherEngine        *watcher.Engine       // nil until Init (D-07: lifecycle tied to TUI startup)
 
 	// Configurable hotkeys
@@ -604,6 +605,22 @@ type selectedItemIdentity struct {
 	windowIndex     int
 }
 
+func (h *Home) saveToolVisibilityConfig() error {
+	if h.toolVisibilityPanel == nil {
+		return nil
+	}
+	cfg, err := session.LoadUserConfig()
+	if err != nil {
+		return err
+	}
+	if cfg == nil {
+		cfg = &session.UserConfig{}
+	}
+	merged := *cfg
+	merged.UI.HiddenTools = h.toolVisibilityPanel.HiddenTools()
+	return session.SaveUserConfig(&merged)
+}
+
 func (h *Home) reloadHotkeysFromConfig() {
 	h.setHotkeys(resolveHotkeys(session.GetHotkeyOverrides()))
 }
@@ -949,6 +966,7 @@ func NewHomeWithProfileAndMode(profile string) *Home {
 		zoxidePicker:         NewZoxidePicker(),
 		feedbackSender:       feedback.NewSender(),
 		watcherPanel:         NewWatcherPanel(),
+		toolVisibilityPanel:  NewToolVisibilityPanel(),
 		insertBatchDuration:  defaultInsertBatchDuration,
 		insertOpenKeySender:  defaultInsertOpenKeySender,
 		cursor:               0,
@@ -3869,6 +3887,9 @@ func (h *Home) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 		h.setupWizard.SetSize(msg.Width, msg.Height)
 		h.settingsPanel.SetSize(msg.Width, msg.Height)
 		h.watcherPanel.SetSize(msg.Width, msg.Height)
+		if h.toolVisibilityPanel != nil {
+			h.toolVisibilityPanel.SetSize(msg.Width, msg.Height)
+		}
 		h.geminiModelDialog.SetSize(msg.Width, msg.Height)
 		return h, nil
 
@@ -3879,6 +3900,9 @@ func (h *Home) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 		switch msg.Button {
 		case tea.MouseButtonWheelUp, tea.MouseButtonWheelDown:
 			if h.setupWizard.IsVisible() {
+				return h, nil
+			}
+			if h.toolVisibilityPanel != nil && h.toolVisibilityPanel.IsVisible() {
 				return h, nil
 			}
 			if h.settingsPanel.IsVisible() {
@@ -5409,11 +5433,37 @@ func (h *Home) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return h, cmd
 		}
 
+		if h.toolVisibilityPanel != nil && h.toolVisibilityPanel.IsVisible() {
+			var cmd tea.Cmd
+			var shouldSave bool
+			h.toolVisibilityPanel, cmd, shouldSave = h.toolVisibilityPanel.Update(msg)
+			if shouldSave {
+				if err := h.saveToolVisibilityConfig(); err != nil {
+					h.err = err
+					h.errTime = time.Now()
+				} else {
+					_, _ = session.ReloadUserConfig()
+					if h.newDialog != nil {
+						h.newDialog.RefreshPresetCommands()
+					}
+				}
+				h.settingsPanel.Show()
+				h.settingsPanel.SetSize(h.width, h.height)
+			}
+			return h, cmd
+		}
+
 		// Handle settings panel
 		if h.settingsPanel.IsVisible() {
 			var cmd tea.Cmd
 			var shouldSave bool
 			h.settingsPanel, cmd, shouldSave = h.settingsPanel.Update(msg)
+			if h.settingsPanel.ConsumeToolVisibilityRequest() {
+				h.settingsPanel.Hide()
+				h.toolVisibilityPanel.Show()
+				h.toolVisibilityPanel.SetSize(h.width, h.height)
+				return h, cmd
+			}
 			if shouldSave {
 				// Merge panel output onto the on-disk config so top-level
 				// fields the panel does not manage (Remotes, Hotkeys,
@@ -6095,6 +6145,7 @@ func (h *Home) handleJumpKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 func (h *Home) hasModalVisible() bool {
 	return h.initialLoading || h.isQuitting || h.notesEditing || h.jumpMode ||
 		h.setupWizard.IsVisible() || h.settingsPanel.IsVisible() ||
+		(h.toolVisibilityPanel != nil && h.toolVisibilityPanel.IsVisible()) ||
 		h.watcherPanel.IsVisible() || // hotkeyWatcherPanel overlay
 		h.helpOverlay.IsVisible() || h.search.IsVisible() || h.globalSearch.IsVisible() ||
 		h.newDialog.IsVisible() || h.groupDialog.IsVisible() || h.forkDialog.IsVisible() ||
@@ -10967,6 +11018,10 @@ func (h *Home) View() string {
 	// Watcher panel is modal (before settings panel)
 	if h.watcherPanel.IsVisible() {
 		return h.watcherPanel.View()
+	}
+
+	if h.toolVisibilityPanel != nil && h.toolVisibilityPanel.IsVisible() {
+		return h.toolVisibilityPanel.View()
 	}
 
 	// Settings panel is modal

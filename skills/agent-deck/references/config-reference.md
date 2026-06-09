@@ -18,6 +18,7 @@ All options for `~/.agent-deck/config.toml`.
 - [[logs] Section](#logs-section)
 - [[updates] Section](#updates-section)
 - [[display] Section](#display-section)
+- [[ui] Section](#ui-section)
 - [[global_search] Section](#global_search-section)
 - [Skills Registry (Outside config.toml)](#skills-registry-outside-configtoml)
 - [[mcp_pool] Section](#mcp_pool-section)
@@ -390,6 +391,23 @@ show_pane_titles = false                          # Show the pane title (task de
 | `active_filter_label` | string | `"Open"` | Label shown on the filter pill when active filter is engaged (e.g., "Active", "Live", "Open"). |
 | `active_filter_excludes` | []string | `["error", "stopped"]` | Statuses hidden when the `%` "Open" filter is engaged. Default matches the original hardcoded behavior. Valid values: `running`, `waiting`, `idle`, `error`, `starting`, `stopped`. Unknown entries are dropped silently; if the resulting list is empty the default applies. **Set to `["error"]`** to keep stopped/closed sessions visible while still hiding errors — fixes the over-broad "Open" semantics where closed sessions disappeared from view. Extend with `idle` for an aggressive "show only running/waiting" definition of open. |
 | `show_pane_titles` | bool | `false` | Shows the dim tmux pane-title (task description) suffix on every session row instead of only the selected row. Also toggleable in the TUI Settings panel (`S`) under **DISPLAY**. |
+
+## [ui] Section
+
+New-session tool picker visibility (TUI + web). Display filters only — CLI launch and existing sessions are unaffected.
+
+```toml
+[ui]
+hidden_tools = ["gemini", "opencode", "pi"]   # Denylist: hide these from the picker
+show_only_installed_tools = true              # Also hide tools not found on PATH
+```
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `hidden_tools` | []string | `[]` | Tool names to hide from the new-session picker. `shell` is always shown and cannot be hidden. Unknown names log a warning and are ignored. Edit via TUI **Settings (`S`) → Visible tools…** or by hand in `config.toml`. |
+| `show_only_installed_tools` | bool | `false` | When `true`, hides built-in and custom tools whose command does not resolve on the host `PATH`. `shell` stays visible. If nothing else resolves, the picker falls back to showing all tools with a one-line hint. Toggle in TUI Settings under **TOOL PICKER**. |
+
+Filters compose: `hidden_tools` is applied first, then `show_only_installed_tools` (when enabled).
 
 ## [global_search] Section
 
