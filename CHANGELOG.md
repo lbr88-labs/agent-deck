@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.9.52] - 2026-06-09
+
+### Fixed
+
+- **Shift+Enter and other modified keys work under the kitty keyboard protocol** ([#1333](https://github.com/asheshgoplani/agent-deck/pull/1333)). Modified keys are now delivered in CSI-u form so that Shift+Enter (and other modifier combinations) reach the underlying agent correctly in kitty.
+- **Deleting the default group reports an error instead of a silent no-op** ([#1334](https://github.com/asheshgoplani/agent-deck/pull/1334)). The TUI now surfaces an error when a user attempts to delete the default group, rather than silently doing nothing.
+
+### Changed
+
+- **Bump go-minor-patch dependency group** ([#1340](https://github.com/asheshgoplani/agent-deck/pull/1340)). Bumps `golang.org/x/sync` (0.20 → 0.21), `golang.org/x/sys` (0.45 → 0.46), `golang.org/x/term` (0.43 → 0.44), and `modernc.org/sqlite` (1.51 → 1.52).
+
 ## [1.9.51] - 2026-06-09
 
 ### Added
