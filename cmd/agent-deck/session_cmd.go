@@ -2938,14 +2938,27 @@ func streamSessionSend(inst *session.Instance, sessionRef, profile string, sentA
 	}
 
 	var jsonlPath string
+	// peers carries the latest profile snapshot so the resolve can refuse a
+	// transcript path that collides with another live instance's session id
+	// (issue #1349 defense-in-depth #2): streaming the wrong transcript is one
+	// of the corruption symptoms the rebind bug caused.
+	var peers []*session.Instance
+	if _, initial, _, loadErr := loadSessionData(profile); loadErr == nil {
+		peers = initial
+	}
 	deadline := time.Now().Add(opts.timeout)
 	for time.Now().Before(deadline) {
-		jsonlPath = resolvedInst.GetJSONLPath()
+		p, resolveErr := resolvedInst.GetJSONLPathChecked(peers)
+		if resolveErr != nil {
+			return fmt.Errorf("refusing to stream a colliding transcript: %w", resolveErr)
+		}
+		jsonlPath = p
 		if jsonlPath != "" {
 			break
 		}
 		// Refresh from DB in case the session was just created.
 		if _, freshInstances, _, loadErr := loadSessionData(profile); loadErr == nil {
+			peers = freshInstances
 			if fi, _, _ := ResolveSession(sessionRef, freshInstances); fi != nil {
 				resolvedInst = fi
 			}
