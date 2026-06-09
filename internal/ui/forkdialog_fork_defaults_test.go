@@ -32,9 +32,9 @@ func forkDefaultsGitRepo(t *testing.T) string {
 	return repo
 }
 
-// With no [fork] config present, the dialog opens reflecting the comprehensive
-// built-in defaults: with-state ON and (in a git repo) gitignored ON.
-func TestForkDialog_Show_SeedsComprehensiveWithStateDefault(t *testing.T) {
+// With no [fork] config present, the dialog opens reflecting the built-in
+// defaults: worktree + with-state ON, gitignored OFF (opt-in).
+func TestForkDialog_Show_SeedsWithStateDefaultGitignoredOff(t *testing.T) {
 	repo := forkDefaultsGitRepo(t)
 
 	d := NewForkDialog()
@@ -42,7 +42,7 @@ func TestForkDialog_Show_SeedsComprehensiveWithStateDefault(t *testing.T) {
 
 	assert.True(t, d.IsWorktreeEnabled(), "worktree seeded ON in a git repo")
 	assert.True(t, d.IsWithStateEnabled(), "with_state seeded ON from [fork] comprehensive default")
-	assert.True(t, d.IsWithStateAndGitignoredEnabled(), "with_ignored seeded ON from [fork] comprehensive default")
+	assert.False(t, d.IsWithStateAndGitignoredEnabled(), "with_ignored seeded OFF by default (opt-in)")
 }
 
 // A jujutsu repo is state-capable as of #1305, so Shift+F must present a
