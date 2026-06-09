@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.9.51] - 2026-06-09
+
+### Added
+
+- **Global `default_path` config key for `agent-deck add`** ([#1303](https://github.com/asheshgoplani/agent-deck/pull/1303)). A new top-level `default_path` key in `~/.config/agent-deck/config.toml` (or `~/.agent-deck/config.toml`) provides a persistent fallback directory for `agent-deck add` when no explicit path or group `default_path` is specified. Tilde, `$VAR`, and `${VAR}` expansion are applied; if the resolved path does not exist the tool falls through to `cwd`.
+- **`show_pane_titles` display toggle** ([#1343](https://github.com/asheshgoplani/agent-deck/pull/1343)). A new `[display] show_pane_titles = true` config key (and matching Settings panel toggle) shows the dim tmux pane-title (task description) suffix on every session row instead of only the selected one.
+- **Session ID in preview copy** ([#1339](https://github.com/asheshgoplani/agent-deck/pull/1339)). The `C` / `Shift+C` preview copy now includes a `Session: <id>` line matching the ID shown in the preview pane, so users can yank the session ID along with the other session info.
+- **Jujutsu quick-fork with-state materialization** ([#1311](https://github.com/asheshgoplani/agent-deck/pull/1311)). `f` (quick fork) and `Shift+F` on a jj repo now materialise the parent's uncommitted and gitignored working state into the new jj workspace — matching the existing git with-state path. Lifts the interim `gateForkStateForBackend` gate for jj; the ForkDialog no longer pre-checks with-state and fails on submit for jj repos.
+
+### Fixed
+
+- **OpenClaw bridge protocol version bump 3 → 4** ([#1342](https://github.com/asheshgoplani/agent-deck/pull/1342)). Aligns the client's `ProtocolVersion` constant with the gateway's current version 4.
+- **Serialize mcppool stdin writes to prevent JSON-RPC framing corruption** ([#1329](https://github.com/asheshgoplani/agent-deck/pull/1329)). Concurrent `handleClient` goroutines could interleave their writes to the MCP process stdin, corrupting JSON-RPC framing. A `stdinMu sync.Mutex` now serialises each complete `payload + newline` write atomically.
+- **Close tmux control pipes on signal exit to prevent orphaned clients** ([#1332](https://github.com/asheshgoplani/agent-deck/pull/1332)). `SIGHUP` (terminal window close) is now caught alongside `SIGINT`/`SIGTERM`, and `PipeManager.Close()` is called before the DB resignation so control-mode clients detach cleanly instead of reparenting and piling up against the tmux server.
+
 ## [1.9.50] - 2026-06-08
 
 ### Fixed
