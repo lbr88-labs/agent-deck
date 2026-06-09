@@ -423,6 +423,11 @@ type Home struct {
 	// the user toggles the setting mid-frame. Reloaded after the panel saves.
 	showSessionTimestamps bool
 
+	// showPaneTitles, when true, renders the dim tmux pane-title (task
+	// description) suffix on every session row instead of only the selected
+	// one. Cached here so all rows of a frame agree; reloaded after panel save.
+	showPaneTitles bool
+
 	// Sessions/Preview split (issue #1092): percentage of width allocated to
 	// preview pane. Loaded from config.toml [ui] preview_pct, adjustable
 	// live via < and > keybindings, persisted back to config on adjustment.
@@ -997,6 +1002,7 @@ func NewHomeWithProfileAndMode(profile string) *Home {
 		h.activeFilterExcludes = cfg.Display.GetActiveFilterExcludes()
 		tmux.SetHideCwdPrefixInTitle(!cfg.Display.GetIncludeCwdPrefix())
 		h.showSessionTimestamps = cfg.Display.ShowSessionTimestamps
+		h.showPaneTitles = cfg.Display.ShowPaneTitles
 		h.sysStatsConfig = cfg.SystemStats
 		h.costLineTemplate, h.costLineHideWhenZero = session.ResolveCostLineTemplate(cfg, actualProfile)
 		h.previewPct = cfg.UI.GetPreviewPct()
@@ -3842,6 +3848,10 @@ func appendClearScreen(cmd tea.Cmd) tea.Cmd {
 	return tea.Batch(cmd, tea.ClearScreen)
 }
 
+// updateInner is the core Bubble Tea update routine for Home. It dispatches a
+// single tea.Msg (key, mouse, tick, or async command result) to the focused
+// component or the appropriate handler and returns the updated model plus any
+// commands to run. Update wraps it to add cross-cutting concerns.
 func (h *Home) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 	var cmds []tea.Cmd
 
@@ -5419,6 +5429,7 @@ func (h *Home) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 				_, _ = session.ReloadUserConfig()
 				h.reloadHotkeysFromConfig()
 				h.showSessionTimestamps = config.Display.ShowSessionTimestamps
+				h.showPaneTitles = config.Display.ShowPaneTitles
 
 				// Apply theme changes live
 				h.stopThemeWatcher()
@@ -13111,6 +13122,11 @@ func (h *Home) renderCreatingSessionItem(
 	b.WriteString("\n")
 }
 
+// renderSessionItem renders a single session row into b, including the tree
+// connector, status badge, tool label, and the dim tmux pane-title suffix.
+// The pane-title suffix appears on the selected row, or on every row when
+// show_pane_titles is enabled, and is truncated to listWidth so it never
+// overflows the SESSIONS panel.
 func (h *Home) renderSessionItem(
 	b *strings.Builder,
 	item session.Item,
@@ -13377,7 +13393,7 @@ func (h *Home) renderSessionItem(
 	// so the prior measurement let the trailing pane-title text overflow
 	// the panel and shove subsequent rows down by one cell. See
 	// internal/ui/cellwidth.go for the upstream disagreement.
-	if selected && instState.paneTitle != "" {
+	if (selected || h.showPaneTitles) && instState.paneTitle != "" {
 		// Dual layout: sidebar is narrower than h.width (#937). Using full
 		// terminal width here overflows the SESSIONS pane, then lipgloss
 		// truncation disagrees from terminal cells — wrapped lines duplicate
