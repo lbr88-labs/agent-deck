@@ -3329,13 +3329,16 @@ func TestHandleMainKeyQuickApproveSkipsNonClaudeTool(t *testing.T) {
 	}
 }
 
-// TestRegression743_NOnRemoteSession_QuickCreatesNoDialog guards #743.
+// TestRegression743_NOnRemoteSession_NeverCreatesLocally guards #743.
 // v1.7.68 shipped d9a5de8 which removed the remote early-return from the `n`
 // key handler, so pressing `n` on a remote session opened the local
-// newDialog and created a LOCAL session instead of a remote one. Restoring
-// the pre-d9a5de8 behavior: `n` on a remote-session cursor issues the remote
-// quick-create command and does NOT open the local new-session dialog.
-func TestRegression743_NOnRemoteSession_QuickCreatesNoDialog(t *testing.T) {
+// newDialog and created a LOCAL session instead of a remote one. Since #1353
+// the dialog DOES open for remote targets (so the user can pick a tool), but
+// the remote target must be recorded so submit routes the create to the
+// remote over SSH — the #743 invariant ("never create on localhost") is now
+// enforced at submit time. See issue1353_remote_new_dialog_test.go for the
+// submit-routing coverage.
+func TestRegression743_NOnRemoteSession_NeverCreatesLocally(t *testing.T) {
 	home := NewHome()
 	home.width = 100
 	home.height = 30
@@ -3344,22 +3347,22 @@ func TestRegression743_NOnRemoteSession_QuickCreatesNoDialog(t *testing.T) {
 	home.flatItems = []session.Item{{Type: session.ItemTypeRemoteSession, RemoteSession: &remote, RemoteName: "myserver"}}
 	home.cursor = 0
 
-	model, cmd := home.handleMainKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'n'}})
+	model, _ := home.handleMainKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'n'}})
 	h, ok := model.(*Home)
 	if !ok {
 		t.Fatal("handleMainKey should return *Home")
 	}
-	if cmd == nil {
-		t.Fatal("pressing n on a remote session must issue the remote quick-create command (was local dialog)")
+	if !h.newDialog.IsVisible() {
+		t.Fatal("pressing n on a remote session must open the new-session dialog (#1353)")
 	}
-	if h.newDialog.IsVisible() {
-		t.Fatal("pressing n on a remote session must NOT open the local new-session dialog")
+	if h.pendingRemoteName != "myserver" {
+		t.Fatalf("remote target must be recorded so submit creates on the remote, not localhost (#743); got %q", h.pendingRemoteName)
 	}
 }
 
-// TestRegression743_NOnRemoteGroup_QuickCreatesNoDialog — same contract for
+// TestRegression743_NOnRemoteGroup_NeverCreatesLocally — same contract for
 // cursor on a remote group header row.
-func TestRegression743_NOnRemoteGroup_QuickCreatesNoDialog(t *testing.T) {
+func TestRegression743_NOnRemoteGroup_NeverCreatesLocally(t *testing.T) {
 	home := NewHome()
 	home.width = 100
 	home.height = 30
@@ -3367,16 +3370,16 @@ func TestRegression743_NOnRemoteGroup_QuickCreatesNoDialog(t *testing.T) {
 	home.flatItems = []session.Item{{Type: session.ItemTypeRemoteGroup, RemoteName: "myserver", Path: "remotes/myserver"}}
 	home.cursor = 0
 
-	model, cmd := home.handleMainKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'n'}})
+	model, _ := home.handleMainKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'n'}})
 	h, ok := model.(*Home)
 	if !ok {
 		t.Fatal("handleMainKey should return *Home")
 	}
-	if cmd == nil {
-		t.Fatal("pressing n on a remote group must issue the remote quick-create command")
+	if !h.newDialog.IsVisible() {
+		t.Fatal("pressing n on a remote group must open the new-session dialog (#1353)")
 	}
-	if h.newDialog.IsVisible() {
-		t.Fatal("pressing n on a remote group must NOT open the local new-session dialog")
+	if h.pendingRemoteName != "myserver" {
+		t.Fatalf("remote target must be recorded so submit creates on the remote, not localhost (#743); got %q", h.pendingRemoteName)
 	}
 }
 

@@ -162,3 +162,56 @@ func TestSSHRunnerCreateSession_NoCleanupOnSuccess(t *testing.T) {
 		}
 	}
 }
+
+// TestRemoteAddArgs covers the `agent-deck add` argument builder used when the
+// new-session dialog targets a remote (#1353): the chosen tool must be passed
+// via -c (previously every remote `n` create was a bare `add --quick` shell),
+// an explicit title uses -t while an empty one falls back to --quick, and the
+// "." / empty path means "remote CWD" so no path argument is sent.
+func TestRemoteAddArgs(t *testing.T) {
+	cases := []struct {
+		name              string
+		tool, title, path string
+		want              []string
+	}{
+		{
+			name: "defaults (quick shell, remote CWD)",
+			want: []string{"add", "--json", "--quick"},
+		},
+		{
+			name: "tool and title from dialog",
+			tool: "claude", title: "my task", path: ".",
+			want: []string{"add", "--json", "-t", "my task", "-c", "claude"},
+		},
+		{
+			name: "explicit remote path",
+			tool: "codex", title: "fix", path: "/srv/project",
+			want: []string{"add", "--json", "-t", "fix", "-c", "codex", "/srv/project"},
+		},
+		{
+			name: "tool without title auto-names via --quick",
+			tool: "pi",
+			want: []string{"add", "--json", "--quick", "-c", "pi"},
+		},
+		{
+			name:  "whitespace-only values fall back to defaults",
+			tool:  "  ",
+			title: " ",
+			path:  " . ",
+			want:  []string{"add", "--json", "--quick"},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := remoteAddArgs(tc.tool, tc.title, tc.path)
+			if len(got) != len(tc.want) {
+				t.Fatalf("remoteAddArgs(%q,%q,%q) = %v, want %v", tc.tool, tc.title, tc.path, got, tc.want)
+			}
+			for i := range got {
+				if got[i] != tc.want[i] {
+					t.Fatalf("remoteAddArgs(%q,%q,%q) = %v, want %v", tc.tool, tc.title, tc.path, got, tc.want)
+				}
+			}
+		})
+	}
+}
