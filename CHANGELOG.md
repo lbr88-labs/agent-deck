@@ -7,28 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.9.54] - 2026-06-10
+
+### Added
+
+- **Configurable agent tool-visibility denylist** ([#1346](https://github.com/asheshgoplani/agent-deck/pull/1346)). A new `[ui].hidden_tools` config option lets you hide selected agent tools from the picker (TUI + web), with a picker UI for managing the list. The `shell` tool is always available regardless of the denylist.
+
 ### Fixed
 
-- `verify-session-persistence.sh` now degrades truthfully on macOS/non-systemd
-  hosts: scenarios 3/4 `[SKIP]` when claude argv is unobservable on non-stub
-  hosts — but `[FAIL]` in stub mode (`AGENT_DECK_VERIFY_USE_STUB=1`, i.e. CI),
-  where the stub must record args and a `[SKIP]` would be a false-green on the
-  mandatory gate. Scenario 5 resolves its tmux name via `session show --json`,
-  and a malformed-JSON payload from a successful `session show --json` is
-  surfaced (loud error) rather than masked as an empty name; likewise any
-  non-not-found error from `session show --json` (exit 1 = DB/load/permission)
-  now surfaces instead of degrading to a false-green `[SKIP]` — including down
-  the argv-capture path, where scenarios 3/4 now `[FAIL]` on a real resolver
-  error regardless of stub mode (vs flattening it to empty→`[SKIP]`). Cleanup removes
-  ONLY the exact session titles this invocation created (tracked as each is
-  created) — never a `verify-persist-${PID}` prefix match on `agent-deck list`
-  output, which collided with foreign runs and fired even on a failed preflight
-  (data-loss risks). `RUN_ID` is now per-invocation unique (PID + epoch seconds
-  + `${RANDOM}`) rather than a bare reusable PID, so two runs can never generate
-  identical titles and cleanup can only match its own sessions even across a
-  reused PID. The harness cleans up its own tempdir, requires `jq` explicitly,
-  and the fake Claude stub no longer relies on GNU-only `sleep infinity`. Gated
-  by new macOS + Linux unit tests.
+- **Quick fork no longer hangs on heavy repos** ([#1354](https://github.com/asheshgoplani/agent-deck/pull/1354)). Copying gitignored files during a fork is now opt-in via `[fork].with_ignored` (default off), fixing quick-fork hanging indefinitely on repos with large gitignored trees (regression since v1.9.49, [#1299](https://github.com/asheshgoplani/agent-deck/pull/1299)).
+- **Claude name-sync no longer clobbers user renames or fork titles** ([#1355](https://github.com/asheshgoplani/agent-deck/pull/1355)). Syncing a session's name from Claude no longer overwrites a title the user set manually or a fork's title. Renames now set `TitleLocked` consistently across the TUI, web, and CLI.
+
+### Changed
+
+- **Hardened the cross-platform persistence-verification harness** ([#1309](https://github.com/asheshgoplani/agent-deck/pull/1309)). `verify-session-persistence.sh` now degrades truthfully on macOS/non-systemd hosts: scenarios 3/4 `[SKIP]` when claude argv is unobservable on non-stub hosts — but `[FAIL]` in stub mode (`AGENT_DECK_VERIFY_USE_STUB=1`, i.e. CI), where the stub must record args and a `[SKIP]` would be a false-green on the mandatory gate. Scenario 5 resolves its tmux name via `session show --json`, and a malformed-JSON payload from a successful `session show --json` is surfaced (loud error) rather than masked as an empty name; likewise any non-not-found error from `session show --json` (exit 1 = DB/load/permission) now surfaces instead of degrading to a false-green `[SKIP]` — including down the argv-capture path, where scenarios 3/4 now `[FAIL]` on a real resolver error regardless of stub mode (vs flattening it to empty→`[SKIP]`). Cleanup removes ONLY the exact session titles this invocation created (tracked as each is created) — never a `verify-persist-${PID}` prefix match on `agent-deck list` output, which collided with foreign runs and fired even on a failed preflight (data-loss risks). `RUN_ID` is now per-invocation unique (PID + epoch seconds + `${RANDOM}`) rather than a bare reusable PID, so two runs can never generate identical titles and cleanup can only match its own sessions even across a reused PID. The harness cleans up its own tempdir, requires `jq` explicitly, and the fake Claude stub no longer relies on GNU-only `sleep infinity`. Gated by new macOS + Linux unit tests.
 
 ## [1.9.53] - 2026-06-09
 
