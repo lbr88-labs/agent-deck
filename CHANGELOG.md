@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.9.55] - 2026-06-10
+
+### Fixed
+
+- **Codex session detector no longer polls full history after a session ID is bound** ([#1324](https://github.com/asheshgoplani/agent-deck/pull/1324)). Once `CodexSessionID` is populated, `updateCodexSession` returns early instead of walking the entire `$CODEX_HOME/sessions` tree on every poll tick. The disk scan is preserved as a bootstrap fallback for sessions that have not yet acquired a binding. Fixes unnecessary CPU burn on large Codex session histories (reported in v1.9.47).
+
 ## [1.9.54] - 2026-06-10
 
 ### Added
