@@ -140,7 +140,11 @@ export function Sidebar() {
     const cur = statusFiltersSignal.value
     statusFiltersSignal.value = cur.includes(id) ? cur.filter(x => x !== id) : [...cur, id]
   }
-  const toggleGroup = (p) => setExpanded(s => ({ ...s, [p]: !s[p] }))
+  // Open is defined as `expanded[p] !== false` (undefined counts as open: groups
+  // arrive after the initial render, so most paths are never seeded). The toggle
+  // must mirror that read — plain `!s[p]` maps undefined → true, which is still
+  // "open", making the first click on a never-toggled group a silent no-op.
+  const toggleGroup = (p) => setExpanded(s => ({ ...s, [p]: s[p] === false }))
   const onSelect = (id) => {
     selectedIdSignal.value = id
     activeTabSignal.value = 'terminal'
