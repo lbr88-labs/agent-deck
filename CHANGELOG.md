@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **⚠️ Behavior change: Enter now advances between fields in the new-session dialog by default.** The mechanism shipped opt-in in [#1295](https://github.com/asheshgoplani/agent-deck/pull/1295) as `[ui].new_session_enter_advances`; it is now **ON by default**. On the free-text **Name** and **Branch** fields, **Enter advances** to the next field instead of submitting the form, so typing a name and pressing Enter no longer silently creates a session with all defaults (the most-reported new-session trap). **Ctrl+S** is the explicit "create now" shortcut and submits from any field in both modes. To restore the old behavior set `[ui].new_session_enter_advances = false`.
+- **New-session dialog hot-path reorder.** Fields are now ordered **Name → Tool → Path**, with the **Multi-repo** toggle moved below the common fields. The 90% flow becomes: type name → Enter (advances to Tool) → (tool already right) → Ctrl+S.
+
+### Added
+
+- **The new-session dialog remembers your last-used tool.** After you create a session, the dialog preselects that tool next time it opens. The value is stored in the profile state database (not `config.toml`, so it never churns your hand-edited config). An explicit `[default_tool]` still wins; first run is unchanged.
+
+### Fixed
+
+- **`[claude].default_model` is now applied when sessions spawn.** The key parsed correctly ([#1172](https://github.com/asheshgoplani/agent-deck/pull/1172)) but `NewClaudeOptions` never copied it into the launch options, so sessions created outside the TUI dialog (CLI / programmatic / resume) ignored it and fell back to Opus. Claude now matches OpenCode/Copilot, which already wired their `default_model` at this layer.
+
 ## [1.9.56] - 2026-06-11
 
 ### Added

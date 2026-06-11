@@ -5855,6 +5855,11 @@ func (h *Home) handleNewDialogKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		// Get values including worktree settings.
 		name, path, command, branchName, worktreeEnabled := h.newDialog.GetValuesWithWorktree()
 
+		// Remember the submitted tool so the next new-session dialog preselects
+		// it (UX top-3 #2). Best-effort: persisted in the profile StateDB, never
+		// config.toml. An explicit [default_tool] still wins on the next open.
+		rememberTool(h.stateDB(), command)
+
 		// #1353: when the dialog was opened on a remote group/session, create
 		// the session on that remote via SSH with the chosen tool. All
 		// local-only logic below (worktree resolution, directory-exists
@@ -7106,7 +7111,7 @@ func (h *Home) handleMainKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				// so no local path leaks into the SSH create.
 				h.newDialog.SetPathSuggestions(nil)
 				h.newDialog.SetRecentSessions(nil)
-				h.newDialog.SetDefaultTool(session.GetDefaultTool())
+				h.newDialog.SetDefaultTool(resolveInitialTool(session.GetDefaultTool(), rememberedTool(h.stateDB())))
 				h.newDialog.ShowInGroup("remotes/"+item.RemoteName, "remotes/"+item.RemoteName, ".", nil, "")
 				return h, nil
 			}
@@ -7172,8 +7177,11 @@ func (h *Home) handleMainKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			h.newDialog.SetRecentSessions(recents)
 		}
 
-		// Apply user's preferred default tool from config
-		h.newDialog.SetDefaultTool(session.GetDefaultTool())
+		// Apply the preselected tool: explicit [default_tool] config wins,
+		// otherwise fall back to the last successfully-submitted tool remembered
+		// in the profile StateDB (UX top-3 #2). First run (neither set) leaves
+		// shell selected, unchanged.
+		h.newDialog.SetDefaultTool(resolveInitialTool(session.GetDefaultTool(), rememberedTool(h.stateDB())))
 
 		// Auto-select parent group from current cursor position
 		groupPath := session.DefaultGroupPath

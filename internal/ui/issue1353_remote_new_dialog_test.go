@@ -145,7 +145,10 @@ func TestIssue1353_SubmitRoutesToRemote(t *testing.T) {
 	for _, r := range "my-remote-task" {
 		h.handleNewDialogKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}})
 	}
-	model, cmd := h.handleNewDialogKey(tea.KeyMsg{Type: tea.KeyEnter})
+	// Submit with Ctrl+S, the explicit create shortcut. Enter-advances is the
+	// default now (UX top-3 #1), so Enter on the Name field advances focus
+	// rather than submitting; Ctrl+S submits from any field in both modes.
+	model, cmd := h.handleNewDialogKey(tea.KeyMsg{Type: tea.KeyCtrlS})
 	h = model.(*Home)
 
 	if h.newDialog.IsVisible() {
