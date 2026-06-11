@@ -416,10 +416,21 @@ func mirrorProfileEntries(dest, source string) error {
 			continue
 		}
 		linkPath := filepath.Join(dest, name)
-		if _, statErr := os.Lstat(linkPath); statErr == nil {
+		target := filepath.Join(source, name)
+		if li, statErr := os.Lstat(linkPath); statErr == nil {
+			// Existing symlink pointing elsewhere — e.g. the previous
+			// account's profile after `session switch-account` (#924
+			// follow-up): repoint it. Real files/dirs are scratch-local
+			// state and are left alone.
+			if li.Mode()&os.ModeSymlink != 0 {
+				if cur, rerr := os.Readlink(linkPath); rerr == nil && cur != target {
+					if err := symlinkReplace(target, linkPath); err != nil {
+						return fmt.Errorf("repoint %s: %w", name, err)
+					}
+				}
+			}
 			continue
 		}
-		target := filepath.Join(source, name)
 		if err := os.Symlink(target, linkPath); err != nil {
 			if os.IsExist(err) {
 				continue
@@ -427,7 +438,44 @@ func mirrorProfileEntries(dest, source string) error {
 			return fmt.Errorf("symlink %s: %w", name, err)
 		}
 	}
+	if err := sweepForeignSymlinks(dest, source); err != nil {
+		return err
+	}
 	return reassertCredentialSymlink(dest, source)
+}
+
+// sweepForeignSymlinks removes scratch symlinks that point outside the
+// current source profile. After an account switch the old profile may have
+// entries the new one lacks; the loop above never visits those names, so a
+// stale-but-resolvable symlink into the OLD profile would silently expose
+// the previous account's state (#924 follow-up). Only symlinks are touched —
+// real files/dirs in scratch are local state and stay. settings.json and
+// .credentials.json keep their dedicated handling.
+func sweepForeignSymlinks(dest, source string) error {
+	destEntries, err := os.ReadDir(dest)
+	if err != nil {
+		return fmt.Errorf("read scratch dir: %w", err)
+	}
+	for _, entry := range destEntries {
+		name := entry.Name()
+		if name == "settings.json" || name == credentialsFileName {
+			continue
+		}
+		if entry.Type()&os.ModeSymlink == 0 {
+			continue
+		}
+		linkPath := filepath.Join(dest, name)
+		cur, rerr := os.Readlink(linkPath)
+		if rerr != nil {
+			continue
+		}
+		if filepath.Dir(cur) != filepath.Clean(source) {
+			if err := os.Remove(linkPath); err != nil && !os.IsNotExist(err) {
+				return fmt.Errorf("remove foreign symlink %s: %w", name, err)
+			}
+		}
+	}
+	return nil
 }
 
 // reassertCredentialSymlink guarantees dest/.credentials.json is a clean symlink
