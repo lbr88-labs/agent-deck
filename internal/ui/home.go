@@ -13882,6 +13882,14 @@ func (h *Home) renderSessionItem(
 		titleStyle = titleStyle.Foreground(lipgloss.Color(inst.Color))
 	}
 
+	// Maestro (fleet supervisor): gold title by default. An explicit
+	// Instance.Color stays the stronger signal (issue #391 opt-in wins);
+	// the ⬢ glyph and [SUPERVISOR] badge below render unconditionally.
+	isMaestro := inst.IsMaestro()
+	if isMaestro && inst.Color == "" {
+		titleStyle = titleStyle.Foreground(ColorYellow)
+	}
+
 	// Tool badge with brand-specific color
 	// Claude=orange, Gemini=purple, Codex=cyan, Aider=red
 	toolStyle := GetToolStyle(instTool)
@@ -13912,8 +13920,22 @@ func (h *Home) renderSessionItem(
 	if inst.Pin != session.PinNone {
 		displayTitle = "📌 " + displayTitle
 	}
+	// Maestro (fleet supervisor): ⬢ glyph leads the title.
+	if isMaestro {
+		displayTitle = "⬢ " + displayTitle
+	}
 	title := titleStyle.Render(displayTitle)
 	tool := toolStyle.Render(" " + instTool)
+
+	// Supervisor badge for the maestro row.
+	maestroBadge := ""
+	if isMaestro {
+		mStyle := lipgloss.NewStyle().Foreground(ColorYellow).Bold(true)
+		if selected {
+			mStyle = SessionStatusSelStyle
+		}
+		maestroBadge = mStyle.Render(" [SUPERVISOR]")
+	}
 
 	// YOLO badge for Gemini/Codex sessions with YOLO mode enabled
 	yoloBadge := ""
@@ -14026,7 +14048,7 @@ func (h *Home) renderSessionItem(
 
 	// Build row: [baseIndent][selection][tree][chevron][status] [title] [tool] [badges]
 	row := fmt.Sprintf(
-		"%s%s%s%s%s %s%s%s%s%s%s%s%s",
+		"%s%s%s%s%s %s%s%s%s%s%s%s%s%s",
 		baseIndent,
 		selectionPrefix,
 		treeStyle.Render(treeConnector),
@@ -14034,6 +14056,7 @@ func (h *Home) renderSessionItem(
 		status,
 		title,
 		tool,
+		maestroBadge,
 		yoloBadge,
 		worktreeBadge,
 		sandboxBadge,
