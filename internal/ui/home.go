@@ -2876,6 +2876,12 @@ func (h *Home) selectedRemotePreviewTarget() (string, string, string, bool) {
 // fetchSelectedPreview debounces a preview fetch for the currently selected item.
 // Handles both session and window items transparently.
 func (h *Home) fetchSelectedPreview() tea.Cmd {
+	// Issue #1366: in single-column layout there is no preview pane, so there is
+	// nothing to fill — skip the `tmux capture-pane` entirely. The preview is
+	// re-fetched on resize back into a preview layout (see WindowSizeMsg).
+	if h.getLayoutMode() == LayoutModeSingle {
+		return nil
+	}
 	inst, _, winIdx := h.selectedPreviewTarget()
 	if inst == nil {
 		remoteName, remoteSessionID, _, ok := h.selectedRemotePreviewTarget()
@@ -3155,25 +3161,56 @@ func (h *Home) getDefaultPathForGroup(groupPath string) string {
 	return p
 }
 
-// statusWorker runs in a background goroutine with its own ticker
+// Status-sweep cadence (issue #1366). The sweep normally runs every
+// baseStatusInterval. When a sweep overruns that interval — which happens at
+// large session counts when the tmux control-mode pipe is unavailable/degraded
+// and capture-pane falls back to subprocesses — sweeps would otherwise pile up
+// and pin the tmux server. nextStatusInterval backs the cadence off so the
+// gap between sweeps is at least twice the last sweep's duration (≈50% duty
+// cycle), capped at maxStatusInterval. Fast sweeps keep the base cadence, so
+// there is no behaviour change in the common (piped) case.
+const (
+	baseStatusInterval = 2 * time.Second
+	maxStatusInterval  = 10 * time.Second
+)
+
+// nextStatusInterval returns how long to wait before the next status sweep,
+// given how long the last sweep took. It returns base when the sweep finished
+// within base, otherwise 2×lastSweep capped at max.
+func nextStatusInterval(lastSweep, base, ceiling time.Duration) time.Duration {
+	if lastSweep <= base {
+		return base
+	}
+	next := 2 * lastSweep
+	if next > ceiling {
+		return ceiling
+	}
+	return next
+}
+
+// statusWorker runs in a background goroutine with its own timer
 // This ensures status updates continue even when TUI is paused (tea.Exec)
 func (h *Home) statusWorker() {
 	defer close(h.statusWorkerDone)
 
-	// Internal ticker - independent of Bubble Tea event loop
+	// Internal timer - independent of Bubble Tea event loop
 	// This is the key insight: when tea.Exec suspends the TUI (user attaches to session),
-	// the Bubble Tea tick messages stop firing, but this goroutine keeps running
-	ticker := time.NewTicker(2 * time.Second)
-	defer ticker.Stop()
+	// the Bubble Tea tick messages stop firing, but this goroutine keeps running.
+	// A timer (reset after each sweep) rather than a fixed ticker lets the cadence
+	// adapt when a sweep overruns the interval (#1366).
+	timer := time.NewTimer(baseStatusInterval)
+	defer timer.Stop()
 
 	for {
 		select {
 		case <-h.ctx.Done():
 			return
 
-		case <-ticker.C:
+		case <-timer.C:
 			// Self-triggered update - runs even when TUI is paused
+			sweepStart := time.Now()
 			h.backgroundStatusUpdate()
+			timer.Reset(nextStatusInterval(time.Since(sweepStart), baseStatusInterval, maxStatusInterval))
 			// Coalesce a queued immediate request after full sweep.
 			select {
 			case <-h.statusTrigger:
@@ -3895,7 +3932,10 @@ func (h *Home) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 			h.toolVisibilityPanel.SetSize(msg.Width, msg.Height)
 		}
 		h.geminiModelDialog.SetSize(msg.Width, msg.Height)
-		return h, nil
+		// Issue #1366: a resize can reveal the preview pane (single -> stacked/dual).
+		// fetchSelectedPreview self-guards to nil in single-column, so this only
+		// fetches when a preview pane is actually visible.
+		return h, h.fetchSelectedPreview()
 
 	case tea.MouseMsg:
 		// Route mouse wheel events to the active scrollable area.
