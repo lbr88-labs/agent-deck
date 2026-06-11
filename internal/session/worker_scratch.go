@@ -568,6 +568,11 @@ func (i *Instance) applyWorkerScratchOverride(resolvedConfigDir string) string {
 // claude would start with enabledPlugins[<id>]=true but without the
 // plugin code reachable, until the next restart rebuilt scratch.
 func (i *Instance) prepareWorkerScratchConfigDirForSpawn() {
+	// Heal lost channel wiring BEFORE evaluating the scratch gates: a
+	// conductor whose persisted Channels lost the telegram entry must
+	// re-arm needsScratchForTelegramChannelOwner on this very spawn
+	// (telegram_reliability.go, telegram-channel-restore).
+	reconcileConductorTelegramChannel(i)
 	if !i.NeedsWorkerScratchConfigDir() {
 		return
 	}
