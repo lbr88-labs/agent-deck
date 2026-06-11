@@ -688,8 +688,35 @@ func (r *SSHRunner) buildAttachArgs(sessionID string) []string {
 // It runs "add --quick --json" to create the session, then "session start" to
 // launch the tmux process, so the session is ready to attach.
 func (r *SSHRunner) CreateSession(ctx context.Context) (string, error) {
+	return r.CreateSessionWithOptions(ctx, "", "", "")
+}
+
+// remoteAddArgs builds the `agent-deck add` argument list for creating a
+// session on a remote with an explicit tool/title/path (#1353). Empty values
+// fall back to remote defaults: no -c means shell, no -t means --quick
+// (auto-generated name), and an empty or "." path means the remote CWD.
+func remoteAddArgs(tool, title, path string) []string {
+	args := []string{"add", "--json"}
+	if t := strings.TrimSpace(title); t != "" {
+		args = append(args, "-t", t)
+	} else {
+		args = append(args, "--quick")
+	}
+	if c := strings.TrimSpace(tool); c != "" {
+		args = append(args, "-c", c)
+	}
+	if p := strings.TrimSpace(path); p != "" && p != "." {
+		args = append(args, p)
+	}
+	return args
+}
+
+// CreateSessionWithOptions creates and starts a new session on the remote with
+// an explicit tool/title/path from the new-session dialog (#1353), returning
+// its ID. Empty values fall back to remote defaults (see remoteAddArgs).
+func (r *SSHRunner) CreateSessionWithOptions(ctx context.Context, tool, title, path string) (string, error) {
 	// Step 1: Create the session
-	output, err := r.Run(ctx, "add", "--quick", "--json")
+	output, err := r.Run(ctx, remoteAddArgs(tool, title, path)...)
 	if err != nil {
 		return "", fmt.Errorf("failed to create remote session: %w", err)
 	}
