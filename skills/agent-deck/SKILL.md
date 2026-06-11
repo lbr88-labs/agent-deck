@@ -89,6 +89,7 @@ Status legend: ✅ verified, 🟡 partial, 🔴 known broken, ⚪ unknown. To up
 | `agent-deck session output <name>` | Get last response |
 | `agent-deck session current [-q\|--json]` | Auto-detect current session |
 | `agent-deck session fork <name>` | Fork Claude/Pi conversation |
+| `agent-deck session switch-account <name> <account>` | Switch Claude account, conversation follows |
 | `agent-deck mcp list` | List available MCPs |
 | `agent-deck mcp attach <name> <mcp>` | Attach MCP (then restart) |
 | `agent-deck status` | Quick status summary |
@@ -718,6 +719,44 @@ $SKILL_DIR/../session-share/scripts/import.sh ~/Downloads/session-file.json
 ```
 
 **See:** [session-share skill](../session-share/SKILL.md) for full documentation.
+
+## Switch a Session to Another Claude Account
+
+Move a session — conversation included — to a different Claude account (work/personal/client) and continue exactly where it left off.
+
+**Use when:** User says "switch account", "move this conversation to my other account", "continue this session on account X", "this session should use the <name> account".
+
+**One-time setup** — name each account in `~/.agent-deck/config.toml` (the target profile must already be logged in: `CLAUDE_CONFIG_DIR=<dir> claude` → `/login`):
+
+```toml
+[profiles.personal.claude]
+  config_dir = "~/.claude"
+[profiles.work.claude]
+  config_dir = "~/.claude-work"
+```
+
+**Commands:**
+
+```bash
+# Full flow: stop → copy conversation into the target account → set account → restart with --resume
+agent-deck session switch-account <session> <account>
+
+# Skip the restart (e.g. switch several sessions, restart later)
+agent-deck session switch-account <session> <account> --no-restart
+
+# Equivalent low-level form — also migrates the conversation; restart required
+agent-deck session set <session> account <account>
+```
+
+**How it works / guarantees:**
+
+- The conversation `.jsonl` is **copied** into `<target-config-dir>/projects/<encoded-path>/` — the old account keeps its copy; a conflicting file in the target is backed up as `.bak-<timestamp>` first. The session id does not change.
+- `claude --resume` is a pure file lookup, so the restarted session continues with full history under the new account's auth.
+- Tools/MCPs/plugins and usage limits follow the **new** account; enable any needed plugins in the target profile (e.g. `CLAUDE_CONFIG_DIR=<dir> claude plugin enable telegram@claude-plugins-official` for channel owners).
+- A fresh session with no conversation yet switches cleanly (nothing to migrate).
+- Unknown account names error and list the configured ones.
+
+**Make a whole group/conductor use the account going forward:** set `[groups.<name>.claude].config_dir` / `[conductors.<name>.claude].config_dir` to the same dir in config.toml — new sessions there spawn on that account; `switch-account` is what carries existing conversations over.
 
 ## Critical Rules
 
