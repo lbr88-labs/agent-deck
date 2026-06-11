@@ -1030,6 +1030,10 @@ func (i *Instance) buildClaudeExtraFlags(opts *ClaudeOptions) string {
 	// Plugin channels: subscribe the claude session to inbound messages from
 	// each listed plugin channel. Persisted on Instance.Channels and refreshed
 	// on every Start/Restart/resume because every command-build flows here.
+	// Heal first: a conductor whose persisted Channels lost the telegram
+	// entry (index wipe, record rebuild) is restored from conductor config
+	// so the wiring can't silently disappear (telegram_reliability.go).
+	reconcileConductorTelegramChannel(i)
 	if len(i.Channels) > 0 {
 		flags = append(flags, "--channels "+shellescape.Quote(strings.Join(i.Channels, ","))) // audit F1
 	}
