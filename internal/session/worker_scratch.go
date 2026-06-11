@@ -279,6 +279,81 @@ func workerScratchDirFor(instanceID string) string {
 	return filepath.Join(workerScratchDirRoot(), instanceID)
 }
 
+// pathUnderWorkerScratch reports whether p resolves inside the worker-scratch
+// root. Both p and the root are resolved through symlinks first so a /tmp →
+// /private/tmp style indirection (or a symlinked HOME) does not defeat the
+// prefix check. Used to detect (a) a leaked worker-scratch CLAUDE_CONFIG_DIR
+// masquerading as a profile source and (b) a nested-scratch credential chain
+// that would otherwise propagate a forked, non-canonical token.
+func pathUnderWorkerScratch(p string) bool {
+	if p == "" {
+		return false
+	}
+	root := workerScratchDirRoot()
+	if resolved, err := filepath.EvalSymlinks(root); err == nil {
+		root = resolved
+	}
+	if resolved, err := filepath.EvalSymlinks(p); err == nil {
+		p = resolved
+	}
+	root = filepath.Clean(root)
+	p = filepath.Clean(p)
+	return p == root || strings.HasPrefix(p, root+string(os.PathSeparator))
+}
+
+// profileCanonicalFromNestedScratch recovers the real profile's credentials
+// path from a worker-scratch dir that was (wrongly) used as a credential
+// source. A scratch dir is a shallow mirror: every entry except settings.json
+// and .credentials.json is a symlink into the profile it was seeded from, so
+// the parent directory of any sibling symlink's target IS the source profile.
+// Follows nested chains (scratch seeded from scratch) up to a small depth
+// bound; returns "" when no non-scratch profile holding a regular
+// .credentials.json can be found. Read-only — never creates or writes.
+func profileCanonicalFromNestedScratch(scratchDir string) string {
+	dir := scratchDir
+	for depth := 0; depth < 5; depth++ {
+		entries, err := os.ReadDir(dir)
+		if err != nil {
+			return ""
+		}
+		next := ""
+		for _, e := range entries {
+			name := e.Name()
+			if name == "settings.json" || name == credentialsFileName {
+				continue
+			}
+			p := filepath.Join(dir, name)
+			fi, lerr := os.Lstat(p)
+			if lerr != nil || fi.Mode()&os.ModeSymlink == 0 {
+				continue
+			}
+			tgt, rerr := os.Readlink(p)
+			if rerr != nil {
+				continue
+			}
+			if !filepath.IsAbs(tgt) {
+				tgt = filepath.Join(dir, tgt)
+			}
+			candidate := filepath.Dir(tgt)
+			if pathUnderWorkerScratch(candidate) {
+				// Deeper nesting — remember the next scratch hop and keep
+				// scanning this level for a direct profile link first.
+				next = candidate
+				continue
+			}
+			canon := filepath.Join(candidate, credentialsFileName)
+			if cfi, serr := os.Stat(canon); serr == nil && cfi.Mode().IsRegular() {
+				return canon
+			}
+		}
+		if next == "" {
+			return ""
+		}
+		dir = next
+	}
+	return ""
+}
+
 // EnsureWorkerScratchConfigDir idempotently prepares the scratch
 // CLAUDE_CONFIG_DIR. Returns "" (no error) when no scratch is needed —
 // callers treat that as "use the ambient profile". The scratch mirrors
@@ -467,6 +542,25 @@ func mirrorProfileEntries(dest, source string) error {
 func reassertCredentialSymlink(dest, source string) error {
 	target := filepath.Join(source, credentialsFileName)
 	linkPath := filepath.Join(dest, credentialsFileName)
+
+	// Nested-scratch collapse (successor to #1222): when source is ITSELF a
+	// worker-scratch dir (a parent worker's scratch leaked into this child's
+	// source resolution), target would be another worker's scratch credentials
+	// — possibly a forked real-file copy that this child's reassert could
+	// never heal (it re-links to the same forked copy on every restart, the
+	// "401 persists across restarts" signature). Recover the TRUE profile
+	// canonical from the nested scratch's own mirrored symlinks and collapse
+	// to it. If no canonical is recoverable, refuse to link into the scratch
+	// tree at all: leave any existing entry intact and create nothing — a
+	// clean login prompt beats inheriting a forked rotation chain. Canonical
+	// is never written either way (the no-promote invariant).
+	if pathUnderWorkerScratch(target) {
+		canon := profileCanonicalFromNestedScratch(source)
+		if canon == "" {
+			return nil
+		}
+		target = canon
+	}
 
 	li, lerr := os.Lstat(linkPath)
 	switch {
