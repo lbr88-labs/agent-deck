@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"os"
 	"path/filepath"
 	"sync"
 	"testing"
@@ -486,28 +487,91 @@ func TestElectPrimary_FirstInstance(t *testing.T) {
 func TestElectPrimary_SecondInstance(t *testing.T) {
 	db := newTestDB(t)
 
-	// Simulate first instance (PID 10001) as primary with fresh heartbeat
+	// Simulate first instance as primary with a fresh heartbeat. Use the test
+	// process's own PID so it is a genuinely *live* owner: ElectPrimary now
+	// verifies process liveness, so a fabricated dead PID would no longer count
+	// as an active primary (see TestElectPrimary_DeadPrimaryFreshHeartbeat).
+	ownerPID := os.Getpid()
 	now := time.Now().Unix()
 	_, err := db.DB().Exec(
 		"INSERT INTO instance_heartbeats (pid, started, heartbeat, is_primary) VALUES (?, ?, ?, ?)",
-		10001, now, now, 1,
+		ownerPID, now, now, 1,
 	)
 	if err != nil {
 		t.Fatalf("Insert primary: %v", err)
 	}
 
-	// Register our process (not primary yet)
-	if err := db.RegisterInstance(false); err != nil {
-		t.Fatalf("RegisterInstance: %v", err)
+	// Electing instance is a *different* pid than the live owner.
+	db.pid = pickDeadPID(ownerPID)
+	if _, err := db.DB().Exec(
+		"INSERT INTO instance_heartbeats (pid, started, heartbeat, is_primary) VALUES (?, ?, ?, ?)",
+		db.pid, now, now, 0,
+	); err != nil {
+		t.Fatalf("Insert second instance: %v", err)
 	}
 
-	// Try to elect: should fail because PID 10001 is alive and primary
+	// Try to elect: should fail because the owner PID is alive and primary.
 	isPrimary, err := db.ElectPrimary(30 * time.Second)
 	if err != nil {
 		t.Fatalf("ElectPrimary: %v", err)
 	}
 	if isPrimary {
 		t.Error("Second instance should NOT become primary while first is alive")
+	}
+}
+
+// pickDeadPID returns a positive PID that is not alive and not equal to avoid.
+// Used to model a primary left behind by a crashed/killed process.
+func pickDeadPID(avoid int) int {
+	for pid := 2147480000; pid > 1; pid-- {
+		if pid == avoid {
+			continue
+		}
+		if !pidAlive(pid) {
+			return pid
+		}
+	}
+	return 99999
+}
+
+// TestElectPrimary_DeadPrimaryFreshHeartbeat is the regression test for the
+// "restart requires manual pkill" bug. A primary row whose PID is dead but
+// whose heartbeat is still within the staleness window must NOT block a new
+// instance from becoming primary — otherwise an unclean exit leaves agent-deck
+// unstartable until the window elapses or the user pkills.
+func TestElectPrimary_DeadPrimaryFreshHeartbeat(t *testing.T) {
+	db := newTestDB(t)
+
+	deadPID := pickDeadPID(os.Getpid())
+	now := time.Now().Unix() // fresh: NOT stale by time
+	if _, err := db.DB().Exec(
+		"INSERT INTO instance_heartbeats (pid, started, heartbeat, is_primary) VALUES (?, ?, ?, ?)",
+		deadPID, now, now, 1,
+	); err != nil {
+		t.Fatalf("Insert dead primary: %v", err)
+	}
+
+	if err := db.RegisterInstance(false); err != nil {
+		t.Fatalf("RegisterInstance: %v", err)
+	}
+
+	isPrimary, err := db.ElectPrimary(30 * time.Second)
+	if err != nil {
+		t.Fatalf("ElectPrimary: %v", err)
+	}
+	if !isPrimary {
+		t.Error("New instance should become primary when the prior primary's PID is dead, even with a fresh heartbeat")
+	}
+
+	// The dead PID must have been demoted.
+	var deadIsPrimary int
+	if err := db.DB().QueryRow(
+		"SELECT is_primary FROM instance_heartbeats WHERE pid = ?", deadPID,
+	).Scan(&deadIsPrimary); err != nil {
+		t.Fatalf("Query dead PID: %v", err)
+	}
+	if deadIsPrimary != 0 {
+		t.Error("Dead PID should have is_primary=0 after reclaim")
 	}
 }
 
