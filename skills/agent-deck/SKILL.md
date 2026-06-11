@@ -78,6 +78,32 @@ What agent-deck does, at the noun level (independent of which surface — CLI / 
 
 Status legend: ✅ verified, 🟡 partial, 🔴 known broken, ⚪ unknown. To update for your own machine, see [Self-Improvement](#self-improvement) below.
 
+## Per-CLI Capabilities (what a launched session can do)
+
+The table above is what *agent-deck* does. This one is what the *CLI inside a session* can do — agent-deck launches one per session (`-c claude|codex|gemini`). A conductor uses this to pick the right tool for a child; a launched child uses it to know its own powers without being told. This is a capability **map**, not a manual — run `<cli> --help` for exact flags. Verified 2026-06 against claude 2.1.x, codex-cli 0.137, gemini 0.45.
+
+| In-session capability | claude (Claude Code) | codex | gemini |
+|---|---|---|---|
+| **Multi-agent fan-out *inside one session*** | ✅ **Agent tool** (parallel subagents, each its own context window; `run_in_background`) **and Workflow tool** (deterministic JS: `agent()`/`pipeline()`/`parallel()` over item lists, structured-output schemas, phases) | ❌ single-agent — fan out by launching codex *peers* via agent-deck | ❌ not exposed — fan out via agent-deck peers |
+| **Skills** | ✅ Skill tool + agent-deck pool skills (`~/.agent-deck/skills/pool/`) | ❌ | ✅ `gemini skills` |
+| **MCP servers** | ✅ `claude mcp` / `--mcp-config`; agent-deck `mcp attach` | ✅ `codex mcp`; also runs **as** a server (`codex mcp-server`) | ✅ `gemini mcp`, `--allowed-mcp-server-names` |
+| **Built-in code review** | ✅ `ultrareview` (cloud multi-agent) + `/code-review` skill | ✅ `codex review` / `codex exec review --uncommitted` | via prompt only |
+| **Plan / read-only mode** | `--permission-mode plan` | `-s read-only` | `--approval-mode plan` |
+| **Autonomy / sandbox** | `--permission-mode acceptEdits\|bypassPermissions`; config `dangerous_mode` | `-s read-only\|workspace-write\|danger-full-access`; `--dangerously-bypass-approvals-and-sandbox` | `--approval-mode auto_edit\|yolo`, `-s/--sandbox` |
+| **Structured output** | `--json-schema`, `--output-format json` | `codex exec` json event stream | `-o json\|stream-json` |
+| **Image input (multimodal)** | paste / `Read` an image | `-i/--image` (attach to prompt; not image *generation*) | multimodal prompt |
+| **Apply a diff to working tree** | Edit/Write tools | `codex apply` (git-apply the last agent diff) | Edit tools |
+| **Git worktree** | `-w/--worktree` | via agent-deck `--worktree` | `-w/--worktree` |
+| **Plugins / extensions / hooks / channels** | `plugin`, `--plugin-dir/-url`, hooks, `--channels` | `codex plugin` | `extensions`, `hooks` |
+| **Resume / fork conversation** | `-r/--resume`, `--fork-session` | `codex resume` / `codex fork` | `--resume`, `--session-file` |
+| **Local / OSS models** | 3P providers (Bedrock/Vertex) | `--oss`, `--local-provider lmstudio\|ollama` | `gemini gemma` routing |
+
+**Choosing the `-c` tool for a child:** default to **claude** — only it has in-session multi-agent fan-out (Agent + Workflow tools) *and* pool skills, so it can own a whole task end-to-end and orchestrate its own sub-work. Reach for **codex** for a fast non-interactive second opinion or code review (`codex review`) and sandboxed exec; **gemini** for a third opinion or large-context reads. For codex/gemini, parallelism comes from launching multiple agent-deck *peers*, not from inside the session.
+
+**agent-deck powers every child also has** (independent of CLI): `agent-deck mcp attach/detach` then `session restart`; `launch` further child or peer sessions (`-no-parent` for peers); load pool skills on demand; `session send` to talk to sibling sessions. See [Sub-Agent Launch](#sub-agent-launch), [Peer (Root) Sessions vs Sub-Agents](#peer-root-sessions-vs-sub-agents), [MCP Management](#mcp-management).
+
+**When to go inline vs Agent tool vs Workflow** (for claude children) is owned by the shared conductor template's *Delegation* section (`~/.agent-deck/conductor/conductor-claude.md`) and is not duplicated here: 1 task = inline; a few independent subtasks = Agent tool; a sweep / audit / matrix = Workflow — and always adversarially verify findings with a second agent told to refute.
+
 ## Essential Commands
 
 | Command | Purpose |
