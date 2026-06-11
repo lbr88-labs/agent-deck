@@ -55,10 +55,10 @@ export function CommandPalette() {
 
   return html`
     <div class="overlay" onClick=${close}>
-      <div class="cmdk" onClick=${e => e.stopPropagation()}>
+      <div class="cmdk" data-testid="command-palette" onClick=${e => e.stopPropagation()}>
         <div class="inp">
           <${Icon} d=${ICONS.search}/>
-          <input ref=${inputRef} value=${q} onInput=${e => setQ(e.target.value)}
+          <input ref=${inputRef} data-testid="palette-input" value=${q} onInput=${e => setQ(e.target.value)}
                  placeholder="Type a command or session name…"
                  onKeyDown=${e => { if (e.key === 'Escape') close() }}/>
           <span class="kbd">esc</span>
@@ -68,7 +68,7 @@ export function CommandPalette() {
             <div key=${name}>
               <div class="sec">${name}</div>
               ${rows.map((r, i) => html`
-                <div key=${r.id} class=${`row ${i === 0 && name === Object.keys(sections)[0] ? 'f' : ''}`} onClick=${r.run}>
+                <div key=${r.id} data-testid=${r.sec === 'SESSIONS' ? 'palette-session-row' : 'palette-cmd-row'} class=${`row ${i === 0 && name === Object.keys(sections)[0] ? 'f' : ''}`} onClick=${r.run}>
                   <span>${r.label}</span>
                   <span class="tool">${r.tool || ''}</span>
                 </div>
@@ -76,7 +76,7 @@ export function CommandPalette() {
             </div>
           `)}
           ${all.length === 0 && html`
-            <div style="padding: 16px; font-family: var(--mono); font-size: 12px; color: var(--muted); text-align: center;">
+            <div data-testid="palette-empty" style="padding: 16px; font-family: var(--mono); font-size: 12px; color: var(--muted); text-align: center;">
               No matches.
             </div>
           `}
