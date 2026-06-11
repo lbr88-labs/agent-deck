@@ -2981,3 +2981,59 @@ func TestBridgeXDGEnv_AgreesWithConductorDir(t *testing.T) {
 		t.Errorf("bridge-computed config path %q != GetUserConfigPath() %q", bridgeCfg, cfgPath)
 	}
 }
+
+// conductorTrustEntry reads the root ~/.claude.json and returns the trust
+// entry for dir, or nil if there is none.
+func conductorTrustEntry(t *testing.T, dir string) map[string]any {
+	t.Helper()
+	data, err := os.ReadFile(GetUserMCPRootPath())
+	if err != nil {
+		return nil
+	}
+	var cfg map[string]any
+	if err := json.Unmarshal(data, &cfg); err != nil {
+		t.Fatalf("unmarshal ~/.claude.json: %v", err)
+	}
+	projects, _ := cfg["projects"].(map[string]any)
+	entry, _ := projects[dir].(map[string]any)
+	return entry
+}
+
+// Issue #1359: setting up a Claude conductor must pre-accept the trust dialog
+// for the just-created conductor directory, so first boot (and heartbeat) does
+// not stall on Claude Code's "do you trust the files in this folder?" prompt.
+func TestSetupConductorWithAgent_PreAcceptsClaudeTrust(t *testing.T) {
+	tmpHome := t.TempDir()
+	t.Setenv("HOME", tmpHome)
+
+	name := "trust-claude"
+	if err := SetupConductorWithAgent(name, "default", ConductorAgentClaude, true, true, "", "", "", "", nil, ""); err != nil {
+		t.Fatalf("SetupConductorWithAgent: %v", err)
+	}
+
+	dir, _ := ConductorNameDir(name)
+	entry := conductorTrustEntry(t, dir)
+	if entry == nil {
+		t.Fatalf("no trust entry for conductor dir %q in %s", dir, GetUserMCPRootPath())
+	}
+	if entry["hasTrustDialogAccepted"] != true {
+		t.Fatalf("hasTrustDialogAccepted = %v, want true", entry["hasTrustDialogAccepted"])
+	}
+}
+
+// Non-Claude conductors (e.g. Codex) must not get a Claude trust entry — the
+// pre-accept is Claude-specific.
+func TestSetupConductorWithAgent_NoClaudeTrustForCodex(t *testing.T) {
+	tmpHome := t.TempDir()
+	t.Setenv("HOME", tmpHome)
+
+	name := "trust-codex"
+	if err := SetupConductorWithAgent(name, "default", ConductorAgentCodex, true, true, "", "", "", "", nil, ""); err != nil {
+		t.Fatalf("SetupConductorWithAgent: %v", err)
+	}
+
+	dir, _ := ConductorNameDir(name)
+	if entry := conductorTrustEntry(t, dir); entry != nil {
+		t.Fatalf("unexpected Claude trust entry for Codex conductor dir %q: %v", dir, entry)
+	}
+}
