@@ -439,9 +439,60 @@ except ImportError:
 # Configuration
 # ---------------------------------------------------------------------------
 
-AGENT_DECK_DIR = Path.home() / ".agent-deck"
-CONFIG_PATH = AGENT_DECK_DIR / "config.toml"
-CONDUCTOR_DIR = AGENT_DECK_DIR / "conductor"
+# --- issue #1350: XDG path resolution (mirror of internal/agentpaths) ---
+# The Go side (internal/agentpaths) resolves agent-deck paths XDG-first with a
+# legacy ~/.agent-deck fallback. bridge.py must mirror that exactly, or on a
+# fresh XDG install the Go side writes conductors/config under XDG while the
+# bridge reads ~/.agent-deck -> routing dies (issue #1350). Keep this region
+# byte-identical with the embedded copy in conductor_templates.go.
+APP_DIR_NAME = "agent-deck"
+
+
+def _xdg_dir(env_name: str, *fallback_parts: str) -> Path:
+    """Mirror agentpaths.xdgDir: $XDG_*/agent-deck if absolute, else ~/<fallback>/agent-deck."""
+    value = os.environ.get(env_name, "").strip()
+    if value and os.path.isabs(value):
+        return Path(value) / APP_DIR_NAME
+    return Path.home().joinpath(*fallback_parts, APP_DIR_NAME)
+
+
+def _legacy_dir() -> Path:
+    """Mirror agentpaths.LegacyDir: ~/.agent-deck."""
+    return Path.home() / ".agent-deck"
+
+
+def resolve_config_path(name: str) -> Path:
+    """Mirror agentpaths.EffectiveConfigPath: XDG config file if it exists, else
+    legacy file if it exists, else default XDG path."""
+    base = os.path.basename(name)
+    xdg_path = _xdg_dir("XDG_CONFIG_HOME", ".config") / base
+    if xdg_path.exists():
+        return xdg_path
+    legacy_path = _legacy_dir() / base
+    if legacy_path.exists():
+        return legacy_path
+    return xdg_path
+
+
+def resolve_data_dir(*markers: str) -> Path:
+    """Mirror agentpaths.EffectiveDataDir: return the XDG data dir if any marker
+    exists there, else legacy if any marker exists there, else default XDG.
+    The returned path is the agent-deck data root; callers join the marker."""
+    data_dir = _xdg_dir("XDG_DATA_HOME", ".local", "share")
+    clean = [m for m in markers if m]
+    if not clean:
+        return data_dir
+    if any((data_dir / m).exists() for m in clean):
+        return data_dir
+    legacy = _legacy_dir()
+    if any((legacy / m).exists() for m in clean):
+        return legacy
+    return data_dir
+
+
+CONDUCTOR_DIR = resolve_data_dir("conductor") / "conductor"
+CONFIG_PATH = resolve_config_path("config.toml")
+# --- end issue #1350 resolver ---
 LOG_PATH = CONDUCTOR_DIR / "bridge.log"
 
 # Telegram message length limit
