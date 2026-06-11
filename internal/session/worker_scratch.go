@@ -447,12 +447,82 @@ func (i *Instance) EnsureWorkerScratchConfigDir(sourceProfileDir string) (string
 	}
 
 	if sourceProfileDir != "" {
+		resetScratchOnSourceChange(scratch, sourceProfileDir)
 		if err := mirrorProfileEntries(scratch, sourceProfileDir); err != nil {
 			return "", err
 		}
 	}
 
 	return scratch, nil
+}
+
+// scratchSourceMarker records which profile the scratch was last seeded
+// from, so a source change (account switch, #924) is detectable even for
+// entries claude has clobbered into real files.
+const scratchSourceMarker = ".agentdeck-scratch-source"
+
+// resetScratchOnSourceChange detects that the scratch was previously seeded
+// from a DIFFERENT profile and removes real-file entries that shadow the new
+// source's entries — most importantly .claude.json, which claude rewrites
+// via rename-on-write (turning the mirror symlink into a real file holding
+// the old account's oauthAccount/MCP state). Symlinked entries are handled
+// by mirrorProfileEntries/sweepForeignSymlinks; settings.json and
+// .credentials.json keep their dedicated handling. Best-effort: a failure
+// leaves the old behavior (stale state) rather than blocking the spawn.
+//
+// Pre-marker scratches infer the previous source from an existing symlink's
+// target (it must run BEFORE mirrorProfileEntries repoints them).
+func resetScratchOnSourceChange(scratch, source string) {
+	markerPath := filepath.Join(scratch, scratchSourceMarker)
+	prevData, _ := os.ReadFile(markerPath)
+	prevSource := strings.TrimSpace(string(prevData))
+	if prevSource == "" {
+		prevSource = inferScratchSource(scratch)
+	}
+	defer func() {
+		_ = os.WriteFile(markerPath, []byte(source+"\n"), 0o600)
+	}()
+	if prevSource == "" || filepath.Clean(prevSource) == filepath.Clean(source) {
+		return
+	}
+
+	sourceEntries, err := os.ReadDir(source)
+	if err != nil {
+		return
+	}
+	for _, entry := range sourceEntries {
+		name := entry.Name()
+		if name == "settings.json" || name == credentialsFileName {
+			continue
+		}
+		scratchPath := filepath.Join(scratch, name)
+		li, lerr := os.Lstat(scratchPath)
+		if lerr != nil || li.Mode()&os.ModeSymlink != 0 || li.IsDir() {
+			// Absent (mirror will link it), symlink (mirror repoints it),
+			// or a real DIR (scratch-local state, e.g. logs) — leave alone.
+			continue
+		}
+		// Real file shadowing a new-source entry: stale old-account state.
+		_ = os.Remove(scratchPath)
+	}
+}
+
+// inferScratchSource derives the profile a pre-marker scratch was seeded
+// from by reading an existing mirror symlink's target directory.
+func inferScratchSource(scratch string) string {
+	entries, err := os.ReadDir(scratch)
+	if err != nil {
+		return ""
+	}
+	for _, entry := range entries {
+		if entry.Type()&os.ModeSymlink == 0 {
+			continue
+		}
+		if target, err := os.Readlink(filepath.Join(scratch, entry.Name())); err == nil {
+			return filepath.Dir(target)
+		}
+	}
+	return ""
 }
 
 // credentialsFileName is the profile's OAuth credentials file. It is the one
@@ -491,10 +561,21 @@ func mirrorProfileEntries(dest, source string) error {
 			continue
 		}
 		linkPath := filepath.Join(dest, name)
-		if _, statErr := os.Lstat(linkPath); statErr == nil {
+		target := filepath.Join(source, name)
+		if li, statErr := os.Lstat(linkPath); statErr == nil {
+			// Existing symlink pointing elsewhere — e.g. the previous
+			// account's profile after `session switch-account` (#924
+			// follow-up): repoint it. Real files/dirs are scratch-local
+			// state and are left alone.
+			if li.Mode()&os.ModeSymlink != 0 {
+				if cur, rerr := os.Readlink(linkPath); rerr == nil && cur != target {
+					if err := symlinkReplace(target, linkPath); err != nil {
+						return fmt.Errorf("repoint %s: %w", name, err)
+					}
+				}
+			}
 			continue
 		}
-		target := filepath.Join(source, name)
 		if err := os.Symlink(target, linkPath); err != nil {
 			if os.IsExist(err) {
 				continue
@@ -502,7 +583,44 @@ func mirrorProfileEntries(dest, source string) error {
 			return fmt.Errorf("symlink %s: %w", name, err)
 		}
 	}
+	if err := sweepForeignSymlinks(dest, source); err != nil {
+		return err
+	}
 	return reassertCredentialSymlink(dest, source)
+}
+
+// sweepForeignSymlinks removes scratch symlinks that point outside the
+// current source profile. After an account switch the old profile may have
+// entries the new one lacks; the loop above never visits those names, so a
+// stale-but-resolvable symlink into the OLD profile would silently expose
+// the previous account's state (#924 follow-up). Only symlinks are touched —
+// real files/dirs in scratch are local state and stay. settings.json and
+// .credentials.json keep their dedicated handling.
+func sweepForeignSymlinks(dest, source string) error {
+	destEntries, err := os.ReadDir(dest)
+	if err != nil {
+		return fmt.Errorf("read scratch dir: %w", err)
+	}
+	for _, entry := range destEntries {
+		name := entry.Name()
+		if name == "settings.json" || name == credentialsFileName {
+			continue
+		}
+		if entry.Type()&os.ModeSymlink == 0 {
+			continue
+		}
+		linkPath := filepath.Join(dest, name)
+		cur, rerr := os.Readlink(linkPath)
+		if rerr != nil {
+			continue
+		}
+		if filepath.Dir(cur) != filepath.Clean(source) {
+			if err := os.Remove(linkPath); err != nil && !os.IsNotExist(err) {
+				return fmt.Errorf("remove foreign symlink %s: %w", name, err)
+			}
+		}
+	}
+	return nil
 }
 
 // reassertCredentialSymlink guarantees dest/.credentials.json is a clean symlink
