@@ -588,6 +588,12 @@ type Home struct {
 	// nil, the dispatch calls terminal.OpenSessionInNewWindow directly.
 	// See issue #1093.
 	openInNewWindowSink func(req terminal.AttachRequest) error
+	// quickApproveSink is an optional override used by tests to capture the
+	// quick-approve (`a`) dispatch — the (instance, windowIndex) it would send
+	// "1"+Enter to — without driving real tmux. windowIndex < 0 means the
+	// session's active window; >= 0 targets that specific window. When nil, the
+	// dispatch calls the tmux session directly. See issue #1369.
+	quickApproveSink func(inst *session.Instance, windowIndex int) error
 }
 
 // reloadState preserves UI state during storage reload
@@ -663,6 +669,30 @@ func (h *Home) openInNewWindow(req terminal.AttachRequest, sessionExists bool) e
 		return nil
 	}
 	return terminal.OpenSessionInNewWindow(req)
+}
+
+// quickApprove delivers "1"+Enter to approve a Claude permission prompt without
+// attaching. windowIndex < 0 targets the session's active window (the
+// session-row path); >= 0 targets that specific tmux window (the window-row
+// path, #1369). Routed through quickApproveSink in tests. A nil instance or
+// absent tmux session is a silent no-op.
+func (h *Home) quickApprove(inst *session.Instance, windowIndex int) {
+	if inst == nil {
+		return
+	}
+	if h.quickApproveSink != nil {
+		_ = h.quickApproveSink(inst, windowIndex)
+		return
+	}
+	tmuxSess := inst.GetTmuxSession()
+	if tmuxSess == nil {
+		return
+	}
+	if windowIndex < 0 {
+		_ = tmuxSess.SendKeysAndEnter("1")
+		return
+	}
+	_ = tmuxSess.SendKeysAndEnterToWindow(windowIndex, "1")
 }
 
 // resolveITermOpenAs reads the [ui] iterm_open_as setting from the user
@@ -7577,7 +7607,7 @@ func (h *Home) handleMainKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return h, nil
 
 	case defaultHotkeyBindings[hotkeyQuickApprove]:
-		// Quick approve: send "1" + Enter to the highlighted Claude session
+		// Quick approve: send "1" + Enter to the highlighted Claude session/window
 		// without attaching. Gated to Claude-compatible tools so a stray press
 		// on a vim/shell session cannot dump a "1" into the buffer. No status
 		// guard - Bash-tool permission prompts in Claude Code don't transition
@@ -7586,10 +7616,20 @@ func (h *Home) handleMainKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		// CLI, which has no status guard either.
 		if h.cursor < len(h.flatItems) {
 			item := h.flatItems[h.cursor]
-			if item.Type == session.ItemTypeSession && item.Session != nil &&
-				session.IsClaudeCompatible(item.Session.Tool) {
-				if tmuxSess := item.Session.GetTmuxSession(); tmuxSess != nil {
-					_ = tmuxSess.SendKeysAndEnter("1")
+			switch item.Type {
+			case session.ItemTypeWindow:
+				// On a window sub-row, approve the window the cursor is on. Gate
+				// on that window's detected tool (WindowTool) rather than the
+				// session's stored Tool — a session created as "shell" that later
+				// runs claude in an added window keeps Tool="shell", so the
+				// session-level gate would wrongly reject it. Target the window by
+				// index so a prompt in a non-active window is reachable. (#1369)
+				if session.IsClaudeCompatible(item.WindowTool) {
+					h.quickApprove(h.getInstanceByID(item.WindowSessionID), item.WindowIndex)
+				}
+			case session.ItemTypeSession:
+				if item.Session != nil && session.IsClaudeCompatible(item.Session.Tool) {
+					h.quickApprove(item.Session, -1)
 				}
 			}
 		}
