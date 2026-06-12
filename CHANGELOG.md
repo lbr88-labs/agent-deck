@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.9.57] - 2026-06-12
+
+### Fixed
+
+- **Conductor bridge no longer reports a false "Failed to send" when an idle conductor's turn outruns the response timeout** ([#1404](https://github.com/asheshgoplani/agent-deck/pull/1404)). When the conductor is idle on arrival, the bridge delivers the message with a blocking `--wait`; a single turn longer than `RESPONSE_TIMEOUT` (300s) made the CLI exit non-zero and the user was told the send failed even though the conductor kept working. The bridge now classifies the "agent still running" timeout, tells the user "Still working — will reply here when done", and a reply-only watcher delivers the captured output asynchronously once the turn finishes — without re-sending the message (no double-processing). Applied to the Telegram, Slack, and Discord idle paths; complements the #452 busy-path queue.
+- **`remote update` can actually update a remote that advertises an available update** ([#1405](https://github.com/asheshgoplani/agent-deck/pull/1405)). `parseRemoteVersion` grabbed the LAST `v` in `agent-deck version` output, so a remote printing `Agent Deck v1.9.49 (update available: v1.9.55)` was mis-read as already being on `1.9.55)` and the update was skipped — a catch-22 where a remote could never be updated while it advertised one. The parser now anchors on the first semver token (the real current version).
+- **Forked sessions keep inherited `extra_args` across restarts and further forks** ([#1408](https://github.com/asheshgoplani/agent-deck/pull/1408), fixes [#1407](https://github.com/asheshgoplani/agent-deck/issues/1407)). A fork inherited the parent's extra claude CLI tokens only inside the baked one-shot fork command; the fork's record never persisted them, so the flags silently dropped on the fork's first restart and a fork-of-a-fork never got them at all. `CreateForkedInstanceWithOptions` now persists an independent copy of the parent's `ExtraArgs` onto the fork, matching how `ClaudeOptions` already survive.
+
+### Changed
+
+- **One canonical conductor bridge script, embedded via `go:embed`** ([#1406](https://github.com/asheshgoplani/agent-deck/pull/1406)). The repo carried two hand-maintained, silently drifted copies of `bridge.py` — the standalone `conductor/bridge.py` the tests ran against (had #452 queue/async, hooks, #971) and a ~2,100-line Go raw-string const that actually deployed (had #1386 secret resolution, Discord, #926 reply parsing). They are unified into a single canonical `internal/session/conductor_bridge.py` carrying the per-function union of both lineages (no fix dropped from either side), embedded directly into the binary; `conductor/tests/` and the python-compat CI gate now exercise the exact bytes that deploy. Drift between tested and shipped bridge code is structurally impossible again.
+- **Release gate excludes integration-heavy test packages from the blocking run** ([#1331](https://github.com/asheshgoplani/agent-deck/pull/1331)). `internal/tmux`, `internal/integration` and `internal/tuitest` no longer block the release tag (their tmux/systemd/socket dependencies caused recurring flaky release failures unrelated to the code being released); systemd/socket-dependent `mcppool` tests moved behind a `go:build integration` tag with their pure unit tests kept in the gate. A continue-on-error informational step still runs the full integration set on every release.
+
 ## [1.9.56] - 2026-06-12
 
 ### Added
