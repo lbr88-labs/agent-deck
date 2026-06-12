@@ -602,6 +602,24 @@ func SetupConductorWithAgent(name, profile, agent string, heartbeatEnabled bool,
 		return fmt.Errorf("failed to create conductor dir: %w", err)
 	}
 
+	// Pre-accept the Claude trust dialog for the conductor directory (#1359).
+	// conductor setup just created this directory, so there is nothing to
+	// vet — yet on first launch Claude Code would prompt "do you trust the
+	// files in this folder?" and the conductor would stall there, defeating
+	// autonomous/heartbeat operation. This reuses the same mechanism added
+	// for multi-repo worktree parents in #1149: seed
+	// projects[dir].hasTrustDialogAccepted = true in the user's root
+	// ~/.claude.json (where Claude keys trust, regardless of profile).
+	// Claude-only; failures are logged but non-fatal so setup still succeeds.
+	if spec.Agent == ConductorAgentClaude {
+		if err := PreAcceptClaudeTrust(GetUserMCPRootPath(), dir); err != nil {
+			sessionLog.Warn("conductor_preaccept_trust_failed",
+				slog.String("conductor", name),
+				slog.String("dir", dir),
+				slog.String("error", err.Error()))
+		}
+	}
+
 	targetPath := filepath.Join(dir, spec.InstructionsFileName)
 
 	if customInstructionsMD != "" {
