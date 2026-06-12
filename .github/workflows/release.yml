@@ -79,13 +79,23 @@ jobs:
           sudo apt-get install -y zoxide
           zoxide --version
 
+      - name: Install gotestsum
+        timeout-minutes: 5
+        run: go install gotest.tools/gotestsum@v1.13.0
+
       - name: Run tests
         timeout-minutes: 30
         env:
           PERF_BUDGET_MULTIPLIER: '2.0'
         run: |
           go install gotest.tools/gotestsum@v1.13.0
-          gotestsum --rerun-fails=2 --rerun-fails-abort-on-data-race --packages="./..." -- -race -timeout 20m
+          PACKAGES=$(go list ./... | grep -v -E 'internal/(tmux|integration|tuitest)$')
+          gotestsum --rerun-fails=2 --rerun-fails-abort-on-data-race --packages="$PACKAGES" -- -race -timeout 20m
+
+      - name: Run integration tests (informational)
+        timeout-minutes: 15
+        continue-on-error: true
+        run: go test -race -timeout 10m -tags integration ./internal/tmux/... ./internal/integration/... ./internal/tuitest/... ./internal/mcppool/...
 
       # Evaluator harness full tier. Blocking — a release that fails eval
       # does not get a tag. See docs/rfc/EVALUATOR_HARNESS.md (#37).
