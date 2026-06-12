@@ -347,9 +347,15 @@ type mockSendRetryTarget struct {
 	statusIdx atomic.Int32
 	paneIdx   atomic.Int32
 
-	sendKeysCalls  int32
-	sendEnterCalls int32
-	sendCtrlCCalls int32
+	sendKeysCalls    int32
+	sendEnterCalls   int32
+	sendCtrlCCalls   int32
+	sendChunkedCalls int32
+}
+
+func (m *mockSendRetryTarget) SendKeysChunked(_ string) error {
+	atomic.AddInt32(&m.sendChunkedCalls, 1)
+	return nil
 }
 
 func (m *mockSendRetryTarget) SendKeysAndEnter(_ string) error {
@@ -402,7 +408,7 @@ func TestSendWithRetryTarget_SkipVerify(t *testing.T) {
 		statuses: []string{"waiting"},
 		panes:    []string{""},
 	}
-	err := sendWithRetryTarget(mock, "hello", true, sendRetryOptions{maxRetries: 4, checkDelay: 0})
+	_, err := sendWithRetryTarget(mock, "hello", true, sendRetryOptions{maxRetries: 4, checkDelay: 0})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -416,7 +422,7 @@ func TestSendWithRetryTarget_StopsWhenActive(t *testing.T) {
 		statuses: []string{"active"},
 		panes:    []string{""},
 	}
-	err := sendWithRetryTarget(mock, "hello", false, sendRetryOptions{maxRetries: 4, checkDelay: 0})
+	_, err := sendWithRetryTarget(mock, "hello", false, sendRetryOptions{maxRetries: 4, checkDelay: 0})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -441,7 +447,7 @@ func TestSendWithRetryTarget_WaitingWithoutPasteMarker_ErrorsUnderVerifyDelivery
 		statuses: []string{"waiting", "waiting", "waiting", "waiting"},
 		panes:    []string{"", "", "", ""},
 	}
-	err := sendWithRetryTarget(mock, "hello", false, sendRetryOptions{
+	_, err := sendWithRetryTarget(mock, "hello", false, sendRetryOptions{
 		maxRetries: 4, checkDelay: 0, verifyDelivery: true,
 	})
 	if err == nil {
@@ -461,9 +467,13 @@ func TestSendWithRetryTarget_WaitingWithoutPasteMarker_ErrorsUnderVerifyDelivery
 
 // TestSendWithRetryTarget_RetriesOnUnsentPasteMarker locks in the post-#876
 // contract for the unsent-paste-marker evidence axis: the marker IS positive
-// evidence the keystrokes reached the inner agent, so verifyDelivery must
-// accept it and return nil. The behavioral state-machine assertion (5
-// SendEnter retries) is preserved.
+// evidence the keystrokes reached the inner agent, so verifyDelivery must not
+// raise the #876 silent-drop error. The behavioral state-machine assertion (5
+// SendEnter retries) is preserved. Since #1413 the marker must CLEAR by the
+// final check for the send to count as submitted — a marker that persists
+// through the whole budget is classified typed_not_submitted (see
+// TestSendWithRetryTarget_TypedNotSubmitted_ErrorsWithStatus), so this
+// scenario ends with the paste accepted on the last retry.
 func TestSendWithRetryTarget_RetriesOnUnsentPasteMarker(t *testing.T) {
 	mock := &mockSendRetryTarget{
 		statuses: []string{"waiting", "waiting", "waiting", "waiting", "waiting"},
@@ -473,16 +483,20 @@ func TestSendWithRetryTarget_RetriesOnUnsentPasteMarker(t *testing.T) {
 			"[Pasted text #1 +89 lines]",
 			"[Pasted text #1 +89 lines]",
 			"[Pasted text #1 +89 lines]",
+			"", // final post-budget check: paste accepted, composer clear
 		},
 	}
-	err := sendWithRetryTarget(mock, "hello", false, sendRetryOptions{
+	delivery, err := sendWithRetryTarget(mock, "hello", false, sendRetryOptions{
 		maxRetries: 5, checkDelay: 0, verifyDelivery: true,
 	})
 	if err != nil {
-		t.Fatalf("verifyDelivery must accept persistent unsent-marker as evidence: %v", err)
+		t.Fatalf("verifyDelivery must accept unsent-marker-then-clear as evidence: %v", err)
+	}
+	if delivery != deliverySubmitted {
+		t.Fatalf("delivery: want %q, got %q", deliverySubmitted, delivery)
 	}
 	if got := atomic.LoadInt32(&mock.sendEnterCalls); got != 5 {
-		t.Fatalf("expected 5 SendEnter calls when unsent marker persists, got %d", got)
+		t.Fatalf("expected 5 SendEnter calls while unsent marker persists, got %d", got)
 	}
 }
 
@@ -499,7 +513,7 @@ func TestSendWithRetryTarget_DetectsPasteMarkerAfterInitialWaiting(t *testing.T)
 			"",
 		},
 	}
-	err := sendWithRetryTarget(mock, "hello", false, sendRetryOptions{
+	_, err := sendWithRetryTarget(mock, "hello", false, sendRetryOptions{
 		maxRetries: 5, checkDelay: 0, verifyDelivery: true,
 	})
 	if err != nil {
@@ -520,7 +534,7 @@ func TestSendWithRetryTarget_RetriesWhenComposerPromptStillHasMessage(t *testing
 			"",
 		},
 	}
-	err := sendWithRetryTarget(mock, "Write one line: LAUNCH_OK", false, sendRetryOptions{maxRetries: 4, checkDelay: 0})
+	_, err := sendWithRetryTarget(mock, "Write one line: LAUNCH_OK", false, sendRetryOptions{maxRetries: 4, checkDelay: 0})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -538,7 +552,7 @@ func TestSendWithRetryTarget_RetriesWhenWrappedComposerPromptStillHasMessage(t *
 		},
 	}
 	message := "Read these 3 files and produce a summary for DIAGTOKEN_123. Keep under 80 lines."
-	err := sendWithRetryTarget(mock, message, false, sendRetryOptions{maxRetries: 4, checkDelay: 0})
+	_, err := sendWithRetryTarget(mock, message, false, sendRetryOptions{maxRetries: 4, checkDelay: 0})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -559,7 +573,7 @@ func TestSendWithRetryTarget_AmbiguousStateFallback_ErrorsUnderVerifyDelivery(t 
 		statuses: []string{"error", "error", "error", "error"},
 		panes:    []string{"", "", "", ""},
 	}
-	err := sendWithRetryTarget(mock, "hello", false, sendRetryOptions{
+	_, err := sendWithRetryTarget(mock, "hello", false, sendRetryOptions{
 		maxRetries: 4, checkDelay: 0, verifyDelivery: true,
 	})
 	if err == nil {
@@ -579,7 +593,7 @@ func TestSendWithRetryTarget_ReturnsErrorWhenInitialSendFails(t *testing.T) {
 	mock := &mockSendRetryTarget{
 		sendKeysErr: fmt.Errorf("tmux send failed"),
 	}
-	err := sendWithRetryTarget(mock, "hello", false, sendRetryOptions{maxRetries: 3, checkDelay: 0})
+	_, err := sendWithRetryTarget(mock, "hello", false, sendRetryOptions{maxRetries: 3, checkDelay: 0})
 	if err == nil {
 		t.Fatal("expected error, got nil")
 	}
@@ -600,7 +614,7 @@ func TestSendWithRetryTarget_AggressiveEarlyEnterNudge(t *testing.T) {
 		},
 		panes: []string{"", "", "", "", "", "", "", "", "", ""},
 	}
-	err := sendWithRetryTarget(mock, "hello", false, sendRetryOptions{
+	_, err := sendWithRetryTarget(mock, "hello", false, sendRetryOptions{
 		maxRetries: 10, checkDelay: 0, verifyDelivery: true,
 	})
 	if err == nil {
@@ -627,7 +641,7 @@ func TestSendWithRetryTarget_IncreasedAmbiguousBudget(t *testing.T) {
 		statuses: []string{"error", "error", "error", "error", "error"},
 		panes:    []string{"", "", "", "", ""},
 	}
-	err := sendWithRetryTarget(mock, "hello", false, sendRetryOptions{
+	_, err := sendWithRetryTarget(mock, "hello", false, sendRetryOptions{
 		maxRetries: 5, checkDelay: 0, verifyDelivery: true,
 	})
 	if err == nil {
@@ -662,7 +676,7 @@ func TestSendWithRetryTarget_FullResendAfterMessageLost(t *testing.T) {
 		statuses: statuses,
 		panes:    panes,
 	}
-	err := sendWithRetryTarget(mock, "hello", false, sendRetryOptions{maxRetries: 12, checkDelay: 0})
+	_, err := sendWithRetryTarget(mock, "hello", false, sendRetryOptions{maxRetries: 12, checkDelay: 0})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -697,7 +711,7 @@ func TestSendWithRetryTarget_FullResendMaxLimit(t *testing.T) {
 		statuses: statuses,
 		panes:    panes,
 	}
-	err := sendWithRetryTarget(mock, "hello", false, sendRetryOptions{
+	_, err := sendWithRetryTarget(mock, "hello", false, sendRetryOptions{
 		maxRetries: n, checkDelay: 0, verifyDelivery: true,
 	})
 	if err == nil {
@@ -740,26 +754,40 @@ func TestSendWithRetryTarget_FullResendMaxLimit(t *testing.T) {
 // to render, then the verification loop detects the unsent prompt and
 // fires SendEnter.
 func TestSendNoWait_ReEntersWhenComposerRendersLate(t *testing.T) {
-	// Preflight barrier polls the pane; then verification loop polls again.
-	// Build a pane/status track where composer renders at iteration 5 with
-	// the unsent message, simulating Claude TUI mount completing late.
-	// After composer renders, status is "waiting" with the message typed
-	// at the prompt.
+	// Preflight barrier polls the pane until the composer renders; the guard
+	// then checks for an operator draft; the verification loop polls again.
+	// Build a pane track where the composer renders empty at index 5
+	// (preflight passes, guard passes), then — after the send — shows the
+	// message typed-but-unsent (swallowed Enter, the #616 late-mount race)
+	// until the retry Enter is accepted.
 	const lateRenderAt = 5
-	n := 40 // generous so both preflight + verification have fuel
+	n := 40 // generous so preflight + guard + verification have fuel
 	statuses := make([]string, n)
 	panes := make([]string, n)
 	for i := 0; i < lateRenderAt; i++ {
-		statuses[i] = "active"
+		statuses[i] = "waiting"
 		panes[i] = "" // no composer yet
 	}
+	// Index 5: composer renders empty (preflight returns; guard sees no
+	// draft). Index 6: guard capture. Indices 7-10: the sent message sits
+	// unsent at the prompt. Index 11+: Enter accepted, composer clear.
 	for i := lateRenderAt; i < n; i++ {
 		statuses[i] = "waiting"
+		panes[i] = "❯ "
+	}
+	for i := 7; i <= 10 && i < n; i++ {
 		panes[i] = "❯ TEST_MSG_616"
 	}
 	mock := &mockSendRetryTarget{statuses: statuses, panes: panes}
 
-	err := sendNoWait(mock, "claude", "TEST_MSG_616")
+	tun := noWaitSendTuning()
+	tun.preflightPoll = time.Millisecond
+	tun.guardPoll = time.Millisecond
+	tun.guardHold = 50 * time.Millisecond
+	tun.guardClearWait = 10 * time.Millisecond
+	tun.settleDelay = 0
+	tun.retry.checkDelay = 0
+	_, err := executeSend(mock, "claude", "TEST_MSG_616", true, tun)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -866,7 +894,7 @@ func TestSendWithRetryTarget_NoWaitDoesNotResend(t *testing.T) {
 		statuses: statuses,
 		panes:    panes,
 	}
-	err := sendWithRetryTarget(mock, "hello", false, sendRetryOptions{
+	_, err := sendWithRetryTarget(mock, "hello", false, sendRetryOptions{
 		maxRetries:     n,
 		checkDelay:     0,
 		maxFullResends: -1, // disabled, as used by --no-wait
@@ -991,9 +1019,9 @@ func TestSendWithRetry_DelayedInputHandler_Integration(t *testing.T) {
 	time.Sleep(500 * time.Millisecond)
 
 	message := "DELAYED_HANDLER_TEST_MSG"
-	err := sendWithRetry(sess, message, false)
+	_, err := executeSend(sess, "claude", message, false, defaultSendTuning())
 	if err != nil {
-		t.Fatalf("sendWithRetry failed: %v", err)
+		t.Fatalf("executeSend failed: %v", err)
 	}
 
 	// Wait for the script to process the re-sent message
@@ -1461,7 +1489,7 @@ func TestSendWithRetryTarget_VerifyDelivery_ErrorsWhenNoEvidenceOfReceipt(t *tes
 		panes[i] = ""
 	}
 	mock := &mockSendRetryTarget{statuses: statuses, panes: panes}
-	err := sendWithRetryTarget(mock, "hello", false, sendRetryOptions{
+	_, err := sendWithRetryTarget(mock, "hello", false, sendRetryOptions{
 		maxRetries: 12, checkDelay: 0, verifyDelivery: true,
 	})
 	if err == nil {
@@ -1478,7 +1506,7 @@ func TestSendWithRetryTarget_VerifyDelivery_AcceptsActiveStatus(t *testing.T) {
 		statuses: []string{"active", "active"},
 		panes:    []string{"", ""},
 	}
-	err := sendWithRetryTarget(mock, "hello", false, sendRetryOptions{
+	_, err := sendWithRetryTarget(mock, "hello", false, sendRetryOptions{
 		maxRetries: 4, checkDelay: 0, verifyDelivery: true,
 	})
 	if err != nil {
@@ -1487,18 +1515,25 @@ func TestSendWithRetryTarget_VerifyDelivery_AcceptsActiveStatus(t *testing.T) {
 }
 
 func TestSendWithRetryTarget_VerifyDelivery_AcceptsUnsentMarker(t *testing.T) {
+	// The unsent-paste marker is receipt evidence (no #876 error), and since
+	// #1413 the send counts as submitted once the marker clears by the final
+	// post-budget check. A marker that never clears is typed_not_submitted.
 	statuses := make([]string, 6)
-	panes := make([]string, 6)
+	panes := make([]string, 7)
 	for i := range statuses {
 		statuses[i] = "waiting"
 		panes[i] = "[Pasted text #1 +89 lines]"
 	}
+	panes[6] = "" // final post-budget check: paste accepted
 	mock := &mockSendRetryTarget{statuses: statuses, panes: panes}
-	err := sendWithRetryTarget(mock, "hello", false, sendRetryOptions{
+	delivery, err := sendWithRetryTarget(mock, "hello", false, sendRetryOptions{
 		maxRetries: 6, checkDelay: 0, verifyDelivery: true,
 	})
 	if err != nil {
 		t.Fatalf("verifyDelivery must accept unsent-prompt marker as receipt evidence: %v", err)
+	}
+	if delivery != deliverySubmitted {
+		t.Fatalf("delivery: want %q, got %q", deliverySubmitted, delivery)
 	}
 }
 
@@ -1513,7 +1548,7 @@ func TestSendWithRetryTarget_VerifyDelivery_AcceptsMessageInPane(t *testing.T) {
 		panes[i] = "DELIVERY_TOKEN_876 — verbatim message body in pane"
 	}
 	mock := &mockSendRetryTarget{statuses: statuses, panes: panes}
-	err := sendWithRetryTarget(mock, "DELIVERY_TOKEN_876", false, sendRetryOptions{
+	_, err := sendWithRetryTarget(mock, "DELIVERY_TOKEN_876", false, sendRetryOptions{
 		maxRetries: 6, checkDelay: 0, verifyDelivery: true,
 	})
 	if err != nil {
@@ -1528,7 +1563,7 @@ func TestSendWithRetryTarget_VerifyDelivery_OffPreservesLegacyBestEffort(t *test
 	statuses := []string{"waiting", "waiting", "waiting", "waiting"}
 	panes := []string{"", "", "", ""}
 	mock := &mockSendRetryTarget{statuses: statuses, panes: panes}
-	err := sendWithRetryTarget(mock, "hello", false, sendRetryOptions{
+	_, err := sendWithRetryTarget(mock, "hello", false, sendRetryOptions{
 		maxRetries: 4, checkDelay: 0, // verifyDelivery omitted (= false)
 	})
 	if err != nil {

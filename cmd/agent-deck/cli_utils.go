@@ -182,12 +182,23 @@ func (c *CLIOutput) Success(message string, data interface{}) {
 
 // Error prints an error message or JSON error response
 func (c *CLIOutput) Error(message string, code string) {
+	c.ErrorWithData(message, code, nil)
+}
+
+// ErrorWithData prints an error message or JSON error response with extra
+// machine-checkable fields merged into the JSON payload (e.g. the `delivery`
+// status of `session send`, issue #1413). The reserved success/error/code
+// keys always win over extra entries.
+func (c *CLIOutput) ErrorWithData(message string, code string, extra map[string]interface{}) {
 	if c.jsonMode {
-		c.printJSON(map[string]interface{}{
-			"success": false,
-			"error":   message,
-			"code":    code,
-		})
+		payload := make(map[string]interface{}, len(extra)+3)
+		for k, v := range extra {
+			payload[k] = v
+		}
+		payload["success"] = false
+		payload["error"] = message
+		payload["code"] = code
+		c.printJSON(payload)
 		return
 	}
 	fmt.Fprintf(os.Stderr, "Error: %s\n", message)
@@ -230,6 +241,9 @@ const (
 	ErrCodeInvalidOperation = "INVALID_OPERATION"
 	ErrCodeGroupNotEmpty    = "GROUP_NOT_EMPTY"
 	ErrCodeMCPNotAvailable  = "MCP_NOT_AVAILABLE"
+	// ErrCodeDeliveryFailed: `session send` typed the message but could not
+	// confirm submission (delivery=typed_not_submitted, issue #1413).
+	ErrCodeDeliveryFailed = "DELIVERY_FAILED"
 )
 
 // ResolveSession finds a session by flexible matching (title, ID prefix, or path)

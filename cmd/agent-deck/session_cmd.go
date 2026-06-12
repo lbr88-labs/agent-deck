@@ -2228,25 +2228,37 @@ func handleSessionSend(profile string, args []string) {
 	// Claude's composer renders after the loop has already returned
 	// success on startup "active" status, leaving the message unsubmitted.
 	// default mode: full retry budget after readiness check.
+	//
+	// Both modes run the composer-draft guard (issue #1409) and submit
+	// verification with a machine-checkable delivery status (issue #1413).
+	tun := defaultSendTuning()
 	if *noWait {
-		if err := sendNoWait(tmuxSess, inst.Tool, message); err != nil {
-			out.Error(fmt.Sprintf("failed to send message: %v", err), ErrCodeInvalidOperation)
-			os.Exit(1)
+		tun = noWaitSendTuning()
+	}
+	sendRes, sendErr := executeSend(tmuxSess, inst.Tool, message, *noWait, tun)
+	if sendErr != nil {
+		extra := sendRes.jsonFields()
+		extra["session_id"] = inst.ID
+		extra["session_title"] = inst.Title
+		if sendRes.delivery == deliveryTypedNotSubmitted {
+			out.ErrorWithData(fmt.Sprintf("message typed but not submitted to '%s': %v", inst.Title, sendErr), ErrCodeDeliveryFailed, extra)
+		} else {
+			out.ErrorWithData(fmt.Sprintf("failed to send message: %v", sendErr), ErrCodeInvalidOperation, extra)
 		}
-	} else {
-		if err := sendWithRetry(tmuxSess, message, skipClaudeDeliveryVerify(inst.Tool)); err != nil {
-			out.Error(fmt.Sprintf("failed to send message: %v", err), ErrCodeInvalidOperation)
-			os.Exit(1)
-		}
+		os.Exit(1)
 	}
 
 	if !*stream {
-		out.Success(fmt.Sprintf("Sent message to '%s'", inst.Title), map[string]interface{}{
+		data := map[string]interface{}{
 			"success":       true,
 			"session_id":    inst.ID,
 			"session_title": inst.Title,
 			"message":       message,
-		})
+		}
+		for k, v := range sendRes.jsonFields() {
+			data[k] = v
+		}
+		out.Success(fmt.Sprintf("Sent message to '%s'", inst.Title), data)
 	}
 
 	// --stream: tail the Claude transcript and pipe JSONL events to
@@ -2347,10 +2359,166 @@ func shouldSkipConductorHeartbeatSend(inst *session.Instance, message string) bo
 	return time.Since(lastActivity) >= time.Duration(idleMinutes)*time.Minute
 }
 
-// sendWithRetry sends a message atomically and retries Enter if the agent
-// doesn't start processing within a reasonable time.
-func sendWithRetry(tmuxSess *tmux.Session, message string, skipVerify bool) error {
-	return sendWithRetryTarget(tmuxSess, message, skipVerify, defaultSendOptions())
+// Delivery status values surfaced by the `session send` path (issue #1413).
+// They are part of the `--json` contract: callers (watchers, conductors,
+// bridges) key off the `delivery` field to distinguish a confirmed submit
+// from a message left typed-but-unsubmitted at the composer.
+const (
+	// deliverySubmitted: positive evidence the agent accepted the message
+	// (an "active" transition, or the composer cleared after holding it).
+	deliverySubmitted = "submitted"
+	// deliveryUnverified: the message was sent but this tool's TUI exposes
+	// no Claude-shaped verification signals, so submission is unverified
+	// (non-Claude tools; legacy best-effort contract).
+	deliveryUnverified = "unverified"
+	// deliveryTypedNotSubmitted: the message body is still sitting unsent in
+	// the composer after the bounded Enter-retry budget (issue #1413).
+	deliveryTypedNotSubmitted = "typed_not_submitted"
+	// deliveryNoEvidence: no positive delivery signal was ever observed
+	// (issue #876 silent-drop classification).
+	deliveryNoEvidence = "no_evidence"
+	// deliverySendFailed: the initial tmux send-keys itself failed.
+	deliverySendFailed = "send_failed"
+)
+
+// sendDeliveryResult is the prompt-state-aware outcome of executeSend.
+type sendDeliveryResult struct {
+	// delivery is one of the delivery* constants above.
+	delivery string
+	// held is how long the composer guard waited/worked before the send
+	// (issue #1409 hold-and-retry plus save-clear time).
+	held time.Duration
+	// draftSaved is the operator draft that was cleared from the composer to
+	// make way for the automated send (empty when no clear was needed).
+	draftSaved string
+	// draftCleared reports whether the guard confirmed the composer emptied
+	// after Ctrl+C.
+	draftCleared bool
+	// draftRestored reports whether the saved operator draft was typed back
+	// (without Enter) after the automated delivery.
+	draftRestored bool
+}
+
+// jsonFields returns the delivery-status fields added to `session send`
+// success and error payloads in --json mode (issue #1413 machine-checkable
+// contract; #1409 draft-guard observability).
+func (r sendDeliveryResult) jsonFields() map[string]interface{} {
+	fields := map[string]interface{}{}
+	if r.delivery != "" {
+		fields["delivery"] = r.delivery
+	}
+	if ms := r.held.Milliseconds(); ms > 0 {
+		fields["held_for_composer_ms"] = ms
+	}
+	if r.draftSaved != "" {
+		fields["saved_draft"] = r.draftSaved
+		fields["draft_restored"] = r.draftRestored
+	}
+	return fields
+}
+
+// sendExecTuning bundles the bounded budgets of the full executeSend
+// pipeline (preflight barrier, composer-draft guard, verification loop) so
+// tests can shrink them and production paths share one definition.
+type sendExecTuning struct {
+	// guardHold bounds the #1409 hold-and-retry phase: how long an automated
+	// send waits for a non-empty operator draft to clear on its own before
+	// falling back to save-clear-restore.
+	guardHold      time.Duration
+	guardPoll      time.Duration
+	guardClearWait time.Duration
+	// preflightWait/preflightPoll bound the --no-wait composer-visibility
+	// barrier (issue #616).
+	preflightWait time.Duration
+	preflightPoll time.Duration
+	// settleDelay is the post-composer-render settle pause (issue #616).
+	settleDelay time.Duration
+	// retry is the verification-loop budget (issues #876, #1413).
+	retry sendRetryOptions
+}
+
+// defaultSendTuning is the tuning for the default (readiness-waited) send
+// path. The guard hold is generous because the caller already waited for
+// readiness; an operator mid-keystroke gets up to 10s to finish or pause.
+func defaultSendTuning() sendExecTuning {
+	return sendExecTuning{
+		guardHold:      10 * time.Second,
+		guardPoll:      250 * time.Millisecond,
+		guardClearWait: 1500 * time.Millisecond,
+		retry:          defaultSendOptions(),
+	}
+}
+
+// noWaitSendTuning is the tuning for `session send --no-wait`. --no-wait
+// skips the readiness wait, NOT the composer guard or submit verification —
+// but its guard hold is kept small (2s) so automated callers (heartbeats,
+// inbox nudges, watchers) pay minimal added latency. When the composer is
+// empty the guard costs a single pane capture.
+func noWaitSendTuning() sendExecTuning {
+	return sendExecTuning{
+		guardHold:      2 * time.Second,
+		guardPoll:      150 * time.Millisecond,
+		guardClearWait: time.Second,
+		preflightWait:  5 * time.Second,
+		preflightPoll:  100 * time.Millisecond,
+		settleDelay:    500 * time.Millisecond,
+		retry:          noWaitSendOptions(),
+	}
+}
+
+// executeSend is the prompt-state-aware send pipeline used by
+// `session send` (issues #1409 + #1413):
+//
+//  1. --no-wait only: capped preflight barrier until the Claude composer is
+//     visible, plus a short settle delay (issue #616).
+//  2. Composer-draft guard (issue #1409): hold while the composer shows a
+//     non-empty operator draft; at the bound, save the draft and clear the
+//     composer (Ctrl+C) so the automated message cannot merge with it.
+//  3. Send + bounded submit verification (issues #876, #1413), classifying
+//     the outcome into a delivery status.
+//  4. Restore the saved operator draft (typed back without Enter) once the
+//     automated delivery is not stuck in the composer. When the automated
+//     message itself ends typed_not_submitted the draft is NOT retyped (it
+//     would merge into the stuck composer) — it is surfaced in the result
+//     instead so the caller can report it.
+//
+// Steps 1, 2 and 4 are Claude-only: composer introspection is Claude-shaped
+// and non-Claude tools gate readiness upstream.
+func executeSend(target sendRetryTarget, tool, message string, noWait bool, tun sendExecTuning) (sendDeliveryResult, error) {
+	res := sendDeliveryResult{}
+	claudeLike := session.IsClaudeCompatible(tool)
+
+	if noWait && claudeLike {
+		if awaitComposerReadyBestEffort(target, tun.preflightWait, tun.preflightPoll) {
+			// Post-composer settle: React mount can lag behind the
+			// composer glyph by a few hundred ms on cold starts.
+			if tun.settleDelay > 0 {
+				time.Sleep(tun.settleDelay)
+			}
+		}
+	}
+
+	if claudeLike {
+		guard := send.GuardComposerDraft(target, send.ComposerGuardOptions{
+			HoldWait:     tun.guardHold,
+			PollInterval: tun.guardPoll,
+			ClearWait:    tun.guardClearWait,
+			Strip:        tmux.StripANSI,
+		})
+		res.held = guard.Held
+		res.draftSaved = guard.SavedDraft
+		res.draftCleared = guard.DraftCleared
+	}
+
+	delivery, err := sendWithRetryTarget(target, message, skipClaudeDeliveryVerify(tool), tun.retry)
+	res.delivery = delivery
+
+	if res.draftSaved != "" && delivery != deliveryTypedNotSubmitted {
+		if restoreErr := target.SendKeysChunked(res.draftSaved); restoreErr == nil {
+			res.draftRestored = true
+		}
+	}
+	return res, err
 }
 
 // skipClaudeDeliveryVerify reports whether the Claude-tuned post-send delivery
@@ -2431,9 +2599,9 @@ func awaitComposerReadyBestEffort(target sendRetryTarget, maxWait, pollInterval 
 	}
 }
 
-// sendNoWait implements `session send --no-wait` semantics for the CLI.
-//
-// Issue #616 fix has three layers, applied in order:
+// The `session send --no-wait` semantics for the CLI live in executeSend
+// (called with noWait=true and noWaitSendTuning()). The historical issue
+// #616 fix is preserved there as three layers, applied in order:
 //
 //  1. Preflight readiness barrier (capped at 5s): polls the pane for a
 //     visible Claude composer `❯`. Without this, the initial paste
@@ -2452,23 +2620,15 @@ func awaitComposerReadyBestEffort(target sendRetryTarget, maxWait, pollInterval 
 //
 // maxFullResends=-1 is load-bearing for the #479 regression (never
 // double-send). Non-Claude tools skip the preflight — they have their
-// own readiness shapes and upstream gating.
-func sendNoWait(target sendRetryTarget, tool, message string) error {
-	if session.IsClaudeCompatible(tool) {
-		if awaitComposerReadyBestEffort(target, 5*time.Second, 100*time.Millisecond) {
-			// Post-composer settle: React mount can lag behind the
-			// composer glyph by a few hundred ms on cold starts.
-			time.Sleep(500 * time.Millisecond)
-		}
-	}
-	return sendWithRetryTarget(target, message, skipClaudeDeliveryVerify(tool), noWaitSendOptions())
-}
+// own readiness shapes and upstream gating. Issue #1409 added a fourth
+// layer between 2 and 3: the composer-draft guard.
 
 type sendRetryTarget interface {
 	SendKeysAndEnter(string) error
 	GetStatus() (string, error)
 	SendEnter() error
 	SendCtrlC() error
+	SendKeysChunked(string) error
 	CapturePaneFresh() (string, error)
 }
 
@@ -2487,7 +2647,11 @@ type sendRetryOptions struct {
 	verifyDelivery bool
 }
 
-func sendWithRetryTarget(target sendRetryTarget, message string, skipVerify bool, opts sendRetryOptions) error {
+// sendWithRetryTarget sends the message and runs the bounded submit
+// verification loop. It returns a delivery status (one of the delivery*
+// constants) alongside the error so callers can expose a machine-checkable
+// outcome (issue #1413).
+func sendWithRetryTarget(target sendRetryTarget, message string, skipVerify bool, opts sendRetryOptions) (string, error) {
 	if opts.maxRetries <= 0 {
 		opts.maxRetries = 1
 	}
@@ -2496,11 +2660,11 @@ func sendWithRetryTarget(target sendRetryTarget, message string, skipVerify bool
 	}
 
 	if err := target.SendKeysAndEnter(message); err != nil {
-		return fmt.Errorf("failed to send message: %w", err)
+		return deliverySendFailed, fmt.Errorf("failed to send message: %w", err)
 	}
 
 	if skipVerify {
-		return nil
+		return deliveryUnverified, nil
 	}
 
 	// Verify the agent accepted Enter and began processing.
@@ -2573,7 +2737,7 @@ func sendWithRetryTarget(target sendRetryTarget, message string, skipVerify bool
 			waitingNoActivityChecks = 0
 			activeChecks++
 			if activeChecks >= activeSuccessThreshold {
-				return nil
+				return deliverySubmitted, nil
 			}
 			continue
 		}
@@ -2584,7 +2748,7 @@ func sendWithRetryTarget(target sendRetryTarget, message string, skipVerify bool
 				waitingNoMarkerChecks++
 				waitingNoActivityChecks = 0
 				if waitingNoMarkerChecks >= waitingAfterActiveThreshold {
-					return nil
+					return deliverySubmitted, nil
 				}
 			} else {
 				waitingNoMarkerChecks = 0
@@ -2629,17 +2793,37 @@ func sendWithRetryTarget(target sendRetryTarget, message string, skipVerify bool
 		}
 	}
 
-	// Issue #876: with verifyDelivery, refuse to claim success when no
-	// positive signal was ever observed — the message was very likely
-	// dropped silently. Without it, preserve the legacy best-effort
-	// contract used by paths that gate verification elsewhere.
-	if opts.verifyDelivery && !sawDeliveryEvidence {
-		return fmt.Errorf("send dropped silently: no evidence of delivery after %d checks (issue #876). "+
-			"The agent never transitioned to 'active', no composer/unsent-paste marker appeared, "+
-			"and the message body was not visible in the pane. Verify the inner agent is reading from "+
-			"its TTY before retrying", opts.maxRetries)
+	// Budget exhausted without a confirmed submit. Classify the final state
+	// (issue #1413): a message still sitting unsent in the composer after
+	// every bounded Enter retry must surface as typed_not_submitted (nonzero
+	// exit + `delivery` in --json) instead of the historical silent exit 0.
+	if opts.verifyDelivery {
+		if rawContent, captureErr := target.CapturePaneFresh(); captureErr == nil {
+			content := tmux.StripANSI(rawContent)
+			if send.HasUnsentPastedPrompt(content) || send.HasUnsentComposerPrompt(content, message) {
+				return deliveryTypedNotSubmitted, fmt.Errorf(
+					"message typed but not submitted after %d verification checks (issue #1413): "+
+						"the composer still holds the message despite bounded Enter retries. "+
+						"The recipient agent's input handler is not accepting Enter", opts.maxRetries)
+			}
+		}
+
+		// Issue #876: with verifyDelivery, refuse to claim success when no
+		// positive signal was ever observed — the message was very likely
+		// dropped silently.
+		if !sawDeliveryEvidence {
+			return deliveryNoEvidence, fmt.Errorf("send dropped silently: no evidence of delivery after %d checks (issue #876). "+
+				"The agent never transitioned to 'active', no composer/unsent-paste marker appeared, "+
+				"and the message body was not visible in the pane. Verify the inner agent is reading from "+
+				"its TTY before retrying", opts.maxRetries)
+		}
+		// Evidence was observed and the composer no longer holds the message:
+		// it was accepted at some point during the budget.
+		return deliverySubmitted, nil
 	}
-	return nil
+
+	// Legacy best-effort contract for paths that gate verification elsewhere.
+	return deliveryUnverified, nil
 }
 
 // messageDeliveryToken returns a short, content-bearing slice of the message
