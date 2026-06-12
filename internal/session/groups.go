@@ -111,10 +111,15 @@ func actionablePriority(s Status) int {
 // pinZone maps a session to its outermost sort band (pin-sessions feature).
 // Lower bands surface higher in the group's list.
 //
+//	-1 maestro      the fleet supervisor — a fixed point of reference that
+//	                surfaces above everything, including pin-top
 //	0  pin-top      fixed at the top, exempt from status/recency
 //	1  normal       the existing actionable sort (status → recency → Order)
 //	2  pin-bottom   fixed at the bottom, exempt from status/recency
 func pinZone(inst *Instance) int {
+	if inst.IsMaestro() {
+		return -1
+	}
 	switch inst.Pin {
 	case PinTop:
 		return 0
@@ -138,11 +143,11 @@ func stablePinPartition(insts []*Instance) {
 		if zi != zj {
 			return zi < zj
 		}
-		// Pin-top (0) and pin-bottom (2) bands are fully fixed by Order, matching
-		// the load-time SortInstancesByActionable. Ordering them here means a
-		// freshly pinned row lands in its correct Order slot live — not wherever
-		// it happened to sit in slice order before the pin edit.
-		if zi == 0 || zi == 2 {
+		// Maestro (-1), pin-top (0), and pin-bottom (2) bands are fully fixed by
+		// Order, matching the load-time SortInstancesByActionable. Ordering them
+		// here means a freshly pinned row lands in its correct Order slot live —
+		// not wherever it happened to sit in slice order before the pin edit.
+		if zi != 1 {
 			return insts[i].Order < insts[j].Order
 		}
 		// Normal (1) band is already actionable-sorted at load; return false so
@@ -169,12 +174,16 @@ func stablePinPartition(insts []*Instance) {
 //     TestSessionOrderMigration)
 func SortInstancesByActionable(insts []*Instance) {
 	sort.SliceStable(insts, func(i, j int) bool {
+		// The outermost key is the band: maestro (the fleet supervisor, a fixed
+		// point of reference that surfaces first regardless of status), then
+		// pin-top, normal, and pin-bottom (see pinZone).
 		zi, zj := pinZone(insts[i]), pinZone(insts[j])
 		if zi != zj {
 			return zi < zj
 		}
-		// Pin-top (0) and pin-bottom (2) bands are fully fixed: Order only.
-		if zi == 0 || zi == 2 {
+		// Maestro (-1), pin-top (0), and pin-bottom (2) bands are fully fixed:
+		// Order only.
+		if zi != 1 {
 			return insts[i].Order < insts[j].Order
 		}
 		// Normal (1) band keeps the actionable tiers.
@@ -323,6 +332,16 @@ func (t *GroupTree) rebuildGroupList() {
 		// Always pin the "conductor" group to the top
 		if g.Path == "conductor" && g.Order >= 0 {
 			g.Order = -1
+		}
+		// The group holding the fleet supervisor (Maestro) pins above
+		// everything, including the legacy "conductor" pin.
+		if g.Order >= -1 {
+			for _, inst := range g.Sessions {
+				if inst.IsMaestro() {
+					g.Order = -2
+					break
+				}
+			}
 		}
 		t.GroupList = append(t.GroupList, g)
 	}
