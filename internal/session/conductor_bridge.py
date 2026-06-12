@@ -1,18 +1,19 @@
 #!/usr/bin/env python3
 """
-Conductor Bridge: Telegram & Slack <-> Agent-Deck conductor sessions (multi-conductor).
+Conductor Bridge: Telegram & Slack & Discord <-> Agent-Deck conductor sessions (multi-conductor).
 
 A thin bridge that:
-  A) Forwards Telegram/Slack messages -> conductor session (via agent-deck CLI)
-  B) Forwards conductor responses -> Telegram/Slack
+  A) Forwards Telegram/Slack/Discord messages -> conductor session (via agent-deck CLI)
+  B) Forwards conductor responses -> Telegram/Slack/Discord
   C) Runs a periodic heartbeat to trigger conductor status checks
 
 Discovers conductors dynamically from meta.json files in ~/.agent-deck/conductor/*/
 Each conductor has its own name, profile, and heartbeat settings.
 
-Dependencies: pip3 install toml aiogram slack-bolt slack-sdk
+Dependencies: pip3 install toml aiogram slack-bolt slack-sdk discord.py
   - aiogram is only needed if Telegram is configured
   - slack-bolt/slack-sdk are only needed if Slack is configured
+  - discord.py is only needed if Discord is configured
 """
 
 from __future__ import annotations
@@ -51,6 +52,14 @@ try:
     HAS_SLACK = True
 except ImportError:
     HAS_SLACK = False
+
+# Conditional imports for Discord
+try:
+    import discord
+    from discord import app_commands
+    HAS_DISCORD = True
+except ImportError:
+    HAS_DISCORD = False
 
 # ---------------------------------------------------------------------------
 # Configuration
@@ -110,11 +119,19 @@ def resolve_data_dir(*markers: str) -> Path:
 CONDUCTOR_DIR = resolve_data_dir("conductor") / "conductor"
 CONFIG_PATH = resolve_config_path("config.toml")
 # --- end issue #1350 resolver ---
+LOG_PATH = CONDUCTOR_DIR / "bridge.log"
+
 # Telegram message length limit
 TG_MAX_LENGTH = 4096
 
 # Slack message length limit
 SLACK_MAX_LENGTH = 40000
+
+# Discord message length limit
+DISCORD_MAX_LENGTH = 2000
+
+# Marker for uploading local images through the Discord bridge.
+IMAGE_MARKER_RE = re.compile(r"\[IMAGE:(?P<path>[^\]]+)\]")
 
 # How long to wait for conductor to respond (seconds)
 RESPONSE_TIMEOUT = 300
@@ -123,12 +140,20 @@ RESPONSE_TIMEOUT = 300
 # Logging
 # ---------------------------------------------------------------------------
 
+# Mirror the deployed bridge's file logging (<data>/conductor/bridge.log) when
+# the conductor data dir already exists. Guard so importing this module in an
+# environment without that dir (e.g. CI/tests) never fails at import time.
+_log_handlers = [logging.StreamHandler(sys.stdout)]
+try:
+    if CONDUCTOR_DIR.exists():
+        _log_handlers.append(logging.FileHandler(LOG_PATH, encoding="utf-8"))
+except OSError:
+    pass
+
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(message)s",
-    handlers=[
-        logging.StreamHandler(sys.stdout),
-    ],
+    handlers=_log_handlers,
 )
 log = logging.getLogger("conductor-bridge")
 
@@ -136,6 +161,39 @@ log = logging.getLogger("conductor-bridge")
 # ---------------------------------------------------------------------------
 # Config loading
 # ---------------------------------------------------------------------------
+
+
+def _resolve_secret(value: str) -> str:
+    """Resolve a config value that may be an env-var reference or a macOS Keychain reference.
+
+    Supports:
+      - "$ENV_VAR" or "${ENV_VAR}" -> os.environ lookup
+      - "keychain:service-name" -> macOS Keychain lookup via /usr/bin/security
+      - Plain strings are returned as-is.
+    """
+    if not value:
+        return value
+    if value.startswith("$"):
+        # Strip ${...} or $... syntax
+        var_name = value.lstrip("$").strip("{}")
+        resolved = os.environ.get(var_name, "")
+        if not resolved:
+            log.warning("Environment variable %s is not set", var_name)
+        return resolved
+    if value.startswith("keychain:"):
+        service_name = value[len("keychain:"):]
+        try:
+            result = subprocess.run(
+                ["/usr/bin/security", "find-generic-password", "-s", service_name, "-w"],
+                capture_output=True, text=True, timeout=5,
+            )
+            if result.returncode == 0:
+                return result.stdout.strip()
+            log.warning("Keychain lookup failed for service '%s': %s", service_name, result.stderr.strip())
+        except Exception as e:
+            log.warning("Keychain lookup error for service '%s': %s", service_name, e)
+        return ""
+    return value
 
 
 def load_config() -> dict:
@@ -157,23 +215,38 @@ def load_config() -> dict:
 
     # Telegram config
     tg = conductor_cfg.get("telegram", {})
-    tg_token = tg.get("token", "")
-    tg_user_id = tg.get("user_id", 0)
+    tg_token = _resolve_secret(tg.get("token", ""))
+    # Resolve user_id like the token so it may be an env-var reference
+    # (e.g. "$TELEGRAM_USER_ID" / "${TELEGRAM_USER_ID}"); a literal integer
+    # in config.toml still works. Empty/unset resolves to "" -> int 0 below.
+    tg_user_id = _resolve_secret(str(tg.get("user_id", "") or ""))
     tg_configured = bool(tg_token and tg_user_id)
 
     # Slack config
     sl = conductor_cfg.get("slack", {})
-    sl_bot_token = sl.get("bot_token", "")
-    sl_app_token = sl.get("app_token", "")
+    sl_bot_token = _resolve_secret(sl.get("bot_token", ""))
+    sl_app_token = _resolve_secret(sl.get("app_token", ""))
     sl_channel_id = sl.get("channel_id", "")
     sl_listen_mode = sl.get("listen_mode", "mentions")  # "mentions" or "all"
     sl_allowed_users = sl.get("allowed_user_ids", [])  # List of authorized Slack user IDs
     sl_configured = bool(sl_bot_token and sl_app_token and sl_channel_id)
 
-    if not tg_configured and not sl_configured:
+    # Discord config
+    dc = conductor_cfg.get("discord", {})
+    dc_bot_token = _resolve_secret(dc.get("bot_token", ""))
+    dc_guild_id = dc.get("guild_id", 0)
+    dc_channel_id = dc.get("channel_id", 0)
+    # Resolve user_id like the bot token so it may be an env-var reference
+    # (e.g. "$DISCORD_USER_ID"); a literal integer in config.toml still works.
+    dc_user_id = _resolve_secret(str(dc.get("user_id", "") or ""))
+    dc_listen_mode = dc.get("listen_mode", "all")  # "mentions" or "all"
+    dc_ignore_replies_to_others = dc.get("ignore_replies_to_others", False)
+    dc_configured = bool(dc_bot_token and dc_guild_id and dc_channel_id and dc_user_id)
+
+    if not tg_configured and not sl_configured and not dc_configured:
         log.error(
-            "Neither Telegram nor Slack configured in config.toml. "
-            "Set [conductor.telegram] or [conductor.slack]."
+            "No messaging platform configured in config.toml. "
+            "Set [conductor.telegram], [conductor.slack], or [conductor.discord]."
         )
         sys.exit(1)
 
@@ -190,6 +263,15 @@ def load_config() -> dict:
             "listen_mode": sl_listen_mode,
             "allowed_user_ids": sl_allowed_users,
             "configured": sl_configured,
+        },
+        "discord": {
+            "bot_token": dc_bot_token,
+            "guild_id": int(dc_guild_id) if dc_guild_id else 0,
+            "channel_id": int(dc_channel_id) if dc_channel_id else 0,
+            "user_id": int(dc_user_id) if dc_user_id else 0,
+            "listen_mode": dc_listen_mode,
+            "ignore_replies_to_others": bool(dc_ignore_replies_to_others),
+            "configured": dc_configured,
         },
         "heartbeat_interval": conductor_cfg.get("heartbeat_interval", 15),
     }
@@ -238,6 +320,19 @@ def get_unique_profiles() -> list[str]:
     for c in discover_conductors():
         profiles.add(c.get("profile", "default"))
     return sorted(profiles)
+
+
+def select_heartbeat_conductors(conductors: list[dict]) -> list[dict]:
+    """Select all heartbeat-enabled conductors in deterministic order."""
+    enabled = [c for c in conductors if c.get("heartbeat_enabled", True)]
+    return sorted(
+        enabled,
+        key=lambda c: (
+            str(c.get("profile") or "default"),
+            str(c.get("created_at", "")),
+            str(c.get("name", "")),
+        ),
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -304,13 +399,23 @@ def get_session_status(session: str, profile: str | None = None) -> str:
 
 
 def get_session_output(session: str, profile: str | None = None) -> str:
-    """Get the last response from a session."""
+    """Get the last response from a session.
+
+    Uses --json mode so we get the structured 'content' field (the actual
+    assistant reply) instead of the raw pane capture (which includes the
+    cosmetic frame / statusline at the top and can be mistaken for a reply).
+    """
     result = run_cli(
-        "session", "output", session, "-q", profile=profile, timeout=30
+        "session", "output", session, "--json", profile=profile, timeout=30
     )
     if result.returncode != 0:
         return f"[Error getting output: {result.stderr.strip()}]"
-    return result.stdout.strip()
+    try:
+        data = json.loads(result.stdout)
+        return (data.get("content") or "").strip()
+    except json.JSONDecodeError:
+        # Fallback: stdout might be the legacy raw-text format.
+        return result.stdout.strip()
 
 
 # Async callable type for reply notifications: (response_text: str) -> None
@@ -394,7 +499,10 @@ def send_to_conductor(
         return True, "", False
 
     # wait_for_reply=True: single-call flow used by heartbeats and the idle
-    # user-message path. Send + wait + capture raw response.
+    # user-message path. `--wait` blocks until the assistant's reply is flushed;
+    # we then re-fetch the clean reply via get_session_output (`session output
+    # --json` -> content), rather than parsing the raw `--wait` pane capture.
+    # This mirrors the deployed bridge's reply-capture (issue #926).
     result = run_cli(
         "session", "send", session, message,
         "--wait", "--timeout", f"{response_timeout}s", "-q",
@@ -415,7 +523,7 @@ def send_to_conductor(
             return False, "", True
         log.error("Failed to send to conductor: %s", stderr)
         return False, "", False
-    return True, result.stdout.strip(), False
+    return True, get_session_output(session, profile=profile), False
 
 
 # ---------------------------------------------------------------------------
@@ -572,7 +680,14 @@ async def _drain_queue() -> None:
                     session, remaining,
                 )
                 if reply_callback is not None:
-                    text = result.stdout.strip() or "[No output from conductor.]"
+                    # Re-fetch the clean reply via get_session_output (consistent
+                    # with send_to_conductor's wait path) rather than the raw
+                    # `--wait` stdout. Off-loop to avoid blocking the drain.
+                    output = await loop.run_in_executor(
+                        None,
+                        functools.partial(get_session_output, session, profile=profile),
+                    )
+                    text = output.strip() or "[No output from conductor.]"
                     loop.create_task(_fire_callback(reply_callback, text))
             else:
                 stderr = result.stderr.strip()
@@ -699,16 +814,16 @@ def get_status_summary(profile: str | None = None) -> dict:
     """Get agent-deck status as a dict for a single profile."""
     result = run_cli("status", "--json", profile=profile, timeout=30)
     if result.returncode != 0:
-        return {"waiting": 0, "running": 0, "idle": 0, "error": 0, "total": 0}
+        return {"waiting": 0, "running": 0, "idle": 0, "error": 0, "stopped": 0, "total": 0}
     try:
         return json.loads(result.stdout)
     except json.JSONDecodeError:
-        return {"waiting": 0, "running": 0, "idle": 0, "error": 0, "total": 0}
+        return {"waiting": 0, "running": 0, "idle": 0, "error": 0, "stopped": 0, "total": 0}
 
 
 def get_status_summary_all(profiles: list[str]) -> dict:
     """Aggregate status across all profiles."""
-    totals = {"waiting": 0, "running": 0, "idle": 0, "error": 0, "total": 0}
+    totals = {"waiting": 0, "running": 0, "idle": 0, "error": 0, "stopped": 0, "total": 0}
     per_profile = {}
     for profile in profiles:
         summary = get_status_summary(profile)
@@ -1079,6 +1194,81 @@ def md_to_tg_html(text: str) -> str:
         text = text.replace(f"\x00CODE{i}\x00", f"<code>{_html.escape(code, quote=False)}</code>")
 
     return text
+
+
+# ---------------------------------------------------------------------------
+# Discord bot setup
+# ---------------------------------------------------------------------------
+
+
+def parse_discord_message_parts(text: str) -> list[tuple[str, str]]:
+    """Split Discord output into plain-text and image-upload segments."""
+    parts = []
+    last_idx = 0
+
+    for match in IMAGE_MARKER_RE.finditer(text):
+        if match.start() > last_idx:
+            parts.append(("text", text[last_idx:match.start()]))
+
+        image_path = match.group("path").strip()
+        if image_path:
+            parts.append(("image", image_path))
+        last_idx = match.end()
+
+    if last_idx < len(text):
+        parts.append(("text", text[last_idx:]))
+
+    if not parts:
+        parts.append(("text", text))
+
+    return parts
+
+
+async def send_discord_output(channel, text: str, name_tag: str = ""):
+    """Send Discord output, uploading [IMAGE:/path] markers as attachments.
+
+    The optional name_tag prefix is applied to the FIRST emitted segment only
+    (matching the Telegram/Slack handlers), not repeated on every chunk.
+    """
+    prefix = name_tag if name_tag else ""
+    prefix_applied = False
+
+    def _apply_prefix(body: str) -> str:
+        nonlocal prefix_applied
+        if prefix and not prefix_applied:
+            prefix_applied = True
+            return f"{prefix}{body}"
+        return body
+
+    for part_type, payload in parse_discord_message_parts(text):
+        if part_type == "text":
+            if not payload.strip():
+                continue
+            for chunk in split_message(payload, max_len=DISCORD_MAX_LENGTH):
+                await channel.send(_apply_prefix(chunk))
+            continue
+
+        image_path = Path(payload).expanduser()
+        if not image_path.is_absolute():
+            await channel.send(_apply_prefix(f"[Image path must be absolute: {payload}]"))
+            continue
+        if not image_path.is_file():
+            await channel.send(_apply_prefix(f"[Image not found: {image_path}]"))
+            continue
+
+        try:
+            # Carry the prefix as the upload's message content only once.
+            content = None
+            if prefix and not prefix_applied:
+                content = prefix.strip()
+                prefix_applied = True
+            await channel.send(
+                content=content,
+                file=discord.File(str(image_path)),
+            )
+        except Exception as e:
+            log.error("Failed to upload Discord image %s: %s", image_path, e)
+            await channel.send(_apply_prefix(f"[Failed to upload image: {image_path}]"))
 
 
 # ---------------------------------------------------------------------------
@@ -1532,14 +1722,120 @@ def create_slack_app(config: dict):
             return False
         return True
 
+    # Caches for Slack user/channel name resolution.
+    # Entries: (value: str, expires_at: float | None).
+    # Successful lookups never expire; failures expire after 5 minutes.
+    _NEGATIVE_TTL = 300  # seconds
+    _user_cache: dict[str, tuple[str, float | None]] = {}
+    _channel_cache: dict[str, tuple[str, float | None]] = {}
+
+    def _cache_get(cache: dict, key: str) -> str | None:
+        entry = cache.get(key)
+        if entry is None:
+            return None
+        value, expires_at = entry
+        if expires_at is not None and time.monotonic() > expires_at:
+            del cache[key]
+            return None
+        return value
+
+    async def resolve_slack_username(user_id: str) -> str:
+        """Resolve a Slack user ID to a display name, with caching."""
+        cached = _cache_get(_user_cache, user_id)
+        if cached is not None:
+            return cached
+        try:
+            resp = await app.client.users_info(user=user_id)
+            profile = resp["user"]["profile"]
+            name = profile.get("display_name") or profile.get("real_name") or user_id
+            _user_cache[user_id] = (name, None)
+            return name
+        except Exception as e:
+            log.warning("Failed to resolve Slack user %s: %s", user_id, e)
+            _user_cache[user_id] = (user_id, time.monotonic() + _NEGATIVE_TTL)
+            return user_id
+
+    async def resolve_slack_channel(event_channel: str) -> str:
+        """Resolve a Slack channel ID to a context tag.
+
+        Returns '[channel:#name (ID)]' for channels or '[dm]' for DMs.
+        """
+        cached = _cache_get(_channel_cache, event_channel)
+        if cached is not None:
+            return cached
+        try:
+            resp = await app.client.conversations_info(channel=event_channel)
+            ch = resp["channel"]
+            if ch.get("is_im"):
+                tag = "[dm]"
+            else:
+                name = ch.get("name", event_channel)
+                tag = f"[channel:#{name} ({event_channel})]"
+            _channel_cache[event_channel] = (tag, None)
+            return tag
+        except Exception as e:
+            log.warning("Failed to resolve Slack channel %s: %s", event_channel, e)
+            tag = f"[channel:{event_channel}]"
+            _channel_cache[event_channel] = (tag, time.monotonic() + _NEGATIVE_TTL)
+            return tag
+
+    def _markdown_to_slack(text: str) -> str:
+        """Convert GitHub-flavored markdown to Slack mrkdwn format.
+
+        Preserves code blocks and inline code. Converts:
+        - Headers (# H1 ... ###### H6) -> *bold text*
+        - Bold (**text**) -> *text*
+        - Strikethrough (~~text~~) -> ~text~
+        - Links [text](url) -> <url|text>
+        - Bullet lists (- item, * item) -> bullet_char item
+        """
+        # Protect code blocks: extract fenced blocks, replace with placeholders.
+        code_blocks = []
+        def _save_code_block(m):
+            code_blocks.append(m.group(0))
+            return f"__CODE_BLOCK_{len(code_blocks) - 1}__"
+        text = re.sub(r"```[\s\S]*?```", _save_code_block, text)
+
+        # Protect inline code.
+        inline_codes = []
+        def _save_inline_code(m):
+            inline_codes.append(m.group(0))
+            return f"__INLINE_CODE_{len(inline_codes) - 1}__"
+        text = re.sub(r"`[^`\n]+`", _save_inline_code, text)
+
+        # Headers -> bold
+        text = re.sub(r"^#{1,6}\s+(.+)$", r"*\1*", text, flags=re.MULTILINE)
+        # Bold **text** -> *text*  (must come after headers to avoid double-wrapping)
+        text = re.sub(r"\*\*(.+?)\*\*", r"*\1*", text)
+        # Strikethrough ~~text~~ -> ~text~
+        text = re.sub(r"~~(.+?)~~", r"~\1~", text)
+        # Links [text](url) -> <url|text>
+        text = re.sub(r"\[([^\]]+)\]\(([^)]+)\)", r"<\2|\1>", text)
+        # Bullet lists: - item or * item -> bullet char item
+        text = re.sub(r"^(\s*)[-*]\s+", "\\1\u2022 ", text, flags=re.MULTILINE)
+
+        # Restore inline code.
+        for i, code in enumerate(inline_codes):
+            text = text.replace(f"__INLINE_CODE_{i}__", code)
+        # Restore code blocks.
+        for i, block in enumerate(code_blocks):
+            text = text.replace(f"__CODE_BLOCK_{i}__", block)
+
+        return text
+
     async def _safe_say(say, **kwargs):
-        """Wrapper around say() that catches network/API errors."""
+        """Wrapper around say() that catches network/API errors and converts markdown."""
+        if "text" in kwargs:
+            kwargs["text"] = _markdown_to_slack(kwargs["text"])
         try:
             await say(**kwargs)
         except Exception as e:
             log.error("Slack say() failed: %s", e)
 
-    async def _handle_slack_text(text: str, say, thread_ts: str = None):
+    async def _handle_slack_text(
+        text: str, say, thread_ts: str = None,
+        user_id: str = None, event_channel: str = None,
+    ):
         """Shared handler for Slack messages and mentions."""
         conductor_names = get_conductor_names()
         conductors = discover_conductors()
@@ -1564,6 +1860,24 @@ def create_slack_app(config: dict):
 
         if not cleaned_msg:
             cleaned_msg = text
+
+        # Enrich message with sender and channel context for the conductor.
+        prefix_parts = []
+        if user_id and event_channel:
+            username, channel_tag = await asyncio.gather(
+                resolve_slack_username(user_id),
+                resolve_slack_channel(event_channel),
+            )
+            prefix_parts.append(f"[from:{username} ({user_id})]")
+            prefix_parts.append(channel_tag)
+        elif user_id:
+            username = await resolve_slack_username(user_id)
+            prefix_parts.append(f"[from:{username} ({user_id})]")
+        elif event_channel:
+            channel_tag = await resolve_slack_channel(event_channel)
+            prefix_parts.append(channel_tag)
+        if prefix_parts:
+            cleaned_msg = " ".join(prefix_parts) + " " + cleaned_msg
 
         session_title = conductor_session_title(target["name"])
         profile = target["profile"]
@@ -1699,6 +2013,7 @@ def create_slack_app(config: dict):
         await _handle_slack_text(
             text, say,
             thread_ts=event.get("thread_ts") or event.get("ts"),
+            user_id=user_id, event_channel=event.get("channel"),
         )
 
     @app.event("app_mention")
@@ -1719,6 +2034,7 @@ def create_slack_app(config: dict):
         await _handle_slack_text(
             text, say,
             thread_ts=thread_ts,
+            user_id=user_id, event_channel=event.get("channel"),
         )
 
     @app.command("/ad-status")
@@ -1729,7 +2045,7 @@ def create_slack_app(config: dict):
         # Authorization check
         user_id = command.get("user_id", "")
         if not is_slack_authorized(user_id):
-            await respond("\u26d4 Unauthorized. Contact your administrator.")
+            await respond("⛔ Unauthorized. Contact your administrator.")
             return
 
         profiles = get_unique_profiles()
@@ -1763,7 +2079,7 @@ def create_slack_app(config: dict):
         # Authorization check
         user_id = command.get("user_id", "")
         if not is_slack_authorized(user_id):
-            await respond("\u26d4 Unauthorized. Contact your administrator.")
+            await respond("⛔ Unauthorized. Contact your administrator.")
             return
 
         profiles = get_unique_profiles()
@@ -1790,7 +2106,7 @@ def create_slack_app(config: dict):
         # Authorization check
         user_id = command.get("user_id", "")
         if not is_slack_authorized(user_id):
-            await respond("\u26d4 Unauthorized. Contact your administrator.")
+            await respond("⛔ Unauthorized. Contact your administrator.")
             return
 
         target_name = command.get("text", "").strip()
@@ -1828,7 +2144,7 @@ def create_slack_app(config: dict):
         # Authorization check
         user_id = command.get("user_id", "")
         if not is_slack_authorized(user_id):
-            await respond("\u26d4 Unauthorized. Contact your administrator.")
+            await respond("⛔ Unauthorized. Contact your administrator.")
             return
 
         conductors = discover_conductors()
@@ -1846,6 +2162,396 @@ def create_slack_app(config: dict):
 
     log.info("Slack app initialized (Socket Mode, channel=%s)", channel_id)
     return app, channel_id
+
+
+# ---------------------------------------------------------------------------
+# Discord bot setup
+# ---------------------------------------------------------------------------
+
+
+def create_discord_bot(config: dict):
+    """Create and configure the Discord bot.
+
+    Returns (client, channel_id) or None if Discord is not configured or discord.py unavailable.
+    """
+    if not HAS_DISCORD:
+        log.warning("discord.py not installed, skipping Discord bot")
+        return None
+    if not config["discord"]["configured"]:
+        return None
+
+    bot_token = config["discord"]["bot_token"]
+    guild_id = config["discord"]["guild_id"]
+    channel_id = config["discord"]["channel_id"]
+    authorized_user = config["discord"]["user_id"]
+    listen_mode = str(config["discord"].get("listen_mode", "all") or "all").strip().lower()
+    ignore_replies_to_others = bool(
+        config["discord"].get("ignore_replies_to_others", False)
+    )
+
+    if listen_mode not in {"all", "mentions"}:
+        log.warning("Unknown Discord listen_mode %r, falling back to 'all'", listen_mode)
+        listen_mode = "all"
+
+    intents = discord.Intents.default()
+    intents.message_content = True
+
+    class ConductorBot(discord.Client):
+        def __init__(self):
+            super().__init__(intents=intents)
+            self.tree = app_commands.CommandTree(self)
+            self.target_channel_id = channel_id
+            self.authorized_user_id = authorized_user
+
+        async def setup_hook(self):
+            g = discord.Object(id=guild_id)
+            self.tree.copy_global_to(guild=g)
+            await self.tree.sync(guild=g)
+            log.info("Discord slash commands synced to guild %d", guild_id)
+
+        async def on_ready(self):
+            log.info(
+                "Discord bot ready: %s (id=%d)", self.user, self.user.id
+            )
+
+    bot = ConductorBot()
+
+    def is_authorized(user_id: int) -> bool:
+        return user_id == authorized_user
+
+    def message_mentions_bot(message: discord.Message) -> bool:
+        if not bot.user:
+            return False
+        return any(getattr(user, "id", 0) == bot.user.id for user in message.mentions)
+
+    def strip_bot_mentions(text: str) -> str:
+        if not bot.user:
+            return text.strip()
+        return re.sub(rf"<@!?{bot.user.id}>", "", text).strip()
+
+    async def should_ignore_reply_to_other(message: discord.Message) -> bool:
+        if not ignore_replies_to_others:
+            return False
+
+        reference = getattr(message, "reference", None)
+        reference_id = getattr(reference, "message_id", None)
+        if not reference_id:
+            return False
+
+        referenced = getattr(reference, "resolved", None)
+        if not isinstance(referenced, discord.Message):
+            try:
+                referenced = await message.channel.fetch_message(reference_id)
+            except Exception as e:
+                log.warning(
+                    "Failed to resolve Discord reply target %d: %s",
+                    reference_id, e,
+                )
+                return False
+
+        if not bot.user:
+            return False
+
+        if referenced.author.id != bot.user.id:
+            log.info(
+                "Ignoring Discord reply to non-bot message %d from user %d",
+                referenced.id, message.author.id,
+            )
+            return True
+        return False
+
+    async def ensure_discord_channel(interaction: discord.Interaction) -> bool:
+        """Restrict slash commands to the configured channel."""
+        if interaction.channel_id != channel_id:
+            await interaction.response.send_message(
+                "This command is only available in the configured channel.",
+                ephemeral=True,
+            )
+            return False
+        return True
+
+    def get_default_conductor() -> dict | None:
+        conductors = discover_conductors()
+        return conductors[0] if conductors else None
+
+    # Register slash commands
+    g = discord.Object(id=guild_id)
+
+    @bot.tree.command(
+        name="ad-status",
+        description="Aggregated status across all profiles",
+        guild=g,
+    )
+    async def dc_cmd_status(interaction: discord.Interaction):
+        if not is_authorized(interaction.user.id):
+            await interaction.response.send_message(
+                "Unauthorized.", ephemeral=True,
+            )
+            return
+        if not await ensure_discord_channel(interaction):
+            return
+
+        profiles = get_unique_profiles()
+        agg = get_status_summary_all(profiles)
+        totals = agg["totals"]
+
+        lines = [
+            f"**Total:** {totals['total']} sessions",
+            f"  Running: {totals['running']}",
+            f"  Waiting: {totals['waiting']}",
+            f"  Idle: {totals['idle']}",
+            f"  Error: {totals['error']}",
+        ]
+
+        if len(profiles) > 1:
+            lines.append("")
+            for profile in profiles:
+                p = agg["per_profile"][profile]
+                lines.append(
+                    f"[{profile}] {p['total']}s "
+                    f"({p['running']}R {p['waiting']}W {p['idle']}I {p['error']}E)"
+                )
+
+        await interaction.response.send_message("\n".join(lines))
+
+    @bot.tree.command(
+        name="ad-sessions",
+        description="List all sessions (all profiles)",
+        guild=g,
+    )
+    async def dc_cmd_sessions(interaction: discord.Interaction):
+        if not is_authorized(interaction.user.id):
+            await interaction.response.send_message(
+                "Unauthorized.", ephemeral=True,
+            )
+            return
+        if not await ensure_discord_channel(interaction):
+            return
+
+        profiles = get_unique_profiles()
+        all_sessions = get_sessions_list_all(profiles)
+        if not all_sessions:
+            await interaction.response.send_message("No sessions found.")
+            return
+
+        STATUS_ICONS = {
+            "running": "\U0001f7e2",
+            "waiting": "\U0001f7e1",
+            "idle": "\u26aa",
+            "error": "\U0001f534",
+            "stopped": "\u23f9",
+        }
+
+        lines = []
+        for profile, s in all_sessions:
+            icon = STATUS_ICONS.get(s.get("status", ""), "\u2753")
+            title = s.get("title", "untitled")
+            tool = s.get("tool", "")
+            prefix = f"[{profile}] " if len(profiles) > 1 else ""
+            lines.append(f"{icon} {prefix}{title} ({tool})")
+
+        text = "\n".join(lines)
+        for i, chunk in enumerate(split_message(text, max_len=DISCORD_MAX_LENGTH)):
+            if i == 0:
+                await interaction.response.send_message(chunk)
+            else:
+                await interaction.followup.send(chunk)
+
+    @bot.tree.command(
+        name="ad-restart",
+        description="Restart a conductor",
+        guild=g,
+    )
+    @app_commands.describe(name="Conductor name (optional, defaults to first)")
+    async def dc_cmd_restart(
+        interaction: discord.Interaction, name: str = "",
+    ):
+        if not is_authorized(interaction.user.id):
+            await interaction.response.send_message(
+                "Unauthorized.", ephemeral=True,
+            )
+            return
+        if not await ensure_discord_channel(interaction):
+            return
+
+        conductor_names = get_conductor_names()
+        target = None
+        if name and name in conductor_names:
+            for c in discover_conductors():
+                if c["name"] == name:
+                    target = c
+                    break
+        if target is None:
+            target = get_default_conductor()
+
+        if target is None:
+            await interaction.response.send_message("No conductors found.")
+            return
+
+        session_title = conductor_session_title(target["name"])
+        await interaction.response.send_message(
+            f"Restarting conductor {target['name']}...",
+        )
+
+        result = run_cli(
+            "session", "restart", session_title,
+            profile=target["profile"], timeout=60,
+        )
+        if result.returncode == 0:
+            await interaction.followup.send(
+                f"Conductor {target['name']} restarted.",
+            )
+        else:
+            await interaction.followup.send(
+                f"Restart failed: {result.stderr.strip()}",
+            )
+
+    @bot.tree.command(
+        name="ad-help",
+        description="Show conductor bridge help",
+        guild=g,
+    )
+    async def dc_cmd_help(interaction: discord.Interaction):
+        if not is_authorized(interaction.user.id):
+            await interaction.response.send_message(
+                "Unauthorized.", ephemeral=True,
+            )
+            return
+        if not await ensure_discord_channel(interaction):
+            return
+
+        conductors = discover_conductors()
+        names = [c["name"] for c in conductors]
+        await interaction.response.send_message(
+            "**Conductor Commands:**\n"
+            "`/ad-status`    - Aggregated status across all profiles\n"
+            "`/ad-sessions`  - List all sessions (all profiles)\n"
+            "`/ad-restart`   - Restart a conductor (specify name)\n"
+            "`/ad-help`      - This message\n\n"
+            f"**Conductors:** {', '.join(names) if names else 'none'}\n"
+            f"**Route:** `<name>: <message>`\n"
+            f"**Default:** messages go to first conductor"
+        )
+
+    @bot.event
+    async def on_message(message):
+        # Ignore bot's own messages
+        if message.author == bot.user:
+            return
+        # Ignore messages from other bots
+        if message.author.bot:
+            return
+        # Only listen in the configured channel
+        if message.channel.id != bot.target_channel_id:
+            return
+        # Authorization check
+        if not is_authorized(message.author.id):
+            log.warning(
+                "Unauthorized Discord message from user %d",
+                message.author.id,
+            )
+            return
+        if await should_ignore_reply_to_other(message):
+            return
+        text = message.content
+        if listen_mode == "mentions":
+            if not message_mentions_bot(message):
+                return
+            text = strip_bot_mentions(text)
+        # Ignore empty messages
+        if not text:
+            return
+
+        conductor_names = get_conductor_names()
+        conductors = discover_conductors()
+
+        target_name, cleaned_msg = parse_conductor_prefix(
+            text, conductor_names,
+        )
+
+        target = None
+        if target_name:
+            for c in conductors:
+                if c["name"] == target_name:
+                    target = c
+                    break
+        if target is None:
+            target = get_default_conductor()
+        if target is None:
+            await message.channel.send(
+                "[No conductors configured. Run: agent-deck conductor setup <name>]",
+            )
+            return
+
+        if not cleaned_msg:
+            cleaned_msg = text
+
+        session_title = conductor_session_title(target["name"])
+        profile = target["profile"]
+
+        if not await ensure_conductor_running(target["name"], profile):
+            await message.channel.send(
+                f"[Could not start conductor {target['name']}. Check agent-deck.]",
+            )
+            return
+
+        log.info(
+            "Discord message -> [%s]: %s",
+            target["name"], cleaned_msg[:100],
+        )
+        async with message.channel.typing():
+            loop = asyncio.get_event_loop()
+            ok, response, still_running = await loop.run_in_executor(
+                None,
+                lambda: send_to_conductor(
+                    session_title,
+                    cleaned_msg,
+                    profile=profile,
+                    wait_for_reply=True,
+                    response_timeout=RESPONSE_TIMEOUT,
+                ),
+            )
+        if not ok:
+            if still_running:
+                # The message WAS delivered; the single turn just outran the
+                # blocking wait. Don't report a false failure and don't re-send
+                # (that would double-process) — watch for the reply async-ly.
+                # Mirrors the Telegram/Slack idle paths (#1404).
+                dc_channel = message.channel
+                dc_name_tag = (
+                    f"[{target['name']}] " if len(conductors) > 1 else ""
+                )
+
+                async def _dc_late_reply(response_text: str):
+                    await send_discord_output(
+                        dc_channel, response_text, name_tag=dc_name_tag,
+                    )
+
+                _register_pending_reply(session_title, profile, _dc_late_reply)
+                await message.channel.send(
+                    "⏳ Still working — will reply here when done.",
+                )
+                return
+            await message.channel.send(
+                f"[Failed to send message to conductor {target['name']}.]",
+            )
+            return
+
+        log.info(
+            "Conductor [%s] response: %s",
+            target["name"], response[:100],
+        )
+
+        name_tag = (
+            f"[{target['name']}] " if len(conductors) > 1 else ""
+        )
+        await send_discord_output(message.channel, response, name_tag=name_tag)
+
+    log.info(
+        "Discord bot initialized (guild=%d, channel=%d)",
+        guild_id, channel_id,
+    )
+    return bot, channel_id
 
 
 # ---------------------------------------------------------------------------
@@ -1874,7 +2580,10 @@ def _os_heartbeat_daemon_installed() -> bool:
     return False
 
 
-async def heartbeat_loop(config: dict, telegram_bot=None, slack_app=None, slack_channel_id=None):
+async def heartbeat_loop(
+    config: dict, telegram_bot=None, slack_app=None, slack_channel_id=None,
+    discord_bot=None, discord_channel_id=None,
+):
     """Periodic heartbeat: check status for each conductor and trigger checks."""
     global_interval = config["heartbeat_interval"]
     if global_interval <= 0:
@@ -1898,67 +2607,65 @@ async def heartbeat_loop(config: dict, telegram_bot=None, slack_app=None, slack_
     while True:
         await asyncio.sleep(interval_seconds)
 
-        conductors = discover_conductors()
+        all_conductors = discover_conductors()
+        conductors = select_heartbeat_conductors(all_conductors)
         for conductor in conductors:
             try:
-                name = conductor["name"]
-                profile = conductor["profile"]
-
-                # Skip conductors with heartbeat disabled
-                if not conductor.get("heartbeat_enabled", True):
-                    log.debug("Heartbeat skipped for %s (disabled)", name)
+                name = conductor.get("name", "")
+                profile = conductor.get("profile") or "default"
+                if not name:
                     continue
 
                 session_title = conductor_session_title(name)
 
-                # Get current status for this conductor's profile
-                summary = get_status_summary(profile)
-                waiting = summary.get("waiting", 0)
-                running = summary.get("running", 0)
-                idle = summary.get("idle", 0)
-                error = summary.get("error", 0)
+                # Scope heartbeat monitoring to this conductor's own group
+                # (mirrors the deployed bridge: per-conductor, not profile-wide).
+                sessions = get_sessions_list(profile)
+                scoped_sessions = []
+                for s in sessions:
+                    s_title = s.get("title", "untitled")
+                    s_group = s.get("group", "") or ""
+                    if s_title.startswith("conductor-"):
+                        continue
+                    if s_group != name and not s_group.startswith(f"{name}/"):
+                        continue
+                    scoped_sessions.append(s)
+
+                waiting = sum(1 for s in scoped_sessions if s.get("status", "") == "waiting")
+                running = sum(1 for s in scoped_sessions if s.get("status", "") == "running")
+                idle = sum(1 for s in scoped_sessions if s.get("status", "") == "idle")
+                error = sum(1 for s in scoped_sessions if s.get("status", "") == "error")
+                stopped = sum(1 for s in scoped_sessions if s.get("status", "") == "stopped")
 
                 log.info(
-                    "Heartbeat [%s/%s]: %d waiting, %d running, %d idle, %d error",
-                    name, profile, waiting, running, idle, error,
+                    "Heartbeat [%s/%s]: %d waiting, %d running, %d idle, %d error, %d stopped",
+                    name, profile, waiting, running, idle, error, stopped,
                 )
 
                 # Only trigger conductor if there are waiting or error sessions
                 if waiting == 0 and error == 0:
                     continue
 
-                # Build heartbeat message with waiting session details
-                sessions = get_sessions_list(profile)
+                # Build heartbeat message with waiting/error session details
                 waiting_details = []
                 error_details = []
-                for s in sessions:
+                for s in scoped_sessions:
                     s_title = s.get("title", "untitled")
                     s_status = s.get("status", "")
                     s_path = s.get("path", "")
-                    # Skip conductor sessions
-                    if s_title.startswith("conductor-"):
-                        continue
                     if s_status == "waiting":
-                        waiting_details.append(
-                            f"{s_title} (project: {s_path})"
-                        )
+                        waiting_details.append(f"{s_title} (project: {s_path})")
                     elif s_status == "error":
-                        error_details.append(
-                            f"{s_title} (project: {s_path})"
-                        )
+                        error_details.append(f"{s_title} (project: {s_path})")
 
                 parts = [
                     f"[HEARTBEAT] [{name}] Status: {waiting} waiting, "
-                    f"{running} running, {idle} idle, {error} error."
+                    f"{running} running, {idle} idle, {error} error, {stopped} stopped."
                 ]
                 if waiting_details:
-                    parts.append(
-                        f"Waiting sessions: {', '.join(waiting_details)}."
-                    )
+                    parts.append(f"Waiting sessions: {', '.join(waiting_details)}.")
                 if error_details:
-                    parts.append(
-                        f"Error sessions: {', '.join(error_details)}."
-                    )
+                    parts.append(f"Error sessions: {', '.join(error_details)}.")
                 # Append HEARTBEAT_RULES.md (per-conductor, per-profile, then global fallback)
                 rules_text = None
                 for rules_path in [
@@ -1975,16 +2682,14 @@ async def heartbeat_loop(config: dict, telegram_bot=None, slack_app=None, slack_
                 if rules_text:
                     parts.append(f"\n\n{rules_text}")
                 else:
-                    parts.append(
-                        "Check if any need auto-response or user attention."
-                    )
+                    parts.append("Check if any need auto-response or user attention.")
 
                 heartbeat_msg = " ".join(parts)
 
                 # Run pre-heartbeat hook (can transform or gate the message)
                 sessions_for_hook = [
                     {"title": s.get("title", ""), "status": s.get("status", ""), "path": s.get("path", "")}
-                    for s in sessions if s.get("title") != session_title
+                    for s in scoped_sessions
                 ]
                 hook_result = invoke_hook(profile, "pre-heartbeat", {
                     "profile": profile,
@@ -2027,7 +2732,6 @@ async def heartbeat_loop(config: dict, telegram_bot=None, slack_app=None, slack_
 
                 # Send heartbeat to conductor (wrapped in executor — blocks up to
                 # RESPONSE_TIMEOUT seconds and must not freeze the event loop)
-                loop = asyncio.get_running_loop()
                 ok, response, _ = await loop.run_in_executor(
                     None,
                     functools.partial(
@@ -2046,7 +2750,7 @@ async def heartbeat_loop(config: dict, telegram_bot=None, slack_app=None, slack_
                     )
                     continue
 
-                # Response is returned directly by `session send --wait`.
+                # Response is captured via get_session_output (see send_to_conductor).
                 log.info(
                     "Heartbeat [%s] response: %s",
                     name, response[:200],
@@ -2073,17 +2777,16 @@ async def heartbeat_loop(config: dict, telegram_bot=None, slack_app=None, slack_
                         need_filtered["retired"],
                     )
                 if has_alerts:
-                    all_conductors = discover_conductors()
                     prefix = (
                         f"[{name}] " if len(all_conductors) > 1 else ""
                     )
                     alert_body = "\n".join(forwarded_need_lines)
-                    alert_text = f"{prefix}Conductor alert:\n{alert_body}"
+                    alert_msg = f"{prefix}Conductor alert:\n{alert_body}"
 
                     # Notify via Telegram (with HTML formatting)
                     if telegram_bot and tg_user_id:
                         try:
-                            alert_html = md_to_tg_html(alert_text)
+                            alert_html = md_to_tg_html(alert_msg)
                             for chunk in split_message(alert_html):
                                 await telegram_bot.send_message(
                                     tg_user_id,
@@ -2099,11 +2802,22 @@ async def heartbeat_loop(config: dict, telegram_bot=None, slack_app=None, slack_
                     if slack_app and slack_channel_id:
                         try:
                             await slack_app.client.chat_postMessage(
-                                channel=slack_channel_id, text=alert_text,
+                                channel=slack_channel_id, text=alert_msg,
                             )
                         except Exception as e:
                             log.error(
                                 "Failed to send Slack notification: %s", e
+                            )
+
+                    # Notify via Discord
+                    if discord_bot and discord_channel_id:
+                        try:
+                            channel = discord_bot.get_channel(discord_channel_id)
+                            if channel:
+                                await send_discord_output(channel, alert_msg)
+                        except Exception as e:
+                            log.error(
+                                "Failed to send Discord notification: %s", e
                             )
 
                 # Run post-heartbeat hook (non-gating)
@@ -2132,14 +2846,17 @@ async def main():
     # Verify at least one integration is configured and available
     tg_ok = config["telegram"]["configured"] and HAS_AIOGRAM
     sl_ok = config["slack"]["configured"] and HAS_SLACK
+    dc_ok = config["discord"]["configured"] and HAS_DISCORD
 
-    if not tg_ok and not sl_ok:
+    if not tg_ok and not sl_ok and not dc_ok:
         if config["telegram"]["configured"] and not HAS_AIOGRAM:
             log.error("Telegram configured but aiogram not installed. pip install aiogram")
         if config["slack"]["configured"] and not HAS_SLACK:
             log.error("Slack configured but slack-bolt not installed. pip install slack-bolt slack-sdk")
-        if not config["telegram"]["configured"] and not config["slack"]["configured"]:
-            log.error("Neither Telegram nor Slack configured. Exiting.")
+        if config["discord"]["configured"] and not HAS_DISCORD:
+            log.error("Discord configured but discord.py not installed. pip install discord.py")
+        if not config["telegram"]["configured"] and not config["slack"]["configured"] and not config["discord"]["configured"]:
+            log.error("No messaging platform configured. Exiting.")
         sys.exit(1)
 
     platforms = []
@@ -2147,6 +2864,8 @@ async def main():
         platforms.append("Telegram")
     if sl_ok:
         platforms.append("Slack")
+    if dc_ok:
+        platforms.append("Discord")
 
     log.info(
         "Starting conductor bridge (platforms=%s, heartbeat=%dm, conductors=%s)",
@@ -2171,6 +2890,13 @@ async def main():
             slack_app, slack_channel_id = result
             slack_handler = AsyncSocketModeHandler(slack_app, config["slack"]["app_token"])
 
+    # Create Discord bot
+    discord_bot, discord_channel_id = None, None
+    if dc_ok:
+        result = create_discord_bot(config)
+        if result:
+            discord_bot, discord_channel_id = result
+
     # Pre-start all conductors so they're warm when messages arrive
     for c in conductors:
         if await ensure_conductor_running(c["name"], c["profile"]):
@@ -2178,13 +2904,15 @@ async def main():
         else:
             log.warning("Failed to pre-start conductor %s", c["name"])
 
-    # Start heartbeat (shared, notifies both platforms)
+    # Start heartbeat (shared, notifies all platforms)
     heartbeat_task = asyncio.create_task(
         heartbeat_loop(
             config,
             telegram_bot=telegram_bot,
             slack_app=slack_app,
             slack_channel_id=slack_channel_id,
+            discord_bot=discord_bot,
+            discord_channel_id=discord_channel_id,
         )
     )
 
@@ -2196,6 +2924,9 @@ async def main():
     if slack_handler:
         tasks.append(asyncio.create_task(slack_handler.start_async()))
         log.info("Slack Socket Mode handler started")
+    if discord_bot:
+        tasks.append(asyncio.create_task(discord_bot.start(config["discord"]["bot_token"])))
+        log.info("Discord bot started")
 
     try:
         await asyncio.gather(*tasks)
@@ -2205,6 +2936,8 @@ async def main():
             await telegram_bot.session.close()
         if slack_handler:
             await slack_handler.close_async()
+        if discord_bot:
+            await discord_bot.close()
 
 
 if __name__ == "__main__":
