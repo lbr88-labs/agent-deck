@@ -106,6 +106,13 @@ func TestClaudeErrorBanner_DoesNotOverMatch(t *testing.T) {
 			content: "⏺ The API returned an authentication error earlier; I retried and it succeeded.\n\n❯ ",
 		},
 		{
+			// An assistant reply that QUOTES the verbatim banner strings as
+			// prose (no "·" separator, no error JSON). Must not be read as a
+			// live banner — the assistant glyph + structural-marker gate.
+			name:    "assistant prose quoting the verbatim banner strings",
+			content: "⏺ Earlier the worker showed API Error: 401 and told me to Please run /login, so I switched its account and it recovered.\n\n❯ ",
+		},
+		{
 			// Banner scrolled out of the recent-tail window (>15 non-empty
 			// lines above the bottom) is stale scrollback, not current state.
 			name: "stale banner outside the 15-line window",

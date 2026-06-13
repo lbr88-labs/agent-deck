@@ -390,6 +390,22 @@ var claudeErrorBannerSubstrings = []string{
 // turn's reply), so those stay matchable.
 var claudeQuotedLinePrefixes = []string{"⎿", "❯", ">", "│"}
 
+// claudeAssistantLinePrefix marks a line as an assistant-turn reply. Genuine
+// auth/connection banners can render on such a line, but so can ordinary
+// conversation that merely MENTIONS the banner text (e.g. a conductor
+// explaining "the worker showed API Error: 401 · Please run /login"). To avoid
+// a false error verdict on prose, an assistant line must ALSO carry a
+// structural banner co-signal (see claudeBannerStructuralMarkers) to match;
+// standalone banner lines (no assistant glyph) keep matching on the substring
+// alone.
+const claudeAssistantLinePrefix = "⏺"
+
+// claudeBannerStructuralMarkers are shapes the rendered banner reliably carries
+// but conversational prose about an error generally does not: the "·" segment
+// separator Claude uses to join banner parts, and the structured error JSON
+// payload. Required as a co-signal on assistant-glyph lines.
+var claudeBannerStructuralMarkers = []string{" · ", `{"type":"error"`}
+
 // hasClaudeErrorBanner scans the last 15 non-empty lines (same window as
 // hasClaudePrompt) for a banner-shaped error line.
 func hasClaudeErrorBanner(content string) bool {
@@ -404,10 +420,25 @@ func hasClaudeErrorBanner(content string) bool {
 		if hasAnyPrefix(line, claudeQuotedLinePrefixes) {
 			continue
 		}
+		// On an assistant-turn line, require a structural banner marker so
+		// prose mentioning the banner text is not misread as a live banner.
+		if strings.HasPrefix(line, claudeAssistantLinePrefix) && !containsAny(line, claudeBannerStructuralMarkers) {
+			continue
+		}
 		for _, pat := range claudeErrorBannerSubstrings {
 			if strings.Contains(line, pat) {
 				return true
 			}
+		}
+	}
+	return false
+}
+
+// containsAny reports whether s contains any of the given substrings.
+func containsAny(s string, subs []string) bool {
+	for _, sub := range subs {
+		if strings.Contains(s, sub) {
+			return true
 		}
 	}
 	return false
