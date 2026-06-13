@@ -832,8 +832,10 @@ func (i *Instance) buildClaudeCommandWithMessage(baseCommand, message string) st
 	}
 
 	// AGENTDECK_INSTANCE_ID is set as an inline env var so Claude's hook subprocesses
-	// can identify which agent-deck session they belong to.
-	instanceIDPrefix := fmt.Sprintf("AGENTDECK_INSTANCE_ID=%s ", i.ID)
+	// can identify which agent-deck session they belong to. AGENTDECK_PROFILE is
+	// injected alongside it so an in-session `agent-deck` command resolves this
+	// session's own profile instead of falling back to "default".
+	instanceIDPrefix := fmt.Sprintf("AGENTDECK_INSTANCE_ID=%s AGENTDECK_PROFILE=%s ", i.ID, shellescape.Quote(sessionProfileEnvValue()))
 	configDirPrefix = instanceIDPrefix + configDirPrefix
 
 	// Get options - either from instance or create defaults from config
@@ -957,7 +959,7 @@ func (i *Instance) buildClaudeCommandWithMessage(baseCommand, message string) st
 // and buildClaudeResumeCommand. See the comment there (issue #949) for
 // why the gate is required.
 func (i *Instance) buildBashExportPrefix() string {
-	prefix := fmt.Sprintf("export AGENTDECK_INSTANCE_ID=%s; ", i.ID)
+	prefix := fmt.Sprintf("export AGENTDECK_INSTANCE_ID=%s; export AGENTDECK_PROFILE=%s; ", i.ID, shellescape.Quote(sessionProfileEnvValue()))
 	if IsClaudeConfigDirExplicitForInstance(i) {
 		// Issue #922 (reporter @bautrey): see applyWorkerScratchOverride.
 		configDir := i.applyWorkerScratchOverride(GetClaudeConfigDirForInstance(i))
@@ -988,6 +990,40 @@ func (i *Instance) buildResolvedAccountHintExports() string {
 		shellescape.Quote(i.GroupPath),
 		shellescape.Quote(source),
 	)
+}
+
+// sessionProfileEnvValue returns the effective profile name to inject as
+// AGENTDECK_PROFILE into a spawned session's environment, alongside
+// AGENTDECK_INSTANCE_ID. Without it, a bare `agent-deck` command run *inside* a
+// non-default-profile session has no AGENTDECK_PROFILE in its shell, so
+// GetEffectiveProfile falls through to "default" — resolving the wrong profile
+// and silently orphaning auto-parent routing (resolveAutoParentInstance looks
+// up the caller's instance against the wrong profile's session list). The deck
+// process is single-profile (one Storage, one state.db), so GetEffectiveProfile("")
+// is authoritative here and matches storage.Profile() for every session it
+// manages. We inject it explicitly at each spawn site (rather than relying on
+// shell inheritance) so a child spawned from a child carries its own profile and
+// not a stale inherited one.
+func sessionProfileEnvValue() string {
+	return GetEffectiveProfile("")
+}
+
+// ensureProfileEnv sets AGENTDECK_PROFILE host-side on the instance's tmux
+// session so a bare `agent-deck` command run inside the session resolves the
+// session's own profile rather than falling back to "default". It is the
+// tool-agnostic safety net complementing the inline command-prefix injection in
+// the spawn-command builders (which only some tools carry — e.g. gemini/opencode/
+// generic respawn rebuild a bare resume command with no AGENTDECK_PROFILE prefix).
+// Must run on every spawn/respawn success path, including the Restart()
+// respawn-pane branches that return early before reaching the fallback recreate
+// path. Best-effort: a failure is logged, not fatal.
+func (i *Instance) ensureProfileEnv() {
+	if i.tmuxSession == nil {
+		return
+	}
+	if err := i.tmuxSession.SetEnvironment("AGENTDECK_PROFILE", sessionProfileEnvValue()); err != nil {
+		sessionLog.Warn("set_profile_failed", slog.String("error", err.Error()))
+	}
 }
 
 // logClaudeConfigResolution emits the CFG-07 observability line documenting
@@ -1362,8 +1398,8 @@ func (i *Instance) buildCodexCommand(baseCommand string) string {
 	// injected BEFORE the custom-command passthrough early-return below.
 	// Dropping it on custom-command sessions was the design regression flagged
 	// on #951 review — keep AGENTDECK_* on every codex-flavoured launch.
-	agentdeckEnvPrefix := fmt.Sprintf("AGENTDECK_INSTANCE_ID=%s AGENTDECK_TITLE=%q AGENTDECK_TOOL=%s ",
-		i.ID, i.Title, i.Tool)
+	agentdeckEnvPrefix := fmt.Sprintf("AGENTDECK_INSTANCE_ID=%s AGENTDECK_TITLE=%q AGENTDECK_TOOL=%s AGENTDECK_PROFILE=%s ",
+		i.ID, i.Title, i.Tool, shellescape.Quote(sessionProfileEnvValue()))
 	envPrefix += agentdeckEnvPrefix
 
 	// Passthrough: if the tool is literally "codex" and user gave a custom command
@@ -1444,11 +1480,13 @@ func (i *Instance) buildPiCommand(baseCommand string) string {
 
 	sessionDir := piAgentDeckSessionDirExpr(i.ID)
 	quotedInstanceID := shellescape.Quote(i.ID)
+	quotedProfile := shellescape.Quote(sessionProfileEnvValue())
 
 	return envPrefix + fmt.Sprintf(
-		"session_dir=%s; mkdir -p \"$session_dir\" && AGENTDECK_INSTANCE_ID=%s %s --continue --session-dir \"$session_dir\"",
+		"session_dir=%s; mkdir -p \"$session_dir\" && AGENTDECK_INSTANCE_ID=%s AGENTDECK_PROFILE=%s %s --continue --session-dir \"$session_dir\"",
 		sessionDir,
 		quotedInstanceID,
+		quotedProfile,
 		cmd,
 	)
 }
@@ -1470,12 +1508,14 @@ func (i *Instance) buildPiForkCommandForTarget(target *Instance, baseCommand str
 	parentSessionDir := piAgentDeckSessionDirExpr(i.ID)
 	sessionDir := piAgentDeckSessionDirExpr(target.ID)
 	quotedInstanceID := shellescape.Quote(target.ID)
+	quotedProfile := shellescape.Quote(sessionProfileEnvValue())
 
 	return envPrefix + fmt.Sprintf(
-		"parent_session_dir=%s; session_dir=%s; mkdir -p \"$session_dir\" && source_file=$(find \"$parent_session_dir\" -type f -name '*.jsonl' -exec ls -t {} + 2>/dev/null | head -n 1); if [ -z \"$source_file\" ]; then echo \"No Pi session file found in $parent_session_dir\" >&2; exit 1; fi; AGENTDECK_INSTANCE_ID=%s %s --fork \"$source_file\" --session-dir \"$session_dir\"",
+		"parent_session_dir=%s; session_dir=%s; mkdir -p \"$session_dir\" && source_file=$(find \"$parent_session_dir\" -type f -name '*.jsonl' -exec ls -t {} + 2>/dev/null | head -n 1); if [ -z \"$source_file\" ]; then echo \"No Pi session file found in $parent_session_dir\" >&2; exit 1; fi; AGENTDECK_INSTANCE_ID=%s AGENTDECK_PROFILE=%s %s --fork \"$source_file\" --session-dir \"$session_dir\"",
 		parentSessionDir,
 		sessionDir,
 		quotedInstanceID,
+		quotedProfile,
 		cmd,
 	), nil
 }
@@ -3041,6 +3081,12 @@ func (i *Instance) Start() error {
 		sessionLog.Warn("set_instance_id_failed", slog.String("error", err.Error()))
 	}
 
+	// Set AGENTDECK_PROFILE (host-side, tool-agnostic) so a bare `agent-deck`
+	// command run inside this session resolves the session's own profile rather
+	// than falling back to "default". Covers shells/OpenCode/etc. that have no
+	// inline env-prefix injection of their own.
+	i.ensureProfileEnv()
+
 	// Propagate tool session IDs into the tmux environment (host-side, works for both
 	// sandbox and non-sandbox sessions). This replaces the previous approach of embedding
 	// "tmux set-environment" calls in the shell command string, which silently failed
@@ -3275,6 +3321,12 @@ func (i *Instance) StartWithMessage(message string) error {
 	if err := i.tmuxSession.SetEnvironment("AGENTDECK_INSTANCE_ID", i.ID); err != nil {
 		sessionLog.Warn("set_instance_id_failed", slog.String("error", err.Error()))
 	}
+
+	// Set AGENTDECK_PROFILE (host-side, tool-agnostic) so a bare `agent-deck`
+	// command run inside this session resolves the session's own profile rather
+	// than falling back to "default". Covers shells/OpenCode/etc. that have no
+	// inline env-prefix injection of their own.
+	i.ensureProfileEnv()
 
 	// Propagate tool session IDs into the tmux environment (host-side, works for both
 	// sandbox and non-sandbox sessions).
@@ -5716,6 +5768,10 @@ func (i *Instance) Restart() error {
 
 		mcpLog.Debug("respawn_pane_claude_succeeded")
 
+		// Re-assert AGENTDECK_PROFILE host-side: this respawn branch returns
+		// before the fallback recreate path that would otherwise set it.
+		i.ensureProfileEnv()
+
 		// Persist .sid sidecar so hook events after restart can be correlated
 		WriteHookSessionAnchor(i.ID, i.ClaudeSessionID)
 
@@ -5755,6 +5811,11 @@ func (i *Instance) Restart() error {
 		}
 
 		sessionLog.Info("restart_gemini_respawn_succeeded")
+
+		// Re-assert AGENTDECK_PROFILE host-side: gemini's rebuilt resume command
+		// carries no inline AGENTDECK_PROFILE prefix, and this branch returns
+		// before the fallback recreate path that would otherwise set it.
+		i.ensureProfileEnv()
 
 		// Persist .sid sidecar so hook events after restart can be correlated
 		WriteHookSessionAnchor(i.ID, i.GeminiSessionID)
@@ -5809,6 +5870,11 @@ func (i *Instance) Restart() error {
 		}
 
 		sessionLog.Info("restart_opencode_respawn_succeeded")
+
+		// Re-assert AGENTDECK_PROFILE host-side: opencode's rebuilt resume command
+		// carries no inline AGENTDECK_PROFILE prefix, and this branch returns
+		// before the fallback recreate path that would otherwise set it.
+		i.ensureProfileEnv()
 
 		// Persist .sid sidecar so hook events after restart can be correlated
 		if i.OpenCodeSessionID != "" {
@@ -5874,6 +5940,11 @@ func (i *Instance) Restart() error {
 
 		sessionLog.Info("restart_codex_respawn_succeeded")
 
+		// Re-assert AGENTDECK_PROFILE host-side as a belt-and-suspenders to the
+		// inline prefix buildCodexCommand already injects; this branch returns
+		// before the fallback recreate path that would otherwise set it.
+		i.ensureProfileEnv()
+
 		// Persist .sid sidecar so hook events after restart can be correlated
 		WriteHookSessionAnchor(i.ID, i.CodexSessionID)
 
@@ -5918,6 +5989,12 @@ func (i *Instance) Restart() error {
 		}
 
 		sessionLog.Info("restart_generic_respawn_succeeded", slog.String("tool", i.Tool))
+
+		// Re-assert AGENTDECK_PROFILE host-side: the generic resume command is a
+		// bare `<cmd> <resumeFlag> <sid>` with no inline AGENTDECK_PROFILE prefix,
+		// and this branch returns before the fallback recreate path.
+		i.ensureProfileEnv()
+
 		i.loadCustomPatternsFromConfig() // Reload custom patterns
 		i.Status = StatusWaiting
 		return nil
@@ -6022,6 +6099,12 @@ func (i *Instance) Restart() error {
 		sessionLog.Warn("set_instance_id_failed", slog.String("error", err.Error()))
 	}
 
+	// Set AGENTDECK_PROFILE (host-side, tool-agnostic) so a bare `agent-deck`
+	// command run inside this session resolves the session's own profile rather
+	// than falling back to "default". Covers shells/OpenCode/etc. that have no
+	// inline env-prefix injection of their own.
+	i.ensureProfileEnv()
+
 	// Propagate all known tool session IDs to the tmux environment (host-side).
 	// This covers Restart() which uses buildClaudeResumeCommand() and similar
 	// builders that no longer embed "tmux set-environment" in the shell string.
@@ -6109,8 +6192,10 @@ func (i *Instance) buildClaudeResumeCommand() string {
 	}
 
 	// AGENTDECK_INSTANCE_ID is set as an inline env var so hook subprocesses
-	// can identify which agent-deck session they belong to.
-	instanceIDPrefix := fmt.Sprintf("AGENTDECK_INSTANCE_ID=%s ", i.ID)
+	// can identify which agent-deck session they belong to. AGENTDECK_PROFILE is
+	// injected alongside it so an in-session `agent-deck` command resolves this
+	// session's own profile instead of falling back to "default".
+	instanceIDPrefix := fmt.Sprintf("AGENTDECK_INSTANCE_ID=%s AGENTDECK_PROFILE=%s ", i.ID, shellescape.Quote(sessionProfileEnvValue()))
 	configDirPrefix = instanceIDPrefix + configDirPrefix
 
 	// Get per-session permission settings (falls back to config if not persisted)
@@ -6811,8 +6896,8 @@ func (i *Instance) buildCodexForkCommandForTarget(target *Instance, baseCommand 
 	// Shell-quote the injected env values: target.Title is user-editable and could
 	// contain shell metacharacters (e.g. $(...) or backticks), and custom Codex-tool
 	// identities are config-defined — keep the generated fork command injection-safe.
-	envPrefix += fmt.Sprintf("AGENTDECK_INSTANCE_ID=%s AGENTDECK_TITLE=%s AGENTDECK_TOOL=%s ",
-		shellescape.Quote(target.ID), shellescape.Quote(target.Title), shellescape.Quote(target.Tool))
+	envPrefix += fmt.Sprintf("AGENTDECK_INSTANCE_ID=%s AGENTDECK_TITLE=%s AGENTDECK_TOOL=%s AGENTDECK_PROFILE=%s ",
+		shellescape.Quote(target.ID), shellescape.Quote(target.Title), shellescape.Quote(target.Tool), shellescape.Quote(sessionProfileEnvValue()))
 	yoloFlag := target.resolveCodexYoloFlag()
 	modelFlag := target.resolveCodexModelFlag()
 	command := target.resolveCodexCommand(baseCommand)
