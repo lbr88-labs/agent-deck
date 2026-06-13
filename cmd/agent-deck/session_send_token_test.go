@@ -107,7 +107,7 @@ func TestSendWithRetryTarget_VerifyDelivery_LargePromptBodyMatch(t *testing.T) {
 	panes := []string{"", paneAfterPaste, paneAfterPaste, paneAfterPaste, paneAfterPaste}
 	mock := &mockSendRetryTarget{statuses: statuses, panes: panes}
 
-	err := sendWithRetryTarget(mock, body, false, sendRetryOptions{
+	_, err := sendWithRetryTarget(mock, body, false, sendRetryOptions{
 		maxRetries: 5, checkDelay: 0, verifyDelivery: true,
 	})
 	if err != nil {

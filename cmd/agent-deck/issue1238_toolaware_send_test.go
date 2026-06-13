@@ -27,7 +27,7 @@ func TestSend_NonClaudeTool_NotReportedDropped(t *testing.T) {
 	for _, tool := range []string{"codex", "codewhale", "gemini", "opencode"} {
 		t.Run(tool, func(t *testing.T) {
 			mock := nonClaudeShapedTarget()
-			err := sendWithRetryTarget(mock, "do the multi-line task please", skipClaudeDeliveryVerify(tool), sendRetryOptions{
+			_, err := sendWithRetryTarget(mock, "do the multi-line task please", skipClaudeDeliveryVerify(tool), sendRetryOptions{
 				maxRetries: 50, checkDelay: 0, verifyDelivery: true,
 			})
 			if err != nil {
@@ -51,7 +51,7 @@ func TestSend_NonClaudeTool_NotReportedDropped(t *testing.T) {
 // active) is still surfaced as an error.
 func TestSend_ClaudeTool_VerifyPreserved(t *testing.T) {
 	mock := nonClaudeShapedTarget()
-	err := sendWithRetryTarget(mock, "do the multi-line task please", skipClaudeDeliveryVerify("claude"), sendRetryOptions{
+	_, err := sendWithRetryTarget(mock, "do the multi-line task please", skipClaudeDeliveryVerify("claude"), sendRetryOptions{
 		maxRetries: 12, checkDelay: 0, verifyDelivery: true,
 	})
 	if err == nil {

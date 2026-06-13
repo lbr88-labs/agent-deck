@@ -24,6 +24,20 @@ type fakeConductorPane struct {
 	enterCalls    int
 	captureCalls  int
 	statusCalls   int
+	ctrlCCalls    int
+	chunkedCalls  int
+	chunkedText   string
+}
+
+func (f *fakeConductorPane) SendCtrlC() error {
+	f.ctrlCCalls++
+	return nil
+}
+
+func (f *fakeConductorPane) SendKeysChunked(text string) error {
+	f.chunkedCalls++
+	f.chunkedText = text
+	return nil
 }
 
 func (f *fakeConductorPane) SendKeysAndEnter(string) error {
