@@ -1217,7 +1217,7 @@ func TestWaitForFreshOutput_ReturnsNewResponse(t *testing.T) {
 			writeClaudeJSONL(t, projectsDir, sessionID, "new question", "new answer", newTimestamp)
 		}()
 
-		resp, err := waitForFreshOutput(inst, sentAt)
+		resp, err := waitForFreshOutput(inst, sentAt, nil)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -1240,7 +1240,7 @@ func TestWaitForFreshOutput_ReturnsNewResponse(t *testing.T) {
 		// sentAt is well after the only response — freshness poll will time out
 		sentAt := time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC)
 
-		resp, err := waitForFreshOutput(inst, sentAt)
+		resp, err := waitForFreshOutput(inst, sentAt, nil)
 		if err != nil {
 			t.Fatalf("should not error even on timeout, got: %v", err)
 		}
@@ -1263,7 +1263,7 @@ func TestWaitForFreshOutput_ReturnsNewResponse(t *testing.T) {
 		sentAt := time.Date(2026, 6, 1, 11, 0, 0, 0, time.UTC) // 1 hour before response
 
 		start := time.Now()
-		resp, err := waitForFreshOutput(inst, sentAt)
+		resp, err := waitForFreshOutput(inst, sentAt, nil)
 		elapsed := time.Since(start)
 
 		if err != nil {
@@ -1291,7 +1291,7 @@ func TestWaitForFreshOutput_ReturnsNewResponse(t *testing.T) {
 		// because the timestamp (whole-second) is only 0ms "before" sentAt.
 		sentAt := time.Date(2026, 4, 1, 10, 0, 0, 0, time.UTC)
 
-		resp, err := waitForFreshOutput(inst, sentAt)
+		resp, err := waitForFreshOutput(inst, sentAt, nil)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -1312,7 +1312,7 @@ func TestWaitForFreshOutput_ReturnsNewResponse(t *testing.T) {
 
 		sentAt := time.Date(2026, 4, 1, 10, 0, 0, 0, time.UTC)
 
-		resp, err := waitForFreshOutput(inst, sentAt)
+		resp, err := waitForFreshOutput(inst, sentAt, nil)
 		if err != nil {
 			t.Fatalf("should not error even on timeout, got: %v", err)
 		}
@@ -1329,7 +1329,7 @@ func TestWaitForFreshOutput_ReturnsNewResponse(t *testing.T) {
 		inst.Tool = "codex"
 
 		start := time.Now()
-		resp, err := waitForFreshOutput(inst, time.Now())
+		resp, err := waitForFreshOutput(inst, time.Now(), nil)
 		elapsed := time.Since(start)
 
 		// Codex path goes straight to GetLastResponseBestEffort, no polling
@@ -1353,7 +1353,7 @@ func TestWaitForFreshOutput_ReturnsNewResponse(t *testing.T) {
 
 		sentAt := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 
-		resp, err := waitForFreshOutput(inst, sentAt)
+		resp, err := waitForFreshOutput(inst, sentAt, nil)
 		if err != nil {
 			t.Fatalf("should not error, got: %v", err)
 		}
