@@ -2248,6 +2248,17 @@ func handleSessionSend(profile string, args []string) {
 		os.Exit(1)
 	}
 
+	// Delivery succeeded, but if an operator draft was cleared and could not
+	// be typed back, it's no longer on screen — surface it on stderr (it's
+	// also in saved_draft in --json) so the operator can recover it rather
+	// than discovering a silent loss. draft_restore_failed never blocks the
+	// send: the automated message did go through.
+	if sendRes.draftSaved != "" && sendRes.draftRestoreFailed {
+		fmt.Fprintf(os.Stderr,
+			"Warning: cleared the operator draft to deliver this message but could not restore it. Recover it from: %s\n",
+			sendRes.draftSaved)
+	}
+
 	if !*stream {
 		data := map[string]interface{}{
 			"success":       true,
@@ -2397,6 +2408,10 @@ type sendDeliveryResult struct {
 	// draftRestored reports whether the saved operator draft was typed back
 	// (without Enter) after the automated delivery.
 	draftRestored bool
+	// draftRestoreFailed reports that a saved operator draft was cleared but
+	// the type-back failed (SendKeysChunked errored) — the draft is held in
+	// draftSaved for recovery and must be surfaced, not silently dropped.
+	draftRestoreFailed bool
 }
 
 // jsonFields returns the delivery-status fields added to `session send`
@@ -2413,6 +2428,9 @@ func (r sendDeliveryResult) jsonFields() map[string]interface{} {
 	if r.draftSaved != "" {
 		fields["saved_draft"] = r.draftSaved
 		fields["draft_restored"] = r.draftRestored
+		if r.draftRestoreFailed {
+			fields["draft_restore_failed"] = true
+		}
 	}
 	return fields
 }
@@ -2516,6 +2534,12 @@ func executeSend(target sendRetryTarget, tool, message string, noWait bool, tun 
 	if res.draftSaved != "" && delivery != deliveryTypedNotSubmitted {
 		if restoreErr := target.SendKeysChunked(res.draftSaved); restoreErr == nil {
 			res.draftRestored = true
+		} else {
+			// The composer was cleared (Ctrl+C) but the type-back failed, so
+			// the operator's draft is no longer on screen. Don't silently
+			// drop it: flag the failure so the caller surfaces draftSaved for
+			// recovery instead of reporting a clean success.
+			res.draftRestoreFailed = true
 		}
 	}
 	return res, err

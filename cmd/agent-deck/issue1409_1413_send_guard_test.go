@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"io"
 	"os"
 	"strings"
@@ -129,6 +130,10 @@ type guardedSendMock struct {
 	// restoredAfterSend records whether SendKeysChunked was called only
 	// after SendKeysAndEnter (the automated delivery must come first).
 	restoredBeforeSend bool
+
+	// chunkedErr, when set, makes SendKeysChunked fail — simulating a draft
+	// restore that cannot type the saved draft back onto the composer.
+	chunkedErr error
 }
 
 func (m *guardedSendMock) SendKeysAndEnter(string) error {
@@ -163,7 +168,7 @@ func (m *guardedSendMock) SendKeysChunked(text string) error {
 	if atomic.LoadInt32(&m.sendKeysCalls) == 0 {
 		m.restoredBeforeSend = true
 	}
-	return nil
+	return m.chunkedErr
 }
 
 func (m *guardedSendMock) CapturePaneFresh() (string, error) {
@@ -285,6 +290,39 @@ func TestExecuteSend_NoRestoreWhenTypedNotSubmitted(t *testing.T) {
 	}
 	if res.draftSaved != "instruct deploy ag" {
 		t.Fatalf("saved draft must be surfaced for recovery, got %q", res.draftSaved)
+	}
+}
+
+func TestExecuteSend_RestoreFailureIsSurfacedNotSwallowed(t *testing.T) {
+	// Delivery succeeds and the guard cleared the operator draft, but typing
+	// the draft back fails (SendKeysChunked errors). The draft is no longer on
+	// screen, so the result must flag the restore failure and keep draftSaved
+	// for recovery — not report a clean success that silently lost the draft.
+	mock := &guardedSendMock{
+		draftPane:        claudeComposer("instruct deploy ag"),
+		postSendPanes:    []string{""},
+		postSendStatuses: []string{"active", "active"},
+		chunkedErr:       errors.New("tmux send-keys failed"),
+	}
+	tun := testGuardTuning(sendRetryOptions{maxRetries: 5, checkDelay: 0, verifyDelivery: true})
+	res, err := executeSend(mock, "claude", "[EVENT] child waiting", false, tun)
+	if err != nil {
+		t.Fatalf("delivery should still succeed (the automated message went through): %v", err)
+	}
+	if res.delivery != deliverySubmitted {
+		t.Fatalf("delivery: want %q, got %q", deliverySubmitted, res.delivery)
+	}
+	if res.draftSaved != "instruct deploy ag" {
+		t.Fatalf("saved draft must be retained for recovery, got %q", res.draftSaved)
+	}
+	if res.draftRestored {
+		t.Fatal("draftRestored must be false when the type-back failed")
+	}
+	if !res.draftRestoreFailed {
+		t.Fatal("draftRestoreFailed must be set so the lost draft is surfaced, not swallowed")
+	}
+	if _, ok := res.jsonFields()["draft_restore_failed"]; !ok {
+		t.Fatal("draft_restore_failed must appear in jsonFields for machine-readable recovery")
 	}
 }
 

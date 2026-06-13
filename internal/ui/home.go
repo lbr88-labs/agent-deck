@@ -8759,7 +8759,14 @@ func deliverToConductorPaneGuarded(p guardableConductorPane, msg string, guardOp
 	err := deliverToConductorPaneTuned(p, msg, maxChecks, checkDelay)
 	if guard.SavedDraft != "" {
 		if err == nil {
-			_ = p.SendKeysChunked(guard.SavedDraft)
+			// Delivery confirmed: type the operator draft back. If the
+			// type-back itself fails the draft is no longer on screen — log
+			// it so the loss is visible and recoverable, not swallowed.
+			if restoreErr := p.SendKeysChunked(guard.SavedDraft); restoreErr != nil {
+				uiLog.Warn("conductor_dispatch_draft_restore_failed",
+					slog.String("saved_draft", guard.SavedDraft),
+					slog.String("error", restoreErr.Error()))
+			}
 		} else {
 			uiLog.Warn("conductor_dispatch_draft_not_restored",
 				slog.String("saved_draft", guard.SavedDraft),
