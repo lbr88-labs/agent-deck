@@ -3036,6 +3036,18 @@ func (s *Session) GetStatus() (string, error) {
 				s.stateTracker.lastHash = currentHash
 			}
 
+			// Not busy. Error banner takes precedence over prompt detection
+			// (#1400): after an auth/connection failure the tool redraws its
+			// input prompt below the banner, so prompt detection alone would
+			// report "waiting" for a session that cannot make progress.
+			if s.hasErrorBannerIndicator(content) {
+				s.resetPromptNoBusyHoldLocked()
+				s.lastStableStatus = "error"
+				s.startupAt = time.Time{}
+				statusLog.Debug("error_banner_detected", slog.String("session", shortName))
+				return "error", nil
+			}
+
 			// Not busy. Check for prompt indicators to distinguish YELLOW vs fall-through.
 			hasPrompt := s.hasPromptIndicator(content)
 			if hasPrompt {
@@ -3179,6 +3191,17 @@ func (s *Session) GetStatus() (string, error) {
 						s.stateTracker.lastHash = currentHash
 					}
 
+					// Error banner takes precedence over prompt detection (#1400).
+					if s.hasErrorBannerIndicator(content) {
+						s.resetPromptNoBusyHoldLocked()
+						s.stateTracker.activityCheckStart = time.Time{}
+						s.stateTracker.activityChangeCount = 0
+						s.lastStableStatus = "error"
+						s.startupAt = time.Time{}
+						statusLog.Debug("sustained_error_banner", slog.String("session", shortName))
+						return "error", nil
+					}
+
 					if s.hasPromptIndicator(content) {
 						if s.stateTracker.acknowledged {
 							s.resetPromptNoBusyHoldLocked()
@@ -3265,6 +3288,14 @@ func (s *Session) GetStatus() (string, error) {
 			statusLog.Debug("still_busy", slog.String("session", shortName))
 			return "active", nil
 		}
+		// Error banner takes precedence over prompt detection (#1400).
+		if captureErr == nil && s.hasErrorBannerIndicator(content) {
+			s.resetPromptNoBusyHoldLocked()
+			s.lastStableStatus = "error"
+			s.startupAt = time.Time{}
+			statusLog.Debug("error_banner_recheck", slog.String("session", shortName))
+			return "error", nil
+		}
 		if captureErr == nil && s.hasPromptIndicator(content) {
 			// Not busy, but prompt visible. Transition to waiting/idle.
 			if !s.stateTracker.acknowledged {
@@ -3300,6 +3331,15 @@ func (s *Session) GetStatus() (string, error) {
 		s.startupAt = time.Time{}
 		statusLog.Debug("idle_acknowledged", slog.String("session", shortName))
 		return "idle", nil
+	}
+	// Sticky error (#1400): an error-banner verdict persists across polls that
+	// skip the pane capture (no new activity). Without this, the error would
+	// surface for one poll and settle back to "waiting" even though the banner
+	// is still on screen. Cleared by new activity (re-captures and
+	// re-evaluates: busy/prompt/banner) or by user acknowledgment above.
+	if s.lastStableStatus == "error" {
+		statusLog.Debug("error_banner_sticky", slog.String("session", shortName))
+		return "error", nil
 	}
 	if s.inStartupWindowLocked() {
 		s.resetPromptNoBusyHoldLocked()
@@ -3369,6 +3409,18 @@ func (s *Session) getStatusFallback() (string, error) {
 		s.startupAt = time.Time{}
 		statusLog.Debug("fallback_active", slog.String("session", shortName))
 		return "active", nil
+	}
+
+	// Error banner takes precedence over prompt detection (#1400).
+	if s.hasErrorBannerIndicator(content) {
+		s.mu.Lock()
+		defer s.mu.Unlock()
+		s.ensureStateTrackerLocked()
+		s.resetPromptNoBusyHoldLocked()
+		s.lastStableStatus = "error"
+		s.startupAt = time.Time{}
+		statusLog.Debug("fallback_error_banner", slog.String("session", shortName))
+		return "error", nil
 	}
 
 	if s.hasPromptIndicator(content) {
@@ -3803,6 +3855,26 @@ func (s *Session) hasPromptIndicator(content string) bool {
 		s.cachedPromptDetectorTool = tool
 	}
 	return s.cachedPromptDetector.HasPrompt(content)
+}
+
+// hasErrorBannerIndicator reports whether the pane shows an error banner the
+// tool itself rendered (auth failure / dead connection — see
+// PromptDetector.HasErrorBanner, issue #1400). Checked AFTER the busy
+// indicator (busy is authoritative: an API-error retry in progress is still
+// working) and BEFORE prompt detection (after a terminal failure the tool
+// redraws its input prompt below the banner, so prompt detection alone would
+// report "waiting" for a session that cannot make progress).
+func (s *Session) hasErrorBannerIndicator(content string) bool {
+	tool := inferToolFromSessionFields(s.detectedTool, s.customToolName, s.Command)
+	if tool == "" {
+		return false
+	}
+	// Reuse cached detector if tool hasn't changed (avoids allocation per call)
+	if s.cachedPromptDetector == nil || s.cachedPromptDetectorTool != tool {
+		s.cachedPromptDetector = NewPromptDetector(tool)
+		s.cachedPromptDetectorTool = tool
+	}
+	return s.cachedPromptDetector.HasErrorBanner(content)
 }
 
 // lastNLines splits content into lines, trims trailing blank lines, and returns

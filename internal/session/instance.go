@@ -3765,6 +3765,12 @@ func (i *Instance) UpdateStatus() error {
 		}
 	case "starting":
 		i.Status = StatusStarting
+	case "error":
+		// Pane shows a tool-rendered error banner (#1400): auth failure
+		// ("API Error: 401" / "Please run /login") or a dead connection
+		// ("socket connection closed"). The process is alive but cannot make
+		// progress without user action — report error, not waiting.
+		i.Status = StatusError
 	case "inactive":
 		i.Status = StatusError
 	default:
@@ -4704,6 +4710,25 @@ func (i *Instance) GetLastResponse() (*ResponseOutput, error) {
 		return i.getGeminiLastResponse()
 	}
 	return i.getTerminalLastResponse()
+}
+
+// GetLastResponseBestEffortChecked is the collision-aware variant of
+// GetLastResponseBestEffort (issue #1400). `session output` (including -q)
+// parses the transcript that ClaudeSessionID resolves to; when multiple LIVE
+// instances share one claude_session_id they all resolve to the SAME transcript
+// and return byte-identical "last responses". Given the instance's profile
+// peers, this refuses the read with the same collision semantics #1352 gave
+// `session output --stream` (GetJSONLPathChecked: live peers sharing both the
+// session id and the transcript dir), instead of silently returning another
+// session's output. Non-Claude tools and the no-collision case delegate to
+// GetLastResponseBestEffort unchanged.
+func (i *Instance) GetLastResponseBestEffortChecked(peers []*Instance) (*ResponseOutput, error) {
+	if IsClaudeCompatible(i.Tool) {
+		if _, err := i.GetJSONLPathChecked(peers); err != nil {
+			return nil, fmt.Errorf("refusing to read a colliding transcript: %w", err)
+		}
+	}
+	return i.GetLastResponseBestEffort()
 }
 
 // GetLastResponseBestEffort returns the last assistant response with fallback logic

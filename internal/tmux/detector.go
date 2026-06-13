@@ -335,6 +335,94 @@ func (d *PromptDetector) hasClaudePrompt(content string) bool {
 	return false
 }
 
+// =============================================================================
+// Error Banner Detector (issue #1400)
+// =============================================================================
+
+// HasErrorBanner reports whether the terminal content shows an error banner
+// rendered by the tool itself — NOT conversation text discussing an error.
+// Used by status detection to classify a visibly broken session (auth failure,
+// dead connection) as "error" instead of "waiting": after such a failure the
+// tool redraws its input prompt below the banner, so prompt detection alone
+// reports waiting while the session cannot actually make progress (#1400).
+//
+// Currently implemented for Claude Code only; other tools return false.
+func (d *PromptDetector) HasErrorBanner(content string) bool {
+	if d.tool != "claude" {
+		return false
+	}
+	return hasClaudeErrorBanner(content)
+}
+
+// claudeErrorBannerSubstrings are fragments of error banners Claude Code
+// actually renders in the pane. Observed shapes (field evidence, #1400):
+//
+//	Please run /login · API Error: 401 {"type":"error","error":{"type":"authentication_error","message":"Invalid authentication credentials"},...}
+//	API Error: 401 ... · Please run /login
+//	API Error (Connection error.) · socket connection closed
+//
+// Patterns are intentionally anchored on the rendered banner text ("API
+// Error: 401", the verbatim "Please run /login" instruction, the socket
+// failure message) rather than bare tokens like "401", so ordinary
+// conversation about errors does not match.
+var claudeErrorBannerSubstrings = []string{
+	// Auth failure (expired/invalid OAuth token or API key).
+	"API Error: 401",
+	"API Error (401",
+	"Please run /login",
+	// Connection failure banner.
+	"socket connection closed",
+}
+
+// claudeQuotedLinePrefixes mark pane lines that carry QUOTED or user-typed
+// content rather than a banner Claude Code itself rendered:
+//
+//	"⎿"      — tool-result connector: output of a command (e.g. a conductor
+//	           reading an errored child's pane via `session output`) may quote
+//	           another session's 401 banner verbatim. Genuine API-error retry
+//	           notices also render behind "⎿", but those panes show a busy
+//	           indicator, which takes precedence over error detection anyway.
+//	"❯", ">" — the input prompt: the user typing ABOUT a 401.
+//	"│"      — box-drawing UI (dialog/input-box content).
+//
+// Real banners render at message level (standalone line or assistant-style
+// "⏺" line — field evidence shows auth failures stored and rendered as the
+// turn's reply), so those stay matchable.
+var claudeQuotedLinePrefixes = []string{"⎿", "❯", ">", "│"}
+
+// hasClaudeErrorBanner scans the last 15 non-empty lines (same window as
+// hasClaudePrompt) for a banner-shaped error line.
+func hasClaudeErrorBanner(content string) bool {
+	lines := strings.Split(content, "\n")
+	checked := 0
+	for i := len(lines) - 1; i >= 0 && checked < 15; i-- {
+		line := strings.TrimSpace(StripANSI(lines[i]))
+		if line == "" {
+			continue
+		}
+		checked++
+		if hasAnyPrefix(line, claudeQuotedLinePrefixes) {
+			continue
+		}
+		for _, pat := range claudeErrorBannerSubstrings {
+			if strings.Contains(line, pat) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// hasAnyPrefix reports whether s starts with any of the given prefixes.
+func hasAnyPrefix(s string, prefixes []string) bool {
+	for _, p := range prefixes {
+		if strings.HasPrefix(s, p) {
+			return true
+		}
+	}
+	return false
+}
+
 // hasCodexPromptMarker detects the › (U+203A) prompt marker used by Codex CLI.
 // Codex renders its prompt as:
 //

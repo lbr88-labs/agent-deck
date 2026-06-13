@@ -2286,13 +2286,13 @@ func handleSessionSend(profile string, args []string) {
 		// Wait for the JSONL to contain a response newer than sentAt.
 		// The status check (waitForCompletion) detects the UI prompt reappearing,
 		// but the JSONL file may not be flushed yet — poll until it is.
-		response, err := waitForFreshOutput(inst, sentAt)
+		response, err := waitForFreshOutput(inst, sentAt, instances)
 		if err != nil {
 			// Fallback: reload session from DB in case tmux env was also stale
 			// (e.g., /clear created a new session that TUI or hooks detected)
 			if _, freshInstances, _, loadErr := loadSessionData(profile); loadErr == nil {
 				if freshInst, _, _ := ResolveSession(sessionRef, freshInstances); freshInst != nil {
-					response, err = waitForFreshOutput(freshInst, sentAt)
+					response, err = waitForFreshOutput(freshInst, sentAt, freshInstances)
 				}
 			}
 		}
@@ -2875,10 +2875,21 @@ var freshOutputTestConfig *freshOutputConfig
 //
 // Falls back to the best-effort response if the freshness timeout expires,
 // logging a warning to stderr so the caller knows the data may be stale.
-func waitForFreshOutput(inst *session.Instance, sentAt time.Time) (*session.ResponseOutput, error) {
+//
+// peers carries the profile snapshot for the #1400 collision guard: a
+// claude_session_id shared by multiple live instances resolves to ONE
+// transcript, so waiting on it would return another session's output.
+// Fail fast (same semantics as --stream's #1352 guard) instead of polling
+// a colliding transcript until the freshness timeout.
+func waitForFreshOutput(inst *session.Instance, sentAt time.Time, peers []*session.Instance) (*session.ResponseOutput, error) {
 	// Non-Claude tools don't use JSONL timestamps — skip the freshness loop.
 	if !session.IsClaudeCompatible(inst.Tool) {
 		return inst.GetLastResponseBestEffort()
+	}
+
+	// #1400: refuse a colliding transcript before entering the poll loop.
+	if _, err := inst.GetJSONLPathChecked(peers); err != nil {
+		return nil, fmt.Errorf("refusing to read a colliding transcript: %w", err)
 	}
 
 	pollInterval := 250 * time.Millisecond
@@ -3105,8 +3116,13 @@ func handleSessionOutput(profile string, args []string) {
 		return
 	}
 
-	// Get the last response (best-effort fallback for smoother CLI reads)
-	response, err := inst.GetLastResponseBestEffort()
+	// Get the last response (best-effort fallback for smoother CLI reads).
+	// Collision-checked (#1400): multiple live instances sharing one
+	// claude_session_id resolve to the SAME transcript, so the parsed "last
+	// response" (-q / --json / default / --copy) would be byte-identical for
+	// all of them. Refuse the read instead — the same guard `session output
+	// --stream` got in #1352.
+	response, err := inst.GetLastResponseBestEffortChecked(instances)
 	if err != nil {
 		out.Error(fmt.Sprintf("failed to get response: %v", err), ErrCodeInvalidOperation)
 		os.Exit(1)
