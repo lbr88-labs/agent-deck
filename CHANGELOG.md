@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.9.60] - 2026-06-14
+
+### Security
+
+- **Transcript-path containment is now boundary-aware and fail-closed** ([#1435](https://github.com/asheshgoplani/agent-deck/pull/1435), closes [#1434](https://github.com/asheshgoplani/agent-deck/issues/1434)). `ValidateTranscriptPath` previously used a raw `strings.HasPrefix` against `~/.claude`, which wrongly accepted sibling directories (e.g. `~/.claude-spoof/transcript.jsonl`) whose string prefix matches but which live outside the transcript root. The check now requires the cleaned path to equal the root exactly or begin with `root + os.PathSeparator`, so siblings are rejected. If `os.UserHomeDir()` errors, the path is now rejected (fail-closed) rather than falling through to acceptance. `writeCostEvent` in the hook handler is also unified to use the same shared validator, closing a second reader that had its own weaker inline `HasPrefix` guard.
+
 ## [1.9.59] - 2026-06-14
 
 ### Fixed
