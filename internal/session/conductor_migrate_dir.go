@@ -2,12 +2,14 @@ package session
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
 	"path/filepath"
 	"sort"
 	"strings"
+	"syscall"
 
 	"github.com/asheshgoplani/agent-deck/internal/agentpaths"
 )
@@ -308,10 +310,19 @@ func MigrateConductorDir(opts ConductorDirMigrateOptions) (*ConductorDirMigrateR
 			return res, fmt.Errorf("copy conductor homes to target: %w", err)
 		}
 		// 2. VERIFY each migrated home's meta.json at the target is byte-identical
-		//    to the source's durable record BEFORE we commit the config or remove
-		//    any source (blocker 2).
-		if err := verifyPlan(plan); err != nil {
+		//    to the source's durable record AND is an independent copy under the
+		//    target base BEFORE we commit the config or remove any source (blocker 2
+		//    + symlink-alias blocker).
+		if err := verifyPlan(plan, target); err != nil {
 			return res, fmt.Errorf("verify migrated conductor homes: %w", err)
+		}
+		// 2b. DURABILITY: copyMigrationFile already fsyncs each file's CONTENT before
+		//     the O_EXCL link, but the new directory ENTRIES are not yet on stable
+		//     storage. fsync every migrated home dir + the target base before we
+		//     commit the config and remove the sources, so a crash cannot persist
+		//     the source deletion while losing a still-dirty target directory entry.
+		if err := syncMigratedTargets(plan, target); err != nil {
+			return res, fmt.Errorf("fsync migrated conductor homes: %w", err)
 		}
 		// Reflect the per-file merge conflicts discovered during copy.
 		res.Actions = actionsOf(plan)
@@ -474,6 +485,84 @@ func conductorMetaConflict(srcPath, dstPath string) (bool, string) {
 	return false, ""
 }
 
+// destAliasesSource reports whether a --force destination conductor home aliases
+// the SOURCE home it would supposedly merge — the per-entry symlink/alias case
+// that the base-level validateMigratePaths check cannot see. validateMigratePaths
+// only proves source-base and target-base are distinct trees; it does NOT examine
+// individual entries INSIDE those bases. A destination entry that is (or whose
+// meta.json is) a symlink/hardlink resolving back into the source home defeats
+// every downstream guard:
+//
+//	conductorMetaConflict os.Stat()s through the symlink and reads the SOURCE's
+//	own meta.json → bytes equal → "no conflict" → action merge; MergeTree
+//	preserves the existing destination symlink (copies nothing); verifyPlan reads
+//	both sides through the same symlink → byte-equal → passes; then
+//	removePlanSources RemoveAll(source) deletes the symlink's backing tree,
+//	leaving the destination a DANGLING symlink — the conductor's only durable
+//	record is gone.
+//
+// Detect it before classifying the entry as merge: same inode as the source home
+// or its meta.json (os.SameFile, at ANY symlink layer), OR the dest home / its
+// meta.json resolves (EvalSymlinks) into the source tree. Either way the "merge"
+// is the tree merging into itself, so it is rejected as a reject-conflict — the
+// source is never deleted. Runs in the shared plan, so --dry-run reports it too.
+func destAliasesSource(srcPath, dstPath string) (bool, string) {
+	// Inode identity at any symlink layer: dest home is the same physical dir as
+	// the source home.
+	if si, serr := os.Stat(srcPath); serr == nil {
+		if di, derr := os.Stat(dstPath); derr == nil && os.SameFile(si, di) {
+			return true, "destination home is the same physical directory as the source (symlink/bind-mount alias)"
+		}
+	}
+	// Inode identity of the durable record itself: dest meta.json is the source's
+	// meta.json (e.g. a real dest dir holding a meta.json symlink to the source's).
+	srcMeta := filepath.Join(srcPath, "meta.json")
+	dstMeta := filepath.Join(dstPath, "meta.json")
+	if si, serr := os.Stat(srcMeta); serr == nil {
+		if di, derr := os.Stat(dstMeta); derr == nil && os.SameFile(si, di) {
+			return true, "destination meta.json is the source's own record (symlink/hardlink alias)"
+		}
+	}
+	// Resolved-path containment: the dest home or its meta.json resolves INTO the
+	// source tree, so removing the source would orphan it. Compare against the
+	// resolved source so a symlinked source base is handled too.
+	srcReal := resolveCanonical(srcPath)
+	if pathResolvesInto(dstPath, srcReal) || pathResolvesInto(dstMeta, srcReal) {
+		return true, "destination home or meta.json resolves into the source tree (symlink alias)"
+	}
+	return false, ""
+}
+
+// pathResolvesInto reports whether path, after symlink resolution, lies at or
+// under base (an already-resolved absolute dir). A dangling/unresolvable path
+// returns false (it cannot alias an existing source tree).
+func pathResolvesInto(path, base string) bool {
+	resolved, err := filepath.EvalSymlinks(path)
+	if err != nil {
+		return false
+	}
+	if resolved == base {
+		return true
+	}
+	return pathContains(base, resolved)
+}
+
+// withinBase reports whether path, after symlink resolution, is at or under the
+// resolved target base. Used by verifyPlan to confirm a migrated record is an
+// INDEPENDENT copy under the target — not an alias resolving back out to the
+// source (or anywhere else outside the new base).
+func withinBase(path, base string) bool {
+	resolvedBase := resolveCanonical(base)
+	resolved, err := filepath.EvalSymlinks(path)
+	if err != nil {
+		return false
+	}
+	if resolved == resolvedBase {
+		return true
+	}
+	return pathContains(resolvedBase, resolved)
+}
+
 // planMigration enumerates source entries and classifies each with NO mutation.
 // It is shared by the dry-run report and the apply path so both see the exact
 // same plan.
@@ -510,6 +599,18 @@ func planMigration(source, target string, opts ConductorDirMigrateOptions) ([]mi
 			act.Conflict = true
 		default: // --force and the destination already exists
 			if act.IsHome {
+				// Blocker (this PR): a destination home that aliases the source
+				// (per-entry symlink/inode alias INTO the source tree) must NOT be
+				// treated as a mergeable conflict — merging it and then removing the
+				// source would delete the alias's own backing and orphan the only
+				// meta.json. Checked before conductorMetaConflict, which would be
+				// fooled into reading the source's record through the alias.
+				if alias, reason := destAliasesSource(srcPath, dstPath); alias {
+					act.Action = "reject-conflict"
+					act.Conflict = true
+					act.Reason = reason
+					break
+				}
 				if conflict, reason := conductorMetaConflict(srcPath, dstPath); conflict {
 					act.Action = "reject-conflict"
 					act.Conflict = true
@@ -581,15 +682,26 @@ func copyPlan(plan []migratePlanEntry) error {
 }
 
 // verifyPlan confirms every migrated conductor home's meta.json at the target is
-// BYTE-IDENTICAL to the source's durable record before the config is committed
-// or any source removed (blocker 2). A non-empty check is not enough: CopyTree
-// preserves symlinks, so a relative meta.json symlink can resolve to a DIFFERENT
-// file once the home moves, passing a content-blind check against an unrelated
-// record while the real identity is stranded at the source — which
-// removePlanSources would then delete. Reading both is cheap (we follow the
-// symlink on each side, exactly what a later LoadConductorMeta does), and an
-// unreadable/dangling target meta.json fails here too.
-func verifyPlan(plan []migratePlanEntry) error {
+// BYTE-IDENTICAL to the source's durable record AND is an INDEPENDENT copy under
+// the target base before the config is committed or any source removed (blocker 2
+// + the symlink-alias blocker). Two distinct attacks are closed here:
+//
+//   - A relative meta.json symlink that resolves to a DIFFERENT file once the home
+//     moves passes a content-blind "non-empty" check against an unrelated record
+//     while the real identity is stranded at the source. Byte-equality vs. the
+//     source closes that.
+//
+//   - A destination meta.json that is the SAME inode as the source's (a symlink
+//     into the source, or a byte-matching alias resolving OUTSIDE the target base):
+//     byte-equality alone passes, then removePlanSources deletes the source and
+//     orphans it. Requiring the target record to (a) not share an inode with the
+//     source and (b) resolve WITHIN the target base closes that — the verify must
+//     confirm an independent copy exists at the target, not the same file as the
+//     source nor an alias pointing back out of the new base.
+//
+// Reading both is cheap (we follow the symlink on each side, exactly what a later
+// LoadConductorMeta does), and an unreadable/dangling target meta.json fails here.
+func verifyPlan(plan []migratePlanEntry, target string) error {
 	for _, e := range plan {
 		if !e.action.IsHome {
 			continue
@@ -615,17 +727,96 @@ func verifyPlan(plan []migratePlanEntry) error {
 				"conductor %q: target meta.json does not match the source's durable record (a relocated symlink may resolve to a different file) — refusing to commit and strand the source",
 				e.action.Name)
 		}
+		// The target record must be an INDEPENDENT copy, not the source's own file
+		// reached through a symlink (os.SameFile catches the same-inode alias even
+		// when the bytes trivially match).
+		if si, serr := os.Stat(srcMeta); serr == nil {
+			if di, derr := os.Stat(dstMeta); derr == nil && os.SameFile(si, di) {
+				return fmt.Errorf(
+					"conductor %q: target meta.json is the same file as the source's (symlink alias) — refusing to commit and delete the only copy",
+					e.action.Name)
+			}
+		}
+		// And it must resolve WITHIN the target base. A byte-matching alias whose
+		// meta.json resolves outside the new base would survive byte-equality yet be
+		// orphaned the instant the source is removed.
+		if !withinBase(dstMeta, target) {
+			return fmt.Errorf(
+				"conductor %q: target meta.json resolves outside the target base (symlink alias) — refusing to commit and strand the durable record",
+				e.action.Name)
+		}
+	}
+	return nil
+}
+
+// syncMigratedTargets fsyncs the directory entries of every migrated target home
+// and the target base, so the directory metadata (the just-published meta.json
+// link) is durable BEFORE the config commit authorizes source removal. The file
+// content is already fsync'd by copyMigrationFile (tmp.Sync before the link); this
+// closes the residual where a crash persists the source deletion while a target
+// directory entry is still dirty. Best-effort per the underlying syscall, but a
+// hard failure aborts before the destructive commit/remove. A nonexistent dir
+// (nothing landed there) is skipped, not an error.
+func syncMigratedTargets(plan []migratePlanEntry, target string) error {
+	for _, e := range plan {
+		if e.action.Action != "move" && e.action.Action != "merge" {
+			continue
+		}
+		if err := fsyncDirStrict(e.dstPath); err != nil {
+			return fmt.Errorf("fsync target home %q: %w", e.dstPath, err)
+		}
+	}
+	if err := fsyncDirStrict(target); err != nil {
+		return fmt.Errorf("fsync target base %q: %w", target, err)
+	}
+	return nil
+}
+
+// fsyncDirStrict opens path as a directory and fsyncs it so newly created entries
+// are durable, surfacing real errors (unlike the best-effort fsyncDir in inbox.go)
+// so the caller aborts BEFORE the destructive source removal. A path that does not
+// exist is a no-op (nothing to flush); a filesystem that rejects directory fsync
+// (EINVAL/ENOTSUP) is treated as benign — the file content is already fsync'd and
+// the entry is published via an atomic link, so the core guarantee still holds.
+func fsyncDirStrict(path string) error {
+	d, err := os.Open(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return err
+	}
+	defer d.Close()
+	if err := d.Sync(); err != nil {
+		if errors.Is(err, syscall.EINVAL) || errors.Is(err, syscall.ENOTSUP) {
+			return nil
+		}
+		return err
 	}
 	return nil
 }
 
 // removePlanSources removes the source of every copied (move/merge) entry. It is
-// called ONLY after the config is committed; any failure is returned as a
-// non-fatal warning (the durable record already exists at the committed target).
+// called ONLY after the config is committed and verifyPlan has confirmed an
+// independent target copy; any failure is returned as a non-fatal warning (the
+// durable record already exists at the committed target).
+//
+// Defense in depth: even though plan/verify already reject per-entry aliases, a
+// final guard refuses to RemoveAll a source whose corresponding destination still
+// resolves back INTO that source — removing it would orphan the destination
+// alias. This makes the destructive step independently safe regardless of how the
+// plan was built, and the skip is reported (the leftover source is a harmless
+// duplicate; the verified target copy is intact).
 func removePlanSources(plan []migratePlanEntry) []string {
 	var warns []string
 	for _, e := range plan {
 		if e.action.Action != "move" && e.action.Action != "merge" {
+			continue
+		}
+		if alias, reason := destAliasesSource(e.srcPath, e.dstPath); alias {
+			warns = append(warns, fmt.Sprintf(
+				"%s: NOT removing source %q — destination still aliases it (%s); left in place to avoid orphaning the only copy",
+				e.action.Name, e.srcPath, reason))
 			continue
 		}
 		if err := os.RemoveAll(e.srcPath); err != nil {

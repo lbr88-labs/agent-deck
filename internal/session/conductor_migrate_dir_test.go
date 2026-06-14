@@ -554,6 +554,183 @@ func TestMigrateConductorDir_VerifyRejectsRelocatedMetaSymlink(t *testing.T) {
 	}
 }
 
+// Per-entry symlink-alias blocker (this PR): the base-level validateMigratePaths
+// check only proves the source-base and target-base are distinct trees. It does
+// NOT examine entries INSIDE the bases. This is the exact data-loss trace from the
+// PR HOLD: a destination home `target/<name>` pre-created as a symlink pointing at
+// the SOURCE home. conductorMetaConflict os.Stat()s through the link and reads the
+// source's own meta.json (bytes equal → "no conflict" → merge); MergeTree
+// preserves the dest symlink; verifyPlan reads both through the same link
+// (byte-equal); then removePlanSources RemoveAll(source) deletes the link's
+// backing, leaving target/<name>/meta.json a DANGLING symlink. The plan-level
+// destAliasesSource guard must reject it as a reject-conflict, source untouched.
+func TestMigrateConductorDir_ForceRejectsDestHomeSymlinkIntoSource(t *testing.T) {
+	_, _, xdgDataHome := setupSessionXDGPathEnv(t)
+	source := filepath.Join(t.TempDir(), "src-conductors")
+	srcHome := writeConductorHome(t, source, "alpha", map[string]string{
+		"meta.json": `{"name":"alpha","profile":"default","id":"ONLY-RECORD"}`,
+	})
+	_ = xdgDataHome
+
+	// Target base is a genuinely distinct tree, but target/alpha is a symlink INTO
+	// the source home — the per-entry alias the base check cannot see.
+	target := filepath.Join(t.TempDir(), "vault-conductors")
+	if err := os.MkdirAll(target, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(srcHome, filepath.Join(target, "alpha")); err != nil {
+		t.Fatal(err)
+	}
+
+	res, err := MigrateConductorDir(ConductorDirMigrateOptions{
+		From: source, Target: target, Apply: true, Force: true,
+	})
+	if res == nil {
+		t.Fatalf("expected a result, got nil (err=%v)", err)
+	}
+	// The plan must refuse the whole migration (no err from MigrateConductorDir;
+	// the refusal surfaces as Refused + a blocker, leaving everything intact).
+	if !res.Refused {
+		t.Fatalf("expected the dest-home-symlink-into-source to be refused; res=%+v err=%v", res, err)
+	}
+	if res.ConfigWritten {
+		t.Fatal("config must NOT be written when the per-entry alias is rejected")
+	}
+	var sawReject bool
+	for _, a := range res.Actions {
+		if a.Name == "alpha" && a.Action == "reject-conflict" {
+			sawReject = true
+		}
+	}
+	if !sawReject {
+		t.Fatalf("alpha should be reject-conflict, got actions=%+v", res.Actions)
+	}
+	// THE durability assertion: the source's only meta.json is still readable.
+	assertFileContains(t, filepath.Join(srcHome, "meta.json"), "ONLY-RECORD")
+	if _, err := os.Stat(filepath.Join(srcHome, "meta.json")); err != nil {
+		t.Fatalf("source's only durable record was deleted: %v", err)
+	}
+}
+
+// Variant: the destination home is a REAL dir, but its meta.json is a symlink to
+// the SOURCE's meta.json. conductorMetaConflict would read the source's record
+// through the link (bytes equal → merge), then removePlanSources deletes the
+// source and orphans the link. destAliasesSource's same-inode/meta check (and the
+// resolves-into-source branch) must reject it.
+func TestMigrateConductorDir_ForceRejectsDestMetaSymlinkIntoSource(t *testing.T) {
+	setupSessionXDGPathEnv(t)
+	source := filepath.Join(t.TempDir(), "src-conductors")
+	srcHome := writeConductorHome(t, source, "alpha", map[string]string{
+		"meta.json": `{"name":"alpha","profile":"default","id":"ONLY-RECORD"}`,
+	})
+
+	target := filepath.Join(t.TempDir(), "vault-conductors")
+	dstHome := filepath.Join(target, "alpha")
+	if err := os.MkdirAll(dstHome, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(filepath.Join(srcHome, "meta.json"), filepath.Join(dstHome, "meta.json")); err != nil {
+		t.Fatal(err)
+	}
+
+	res, err := MigrateConductorDir(ConductorDirMigrateOptions{
+		From: source, Target: target, Apply: true, Force: true,
+	})
+	if res == nil {
+		t.Fatalf("expected a result, got nil (err=%v)", err)
+	}
+	if !res.Refused {
+		t.Fatalf("expected the dest-meta-symlink-into-source to be refused; res=%+v err=%v", res, err)
+	}
+	if res.ConfigWritten {
+		t.Fatal("config must NOT be written when the meta alias is rejected")
+	}
+	assertFileContains(t, filepath.Join(srcHome, "meta.json"), "ONLY-RECORD")
+}
+
+// Variant: a byte-matching dest alias that resolves OUTSIDE the target base slips
+// the plan-level check (its bytes equal the source) but must be caught by verify's
+// within-target-base requirement, since removing the source would orphan it.
+func TestMigrateConductorDir_VerifyRejectsDestSymlinkOutsideBase(t *testing.T) {
+	setupSessionXDGPathEnv(t)
+	source := filepath.Join(t.TempDir(), "src-conductors")
+	srcHome := writeConductorHome(t, source, "alpha", map[string]string{
+		"meta.json": `{"name":"alpha","profile":"default","id":"ONLY-RECORD"}`,
+	})
+
+	// An out-of-base copy whose BYTES equal the source's (so byte-equality passes),
+	// but which lives outside the target base.
+	outside := filepath.Join(t.TempDir(), "outside")
+	if err := os.MkdirAll(outside, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	outsideMeta := filepath.Join(outside, "meta.json")
+	if err := os.WriteFile(outsideMeta, []byte(`{"name":"alpha","profile":"default","id":"ONLY-RECORD"}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	target := filepath.Join(t.TempDir(), "vault-conductors")
+	dstHome := filepath.Join(target, "alpha")
+	if err := os.MkdirAll(dstHome, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// dest meta.json -> outside/meta.json (different inode from source, equal bytes,
+	// resolves outside the target base).
+	if err := os.Symlink(outsideMeta, filepath.Join(dstHome, "meta.json")); err != nil {
+		t.Fatal(err)
+	}
+
+	res, err := MigrateConductorDir(ConductorDirMigrateOptions{
+		From: source, Target: target, Apply: true, Force: true,
+	})
+	// Either the plan refuses it or verify aborts it — both leave the source intact
+	// and the config uncommitted. Assert the durable outcome, not which layer fired.
+	if res != nil && res.ConfigWritten {
+		t.Fatalf("config must NOT be committed for an out-of-base alias; err=%v res=%+v", err, res)
+	}
+	if res == nil && err == nil {
+		t.Fatal("expected a refusal or an error")
+	}
+	assertFileContains(t, filepath.Join(srcHome, "meta.json"), "ONLY-RECORD")
+	if _, statErr := os.Stat(filepath.Join(srcHome, "meta.json")); statErr != nil {
+		t.Fatalf("source's only durable record was deleted: %v", statErr)
+	}
+}
+
+// Variant: the alias runs the OTHER direction — a SOURCE entry that is a symlink
+// pointing at the would-be target. Removing the source then deletes the target's
+// backing. The plan-level resolves-into-source / same-inode guard plus the
+// removePlanSources defense-in-depth skip must keep the record alive.
+func TestMigrateConductorDir_ForceRejectsSourceEntryAliasingTarget(t *testing.T) {
+	setupSessionXDGPathEnv(t)
+	// Real target home holding the only record.
+	target := filepath.Join(t.TempDir(), "vault-conductors")
+	tgtHome := writeConductorHome(t, target, "alpha", map[string]string{
+		"meta.json": `{"name":"alpha","profile":"default","id":"ONLY-RECORD"}`,
+	})
+
+	// Source/alpha is a symlink INTO the target home.
+	source := filepath.Join(t.TempDir(), "src-conductors")
+	if err := os.MkdirAll(source, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(tgtHome, filepath.Join(source, "alpha")); err != nil {
+		t.Fatal(err)
+	}
+
+	res, err := MigrateConductorDir(ConductorDirMigrateOptions{
+		From: source, Target: target, Apply: true, Force: true,
+	})
+	if res != nil && res.ConfigWritten {
+		t.Fatalf("config must NOT be committed when source aliases target; err=%v res=%+v", err, res)
+	}
+	// The target's only record must survive regardless of the refusal path.
+	assertFileContains(t, filepath.Join(tgtHome, "meta.json"), "ONLY-RECORD")
+	if _, statErr := os.Stat(filepath.Join(tgtHome, "meta.json")); statErr != nil {
+		t.Fatalf("target's only durable record was deleted: %v", statErr)
+	}
+}
+
 func TestDetectConductorDirSplitBrain(t *testing.T) {
 	_, xdgConfigHome, xdgDataHome := setupSessionXDGPathEnv(t)
 	defaultBase := filepath.Join(xdgDataHome, "agent-deck", "conductor")
