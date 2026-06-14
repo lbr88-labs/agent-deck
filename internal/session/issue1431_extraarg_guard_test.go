@@ -29,12 +29,12 @@ func TestValidateClaudeExtraArgToken_RejectsFlagMashedWithValue(t *testing.T) {
 
 func TestValidateClaudeExtraArgToken_AllowsCleanTokens(t *testing.T) {
 	good := []string{
-		"--model",                 // bare flag
-		"opus",                    // bare value
+		"--model",                        // bare flag
+		"opus",                           // bare value
 		"--dangerously-skip-permissions", // bare flag, no value
-		"claude-opus-4-8",         // value with dashes but no space
-		"be concise please",       // a value with spaces that is NOT a flag
-		"",                        // empty (handled elsewhere; not a footgun)
+		"claude-opus-4-8",                // value with dashes but no space
+		"be concise please",              // a value with spaces that is NOT a flag
+		"",                               // empty (handled elsewhere; not a footgun)
 	}
 	for _, tok := range good {
 		if err := ValidateClaudeExtraArgToken(tok); err != nil {
