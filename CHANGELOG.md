@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.9.62] - 2026-06-14
+
+### Added
+
+- **Prompt the highlighted session from the main list without attaching, with `o`** ([#1446](https://github.com/asheshgoplani/agent-deck/pull/1446), closes [#1410](https://github.com/asheshgoplani/agent-deck/issues/1410)). From Feedback Hub (Lawrence-Dawson): "I wish I could prompt the session from the initial agent deck screen" without entering it. Pressing `o` on a highlighted, running, Claude-compatible session row opens a one-line prompt input at the bottom of the list; submitting routes the text to that session via the existing prompt-state-aware send path — the [#1409](https://github.com/asheshgoplani/agent-deck/issues/1409)/[#1432](https://github.com/asheshgoplani/agent-deck/issues/1432) composer-draft guard plus verified delivery — so the prompt never merges with a half-typed operator draft and a dropped Enter is re-pressed. No attach. Esc cancels, an empty submit is a no-op, and a stopped session is rejected up front with a clear message.
+
+### Fixed
+
+- **An operator's per-session model choice now survives `session restart`** ([#1445](https://github.com/asheshgoplani/agent-deck/pull/1445), closes [#1436](https://github.com/asheshgoplani/agent-deck/issues/1436)). Follow-up to [#1431](https://github.com/asheshgoplani/agent-deck/issues/1431), which made `[claude].default_model` honored at spawn and restart. A new tool-agnostic `model` field — `agent-deck session set <id> model <m>` — persists the selected model into the per-session store each command builder already reads on start/restart (Claude/Gemini/OpenCode/Codex), so a model switched after launch is relaunched on the operator's selection instead of reverting to the baked/default model; an empty value clears the override. The field is restart-required. Note: agent-deck cannot observe an in-pane `/model` switch typed into a running Claude session (Claude exposes no clean model readback), so the documented path is `session set <id> model <m>`.
+
 ## [1.9.61] - 2026-06-14
 
 ### Fixed
