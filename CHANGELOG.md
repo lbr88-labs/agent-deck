@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.9.63] - 2026-06-14
+
+### Added
+
+- **Configurable `[conductor].dir` with safe relocation** ([#1429](https://github.com/asheshgoplani/agent-deck/pull/1429), closes [#1427](https://github.com/asheshgoplani/agent-deck/issues/1427)). The conductor base directory can be overridden via `[conductor].dir` (empty = default `<data-dir>/conductor` with legacy fallback; tilde/`$VAR` expanded), routed through every in-process and out-of-process surface (meta/heartbeat/templates, `agent-deck update` bridge refresh, and the Python bridge daemon via an injected `AGENT_DECK_CONDUCTOR_DIR`). A new `conductor migrate-dir` subcommand relocates an existing fleet in one transactional, dry-run-by-default move (copy → verify → commit-config → remove-source), with split-brain detection in `list`/`status` and setup clobber-hardening that preserves in-place-edited `CLAUDE.md`/`POLICY.md` and `meta.json` fields.
+
+### Fixed
+
+- **`conductor migrate-dir`: close the per-entry symlink-alias data-loss path** ([#1429](https://github.com/asheshgoplani/agent-deck/pull/1429)). A conductor's `meta.json` is its only durable record. Under `migrate-dir --apply --force`, a destination home that was a symlink pointing into the source home (or whose `meta.json` aliased the source's) survived the base-level overlap check, the merge-conflict check, and the byte-equal verify — then source removal deleted the alias's backing and left a dangling `meta.json`. Now rejected at three layers: the plan refuses a `--force` destination that aliases the source (`os.SameFile` at any symlink layer, or `EvalSymlinks`-resolves into the source tree); verify additionally requires the target record to be an independent copy under the target base (not a same-inode alias, and resolving within the base); and source removal skips any source whose destination still resolves back into it. Each migrated home and the target base are fsync'd after verify and before the config commit so a crash cannot persist the source deletion while losing a still-dirty target directory entry. Regression tests assert the source's only `meta.json` survives.
+
 ## [1.9.62] - 2026-06-14
 
 ### Added

@@ -84,6 +84,21 @@ type ConductorSettings struct {
 
 	// Discord defines Discord bot integration settings
 	Discord DiscordSettings `toml:"discord,omitempty"`
+
+	// Dir overrides the base conductor directory. Empty = default
+	// (<data-dir>/conductor with legacy ~/.agent-deck/conductor fallback).
+	// Tilde and $VAR are expanded.
+	//
+	// The rendered heartbeat.sh honors this override and is auto-refreshed by
+	// MigrateConductorHeartbeatScripts on the next conductor command (list /
+	// status / setup / teardown), so the script content reconciles on its own.
+	// What does NOT self-heal is the daemon: the launchd heartbeat plist (and
+	// the Linux systemd unit) bakes absolute script/log paths at install time
+	// and is regenerated only by 'conductor setup'. After changing dir, re-run
+	// 'conductor setup' per conductor to regenerate + reload the daemon (or use
+	// 'conductor migrate-dir'). The bridge daemon similarly freezes
+	// AGENT_DECK_CONDUCTOR_DIR at install time.
+	Dir string `toml:"dir,omitempty"`
 }
 
 // TelegramSettings defines Telegram bot configuration for the conductor bridge
@@ -359,8 +374,16 @@ func normalizeConductorProfile(profile string) string {
 	return profile
 }
 
-// ConductorDir returns the base conductor directory (~/.agent-deck/conductor)
+// ConductorDir returns the base conductor directory. When [conductor].dir is
+// set in config.toml it takes precedence (tilde and $VAR expanded); empty
+// falls through to the default <data-dir>/conductor resolution (XDG with
+// legacy ~/.agent-deck/conductor fallback).
 func ConductorDir() (string, error) {
+	if cfg, err := LoadUserConfig(); err == nil {
+		if dir := strings.TrimSpace(cfg.Conductor.Dir); dir != "" {
+			return ExpandPath(dir), nil
+		}
+	}
 	return dataPath("conductor", "conductor")
 }
 
@@ -434,8 +457,23 @@ func LoadConductorMeta(name string) (*ConductorMeta, error) {
 	return &meta, nil
 }
 
-// SaveConductorMeta writes meta.json for a conductor
+// SaveConductorMeta writes meta.json for a conductor. It takes the conductor
+// base lock so a write cannot interleave with an in-flight `migrate-dir`
+// (enumerate→copy→verify→commit→remove) and be stranded at the old base or
+// deleted with the source tree (finding #5). Internal callers that already hold
+// the lock must use saveConductorMetaLocked instead.
 func SaveConductorMeta(meta *ConductorMeta) error {
+	lock, err := acquireConductorBaseLock()
+	if err != nil {
+		return err
+	}
+	defer lock.release()
+	return saveConductorMetaLocked(meta)
+}
+
+// saveConductorMetaLocked is the unlocked body of SaveConductorMeta. The caller
+// MUST already hold the conductor base lock.
+func saveConductorMetaLocked(meta *ConductorMeta) error {
 	if meta == nil {
 		return fmt.Errorf("conductor metadata cannot be nil")
 	}
@@ -587,10 +625,22 @@ func SetupConductorWithAgent(name, profile, agent string, heartbeatEnabled bool,
 	}
 	profile = normalizeConductorProfile(profile)
 
-	if existing, err := LoadConductorMeta(name); err == nil {
-		if existing.Profile != profile {
-			return fmt.Errorf("conductor %q already exists for profile %q (requested profile: %q)", name, existing.Profile, profile)
-		}
+	// Hold the conductor base lock for the whole setup so a concurrent
+	// `migrate-dir` cannot relocate the base out from under a half-written home
+	// (finding #5). The meta write below uses the unlocked saveConductorMetaLocked
+	// to avoid re-acquiring the non-reentrant lock.
+	lock, err := acquireConductorBaseLock()
+	if err != nil {
+		return err
+	}
+	defer lock.release()
+
+	// Load any existing meta up front: it gates the profile-mismatch guard AND
+	// lets a re-run preserve user-state fields that aren't re-passed as flags
+	// (merge, don't clobber).
+	existing, _ := LoadConductorMeta(name)
+	if existing != nil && existing.Profile != profile {
+		return fmt.Errorf("conductor %q already exists for profile %q (requested profile: %q)", name, existing.Profile, profile)
 	}
 
 	dir, err := ConductorNameDir(name)
@@ -627,8 +677,10 @@ func SetupConductorWithAgent(name, profile, agent string, heartbeatEnabled bool,
 		if err := createSymlinkWithExpansion(targetPath, customInstructionsMD); err != nil {
 			return err
 		}
-	} else if info, err := os.Lstat(targetPath); err != nil || info.Mode()&os.ModeSymlink == 0 {
-		// No custom path - write default template (but preserve existing symlink)
+	} else {
+		// No custom path - write the default template only if absent. An existing
+		// symlink keeps the user's customization; an existing regular file may
+		// carry in-place edits, so re-running setup must not clobber it.
 		var perNameTemplate string
 		if spec.Agent == ConductorAgentHermes {
 			perNameTemplate = conductorPerNameHermesMDTemplate
@@ -636,7 +688,7 @@ func SetupConductorWithAgent(name, profile, agent string, heartbeatEnabled bool,
 			perNameTemplate = conductorPerNameClaudeMDTemplate
 		}
 		content := renderConductorInstructionsTemplate(perNameTemplate, name, profile, spec)
-		if err := os.WriteFile(targetPath, []byte(content), 0o644); err != nil {
+		if err := writeFileIfAbsent(targetPath, []byte(content), 0o644); err != nil {
 			return fmt.Errorf("failed to write %s: %w", spec.InstructionsFileName, err)
 		}
 	}
@@ -668,7 +720,10 @@ func SetupConductorWithAgent(name, profile, agent string, heartbeatEnabled bool,
 		}
 	}
 
-	// Write meta.json
+	// Write meta.json. On a re-run, preserve user-state that setup callers don't
+	// necessarily re-pass: CreatedAt, Description, Env, EnvFile, ClearOnCompact,
+	// HeartbeatInterval and HeartbeatIdleMinutes are kept from the existing meta
+	// when the corresponding flag is unset, rather than reset to zero.
 	meta := &ConductorMeta{
 		Name:             name,
 		Agent:            spec.Agent,
@@ -679,14 +734,35 @@ func SetupConductorWithAgent(name, profile, agent string, heartbeatEnabled bool,
 		Env:              env,
 		EnvFile:          envFile,
 	}
+	if existing != nil {
+		if existing.CreatedAt != "" {
+			meta.CreatedAt = existing.CreatedAt
+		}
+		if description == "" {
+			meta.Description = existing.Description
+		}
+		if len(env) == 0 {
+			meta.Env = existing.Env
+		}
+		if envFile == "" {
+			meta.EnvFile = existing.EnvFile
+		}
+		meta.HeartbeatInterval = existing.HeartbeatInterval
+	}
 	if !clearOnCompact {
 		meta.ClearOnCompact = &clearOnCompact
+	} else if existing != nil {
+		// Flag not used to disable: keep any explicit prior setting.
+		meta.ClearOnCompact = existing.ClearOnCompact
 	}
-	// Set heartbeat idle minutes if provided (non-negative value)
+	// Set heartbeat idle minutes if provided (non-negative value); otherwise
+	// preserve the existing value on a re-run.
 	if len(heartbeatIdleMinutes) > 0 && heartbeatIdleMinutes[0] >= 0 {
 		meta.HeartbeatIdleMinutes = heartbeatIdleMinutes[0]
+	} else if existing != nil {
+		meta.HeartbeatIdleMinutes = existing.HeartbeatIdleMinutes
 	}
-	if err := SaveConductorMeta(meta); err != nil {
+	if err := saveConductorMetaLocked(meta); err != nil {
 		return fmt.Errorf("failed to write meta.json: %w", err)
 	}
 
@@ -703,6 +779,16 @@ func SetupConductorWithAgent(name, profile, agent string, heartbeatEnabled bool,
 
 // InstallHeartbeatScript writes the heartbeat.sh script for a conductor.
 // This is a standalone heartbeat that works without Telegram.
+//
+// The script embeds the conductor root (renderConductorHeartbeatScript's
+// {CONDUCTOR_ROOT} substitution, which honors [conductor].dir) as a literal.
+// When [conductor].dir changes, the script content does NOT go stale silently:
+// MigrateConductorHeartbeatScripts rewrites managed scripts on the next
+// conductor command (list / status / setup / teardown). The stale surface is
+// the daemon, not the script — GenerateHeartbeatPlist bakes absolute
+// script/log paths into the launchd plist (and systemd unit) at setup time and
+// is regenerated only by 'conductor setup', so re-run 'conductor setup' per
+// conductor after a dir change to reload the daemon.
 func InstallHeartbeatScript(name, profile string) error {
 	dir, err := ConductorNameDir(name)
 	if err != nil {
@@ -795,6 +881,45 @@ func RemoveHeartbeatPlist(name string) error {
 		return nil
 	}
 	return os.Remove(path)
+}
+
+// HeartbeatDaemonStale reports whether an installed heartbeat daemon (launchd
+// plist on macOS, systemd service on Linux) references a script path other than
+// the conductor's currently-resolved <ConductorNameDir>/heartbeat.sh. This is
+// the surface that goes stale when [conductor].dir changes:
+// MigrateConductorHeartbeatScripts refreshes the rendered script content, but
+// the daemon still invokes the old absolute path and is only regenerated by
+// 'conductor setup'.
+//
+// Detection is side-effect-free (it reads the installed unit and makes no
+// launchctl/systemctl calls) and best-effort: a missing or unreadable daemon
+// returns false, since there is nothing installed to warn about.
+func HeartbeatDaemonStale(name string) bool {
+	dir, err := ConductorNameDir(name)
+	if err != nil {
+		return false
+	}
+	expectedScript := filepath.Join(dir, "heartbeat.sh")
+
+	refersElsewhere := func(path string) bool {
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return false
+		}
+		return !strings.Contains(string(data), expectedScript)
+	}
+
+	if plistPath, err := HeartbeatPlistPath(name); err == nil {
+		if _, statErr := os.Stat(plistPath); statErr == nil {
+			return refersElsewhere(plistPath)
+		}
+	}
+	if svcPath, err := SystemdHeartbeatServicePath(name); err == nil {
+		if _, statErr := os.Stat(svcPath); statErr == nil {
+			return refersElsewhere(svcPath)
+		}
+	}
+	return false
 }
 
 // FindAgentDeck looks for agent-deck in common locations
@@ -1046,6 +1171,30 @@ func createSymlinkWithExpansion(target, source string) error {
 	return nil
 }
 
+// writeFileIfAbsent writes content to path only when path does not already
+// exist, using O_CREATE|O_EXCL so an existing (possibly user-edited) regular
+// file is never clobbered — the TOCTOU-safe if-absent primitive mirroring
+// watcher.writeIfAbsent. A pre-existing path (regular file or symlink) is left
+// untouched and reported as success.
+func writeFileIfAbsent(path string, content []byte, perm os.FileMode) error {
+	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, perm)
+	if err != nil {
+		if os.IsExist(err) {
+			return nil
+		}
+		return err
+	}
+	// Surface both the write and the close error: a buffered write only fully
+	// commits on a successful Close, so a swallowed Close() error can mask data
+	// loss. Return the write error first (more specific), else the close error.
+	_, writeErr := f.Write(content)
+	closeErr := f.Close()
+	if writeErr != nil {
+		return writeErr
+	}
+	return closeErr
+}
+
 // InstallSharedConductorInstructions writes the shared instructions file for the given conductor agent,
 // or creates a symlink if customPath is provided.
 func InstallSharedConductorInstructions(agent, customPath string) error {
@@ -1067,12 +1216,12 @@ func InstallSharedConductorInstructions(agent, customPath string) error {
 		return createSymlinkWithExpansion(targetPath, customPath)
 	}
 
-	// No custom path - write default template (but preserve existing symlink)
-	if info, err := os.Lstat(targetPath); err == nil && info.Mode()&os.ModeSymlink != 0 {
-		return nil
-	}
+	// No custom path - write the default template only if nothing is there yet.
+	// An existing file is preserved: a symlink keeps the user's customization,
+	// and a regular file may carry in-place edits we must not clobber on re-run.
+	// writeFileIfAbsent's O_EXCL makes both cases a no-op.
 	content := renderConductorInstructionsTemplate(conductorSharedClaudeMDTemplate, "", DefaultProfile, spec)
-	if err := os.WriteFile(targetPath, []byte(content), 0o644); err != nil {
+	if err := writeFileIfAbsent(targetPath, []byte(content), 0o644); err != nil {
 		return fmt.Errorf("failed to write shared %s: %w", spec.InstructionsFileName, err)
 	}
 	return nil
@@ -1120,11 +1269,10 @@ func InstallPolicyMD(customPath string) error {
 		return createSymlinkWithExpansion(targetPath, customPath)
 	}
 
-	// No custom path - write default template (but preserve existing symlink)
-	if info, err := os.Lstat(targetPath); err == nil && info.Mode()&os.ModeSymlink != 0 {
-		return nil
-	}
-	if err := os.WriteFile(targetPath, []byte(conductorPolicyTemplate), 0o644); err != nil {
+	// No custom path - write the default template only if nothing is there yet.
+	// Preserve an existing symlink (user customization) or regular file (possible
+	// in-place edits) so re-running setup is non-destructive.
+	if err := writeFileIfAbsent(targetPath, []byte(conductorPolicyTemplate), 0o644); err != nil {
 		return fmt.Errorf("failed to write POLICY.md: %w", err)
 	}
 	return nil
@@ -1499,6 +1647,7 @@ func GenerateLaunchdPlist() (string, error) {
 	plist = strings.ReplaceAll(plist, "__HOME__", homeDir)
 	plist = strings.ReplaceAll(plist, "__XDG_DATA_HOME__", dataBase)
 	plist = strings.ReplaceAll(plist, "__XDG_CONFIG_HOME__", configBase)
+	plist = strings.ReplaceAll(plist, "__CONDUCTOR_DIR__", condDir)
 	agentDeckPath := FindAgentDeck()
 	plist = strings.ReplaceAll(plist, "__PATH__", buildDaemonPath(agentDeckPath))
 
@@ -1586,6 +1735,8 @@ const conductorPlistTemplate = `<?xml version="1.0" encoding="UTF-8"?>
         <string>__XDG_DATA_HOME__</string>
         <key>XDG_CONFIG_HOME</key>
         <string>__XDG_CONFIG_HOME__</string>
+        <key>AGENT_DECK_CONDUCTOR_DIR</key>
+        <string>__CONDUCTOR_DIR__</string>
     </dict>
 
     <key>ThrottleInterval</key>
@@ -1647,15 +1798,15 @@ After=network.target
 
 [Service]
 Type=simple
-ExecStartPre=-/bin/mkdir -p __LOG_DIR__
-ExecStart=__PYTHON3__ __BRIDGE_PATH__
+ExecStartPre=-/bin/mkdir -p "__LOG_DIR__"
+ExecStart="__PYTHON3__" "__BRIDGE_PATH__"
 Restart=always
 RestartSec=10
 WorkingDirectory=__HOME__
 StandardOutput=append:__LOG_PATH__
 StandardError=append:__LOG_PATH__
-Environment=PATH=__PATH__
-Environment=HOME=__HOME__
+Environment="PATH=__PATH__"
+Environment="HOME=__HOME__"
 __XDG_ENV__
 [Install]
 WantedBy=default.target
@@ -1673,16 +1824,16 @@ After=network.target
 
 [Service]
 Type=simple
-ExecStartPre=-/bin/mkdir -p __LOG_DIR__
-ExecStart=__AGENT_DECK__ notify-daemon
+ExecStartPre=-/bin/mkdir -p "__LOG_DIR__"
+ExecStart="__AGENT_DECK__" notify-daemon
 Restart=always
 RestartSec=5
 RuntimeMaxSec=86400
 WorkingDirectory=__HOME__
 StandardOutput=append:__LOG_PATH__
 StandardError=append:__LOG_PATH__
-Environment=PATH=__PATH__
-Environment=HOME=__HOME__
+Environment="PATH=__PATH__"
+Environment="HOME=__HOME__"
 
 [Install]
 WantedBy=default.target
@@ -1704,10 +1855,10 @@ Description=Agent Deck Conductor Heartbeat (__NAME__)
 
 [Service]
 Type=oneshot
-ExecStart=/bin/bash __SCRIPT_PATH__
+ExecStart=/bin/bash "__SCRIPT_PATH__"
 WorkingDirectory=__HOME__
-Environment=PATH=__PATH__
-Environment=HOME=__HOME__
+Environment="PATH=__PATH__"
+Environment="HOME=__HOME__"
 `
 
 // --- Systemd path helpers ---
@@ -1793,7 +1944,11 @@ func GenerateSystemdBridgeService() (string, error) {
 	if err != nil {
 		return "", err
 	}
-	xdgEnv := "Environment=XDG_DATA_HOME=" + dataBase + "\nEnvironment=XDG_CONFIG_HOME=" + configBase
+	// Quote each value: systemd splits Environment= on unquoted whitespace, so a
+	// conductor/XDG path containing spaces would otherwise corrupt the unit.
+	xdgEnv := `Environment="XDG_DATA_HOME=` + dataBase + `"` +
+		"\n" + `Environment="XDG_CONFIG_HOME=` + configBase + `"` +
+		"\n" + `Environment="AGENT_DECK_CONDUCTOR_DIR=` + condDir + `"`
 
 	unit := strings.ReplaceAll(systemdBridgeServiceTemplate, "__PYTHON3__", python3Path)
 	unit = strings.ReplaceAll(unit, "__BRIDGE_PATH__", bridgePath)

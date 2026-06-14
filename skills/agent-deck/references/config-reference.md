@@ -15,6 +15,7 @@ All options for `~/.agent-deck/config.toml`.
 - [[docker] Section](#docker-section)
 - [[worktree] Section](#worktree-section)
 - [[fork] Section](#fork-section)
+- [[conductor] Section](#conductor-section)
 - [[logs] Section](#logs-section)
 - [[updates] Section](#updates-section)
 - [[display] Section](#display-section)
@@ -332,6 +333,23 @@ branch_prefix       = "fork/" # Auto branch name = <branch_prefix><sanitized-tit
 | `branch_prefix` | string | `"fork/"` | Prefix for the auto-suggested fork branch name. Applies to both quick fork and the `Shift+F` dialog. |
 
 > **Note:** Forking is supported across Claude, OpenCode, Pi, and Codex (and Codex-compatible custom tools) via each tool's native fork, in the TUI, CLI (`agent-deck session fork <id>`), and Web UI. The Web/API endpoint (`POST /api/sessions/{id}/fork`) performs a plain tool-native fork and does **not** apply these `[fork]` worktree/state/Docker defaults — those are TUI quick-fork/dialog scope. Codex forking requires a codex CLI with `codex fork <session-id>` support.
+
+## [conductor] Section
+
+Conductor (meta-agent orchestration) settings. The `[conductor]` block also carries the conductor-system toggles (`enabled`, `heartbeat_interval`, Telegram/Slack/Discord integration) — see the conductor setup docs; the key below governs where conductor state lives.
+
+```toml
+[conductor]
+dir = ""   # Override the base conductor directory (default: <data-dir>/conductor)
+```
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `dir` | string | `""` | Base directory for conductor homes (`meta.json`, `CLAUDE.md`, heartbeat scripts). Empty uses the default resolution: `$XDG_DATA_HOME/agent-deck/conductor` with a legacy `~/.agent-deck/conductor` fallback. Tilde and `$VAR` are expanded. |
+
+> **Note:** Each conductor's `heartbeat.sh` honors `[conductor].dir` and self-heals — when you change `dir`, the script content is auto-refreshed by the migration that runs on the next `agent-deck conductor list` / `status` / `setup` / `teardown`. The surface that goes **stale** is the daemon, not the script: the launchd heartbeat plist (and the Linux systemd unit) bakes absolute script/log paths at install time and is regenerated only by `agent-deck conductor setup`. After changing `dir`, re-run `agent-deck conductor setup <name>` per conductor to regenerate and reload the daemon. (A `conductor migrate-dir` helper to automate this is planned.) A `conductor list`/`status` after a dir change will flag a stale heartbeat daemon in its `[migrated]` output.
+
+> **Note:** The Telegram/Slack/Discord bridge daemon (`bridge.py`) now honors `[conductor].dir`: the Go side injects the resolved override into the daemon environment as `AGENT_DECK_CONDUCTOR_DIR`, and the bridge prefers it over its XDG/legacy resolver (#1350). Caveat: the daemon's environment is frozen at install time, so if you change `[conductor].dir` after the bridge is set up, regenerate the bridge daemon (re-run conductor setup, or the planned `conductor migrate-dir`) for the daemon to pick up the new directory.
 
 ## [logs] Section
 

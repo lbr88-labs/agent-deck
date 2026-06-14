@@ -37,7 +37,7 @@ import (
 	"github.com/asheshgoplani/agent-deck/internal/web"
 )
 
-var Version = "1.9.62" // overridden at build time via -ldflags "-X main.Version=..."
+var Version = "1.9.63" // overridden at build time via -ldflags "-X main.Version=..."
 
 // Table column widths for list command output
 const (
@@ -58,6 +58,7 @@ func initUpdateSettings() {
 	settings := session.GetUpdateSettings()
 	update.SetCheckInterval(settings.CheckIntervalHours)
 	update.SetBridgeScriptInstaller(session.InstallBridgeScript)
+	update.SetConductorDirResolver(session.ConductorDir)
 }
 
 // writeVersionOutput prints `Agent Deck vX.Y.Z` to `w`, appending
