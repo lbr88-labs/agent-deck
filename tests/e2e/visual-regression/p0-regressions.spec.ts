@@ -7,8 +7,12 @@
 //     bottom tab bar (MobileTabs.js). The protective intent (mobile nav is
 //     reachable and clickable) is kept: tap the "Costs" bottom tab and
 //     verify the pane switches.
-//   WEB-P0-2 profile switcher  -> kept: the topbar now renders a <select>
-//     populated from /api/profiles (Topbar.js).
+//   WEB-P0-2 profile switcher  -> kept, narrowed: the topbar renders the
+//     current profile from /api/profiles. Since #1392 (issue #1365) this is
+//     a read-only `.icon-btn[title^="Active profile"]` span (no server-side
+//     web profile switch exists), not the legacy interactive <select>. The
+//     protective intent — the profile indicator is present and reflects
+//     /api/profiles — is preserved.
 //   WEB-P0-3 titles not truncated -> kept (new .sess/.tt markup).
 //   WEB-P0-4 toast stack capped at 3 -> kept: Toast.js preserves the cap-3
 //     contract verbatim; triggered via failing DELETEs through the new
@@ -41,17 +45,29 @@ test.describe('P0 bug regression baselines', () => {
     await expect(page).toHaveScreenshot('mobile-tab-nav-costs-375x667.png', { mask: masks });
   });
 
-  test('WEB-P0-2: profile select populated at 1280x800', async ({ page }) => {
+  test('WEB-P0-2: current profile indicator shown at 1280x800', async ({ page }) => {
     await freezeClock(page);
     await mockEndpoints(page);
+    // Override /api/profiles with a distinctive `current` that is NOT a UI
+    // fallback ('default' / first-in-list), so the assertion proves the value
+    // flowed from /api/profiles rather than a hardcoded default (Topbar.js:
+    // `profileSignal.value || p.current || list[0]`). Registered after
+    // mockEndpoints so Playwright's last-registered route wins.
+    await page.route('**/api/profiles*', r => r.fulfill({
+      json: { current: 'ci-active-profile', profiles: ['default', 'ci-active-profile', 'work'] },
+    }));
     await page.goto('/?token=test');
     await prepareForScreenshot(page);
-    // Topbar.js renders the profile <select> only after /api/profiles resolves
-    const select = page.locator('.top-right select');
-    await expect(select).toBeVisible();
-    await expect(select.locator('option')).toHaveCount(3);
+    // Topbar.js renders the current profile as a read-only span only after
+    // /api/profiles resolves. Since #1392 (issue #1365) it is no longer an
+    // interactive <select> — there is no web profile-switch endpoint.
+    const profile = page.locator('.top-right .icon-btn[title^="Active profile"]');
+    await expect(profile).toBeVisible();
+    // Must equal the fixture's `current`, not 'default'/first-in-list: this
+    // catches a broken /api/profiles -> indicator binding (codex review #1444).
+    await expect(profile).toHaveText('ci-active-profile');
     const masks = await getDynamicContentMasks(page);
-    await expect(page).toHaveScreenshot('profile-select-1280x800.png', { mask: masks });
+    await expect(page).toHaveScreenshot('profile-indicator-1280x800.png', { mask: masks });
   });
 
   test('WEB-P0-3: titles not truncated at 1280x800', async ({ page }) => {
