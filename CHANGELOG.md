@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.9.59] - 2026-06-14
+
+### Fixed
+
+- **Conductor-spawned children honor `[claude].default_model` at spawn and restart** ([#1437](https://github.com/asheshgoplani/agent-deck/pull/1437), closes [#1431](https://github.com/asheshgoplani/agent-deck/issues/1431)). A session carrying any persisted Claude option (skip-permissions, chrome, teammate-mode) but no explicit model has a non-nil `ClaudeOptions` with an empty `Model`, which short-circuited the `NewClaudeOptions` `default_model` fallback — so the launch command dropped `--model` entirely and the child silently booted on Claude's built-in default (Fable, unavailable account-wide) while the registry still showed it `running`. `buildClaudeExtraFlags`, the single chokepoint every start/restart/resume command delegates flag assembly to, now resolves the launch model (explicit `opts.Model` wins, else `[claude].default_model`); because restart routes through the same point, this also fixes the "restart re-bakes the original model" symptom. A `--model` supplied via `--extra-arg` is respected and suppresses the default to avoid a duplicate flag. Persisting an operator's in-pane `/model` switch across restart is split to follow-up [#1436](https://github.com/asheshgoplani/agent-deck/issues/1436).
+- **`agent-deck add`/`launch --extra-arg "--model opus"` fails fast instead of silently killing tmux bringup** ([#1437](https://github.com/asheshgoplani/agent-deck/pull/1437), closes [#1431](https://github.com/asheshgoplani/agent-deck/issues/1431)). Each `--extra-arg` is shell-quoted as one argument, so a flag mashed with its value reached `claude` as the single bogus arg `'--model opus'` and `claude` exited on startup, leaving a dead pane the registry still reported as running. `ValidateClaudeExtraArgToken` now rejects a token that starts with `-` and contains whitespace at spawn time, pointing the operator at separate tokens or the first-class `--model` flag.
+
+### Added
+
+- **`opencode` MCP attach/detach support** ([#1420](https://github.com/asheshgoplani/agent-deck/pull/1420), closes [#1288](https://github.com/asheshgoplani/agent-deck/issues/1288)). Catalog MCPs can now be written to opencode's local (`<project>/opencode.json`) and global (`~/.config/opencode/opencode.json`) config in opencode's `{"mcp": {...}}` format, preserving sibling keys. The writers fail closed when an existing config file is unparseable — returning an error and leaving the file untouched rather than resetting it to an empty map — so a transient/partial write or a hand-edited-with-comments (JSONC) file can never wipe the user's `model`/`theme`/`keybinds`.
+
 ## [1.9.58] - 2026-06-14
 
 ### Added
