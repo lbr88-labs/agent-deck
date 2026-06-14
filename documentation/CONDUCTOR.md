@@ -101,10 +101,12 @@ config_dir = "~/.claude"
 env_file   = "~/.agent-deck/conductor/my-conductor/.envrc"
 ```
 
-Then write the envrc:
+Then write the envrc, pointing `TELEGRAM_STATE_DIR` at this conductor's
+channel directory (the one you created in step 3d):
 
 ```bash
-echo 'export TELEGRAM_STATE_DIR=~/.agent-deck/channels/telegram-my-conductor' \
+STATE_DIR="$HOME/.agent-deck/channels/telegram-my-conductor"
+echo "export TELEGRAM_STATE_DIR=$STATE_DIR" \
   > ~/.agent-deck/conductor/my-conductor/.envrc
 ```
 

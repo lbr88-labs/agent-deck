@@ -85,7 +85,7 @@ extra_args = ["--agent", "reviewer"] # Extra Claude CLI flags
 env_file = "~/.claude.env"         # .env file specific to Claude sessions
 
 [profiles.work.claude]
-config_dir = "~/.claude-work"      # Optional override for profile "work"
+config_dir = "~/.claude-team"      # Optional override for profile "work"
 ```
 
 | Key | Type | Default | Description |
@@ -117,7 +117,7 @@ Use a global default, then override only profiles that need a different Claude a
 config_dir = "~/.claude"             # Global default (personal)
 
 [profiles.work.claude]
-config_dir = "~/.claude-work"        # Work account
+config_dir = "~/.claude-team"        # Work account
 
 [profiles.clientx.claude]
 config_dir = "~/.claude-clientx"     # Client account
@@ -644,7 +644,7 @@ dangerous_mode = true
 env_file = "~/.claude.env"
 
 [profiles.work.claude]
-config_dir = "~/.claude-work"
+config_dir = "~/.claude-team"
 
 [gemini]
 yolo_mode = true

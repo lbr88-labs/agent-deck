@@ -215,7 +215,7 @@ agent-deck session current --json
 
 **Profile auto-detection priority:**
 1. `AGENTDECK_PROFILE` env var
-2. Parse from `CLAUDE_CONFIG_DIR` (`~/.claude-work` -> `work`)
+2. Parse from `CLAUDE_CONFIG_DIR` (`~/.claude-team` -> `work`)
 3. Config default or `default`
 
 ### session set

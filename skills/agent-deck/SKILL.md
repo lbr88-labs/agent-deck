@@ -678,7 +678,7 @@ The verifier requirement attaches to claims about external mutable state: PRs, r
 
 ```toml
 [claude]
-config_dir = "~/.claude-work"    # Custom Claude profile
+config_dir = "~/.claude-team"    # Custom Claude profile
 dangerous_mode = true            # --dangerously-skip-permissions
 use_chrome = false               # --chrome
 use_teammate_mode = false        # --teammate-mode tmux
@@ -761,7 +761,7 @@ Move a session — conversation included — to a different Claude account (work
 [profiles.personal.claude]
   config_dir = "~/.claude"
 [profiles.work.claude]
-  config_dir = "~/.claude-work"
+  config_dir = "~/.claude-team"
 ```
 
 **Commands:**

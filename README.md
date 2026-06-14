@@ -156,13 +156,13 @@ Attach/detach Claude skills per project with a managed pool workflow.
 
 ### Per-group Claude config
 
-Agent Deck supports per-group `CLAUDE_CONFIG_DIR` and `env_file` overrides. Useful when a single profile hosts groups that should authenticate against different Claude accounts — for example, a personal profile hosting a `conductor` group pinned to `~/.claude-work` while other groups stay on `~/.claude`.
+Agent Deck supports per-group `CLAUDE_CONFIG_DIR` and `env_file` overrides. Useful when a single profile hosts groups that should authenticate against different Claude accounts — for example, a personal profile hosting a `conductor` group pinned to `~/.claude-team` while other groups stay on `~/.claude`.
 
 Override any group by adding a `[groups."<name>".claude]` table to `$XDG_CONFIG_HOME/agent-deck/config.toml` (default `~/.config/agent-deck/config.toml`):
 
 ```toml
 [groups."conductor".claude]
-config_dir = "~/.claude-work"
+config_dir = "~/.claude-team"
 env_file = "~/git/work/.envrc"
 ```
 
@@ -176,7 +176,7 @@ Conductors are first-class agent-deck entities (see `agent-deck conductor setup`
 
 ```toml
 [conductors.gsd-v154.claude]
-config_dir = "~/.claude-work"
+config_dir = "~/.claude-team"
 env_file = "~/git/work/.envrc"
 ```
 
@@ -930,7 +930,7 @@ Yes. Set a global Claude config dir, then add optional per-profile overrides in 
 config_dir = "~/.claude"             # Global default
 
 [profiles.work.claude]
-config_dir = "~/.claude-work"        # Work account
+config_dir = "~/.claude-team"        # Work account
 ```
 
 Run with the target profile:
