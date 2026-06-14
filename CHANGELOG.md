@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.9.61] - 2026-06-14
+
+### Fixed
+
+- **`SaveUserConfig` no longer bloats `config.toml` with zero-value fields, and default-true settings survive an explicit `false`** ([#1383](https://github.com/asheshgoplani/agent-deck/pull/1383)). Saving the config previously rewrote every struct field, including unset zero values, so a minimal hand-written `config.toml` ballooned with defaulted keys on the first save. The serializer now omits zero-value scalars (`omitzero`) and empty collections (`omitempty`), and `stripEmptyTOMLSections` removes the orphan section headers the encoder leaves behind, keeping the on-disk file minimal. Critically, the six default-`true` booleans (e.g. global-search enabled, update checks, MCP-pool stdio fallback) were converted to `*bool` so an explicit `false` is encoded and round-trips losslessly instead of being silently dropped and reverting to its `true` default; the heartbeat interval default (15) is likewise preserved across save/reload. The populated `[mcps]`/`[groups]` sections remain protected by the existing section-drop guard and the `config.toml.bak` backup taken before every save.
+
 ## [1.9.60] - 2026-06-14
 
 ### Added
