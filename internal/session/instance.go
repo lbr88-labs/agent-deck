@@ -1047,6 +1047,25 @@ func (i *Instance) logClaudeConfigResolution() {
 	)
 }
 
+// ValidateClaudeExtraArgToken rejects a single --extra-arg token that looks
+// like a flag mashed together with its value (issue #1431b). Each --extra-arg
+// is shell-quoted as ONE argument, so `--extra-arg "--model opus"` reaches
+// claude as the literal single arg '--model opus' (embedded space) — an
+// unknown flag that makes claude exit on startup and leaves a dead pane the
+// registry still reports as running. A token that starts with '-' AND contains
+// whitespace is almost always two tokens the user meant to pass separately;
+// surfacing it as an error at spawn time beats the silent tmux death. Clean
+// flags ("--model") and clean values ("opus", "be concise") pass.
+func ValidateClaudeExtraArgToken(token string) error {
+	if strings.HasPrefix(token, "-") && strings.ContainsAny(token, " \t\n\r") {
+		return fmt.Errorf(
+			"--extra-arg %q looks like a flag and its value combined; pass them as separate --extra-arg tokens (e.g. --extra-arg \"--model\" --extra-arg \"opus\"), or use the first-class --model flag",
+			token,
+		)
+	}
+	return nil
+}
+
 // buildClaudeExtraFlags builds extra command-line flags string from ClaudeOptions
 // Also handles instance-level flags like --add-dir for subagent access
 func (i *Instance) buildClaudeExtraFlags(opts *ClaudeOptions) string {
@@ -1078,11 +1097,32 @@ func (i *Instance) buildClaudeExtraFlags(opts *ClaudeOptions) string {
 		}
 	}
 
+	// Launch model resolution (#1431). An explicit per-session opts.Model
+	// wins; otherwise fall back to [claude].default_model. The fallback is the
+	// load-bearing fix: a session that persisted ANY other Claude option
+	// (skip-permissions / chrome / teammate-mode) has a non-nil ClaudeOptions
+	// with an empty Model, which bypasses the NewClaudeOptions default_model
+	// fallback in the callers. Without resolving the default here, both spawn
+	// and restart dropped --model entirely and the child silently booted on
+	// Claude's built-in default (Fable, unavailable account-wide) while the
+	// registry still showed it running. Because every start/restart/resume
+	// command delegates flag assembly here, this single point keeps them all
+	// in lockstep.
+	launchModel := ""
+	if opts != nil {
+		launchModel = opts.Model
+	}
+	if launchModel == "" {
+		if cfg, _ := LoadUserConfig(); cfg != nil {
+			launchModel = cfg.Claude.DefaultModel
+		}
+	}
+	if launchModel != "" {
+		flags = append(flags, "--model "+shellescape.Quote(launchModel))
+	}
+
 	// Options-level flags
 	if opts != nil {
-		if opts.Model != "" {
-			flags = append(flags, "--model "+shellescape.Quote(opts.Model))
-		}
 		if opts.SkipPermissions {
 			flags = append(flags, "--dangerously-skip-permissions")
 		} else if opts.AutoMode {
