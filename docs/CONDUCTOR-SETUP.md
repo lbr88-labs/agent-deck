@@ -8,7 +8,7 @@ This is the **onboarding** guide. Once you have a conductor running and
 talking to you, the deeper reference lives in
 [`documentation/CONDUCTOR.md`](../documentation/CONDUCTOR.md).
 
-![Fleet topology: user phone → conductor → child sessions, with watchers ringing the conductor from the side](images/fleet-topology.png)
+![Fleet topology: user phone → conductor → child sessions, with watchers ringing the conductor from the side](conductor/fleet-topology.svg)
 
 ---
 
@@ -50,7 +50,7 @@ You stay in the loop without staring at a terminal.
    `infra`. You can run as many conductors as you want; one name per scope of
    work. Multiple conductors do not share state.
 4. **(Optional) Decide a profile.** If you keep work + personal Claude logins
-   separate (e.g. `~/.claude` vs `~/.claude-work`), pass `-p <profile>` to
+   separate (e.g. `~/.claude` vs `~/.claude-team`), pass `-p <profile>` to
    every command. Otherwise omit it.
 
 ---
@@ -140,7 +140,8 @@ Next steps:
 That single command:
 
 - Created `$XDG_DATA_HOME/agent-deck/conductor/<name>/` (default
-  `~/.local/share/agent-deck/conductor/<name>/`) with `CLAUDE.md`,
+  `~/.local/share/agent-deck/conductor/<name>/`; existing pre-XDG installs
+  keep using `~/.agent-deck/conductor/<name>/`) with `CLAUDE.md`,
   `POLICY.md`, `LEARNINGS.md`, `meta.json`, `state.json`, `task-log.md`.
 - Stored the Telegram token in the conductor `.env` file (chmod 600).
   **Never commit this file.**
@@ -297,7 +298,7 @@ will start under the wrong identity. Pin the profile explicitly:
 
 ```toml
 [conductors.work.claude]
-config_dir = "~/.claude-work"
+config_dir = "~/.claude-team"
 ```
 
 Lookup precedence (highest wins):
@@ -323,7 +324,7 @@ agent-deck conductor teardown --all --remove    # nuke every conductor in this p
 
 Managed claude sessions share one OAuth token: agent-deck symlinks each
 session's scratch `$CLAUDE_CONFIG_DIR/.credentials.json` to the canonical
-profile credentials (e.g. `~/.claude-work/.credentials.json`). **Log in once,
+profile credentials (e.g. `~/.claude-team/.credentials.json`). **Log in once,
 in the canonical profile, and every session inherits it through that symlink.**
 
 If you run `/login` *inside* a managed session, Claude replaces the symlink
@@ -348,8 +349,8 @@ You will almost certainly want more than one — typical pairing:
 | Conductor | Profile | Channel |
 |-----------|--------------|------------------------|
 | `personal` | `~/.claude` | `@my_personal_bot` |
-| `work` | `~/.claude-work` | `@my_work_bot` |
-| `oncall` | `~/.claude-work` | `@my_oncall_bot` |
+| `work` | `~/.claude-team` | `@my_work_bot` |
+| `oncall` | `~/.claude-team` | `@my_oncall_bot` |
 
 Each gets its **own** Telegram bot (one bot = one conductor — see gotcha
 #1). They run side by side, never share state, and each escalates to a
