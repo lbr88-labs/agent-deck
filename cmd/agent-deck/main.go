@@ -1195,6 +1195,9 @@ func handleAdd(profile string, args []string) {
 	// buildClaudeExtraFlags.
 	var extraArgFlags []string
 	fs.Func("extra-arg", "Extra claude CLI token (can specify multiple times); requires -c claude; persisted plaintext — no secrets", func(s string) error {
+		if err := session.ValidateClaudeExtraArgToken(s); err != nil {
+			return err
+		}
 		extraArgFlags = append(extraArgFlags, s)
 		return nil
 	})
