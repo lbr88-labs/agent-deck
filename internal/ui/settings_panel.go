@@ -268,7 +268,7 @@ func (s *SettingsPanel) LoadConfig(config *session.UserConfig) {
 	s.hermesYoloMode = config.Hermes.YoloMode
 
 	// Update settings
-	s.checkForUpdates = config.Updates.CheckEnabled
+	s.checkForUpdates = config.Updates.GetCheckEnabled()
 	s.autoUpdate = config.Updates.AutoUpdate
 
 	// Log settings
@@ -280,10 +280,10 @@ func (s *SettingsPanel) LoadConfig(config *session.UserConfig) {
 	if s.logMaxLines <= 0 {
 		s.logMaxLines = 10000
 	}
-	s.removeOrphans = config.Logs.RemoveOrphans
+	s.removeOrphans = config.Logs.GetRemoveOrphans()
 
 	// Global search settings
-	s.globalSearchEnabled = config.GlobalSearch.Enabled
+	s.globalSearchEnabled = config.GlobalSearch.GetEnabled()
 	s.searchTier = 0 // auto by default
 	for i, val := range tierValues {
 		if val == config.GlobalSearch.Tier {
@@ -409,16 +409,19 @@ func (s *SettingsPanel) GetConfig() *session.UserConfig {
 	config.Hermes.YoloMode = s.hermesYoloMode
 
 	// Update settings
-	config.Updates.CheckEnabled = s.checkForUpdates
+	checkForUpdates := s.checkForUpdates
+	config.Updates.CheckEnabled = &checkForUpdates
 	config.Updates.AutoUpdate = s.autoUpdate
 
 	// Log settings
 	config.Logs.MaxSizeMB = s.logMaxSizeMB
 	config.Logs.MaxLines = s.logMaxLines
-	config.Logs.RemoveOrphans = s.removeOrphans
+	removeOrphans := s.removeOrphans
+	config.Logs.RemoveOrphans = &removeOrphans
 
 	// Global search settings
-	config.GlobalSearch.Enabled = s.globalSearchEnabled
+	globalSearchEnabled := s.globalSearchEnabled
+	config.GlobalSearch.Enabled = &globalSearchEnabled
 	if s.searchTier >= 0 && s.searchTier < len(tierValues) {
 		config.GlobalSearch.Tier = tierValues[s.searchTier]
 	}

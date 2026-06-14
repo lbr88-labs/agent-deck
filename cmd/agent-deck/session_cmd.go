@@ -3615,8 +3615,9 @@ func handleSessionSearch(profile string, args []string) {
 	}
 
 	claudeDir := session.GetClaudeConfigDir()
+	searchEnabled := true
 	cfg := session.GlobalSearchSettings{
-		Enabled:        true,
+		Enabled:        &searchEnabled,
 		Tier:           *tierFlag,
 		MemoryLimitMB:  100,
 		RecentDays:     *recentDays,

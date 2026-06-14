@@ -76,7 +76,7 @@ func writeVersionOutput(w io.Writer, currentVersion string) {
 // Uses cache to avoid API calls - only prints if update was already detected
 func printUpdateNotice() {
 	settings := session.GetUpdateSettings()
-	if !settings.CheckEnabled || !settings.NotifyInCLI {
+	if !settings.GetCheckEnabled() || !settings.GetNotifyInCLI() {
 		return
 	}
 
@@ -93,7 +93,7 @@ func printUpdateNotice() {
 // promptForUpdate checks for updates and prompts user if auto_update is enabled
 func promptForUpdate() bool {
 	settings := session.GetUpdateSettings()
-	if !settings.CheckEnabled {
+	if !settings.GetCheckEnabled() {
 		return false
 	}
 
@@ -531,9 +531,7 @@ func main() {
 			if ls.DebugRetentionDays > 0 {
 				logCfg.MaxAgeDays = ls.DebugRetentionDays
 			}
-			if ls.DebugCompress {
-				logCfg.Compress = ls.DebugCompress
-			}
+			logCfg.Compress = ls.GetDebugCompress()
 			if ls.RingBufferMB > 0 {
 				logCfg.RingBufferSize = ls.RingBufferMB * 1024 * 1024
 			}
