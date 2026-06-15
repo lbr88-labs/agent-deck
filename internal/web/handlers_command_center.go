@@ -171,7 +171,9 @@ func (s *Server) handleCommandCenterEvents(w http.ResponseWriter, r *http.Reques
 		writeAPIError(w, http.StatusMethodNotAllowed, "METHOD_NOT_ALLOWED", "method not allowed")
 		return
 	}
-	if !s.authorizeRequest(r) {
+	// SSE: the browser EventSource API cannot set an Authorization header, so
+	// accept the token from the query string here (the client appends it).
+	if !s.authorizeStreamRequest(r) {
 		writeAPIError(w, http.StatusUnauthorized, "UNAUTHORIZED", "unauthorized")
 		return
 	}

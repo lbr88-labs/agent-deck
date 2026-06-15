@@ -23,6 +23,18 @@ func (s *Server) authorizeWSRequest(r *http.Request) bool {
 	return s.authorize(r, true)
 }
 
+// authorizeStreamRequest authorizes a streaming endpoint (Server-Sent Events
+// via EventSource, or any push channel opened by the browser without explicit
+// fetch options). Like the WS handshake, the browser EventSource API cannot set
+// an Authorization header, so the token must travel on the query string. The
+// client appends ?token=<tok> to the stream URL and the same Referrer-Policy:
+// no-referrer + URL-strip mitigations from report #5 apply. Without this, the
+// menu and command-center SSE feeds 401 in token mode (page serves but the live
+// fleet snapshot never arrives — "Waiting for the first fleet snapshot…").
+func (s *Server) authorizeStreamRequest(r *http.Request) bool {
+	return s.authorize(r, true)
+}
+
 func (s *Server) authorize(r *http.Request, allowQueryToken bool) bool {
 	if s.cfg.Token == "" {
 		return true
