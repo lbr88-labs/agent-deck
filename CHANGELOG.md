@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.9.66] - 2026-06-15
+
+### Fixed
+
+- **Headless `web --no-tui` daemon now works under a process supervisor** ([#1455](https://github.com/asheshgoplani/agent-deck/pull/1455), fixes [#1452](https://github.com/asheshgoplani/agent-deck/issues/1452)). Two bugs made `agent-deck web --no-tui` unusable when running under launchd/systemd: (1) The single-instance guard (`ElectPrimary`) was missing the same `!webHeadless` exemption already present on the three adjacent TUI-only guards, so a supervised headless daemon crash-looped when a TUI held the profile primary. (2) A tmux attach client with no `TERM` (common under supervisors) aborted with "open terminal failed: terminal does not support clear" leaving the browser terminal blank. A new `ensureTERM()` helper guarantees a usable `TERM` on the attach environment; the daemon now coexists correctly with an interactive TUI.
+
 ## [1.9.65] - 2026-06-14
 
 ### Fixed
