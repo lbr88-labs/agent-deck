@@ -458,9 +458,13 @@ func main() {
 		}
 	}
 
-	// Check if multiple instances are allowed (uses primary election as single-instance gate)
+	// Check if multiple instances are allowed (uses primary election as single-instance gate).
+	// In headless web mode (--no-tui), skip the gate — a headless HTTP server is meant to
+	// coexist with an interactive TUI for the same profile (the whole point of --no-tui), and
+	// the sibling TUI-launch guards above skip the same way. Without this, restarting the web
+	// daemon while a TUI holds the profile primary makes it lose ElectPrimary and exit.
 	instanceSettings := session.GetInstanceSettings()
-	if !instanceSettings.GetAllowMultiple() {
+	if !webHeadless && !instanceSettings.GetAllowMultiple() {
 		if db := statedb.GetGlobal(); db != nil {
 			isFirst, electErr := db.ElectPrimary(30 * time.Second)
 			if electErr == nil && !isFirst {

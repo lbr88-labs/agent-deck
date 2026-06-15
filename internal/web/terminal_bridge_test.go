@@ -127,6 +127,105 @@ func TestResize_AcceptsReasonableDimensions(t *testing.T) {
 	}
 }
 
+// TestEnsureTERM exercises the launchd/systemd failure mode directly: a web
+// daemon spawned by a supervisor inherits an environment with no TERM, and a
+// tmux attach client with an unset/empty TERM aborts with "open terminal
+// failed: terminal does not support clear". ensureTERM must guarantee a usable
+// TERM without clobbering one the daemon legitimately inherited.
+func TestEnsureTERM(t *testing.T) {
+	const fallback = "TERM=xterm-256color"
+
+	countTERM := func(env []string) (n int, last string) {
+		for _, kv := range env {
+			if strings.HasPrefix(kv, "TERM=") {
+				n++
+				last = kv
+			}
+		}
+		return n, last
+	}
+
+	t.Run("unset TERM gets the fallback appended", func(t *testing.T) {
+		env := []string{"PATH=/usr/bin", "HOME=/home/x"}
+		got := ensureTERM(env)
+		n, last := countTERM(got)
+		if n != 1 || last != fallback {
+			t.Fatalf("want exactly one %q, got n=%d last=%q (env=%v)", fallback, n, last, got)
+		}
+	})
+
+	t.Run("empty TERM is replaced in place, not duplicated", func(t *testing.T) {
+		env := []string{"TERM=", "PATH=/usr/bin"}
+		got := ensureTERM(env)
+		n, last := countTERM(got)
+		if n != 1 {
+			t.Fatalf("empty TERM must be replaced, not shadowed: got %d TERM entries (env=%v)", n, got)
+		}
+		if last != fallback {
+			t.Fatalf("want TERM replaced with %q, got %q", fallback, last)
+		}
+	})
+
+	t.Run("whitespace-only TERM is treated as empty and replaced", func(t *testing.T) {
+		env := []string{"TERM=   ", "PATH=/usr/bin"}
+		got := ensureTERM(env)
+		n, last := countTERM(got)
+		if n != 1 || last != fallback {
+			t.Fatalf("whitespace TERM must be replaced: got n=%d last=%q (env=%v)", n, last, got)
+		}
+	})
+
+	t.Run("inherited non-empty TERM is preserved untouched", func(t *testing.T) {
+		env := []string{"TERM=screen-256color", "PATH=/usr/bin"}
+		got := ensureTERM(env)
+		n, last := countTERM(got)
+		if n != 1 || last != "TERM=screen-256color" {
+			t.Fatalf("inherited TERM must be preserved: got n=%d last=%q", n, last)
+		}
+	})
+
+	t.Run("nil env is materialized and gets a TERM", func(t *testing.T) {
+		got := ensureTERM(nil)
+		if got == nil {
+			t.Fatal("nil env must be materialized, got nil")
+		}
+		if n, _ := countTERM(got); n == 0 {
+			t.Fatalf("materialized env must contain a TERM, got none (len=%d)", len(got))
+		}
+	})
+}
+
+// TestTmuxAttachCommand_InjectsTERM guards the wiring: the attach command's
+// environment must always carry a non-empty TERM regardless of socket path, so
+// the bridge renders under a TERM-less supervisor.
+func TestTmuxAttachCommand_InjectsTERM(t *testing.T) {
+	t.Setenv("TERM", "") // simulate a launchd-spawned daemon with no TERM
+
+	for _, tc := range []struct {
+		name       string
+		socketName string
+		tmuxEnv    string
+	}{
+		{"default server", "", ""},
+		{"socket from TMUX env", "", "/tmp/tmux-test.sock,1,0"},
+		{"explicit socket name", "agent-deck", ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv("TMUX", tc.tmuxEnv)
+			cmd := tmuxAttachCommand("sess", tc.socketName)
+			found := false
+			for _, kv := range cmd.Env {
+				if strings.HasPrefix(kv, "TERM=") && strings.TrimSpace(kv[len("TERM="):]) != "" {
+					found = true
+				}
+			}
+			if !found {
+				t.Fatalf("attach command env must carry a non-empty TERM, got %v", cmd.Env)
+			}
+		})
+	}
+}
+
 // TestTmuxAttachCommand_WhitespaceSocketNameFallsBackToEnv: the same
 // defensive trim we use elsewhere. A typo like `socket_name = "   "` in
 // config must not send the web bridge to a phantom server named "   " —

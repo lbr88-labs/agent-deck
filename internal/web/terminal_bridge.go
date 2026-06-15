@@ -283,7 +283,39 @@ func tmuxAttachCommand(sessionName, socketName string) *exec.Cmd {
 	// for ALL attached clients (Ghostty, iTerm) — the dots-in-window symptom.
 	// With largest in effect, every client sees content sized to the biggest
 	// viewer; smaller clients see a clipped portion rather than dot-filled void.
-	return tmuxCommand(socketName, "attach-session", "-t", sessionName)
+	cmd := tmuxCommand(socketName, "attach-session", "-t", sessionName)
+	// Guarantee a usable TERM for the attach client. When the web daemon runs
+	// under launchd/systemd its environment carries no TERM, and a tmux attach
+	// client with an empty/unset TERM aborts with "open terminal failed:
+	// terminal does not support clear" — the web terminal then never renders
+	// and the browser's resize message races the dying bridge into
+	// RESIZE_FAILED. The browser side is xterm.js, so xterm-256color is the
+	// correct client terminal type. A TERM the daemon legitimately inherited
+	// (e.g. `agent-deck web` launched from an interactive shell) is preserved.
+	cmd.Env = ensureTERM(cmd.Env)
+	return cmd
+}
+
+// ensureTERM returns env with a non-empty TERM guaranteed. A nil env (the
+// inherit-parent default) is materialized from os.Environ() first so the
+// appended TERM is not dropped. An existing non-empty TERM is left untouched;
+// an existing but empty TERM (`TERM=`) is replaced in place rather than
+// shadowed by a duplicate entry — execve passes the slice verbatim and getenv
+// resolution order for duplicate keys is unspecified, so a trailing append
+// could leave the empty value winning and tmux would still abort.
+func ensureTERM(env []string) []string {
+	if env == nil {
+		env = os.Environ()
+	}
+	for i, kv := range env {
+		if strings.HasPrefix(kv, "TERM=") {
+			if strings.TrimSpace(kv[len("TERM="):]) == "" {
+				env[i] = "TERM=xterm-256color"
+			}
+			return env
+		}
+	}
+	return append(env, "TERM=xterm-256color")
 }
 
 func tmuxSocketFromEnv() (string, bool) {
