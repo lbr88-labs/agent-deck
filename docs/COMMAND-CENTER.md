@@ -93,7 +93,60 @@ account/conductor, never the credential. (Asserted in
   rows + input bar, **live SSE update without reload**, **error/stopped
   filtering**, two-way input routing (the web-UI TDD gate).
 
-## v2 (planned — follow-on PR)
+## v2 Phase 1 (BUILT — pending Ashesh's test sign-off, NOT merged)
+
+Phase 1 of v2 is built on `feat/command-center-v2-phase1` and adds, additively
+to the v1 surface:
+
+1. **Per-project DETAIL pages — live aggregations.** Click a conductor's
+   `open →` (or press its digit 1–9) → an in-app detail page that aggregates the
+   conductor's four feeds (Addendum 1), never hand-written:
+   - status/activity (conductor status + `status.json` `headline`/`inProgress`/
+     `recentlyDone`),
+   - **produced docs** from the conductor's `outputs/` dir, rendered markdown→
+     HTML inline, newest first (the self-maintaining convention),
+   - its live session list (error/stopped filtered out),
+   - its decisions-waiting (the §D subset scoped to this conductor).
+   Endpoint: `GET /api/command-center/detail/{name}`. Esc / `← back` returns to
+   the god-view list.
+2. **The `outputs/` convention.** Each conductor drops its key docs/updates into
+   `~/.agent-deck/conductor/<name>/outputs/*.md` (+ an optional `status.json`).
+   The Command Center watches that location (via the live snapshot fingerprint,
+   which now folds in each conductor's doc count + newest-doc mtime) and renders
+   whatever's there — markdown inline, "updated X ago" from the file mtime. This
+   is a fleet-wide convention (document in the shared conductor CLAUDE.md so all
+   conductors adopt it); the Command Center is the universal renderer over it.
+   The markdown renderer (`internal/web/markdown.go`) is a small, dependency-free,
+   injection-safe subset (escapes all text, fixed safe-tag whitelist, drops
+   `javascript:`/`data:` hrefs) — the server is the sanitize boundary.
+3. **Comment-on-anything (💬), context-aware routing (Addendum 2).** A 💬 on any
+   conductor / session / decision prefills the input with that entity's `re …:`
+   reference and attaches a `context` object to `/ask`. A detail-page input box
+   is **pre-scoped to its conductor** (no picker — the target is implicit), so a
+   comment on a project routes straight to that conductor's session via the
+   supported `session send` path. The server composes the tagged message
+   (`[command-center re <ref>] <text>`) so the receiver knows exactly what's
+   being commented on.
+4. **Acknowledgements (Addendum 4 — never silence).** Every ask records an ack
+   the instant it's sent (before the request resolves) and advances it through
+   `received → routed → session-created → result` (or `failed`): driven by the
+   `/ask` ack payload, the live SSE feed (a growing session count advances a
+   routed ack to "session created" — asks-become-real-work), and a correlated
+   read-back (`GET /api/command-center/reply`, which shells `session output -q`).
+   The user always sees their input landed, where it routed, and the outcome.
+5. **Keyboard nav.** ↑/↓ move row focus, Enter opens the focused conductor,
+   digits 1–9 jump+open, `/` focuses the input, Esc backs out / blurs.
+
+Coverage: `internal/web/markdown_test.go` (5, incl. XSS) +
+`internal/web/handlers_command_center_detail_test.go` (9) +
+`tests/web/e2e/command-center.spec.js` (+5 v2 cases, 30 total across desktop/
+tablet/phone — the web-UI TDD gate). The web fixture
+(`tests/web/fixtures/cmd/web-fixture/main.go`) now isolates `XDG_DATA_HOME` and
+seeds a deterministic conductor artifact tree (so the fixture never reads the
+host's real conductor dir — a data-safety fix — and detail pages have stable
+e2e content).
+
+### Remaining v2 (Phase 2 — follow-on)
 
 v2 deepens interactivity and per-project depth. It is additive to the v1 surface
 and ships as its own review-gated PR.

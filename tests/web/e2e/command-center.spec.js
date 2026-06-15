@@ -108,3 +108,81 @@ test.describe('command center pane', () => {
     await expect(page.locator('[data-testid="cc-status"]')).not.toHaveText('ready', { timeout: 6000 })
   })
 })
+
+// ---- Command Center v2 (Phase 1) ---------------------------------------------
+// Per-project detail pages (live aggregation), comment-on-anything with context,
+// keyboard nav, acknowledgements. The fixture seeds a conductor artifact tree
+// (web-fixture/main.go seedConductorArtifacts): the "work" conductor row carries
+// a status.json headline + an outputs/summary.md doc + a live "frontend" session.
+test.describe('command center v2 — detail pages', () => {
+  test.beforeEach(async ({ request }) => {
+    await request.post('/__fixture/reset')
+  })
+
+  test('opens a per-project detail page that aggregates docs + sessions live', async ({ page }) => {
+    await openCommandCenter(page)
+    // Each conductor row exposes an "open →" affordance into its detail page.
+    const workRow = page.locator('[data-testid="cc-conductor"][data-name="work"]')
+    await expect(workRow).toBeVisible({ timeout: 5000 })
+    await workRow.locator('[data-testid="cc-open-detail"]').click()
+
+    // The detail page mounts and aggregates the four feeds.
+    const detail = page.locator('[data-testid="command-center-detail-pane"]')
+    await expect(detail).toBeVisible({ timeout: 5000 })
+    // (a) status/activity headline from status.json
+    await expect(page.locator('[data-testid="ccd-headline"]')).toContainText('work conductor', { timeout: 5000 })
+    // (b) produced doc rendered inline (markdown → HTML)
+    const doc = page.locator('[data-testid="ccd-doc"]').first()
+    await expect(doc).toBeVisible({ timeout: 5000 })
+    await expect(doc.locator('.ccd-doc-body.md strong')).toContainText('inline')
+    // (c) live session list (the frontend child of group work)
+    await expect(page.locator('[data-testid="ccd-session"]').first()).toBeVisible()
+    // The input box is pre-scoped to this conductor — no target picker.
+    await expect(page.locator('[data-testid="ccd-input"] .ccd-scope')).toContainText('conductor-work')
+  })
+
+  test('Esc and the back button return to the god-view list', async ({ page }) => {
+    await openCommandCenter(page)
+    await page.locator('[data-testid="cc-conductor"][data-name="work"] [data-testid="cc-open-detail"]').click()
+    await expect(page.locator('[data-testid="command-center-detail-pane"]')).toBeVisible({ timeout: 5000 })
+
+    // Esc backs out to the list.
+    await page.keyboard.press('Escape')
+    await expect(page.locator('[data-testid="command-center-pane"]')).toBeVisible({ timeout: 5000 })
+    await expect(page.locator('[data-testid="command-center-detail-pane"]')).toHaveCount(0)
+
+    // Re-open, then use the explicit back button.
+    await page.locator('[data-testid="cc-conductor"][data-name="work"] [data-testid="cc-open-detail"]').click()
+    await expect(page.locator('[data-testid="command-center-detail-pane"]')).toBeVisible({ timeout: 5000 })
+    await page.locator('[data-testid="ccd-back"]').click()
+    await expect(page.locator('[data-testid="command-center-pane"]')).toBeVisible({ timeout: 5000 })
+  })
+
+  test('digit-jump opens the matching conductor detail page', async ({ page }) => {
+    await openCommandCenter(page)
+    await expect(page.locator('[data-testid="cc-conductor"]').first()).toBeVisible({ timeout: 5000 })
+    // Pressing "1" jumps to + opens the first conductor row's detail page.
+    await page.keyboard.press('1')
+    await expect(page.locator('[data-testid="command-center-detail-pane"]')).toBeVisible({ timeout: 5000 })
+  })
+
+  test('commenting on a decision prefills the input with its context', async ({ page }) => {
+    await openCommandCenter(page)
+    // The fixture's OPEN-ITEMS §D seeds one decision (#777). Comment on it.
+    const decision = page.locator('[data-testid="cc-decision"]').first()
+    await expect(decision).toBeVisible({ timeout: 5000 })
+    await decision.locator('.cc-cmt').click()
+    // The input is prefilled with a context-scoped "re <id>:" reference.
+    await expect(page.locator('[data-testid="cc-input"] textarea')).toHaveValue(/^re /)
+  })
+
+  test('asking shows an acknowledgement (never silence)', async ({ page }) => {
+    await openCommandCenter(page)
+    await page.locator('[data-testid="cc-input"] textarea').fill('kick off the release')
+    await page.locator('[data-testid="cc-send"]').click()
+    // An ack appears immediately with the "got it → routed" progression
+    // (Addendum 4), independent of whether a live agent is behind the target.
+    await expect(page.locator('[data-testid="cc-acks"]')).toBeVisible({ timeout: 6000 })
+    await expect(page.locator('[data-testid="cc-ack"]').first()).toContainText('kick off the release')
+  })
+})

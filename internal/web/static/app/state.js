@@ -181,6 +181,27 @@ export const systemStatsSignal = signal(null)
 // SSE snapshot lands; the pane handles the null case with a skeleton.
 export const commandCenterSignal = signal(null)
 
+// Command Center v2 (Phase 1) nav: which view the pane shows.
+//   null            → the list / god-view (default)
+//   "<conductor>"   → that project's detail page (in + Esc back)
+export const ccDetailNameSignal = signal(null)
+// The fetched detail aggregation for the open detail page (null while loading).
+export const ccDetailSignal = signal(null)
+// Acknowledgements: a small list of {correlationId, target, text, stage, reply,
+// at} items the input appends to on send and advances via read-back (Addendum 4
+// "got it → routed → result", never silence). Newest first, capped.
+export const ccAcksSignal = signal([])
+
+export function pushAck(ack) {
+  const next = [ack, ...ccAcksSignal.value].slice(0, 8)
+  ccAcksSignal.value = next
+}
+
+export function updateAck(correlationId, patch) {
+  ccAcksSignal.value = ccAcksSignal.value.map(a =>
+    a.correlationId === correlationId ? { ...a, ...patch } : a)
+}
+
 export async function loadArchivedSessions() {
   try {
     const data = await apiFetch('GET', '/api/sessions/archived')

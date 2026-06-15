@@ -20,6 +20,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"sync"
 	"syscall"
 	"time"
@@ -34,6 +35,16 @@ func main() {
 	portFile := flag.String("port-file", "", "If set, write the bound TCP port to this file once listening (used with :0)")
 	startupToken := flag.String("startup-token", "", "Echoed at /__fixture/whoami so callers can verify they're talking to this exact process")
 	flag.Parse()
+
+	// Isolate the fixture's view of the on-disk conductor artifacts the Command
+	// Center reads (status.json / outputs/*.md / OPEN-ITEMS.md). Without this the
+	// detail/status handlers would read the host's real ~/.agent-deck/conductor
+	// (a data leak + non-deterministic tests). We point XDG_DATA_HOME at a temp
+	// tree and seed deterministic v2 detail-page content into it.
+	if err := seedConductorArtifacts(); err != nil {
+		fmt.Fprintf(os.Stderr, "web-fixture: seeding conductor artifacts failed: %v\n", err)
+		os.Exit(1)
+	}
 
 	store := newFixtureStore()
 	store.seed()
@@ -638,6 +649,48 @@ func (s *fixtureStore) adminHandler() http.Handler {
 		}
 	})
 	return mux
+}
+
+// seedConductorArtifacts plants a deterministic conductor artifact tree under a
+// fresh XDG_DATA_HOME so the Command Center v2 detail pages have stable content
+// in e2e tests, and so the fixture NEVER reads the host's real conductor dir.
+// The "work" group (which carries the "frontend" session in seed()) gets a
+// status.json + an outputs/ doc so its detail page renders the full aggregation.
+func seedConductorArtifacts() error {
+	base, err := os.MkdirTemp("", "ad-web-fixture-xdg-")
+	if err != nil {
+		return err
+	}
+	// agentpaths.EffectiveDataPath("conductor", ...) resolves under
+	// $XDG_DATA_HOME/agent-deck/conductor.
+	if err := os.Setenv("XDG_DATA_HOME", base); err != nil {
+		return err
+	}
+	conductorDir := filepath.Join(base, "agent-deck", "conductor")
+
+	workOut := filepath.Join(conductorDir, "work", "outputs")
+	if err := os.MkdirAll(workOut, 0o755); err != nil {
+		return err
+	}
+	status := `{"headline":"work conductor: fixture build green","inProgress":["wiring the detail page"],"recentlyDone":["shipped v2 phase 1"]}`
+	if err := os.WriteFile(filepath.Join(conductorDir, "work", "status.json"), []byte(status), 0o644); err != nil {
+		return err
+	}
+	doc := "# Fixture Summary\n\nThis doc renders **inline** on the detail page.\n\n- live aggregation\n- markdown to HTML\n\n`session send` is the routing primitive.\n"
+	if err := os.WriteFile(filepath.Join(workOut, "summary.md"), []byte(doc), 0o644); err != nil {
+		return err
+	}
+
+	// Decisions §D for the agent-deck conductor (the parse target).
+	adDir := filepath.Join(conductorDir, "agent-deck")
+	if err := os.MkdirAll(adDir, 0o755); err != nil {
+		return err
+	}
+	openItems := "## D. DECISIONS — waiting on Ashesh\n#777 fixture decision waiting on you\n\n## E. OTHER\nx\n"
+	if err := os.WriteFile(filepath.Join(adDir, "OPEN-ITEMS.md"), []byte(openItems), 0o644); err != nil {
+		return err
+	}
+	return nil
 }
 
 func indexOf(s string, c byte) int {

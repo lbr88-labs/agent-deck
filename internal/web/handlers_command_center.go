@@ -80,6 +80,11 @@ type CommandCenterConductor struct {
 	// Sessions are the conductor's active children, error/stopped filtered out.
 	Sessions []CommandCenterSession `json:"sessions"`
 	Counts   CommandCenterCounts    `json:"counts"`
+	// DocCount is how many output docs this conductor has produced (drives the
+	// "open detail" affordance + a "N docs" hint on the list row). LastDocAt is
+	// the newest doc's mtime (RFC3339), for an "updated X ago" cue.
+	DocCount  int    `json:"docCount"`
+	LastDocAt string `json:"lastDocAt,omitempty"`
 }
 
 // CommandCenterSession is one active child session in a conductor's group.
@@ -124,13 +129,13 @@ type CommandCenterCompletion struct {
 	At     string `json:"at"`
 }
 
-// askRequest is the POST /api/command-center/ask body.
+// askRequest is the POST /api/command-center/ask body. Context is the optional
+// comment-on-anything scope (Addendum 2): which decision/session/project the
+// input refers to, so the message routed to the owning conductor references it.
 type askRequest struct {
-	Target  string `json:"target"` // "maestro" | "conductor-<name>" | "auto"
-	Text    string `json:"text"`   // the instruction
-	Context struct {
-		DecisionID string `json:"decisionId"`
-	} `json:"context,omitempty"`
+	Target  string     `json:"target"` // "maestro" | "conductor-<name>" | "auto"
+	Text    string     `json:"text"`   // the instruction
+	Context askContext `json:"context,omitempty"`
 }
 
 // ccPrevStatuses tracks the last observed status per session id, per profile,
@@ -364,6 +369,11 @@ func buildCommandCenterSnapshot(menu *MenuSnapshot, profile, artifactDir string,
 			cd.Substate = c.substate
 			snap.AskTargets = append(snap.AskTargets, c.title)
 		}
+		// Cheap outputs/ metadata for the list row's "open detail" affordance —
+		// count + newest mtime only, NOT a full render (that's the detail page).
+		if artifactDir != "" {
+			cd.DocCount, cd.LastDocAt = conductorDocsMeta(filepath.Join(artifactDir, name, conductorOutputsDirName))
+		}
 		// plain-language "currently working on": disk status feed wins, else
 		// the conductor's own latest prompt.
 		if feed, ok := statusFeeds[name]; ok && feed != "" {
@@ -585,10 +595,11 @@ func (s *Server) handleCommandCenterAsk(w http.ResponseWriter, r *http.Request) 
 	}
 
 	// Tag the message like every other inbound channel so the receiving
-	// conductor knows the source. text is passed as a single argv element to
-	// `session send` — never interpolated into a shell string — closing the
-	// multiline / metacharacter footgun.
-	msg := "[command-center] " + text
+	// conductor knows the source, and scope it to the commented entity when the
+	// request carries context (Addendum 2 context-aware routing). text is passed
+	// as a single argv element to `session send` — never interpolated into a
+	// shell string — closing the multiline / metacharacter footgun.
+	msg := composeAskMessage(text, req.Context)
 
 	exe, err := os.Executable()
 	if err != nil || exe == "" {
@@ -625,11 +636,17 @@ func (s *Server) handleCommandCenterAsk(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
+	// Acknowledgement payload (Addendum 4): "got it → routed to X". The panel
+	// shows this immediately, then advances the progression (→ result) by
+	// polling /api/command-center/reply with the correlationId, and reflects any
+	// new session the conductor spawns via the live SSE feed. Never silence.
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusAccepted)
 	_ = json.NewEncoder(w).Encode(map[string]string{
 		"correlationId": correlationID,
 		"routedTo":      resolved,
+		"stage":         "routed",
+		"ack":           "got it — routed to " + resolved,
 	})
 }
 

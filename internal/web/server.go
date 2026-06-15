@@ -248,6 +248,10 @@ func NewServer(cfg Config) *Server {
 	mux.HandleFunc("/api/command-center/status", s.handleCommandCenterStatus)
 	mux.HandleFunc("/events/command-center", s.handleCommandCenterEvents)
 	mux.HandleFunc("POST /api/command-center/ask", s.handleCommandCenterAsk)
+	// Command Center v2 (Phase 1): per-project detail aggregation + correlated
+	// reply read-back. Same authorize/CSRF/mutation security envelope.
+	mux.HandleFunc("/api/command-center/detail/", s.handleCommandCenterDetail)
+	mux.HandleFunc("/api/command-center/reply", s.handleCommandCenterReply)
 
 	mux.HandleFunc("/api/costs/summary", s.handleCostsSummary)
 	mux.HandleFunc("/api/costs/daily", s.handleCostsDaily)

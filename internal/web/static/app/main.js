@@ -10,6 +10,8 @@ import {
   connectionSignal,
   authTokenSignal,
   commandCenterSignal,
+  ccAcksSignal,
+  updateAck,
 } from './state.js'
 import { addToast } from './Toast.js'
 
@@ -115,7 +117,12 @@ export function startCommandCenterSSE() {
     try {
       const snapshot = JSON.parse(event.data)
       if (snapshot && typeof snapshot === 'object') {
+        // Reflect asks-become-real-work (Addendum 4): if the fleet's active
+        // session count grew since the previous snapshot, the conductor likely
+        // spawned work for a recent ask — advance that ack to "session-created".
+        const prev = commandCenterSignal.value
         commandCenterSignal.value = snapshot
+        reflectSpawnIntoAcks(prev, snapshot)
         const done = Array.isArray(snapshot.recentlyCompleted) ? snapshot.recentlyCompleted : []
         for (const c of done) {
           const key = (c && (c.id || '')) + ':' + (c && (c.at || ''))
@@ -135,6 +142,23 @@ export function startCommandCenterSSE() {
 
   // The command-center stream shares the connection-state signal via the menu
   // stream; we don't flip it here to avoid fighting the menu reconnect logic.
+}
+
+// reflectSpawnIntoAcks advances the most recent still-"routed" ack to
+// "session-created" when the fleet's total active session count grows between
+// two snapshots — the cheap, free reflection that an ask became real work
+// (Addendum 4). The correlated read-back independently advances acks to
+// "result"; whichever fires first wins.
+function totalActive(snap) {
+  const t = snap && snap.totals
+  if (!t) return 0
+  return (t.running || 0) + (t.waiting || 0) + (t.idle || 0)
+}
+function reflectSpawnIntoAcks(prev, next) {
+  if (!prev || totalActive(next) <= totalActive(prev)) return
+  const acks = ccAcksSignal.value
+  const recent = acks.find(a => a.stage === 'routed')
+  if (recent) updateAck(recent.correlationId, { stage: 'session-created' })
 }
 
 // ---------- Initial menu load + SSE kick-off ----------
