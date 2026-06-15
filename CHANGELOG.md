@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.9.68] - 2026-06-15
+
+### Added
+
+- **Command Center — a live, two-way fleet god-view tab in the web UI.** A new first tab in `agent-deck web` that renders cross-project status live and lets you act on it, productizing the hand-made conductor status pages into a real feature. It composes the existing web-server plumbing (the SSE feed, the WebMutator security model, the profile model, and the supported `session send` inbound path) — no new server, no new daemon, no new auth surface.
+  - **Live, no polling.** A new `GET /events/command-center` SSE stream (fingerprint-diffed + heartbeat, subscribed to the same change channel as the menu feed) pushes a synthesized snapshot the instant fleet state changes; the panel re-renders off a signal with no reload.
+  - **Completion notifications.** The stream diffs each session's status between snapshots server-side and fires a "✅ X just finished" toast when a session transitions out of `running`.
+  - **See-everything, noise filtered.** Per-conductor rows show health plus active child sessions and what each is working on; error/stopped sessions are filtered out by construction, and Honest Status v2 substates (`model-unavailable` / `auth-401`) are surfaced distinctly instead of hidden as "running".
+  - **Decisions waiting on you.** Parsed live from the agent-deck conductor's open-items list, each with a comment affordance that prefills the input.
+  - **Two-way input.** An input box with a Maestro/conductor target picker routes a typed instruction to `POST /api/command-center/ask`, which delivers via the supported `session send` path (argv-safe, target-allowlisted against live conductors, mutation-gated, CSRF fail-closed, and journaled by correlation id without the raw text). Replies reflect back through the live feed.
+  - Private by construction: inherits the web server's loopback-default / token / CSRF / mutation gates. Reachable on desktop, tablet, and phone. No secret-shaped field is ever in the payload.
+
 ## [1.9.67] - 2026-06-15
 
 ### Added
