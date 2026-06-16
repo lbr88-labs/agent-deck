@@ -252,6 +252,11 @@ func NewServer(cfg Config) *Server {
 	// reply read-back. Same authorize/CSRF/mutation security envelope.
 	mux.HandleFunc("/api/command-center/detail/", s.handleCommandCenterDetail)
 	mux.HandleFunc("/api/command-center/reply", s.handleCommandCenterReply)
+	// Generative command center (v-genui-0): hand-authored, server-validated
+	// whole-UI view specs. The client renderer draws a spec; switching specs
+	// reshapes the whole UI. No LLM in v0 — inert DATA proving the safe engine.
+	mux.HandleFunc("/api/command-center/genui/views", s.handleGenuiViews)
+	mux.HandleFunc("/api/command-center/genui/spec/", s.handleGenuiSpec)
 
 	mux.HandleFunc("/api/costs/summary", s.handleCostsSummary)
 	mux.HandleFunc("/api/costs/daily", s.handleCostsDaily)

@@ -16,6 +16,7 @@ import { ToastHistoryDrawerToggle } from './ToastHistoryDrawer.js'
 
 const TABS = [
   { id: 'command-center', label: 'Command Center' },
+  { id: 'genui',     label: 'GenUI'     },
   { id: 'fleet',     label: 'Fleet'     },
   { id: 'terminal',  label: 'Terminal'  },
   { id: 'mcp',       label: 'MCPs'      },

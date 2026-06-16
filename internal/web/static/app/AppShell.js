@@ -19,6 +19,7 @@ import { TerminalPane } from './panes/TerminalPane.js'
 import { CostsPane } from './panes/CostsPane.js'
 import { FleetPane } from './panes/FleetPane.js'
 import { CommandCenterPane } from './panes/CommandCenterPane.js'
+import { GenuiPane } from './panes/GenuiPane.js'
 import { ArchivedPane } from './panes/ArchivedPane.js'
 import { StubPane } from './panes/StubPane.js'
 import { SearchPane } from './panes/SearchPane.js'
@@ -104,6 +105,7 @@ function Panes({ tab }) {
       <${TerminalPane}/>
     </div>
     ${tab === 'command-center' && html`<${CommandCenterPane}/>`}
+    ${tab === 'genui'     && html`<${GenuiPane}/>`}
     ${tab === 'fleet'     && html`<${FleetPane}/>`}
     ${tab === 'costs'     && html`<${CostsPane}/>`}
     ${tab === 'search'    && html`<${SearchPane}/>`}
