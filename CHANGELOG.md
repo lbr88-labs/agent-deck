@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.9.69] - 2026-06-16
+
+### Added
+
+- **Cursor Agent CLI: hook-based running→waiting status transitions for conductor notifications.** Wire Cursor Agent CLI lifecycle hooks (`sessionStart`, `beforeSubmitPrompt`, `preToolUse`, `postToolUse`, `stop`, `sessionEnd`) into agent-deck's hook handler so conductors receive inbox events reliably. New `cursor-hooks install/uninstall/status` subcommand; hooks are auto-injected silently on TUI startup when the cursor binary is present. Hook event names from all tools (Claude, Gemini, Hermes, Codex, Cursor) are now normalized case-insensitively so camelCase (Cursor), snake_case (Hermes), and PascalCase (Claude) all resolve correctly.
+
+- **Cursor sessions can be restarted (`R` key / `session restart`).** `CanRestart()` now returns true for Cursor sessions, and `Restart()` has a dedicated respawn-pane path with `--continue` to resume the workspace-scoped chat, matching the pattern used by other agent tools.
+
+### Fixed
+
+- **Cursor launch with `-m` no longer times out when the pane is already showing the prompt.** `sendMessageWhenReady` and `session send` shared a readiness loop that ignored tmux's `"starting"` window-state: if `GetStatus()` returned `"starting"`, the loop kept waiting even when the Cursor prompt was already visible. The loop now probes the pane directly via `CapturePaneFresh` in that state and returns ready immediately. Readiness polling is factored into a shared `internal/send.WaitForAgentReady` helper used by both paths. The default readiness budget for `StartWithMessage` is raised from 60 s to 10 min to accommodate slow-starting agents (Cursor + many MCPs).
+
+### Security
+
+- **esbuild updated to 0.28.1 (CVE fix: path traversal in local dev server on Windows via `\` in HTTP request paths).** Routine dep bumps also include fuzzy 0.1.3 and google.golang.org/api 0.284.0.
+
 ## [1.9.68] - 2026-06-15
 
 ### Added
