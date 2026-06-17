@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.9.71] - 2026-06-17
+
+### Fixed
+
+- **tmux: keep live control pipes only for active sessions.** Each agent-deck instance now maintains live `tmux -C` control pipes only for the cursor-focused, attached, and recently-viewed sessions (small LRU, capacity 3) instead of connecting every session at startup. This drops per-instance pipe count from ×(all sessions) to ≤4 and eliminates the attach-storm freezes and tmux-server backpressure that occurred when running multiple deck instances against a shared session set. A 500 ms reconciler goroutine replaces the old eager-connect startup burst; background sessions ride the existing 2 s status poll. Backward-compatible: a nil predicate retains the legacy "want everything" behavior.
+
 ## [1.9.70] - 2026-06-16
 
 ### Fixed
