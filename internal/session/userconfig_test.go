@@ -2271,6 +2271,7 @@ func TestSaveUserConfig_OmitsZeroValueFields(t *testing.T) {
 		"[instances]",
 		"[shell]",
 		"[fork]",
+		"[selfheal]",
 	} {
 		if strings.Contains(content, absent) {
 			t.Errorf("config.toml should not contain zero-value section %q", absent)
@@ -2296,6 +2297,41 @@ func TestSaveUserConfig_OmitsZeroValueFields(t *testing.T) {
 	lines := strings.Split(strings.TrimSpace(content), "\n")
 	if len(lines) > 50 {
 		t.Errorf("config.toml is %d lines; expected under 50 for a minimal config.\nContent:\n%s", len(lines), content)
+	}
+}
+
+// TestSaveUserConfig_ZeroValueConfigProducesNoSections saves a completely empty
+// UserConfig and asserts NO section headers appear. This catches new struct fields
+// that lack omitempty/omitzero without needing to maintain a deny-list.
+func TestSaveUserConfig_ZeroValueConfigProducesNoSections(t *testing.T) {
+	tempDir := t.TempDir()
+	originalHome := os.Getenv("HOME")
+	os.Setenv("HOME", tempDir)
+	defer os.Setenv("HOME", originalHome)
+	isolateConfigHomeXDG(t)
+
+	if err := SaveUserConfig(&UserConfig{}); err != nil {
+		t.Fatalf("SaveUserConfig: %v", err)
+	}
+
+	configPath, err := GetUserConfigPath()
+	if err != nil {
+		t.Fatalf("GetUserConfigPath: %v", err)
+	}
+	raw, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatalf("read config.toml: %v", err)
+	}
+
+	content := strings.TrimSpace(string(raw))
+
+	// A zero-value UserConfig should produce at most the file header comment — no
+	// section headers. Any [section] means a field leaks its zero value.
+	for _, line := range strings.Split(content, "\n") {
+		trimmed := strings.TrimSpace(line)
+		if len(trimmed) > 0 && trimmed[0] == '[' {
+			t.Errorf("zero-value UserConfig produced section header: %s\nFull content:\n%s", trimmed, content)
+		}
 	}
 }
 

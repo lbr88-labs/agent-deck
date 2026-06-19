@@ -42,7 +42,12 @@ const UserConfigFileName = "config.toml"
 // allowSectionDrop=true so the destructive intent is explicit and greppable.
 var ErrRefusingConfigSectionDrop = fmt.Errorf("session: refusing to save config.toml that would drop a populated [mcps] or [groups] section to empty (use SaveUserConfigWithIntent to intentionally clear)")
 
-// UserConfig represents user-facing configuration in TOML format
+// UserConfig represents user-facing configuration in TOML format.
+//
+// TOML serialization: every field must use omitempty (string/bool/slice/map/pointer)
+// or omitzero (int/struct) so zero-value fields are not written to disk. Without
+// this, SaveUserConfig bloats the file with sections the user never configured.
+// TestSaveUserConfig_ZeroValueConfigProducesNoSections enforces this invariant.
 type UserConfig struct {
 	// DefaultTool is the pre-selected AI tool when creating new sessions
 	// Valid values: "claude", "gemini", "opencode", "codex", "pi", or any custom tool name
@@ -239,7 +244,7 @@ type SelfHealSettings struct {
 	// Enabled is the global kill switch (§3.7). When false (the default),
 	// self-heal does nothing at all — not even observe-mode logging. Set true to
 	// run the observe-only Stage 1.
-	Enabled bool `toml:"enabled"`
+	Enabled bool `toml:"enabled,omitempty"`
 
 	// Mode is the authority level: "observe" (default, the only acting mode in
 	// v1.9.67 — logs would_have, takes no action), "single_action" / "full"
@@ -256,11 +261,11 @@ type SelfHealSettings struct {
 	// PerSessionPerWindow overrides the per-session recovery cap (default 2 / 6h;
 	// auth_401 is always 1). 0 uses the default. Starting dial; tuned from
 	// observe data.
-	PerSessionPerWindow int `toml:"per_session_per_window,omitempty"`
+	PerSessionPerWindow int `toml:"per_session_per_window,omitzero"`
 
 	// GlobalPerHour overrides the fleet-wide hourly recovery cap (default 5 =
 	// TriageMaxPerHour). 0 uses the default.
-	GlobalPerHour int `toml:"global_per_hour,omitempty"`
+	GlobalPerHour int `toml:"global_per_hour,omitzero"`
 
 	// OptOutGroups lists group paths that opt OUT of self-heal entirely
 	// (deliberate long-waiting stream leads, sensitive scopes — §3.7). Checked
