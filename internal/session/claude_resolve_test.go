@@ -69,7 +69,12 @@ config_dir = "~/.claude-coordinator"
 		groupPath   string
 		wantSource  string
 	}{
-		{"env wins", filepath.Join(tmpHome, ".claude-env"), "team-a", "env"},
+		// Group config_dir beats ambient env on the group chain too — mirrors
+		// the instance chain (#881), so a grouped child never inherits the
+		// caller's stale ambient account (wrong-account-grouped-child).
+		{"group beats env", filepath.Join(tmpHome, ".claude-env"), "team-a", "group"},
+		// env still wins when the group has no config_dir to assert.
+		{"env wins when no group match", filepath.Join(tmpHome, ".claude-env"), "unknown", "env"},
 		{"group beats profile (no env)", "", "team-a", "group"},
 		{"profile wins when no group match", "", "unknown", "profile"},
 		{"default when no profile", "", "", "profile"}, // profile=work matches

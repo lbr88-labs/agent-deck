@@ -489,7 +489,14 @@ func TestPerGroupConfig_ClaudeConfigDirSourceLabel(t *testing.T) {
 	}
 	_ = os.Setenv("HOME", tmpHome)
 
-	t.Run("env_var_wins", func(t *testing.T) {
+	// Group config_dir beats ambient CLAUDE_CONFIG_DIR on the group chain
+	// (wrong-account-grouped-child): a [groups."g".claude].config_dir is a
+	// config.toml-scoped override and is more specific than a shell-wide
+	// CLAUDE_CONFIG_DIR. Pre-fix this returned ("/tmp/env-dir","env"); the
+	// resolver now mirrors the instance chain where group already beat env
+	// (#881), so a grouped child can never silently inherit the caller's
+	// stale ambient account.
+	t.Run("group_beats_env", func(t *testing.T) {
 		_ = os.Setenv("CLAUDE_CONFIG_DIR", "/tmp/env-dir")
 		_ = os.Setenv("AGENTDECK_PROFILE", "p")
 		writeConfig(t, `
@@ -502,6 +509,31 @@ config_dir = "~/.claude-global"
 `)
 		ClearUserConfigCache()
 		path, source := GetClaudeConfigDirSourceForGroup("g")
+		if source != "group" {
+			t.Errorf("source=%q want %q", source, "group")
+		}
+		if want := filepath.Join(tmpHome, ".claude-g"); path != want {
+			t.Errorf("path=%q want %q", path, want)
+		}
+		_ = os.Unsetenv("CLAUDE_CONFIG_DIR")
+	})
+
+	// A bare CLAUDE_CONFIG_DIR with no matching group still resolves to env
+	// (env beats profile/global) — the group level only wins when the group
+	// actually has a config_dir.
+	t.Run("env_wins_when_no_group_match", func(t *testing.T) {
+		_ = os.Setenv("CLAUDE_CONFIG_DIR", "/tmp/env-dir")
+		_ = os.Setenv("AGENTDECK_PROFILE", "p")
+		writeConfig(t, `
+[groups."g".claude]
+config_dir = "~/.claude-g"
+[profiles.p.claude]
+config_dir = "~/.claude-p"
+[claude]
+config_dir = "~/.claude-global"
+`)
+		ClearUserConfigCache()
+		path, source := GetClaudeConfigDirSourceForGroup("unmatched-group")
 		if source != "env" {
 			t.Errorf("source=%q want %q", source, "env")
 		}

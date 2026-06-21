@@ -754,11 +754,22 @@ config_dir = "~/.claude-team-a"
 		t.Errorf("GetClaudeConfigDirForGroup('') = %s, want %s", got, want)
 	}
 
-	// CLAUDE_CONFIG_DIR env var always wins
+	// A group's config_dir beats ambient CLAUDE_CONFIG_DIR — a scoped
+	// config.toml override is more specific than a shell-wide env var, so a
+	// grouped child can't silently inherit the caller's stale ambient account
+	// (wrong-account-grouped-child). Mirrors the instance chain (#881).
 	_ = os.Setenv("CLAUDE_CONFIG_DIR", "/env-override")
+	ClearUserConfigCache()
 	got = GetClaudeConfigDirForGroup("team-a")
+	wantGroup := filepath.Join(tmpHome, ".claude-team-a")
+	if got != wantGroup {
+		t.Errorf("GetClaudeConfigDirForGroup(team-a) with env set = %s, want %s (group beats ambient)", got, wantGroup)
+	}
+
+	// CLAUDE_CONFIG_DIR still wins when the group has no config_dir to assert.
+	got = GetClaudeConfigDirForGroup("unknown")
 	if got != "/env-override" {
-		t.Errorf("GetClaudeConfigDirForGroup with env = %s, want /env-override", got)
+		t.Errorf("GetClaudeConfigDirForGroup(unknown) with env = %s, want /env-override", got)
 	}
 }
 

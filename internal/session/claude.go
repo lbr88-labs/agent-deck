@@ -293,11 +293,20 @@ func getMCPInfoUncached(projectPath string) *MCPInfo {
 }
 
 // resolveOpts selects which priority chain resolveClaudeConfigDir walks.
-//   - inst != nil  → instance chain: conductor > group > env > profile > global > default
-//   - inst == nil  → group chain:    env > group > profile > global > default
+//   - inst != nil  → instance chain: account > conductor > group > env > profile > global > default
+//   - inst == nil  → group chain:    group > env > profile > global > default
 //
 // groupPath is consulted in both chains; for the instance chain it falls
 // back to inst.GroupPath when not set explicitly.
+//
+// Both chains rank the group's config_dir ABOVE the ambient CLAUDE_CONFIG_DIR
+// env var. A [groups."<g>".claude].config_dir block is a config.toml-scoped
+// override (more specific than a shell-wide CLAUDE_CONFIG_DIR that dev shells
+// commonly export via aliases like cdp/cdw), so it must win — otherwise a
+// grouped child launched from inside a session whose ambient CLAUDE_CONFIG_DIR
+// points at the wrong account silently lands on that account instead of its
+// group's. The instance chain already did this (#881); the group chain was
+// fixed to match (wrong-account-grouped-child).
 type resolveOpts struct {
 	inst      *Instance
 	groupPath string
@@ -355,14 +364,18 @@ func resolveClaudeConfigDir(opts resolveOpts) (path, source string) {
 			return envDir, "env"
 		}
 	} else {
-		// Group chain: env wins.
-		if envDir := envClaudeConfigDirIgnoringScratchLeak(); envDir != "" {
-			return envDir, "env"
-		}
+		// Group chain: group config_dir beats ambient env (mirrors the
+		// instance chain). A config.toml [groups."<g>".claude].config_dir is
+		// a scoped override and is more specific than a shell-wide
+		// CLAUDE_CONFIG_DIR, so it must win — see resolveOpts doc
+		// (wrong-account-grouped-child).
 		if userConfig != nil {
 			if groupDir := userConfig.GetGroupClaudeConfigDir(groupPath); groupDir != "" {
 				return groupDir, "group"
 			}
+		}
+		if envDir := envClaudeConfigDirIgnoringScratchLeak(); envDir != "" {
+			return envDir, "env"
 		}
 	}
 
@@ -421,7 +434,8 @@ func IsClaudeConfigDirExplicit() bool {
 }
 
 // GetClaudeConfigDirForGroup returns the Claude config directory, walking
-// the group chain: env > group > profile > global > default.
+// the group chain: group > env > profile > global > default. The group's
+// config_dir beats ambient CLAUDE_CONFIG_DIR (wrong-account-grouped-child).
 func GetClaudeConfigDirForGroup(groupPath string) string {
 	path, _ := resolveClaudeConfigDir(resolveOpts{groupPath: groupPath})
 	return path

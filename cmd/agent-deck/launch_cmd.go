@@ -436,6 +436,14 @@ func handleLaunch(profile string, args []string) {
 		_ = newInstance.SetClaudeOptions(opts)
 	}
 
+	// Warn when the child will NOT run on the account its group configures
+	// (wrong-account-grouped-child). With the resolver fix a grouped child
+	// pins its group's config_dir, so this only fires when an explicit
+	// account/conductor override (or a missing group block) diverts it —
+	// exactly the case an operator wants flagged before burning the wrong
+	// account's quota.
+	warnGroupAccountMismatch(newInstance)
+
 	// Add to instances list (in-memory only — used for downstream
 	// group cap math and the second SaveWithGroups after PostStartSync).
 	instances = append(instances, newInstance)

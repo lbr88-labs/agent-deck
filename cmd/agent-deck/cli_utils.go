@@ -143,6 +143,35 @@ func resolveGroupSelection(currentGroup, cwdDerivedGroup, parentGroup string, ex
 	return parentGroup
 }
 
+// warnGroupAccountMismatch prints a stderr warning when a session's group
+// configures a Claude config_dir but the session will resolve to a DIFFERENT
+// config_dir (wrong-account-grouped-child). This catches the case where an
+// explicit account/conductor override — or the group block not being found at
+// resolution time — diverts a grouped child off its group's account before it
+// silently burns the wrong account's quota. No-op when the group has no
+// config_dir, or when the resolved dir already matches the group's.
+func warnGroupAccountMismatch(inst *session.Instance) {
+	if inst == nil || !session.IsClaudeCompatible(inst.Tool) || inst.GroupPath == "" {
+		return
+	}
+	userConfig, _ := session.LoadUserConfig()
+	if userConfig == nil {
+		return
+	}
+	groupDir := userConfig.GetGroupClaudeConfigDir(inst.GroupPath)
+	if groupDir == "" {
+		return
+	}
+	resolved, source := session.GetClaudeConfigDirSourceForInstance(inst)
+	if resolved == groupDir {
+		return
+	}
+	fmt.Fprintf(os.Stderr,
+		"warning: session %q in group %q will use CLAUDE_CONFIG_DIR=%s (source: %s), "+
+			"NOT the group's configured config_dir %s — it may run on the wrong account\n",
+		inst.Title, inst.GroupPath, resolved, source, groupDir)
+}
+
 // resolveAddPath resolves the user-provided positional path arg for `agent-deck add`.
 // Handles ".", "~", "~/foo", "$VAR/foo", and relative/absolute paths uniformly.
 // session.ExpandPath runs first so a literal tilde from a non-expanding shell
