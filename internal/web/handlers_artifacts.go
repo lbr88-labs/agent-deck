@@ -170,7 +170,12 @@ func (s *Server) handleArtifactServe(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.Header().Set("X-Content-Type-Options", "nosniff")
 	w.Header().Set("Cache-Control", "no-store")
-	_, _ = w.Write([]byte(injectSelectionRelay(string(data), rel)))
+	// G705 (XSS taint) false positive: serving the conductor HTML artifact verbatim
+	// is the feature. The path is confined to artifactRoot (ConfinedPath above) and the
+	// artifact renders only inside an opaque-origin sandbox iframe — allow-scripts, NO
+	// allow-same-origin — so it cannot reach this origin, the parent DOM, or any
+	// credential (see the security note in the file header).
+	_, _ = w.Write([]byte(injectSelectionRelay(string(data), rel))) //nolint:gosec // G705: read-only, path-confined HTML served into an opaque-origin sandbox iframe (see header)
 }
 
 // artifactCommentRequest is the POST /api/artifacts/comment body.
