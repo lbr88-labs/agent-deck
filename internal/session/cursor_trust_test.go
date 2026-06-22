@@ -3,11 +3,19 @@ package session
 import (
 	"encoding/json"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
 )
+
+func runShellScriptForTest(script string) (string, error) {
+	cmd := exec.Command("sh", "-s")
+	cmd.Stdin = strings.NewReader(script)
+	out, err := cmd.CombinedOutput()
+	return string(out), err
+}
 
 func TestCursorWorkspaceProjectKey(t *testing.T) {
 	workspace := filepath.Join("/Users", "me", "dev", "agent-deck")
@@ -191,17 +199,210 @@ func TestInstance_cursorTrustWorkspacePath(t *testing.T) {
 	}
 }
 
+func TestInstance_cursorTrustWorkspacePath_SandboxTakesPrecedenceOverSSH(t *testing.T) {
+	inst := NewInstanceWithTool("x", "/host/proj", "cursor")
+	inst.SSHHost = "user@remote"
+	inst.SSHRemotePath = "/remote/proj"
+	inst.Sandbox = NewSandboxConfig("")
+	inst.SandboxContainer = "agent-deck-test-12345678"
+
+	if got := inst.cursorTrustWorkspacePath(); got != cursorSandboxWorkDir {
+		t.Fatalf("workspace path = %q, want sandbox %s", got, cursorSandboxWorkDir)
+	}
+}
+
+func TestInstance_preAcceptCursorWorkspaceTrust_SandboxTakesPrecedenceOverSSH(t *testing.T) {
+	fakeBin := t.TempDir()
+	capturedDockerScript := filepath.Join(t.TempDir(), "docker-script.sh")
+	sshMarker := filepath.Join(t.TempDir(), "ssh-called")
+
+	if err := os.WriteFile(filepath.Join(fakeBin, "docker"), []byte(`#!/bin/sh
+set -eu
+if [ "$1" != "exec" ] || [ "$2" != "-i" ]; then
+  echo "unexpected docker args: $*" >&2
+  exit 20
+fi
+cat > "$FAKE_DOCKER_SCRIPT"
+`), 0o755); err != nil {
+		t.Fatalf("write fake docker: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(fakeBin, "ssh"), []byte(`#!/bin/sh
+echo called > "$FAKE_SSH_MARKER"
+exit 99
+`), 0o755); err != nil {
+		t.Fatalf("write fake ssh: %v", err)
+	}
+
+	t.Setenv("PATH", fakeBin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	t.Setenv("FAKE_DOCKER_SCRIPT", capturedDockerScript)
+	t.Setenv("FAKE_SSH_MARKER", sshMarker)
+
+	inst := NewInstanceWithTool("x", "/host/proj", "cursor")
+	inst.SSHHost = "user@remote"
+	inst.SSHRemotePath = "/remote/proj"
+	inst.Sandbox = NewSandboxConfig("")
+	inst.SandboxContainer = "agent-deck-test-12345678"
+
+	inst.preAcceptCursorWorkspaceTrust()
+
+	script, err := os.ReadFile(capturedDockerScript)
+	if err != nil {
+		t.Fatalf("docker script was not captured: %v", err)
+	}
+	if !strings.Contains(string(script), cursorSandboxHome+"/.cursor/projects/") {
+		t.Fatalf("docker script did not target sandbox cursor home:\n%s", script)
+	}
+	if _, err := os.Stat(sshMarker); !os.IsNotExist(err) {
+		t.Fatalf("ssh path was invoked for sandboxed session; stat marker err=%v", err)
+	}
+}
+
 func TestBuildCursorTrustRemoteShellScript_ExpandsHome(t *testing.T) {
 	pathSetup := "key='foo'\npath=\"$HOME/.cursor/projects/$key/.workspace-trusted\""
 	script := buildCursorTrustRemoteShellScript(pathSetup, []byte("data\n"))
 	if !strings.Contains(script, `path="$HOME/.cursor/projects/$key/.workspace-trusted"`) {
 		t.Fatalf("script missing HOME path expansion: %s", script)
 	}
-	if !strings.Contains(script, "set -C") {
-		t.Fatalf("script missing noclobber exclusive write: %s", script)
+	if !strings.Contains(script, "mktemp") || !strings.Contains(script, `ln "$tmp" "$path"`) {
+		t.Fatalf("script missing temp-file exclusive link: %s", script)
 	}
 	if !strings.Contains(script, "base64 -d") {
 		t.Fatalf("script missing base64 decode: %s", script)
+	}
+}
+
+func TestBuildCursorTrustRemoteShellScript_WritesWithoutClobber(t *testing.T) {
+	remoteHome := t.TempDir()
+	trustPath := filepath.Join(remoteHome, ".cursor", "projects", "foo", ".workspace-trusted")
+	script := buildCursorTrustRemoteShellScript("path="+shellQuote(trustPath), []byte("created\n"))
+
+	if out, err := runShellScriptForTest(script); err != nil {
+		t.Fatalf("script failed: %v: %s", err, out)
+	}
+	data, err := os.ReadFile(trustPath)
+	if err != nil {
+		t.Fatalf("read trust file: %v", err)
+	}
+	if string(data) != "created\n" {
+		t.Fatalf("trust content = %q, want created", data)
+	}
+
+	if out, err := runShellScriptForTest(buildCursorTrustRemoteShellScript("path="+shellQuote(trustPath), []byte("overwrite\n"))); err != nil {
+		t.Fatalf("second script failed: %v: %s", err, out)
+	}
+	after, err := os.ReadFile(trustPath)
+	if err != nil {
+		t.Fatalf("read trust file after second script: %v", err)
+	}
+	if string(after) != "created\n" {
+		t.Fatalf("trust content after second script = %q, want original", after)
+	}
+}
+
+func TestBuildCursorTrustRemoteShellScript_PropagatesRealWriteErrors(t *testing.T) {
+	parentFile := filepath.Join(t.TempDir(), "not-a-dir")
+	if err := os.WriteFile(parentFile, []byte("file\n"), 0o644); err != nil {
+		t.Fatalf("write parent file: %v", err)
+	}
+	trustPath := filepath.Join(parentFile, ".workspace-trusted")
+	script := buildCursorTrustRemoteShellScript("path="+shellQuote(trustPath), []byte("data\n"))
+
+	if out, err := runShellScriptForTest(script); err == nil {
+		t.Fatalf("script succeeded unexpectedly: %s", out)
+	}
+}
+
+func TestPreAcceptCursorTrustSSH_UsesRemoteHomeAndWorkspace(t *testing.T) {
+	fakeBin := t.TempDir()
+	remoteHome := t.TempDir()
+	workspace := "/remote/My Project"
+	fakeSSH := filepath.Join(fakeBin, "ssh")
+	if err := os.WriteFile(fakeSSH, []byte(`#!/bin/sh
+set -eu
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    -o)
+      shift 2
+      ;;
+    *)
+      break
+      ;;
+  esac
+done
+host="$1"
+shift
+if [ "$host" != "user@remote" ]; then
+  echo "unexpected host: $host" >&2
+  exit 20
+fi
+if [ "$1" != "sh" ] || [ "$2" != "-s" ]; then
+  echo "unexpected remote command: $*" >&2
+  exit 21
+fi
+export HOME="$FAKE_REMOTE_HOME"
+exec sh -s
+`), 0o755); err != nil {
+		t.Fatalf("write fake ssh: %v", err)
+	}
+	t.Setenv("PATH", fakeBin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	t.Setenv("FAKE_REMOTE_HOME", remoteHome)
+
+	if err := PreAcceptCursorTrustSSH("user@remote", workspace); err != nil {
+		t.Fatalf("PreAcceptCursorTrustSSH: %v", err)
+	}
+
+	key, err := cursorWorkspaceProjectKey(workspace)
+	if err != nil {
+		t.Fatalf("cursorWorkspaceProjectKey: %v", err)
+	}
+	trustPath := filepath.Join(remoteHome, ".cursor", "projects", key, ".workspace-trusted")
+	data, err := os.ReadFile(trustPath)
+	if err != nil {
+		t.Fatalf("read remote trust file: %v", err)
+	}
+	var entry map[string]string
+	if err := json.Unmarshal(data, &entry); err != nil {
+		t.Fatalf("unmarshal remote trust file: %v", err)
+	}
+	if entry["workspacePath"] != workspace {
+		t.Fatalf("workspacePath = %q, want %q", entry["workspacePath"], workspace)
+	}
+}
+
+func TestPreAcceptCursorTrustSSH_PropagatesRemoteWriteError(t *testing.T) {
+	fakeBin := t.TempDir()
+	remoteHome := filepath.Join(t.TempDir(), "not-a-directory")
+	if err := os.WriteFile(remoteHome, []byte("file\n"), 0o644); err != nil {
+		t.Fatalf("write fake remote home: %v", err)
+	}
+	fakeSSH := filepath.Join(fakeBin, "ssh")
+	if err := os.WriteFile(fakeSSH, []byte(`#!/bin/sh
+set -eu
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    -o)
+      shift 2
+      ;;
+    *)
+      break
+      ;;
+  esac
+done
+shift
+if [ "$1" != "sh" ] || [ "$2" != "-s" ]; then
+  echo "unexpected remote command: $*" >&2
+  exit 21
+fi
+export HOME="$FAKE_REMOTE_HOME"
+exec sh -s
+`), 0o755); err != nil {
+		t.Fatalf("write fake ssh: %v", err)
+	}
+	t.Setenv("PATH", fakeBin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	t.Setenv("FAKE_REMOTE_HOME", remoteHome)
+
+	if err := PreAcceptCursorTrustSSH("user@remote", "/remote/project"); err == nil {
+		t.Fatal("PreAcceptCursorTrustSSH succeeded despite remote write error")
 	}
 }
 

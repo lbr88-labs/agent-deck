@@ -1,6 +1,7 @@
 package session
 
 import (
+	"context"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
@@ -17,8 +18,9 @@ import (
 // cursorSandboxHome and cursorSandboxWorkDir match internal/docker/config.go
 // containerHome and containerWorkDir.
 const (
-	cursorSandboxHome    = "/root"
-	cursorSandboxWorkDir = "/workspace"
+	cursorSandboxHome         = "/root"
+	cursorSandboxWorkDir      = "/workspace"
+	cursorTrustCommandTimeout = 30 * time.Second
 )
 
 // validateCursorProjectKey rejects project keys that could escape the projects/
@@ -142,7 +144,9 @@ func writeCursorTrustFileExclusive(trustPath string, content []byte) error {
 //
 // Cursor keys trust by the literal workspace path (stored in the JSON file) and
 // a slugified directory under ~/.cursor/projects/. Pre-seeding matches what
-// accepting the prompt in the UI would write.
+// accepting the prompt in the UI would write. This mirrors Cursor's observed
+// trust format as of 2026-06; if Cursor changes that schema, seeding may become
+// a harmless no-op until this mapping is updated.
 //
 // If the trust file already exists it is left unchanged. Malformed existing
 // trust files are not overwritten.
@@ -159,16 +163,25 @@ func PreAcceptCursorTrust(cursorConfigDir, workspacePath string) error {
 }
 
 // buildCursorTrustRemoteShellScript returns a POSIX shell script that writes
-// trust JSON to path using noclobber (set -C) so concurrent seeders do not
-// overwrite an existing file. pathSetup must set path= (and optionally key=)
-// before the write runs.
+// trust JSON to path through a same-directory temp file and exclusive hard link
+// so concurrent seeders do not overwrite an existing file. pathSetup must set
+// path= (and optionally key=) before the write runs.
 func buildCursorTrustRemoteShellScript(pathSetup string, content []byte) string {
 	b64 := base64.StdEncoding.EncodeToString(content)
 	return fmt.Sprintf(`set -e
 %s
-mkdir -p "$(dirname "$path")"
-if (set -C; echo %s | base64 -d > "$path") 2>/dev/null; then
-  :
+if [ -e "$path" ] || [ -L "$path" ]; then
+  exit 0
+fi
+dir="$(dirname "$path")"
+mkdir -p "$dir"
+tmp="$(mktemp "$dir/.workspace-trusted.XXXXXX")"
+trap 'rm -f "$tmp"' EXIT HUP INT TERM
+echo %s | base64 -d > "$tmp"
+if ln "$tmp" "$path" 2>/dev/null; then
+  rm -f "$tmp"
+elif [ ! -e "$path" ] && [ ! -L "$path" ]; then
+  exit 1
 fi
 `, pathSetup, shellQuote(b64))
 }
@@ -178,11 +191,16 @@ fi
 func runCursorTrustRemoteScript(host, script string) error {
 	_ = os.MkdirAll(sshControlDir, 0o700)
 	args := append(sessionSSHConnOpts(), host, "sh", "-s")
+	ctx, cancel := context.WithTimeout(context.Background(), cursorTrustCommandTimeout)
+	defer cancel()
 	// #nosec G204 -- host is validated by ValidateSSHHost; script is generated
 	// locally from a slugified key and base64 JSON, delivered via stdin.
-	cmd := exec.Command("ssh", args...)
+	cmd := exec.CommandContext(ctx, "ssh", args...)
 	cmd.Stdin = strings.NewReader(script)
 	if out, err := cmd.CombinedOutput(); err != nil {
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return fmt.Errorf("ssh cursor trust seed: %w: %s", ctxErr, strings.TrimSpace(string(out)))
+		}
 		return fmt.Errorf("ssh cursor trust seed: %w: %s", err, strings.TrimSpace(string(out)))
 	}
 	return nil
@@ -191,17 +209,23 @@ func runCursorTrustRemoteScript(host, script string) error {
 // runCursorTrustContainerScript executes a trust-seeding shell script inside a
 // managed sandbox container. The script is passed on stdin to docker exec.
 func runCursorTrustContainerScript(containerName, script string) error {
+	ctx, cancel := context.WithTimeout(context.Background(), cursorTrustCommandTimeout)
+	defer cancel()
 	// #nosec G204 -- containerName is restricted to agent-deck-managed names;
 	// script is generated locally and delivered via stdin.
-	cmd := exec.Command("docker", "exec", "-i", containerName, "sh", "-s")
+	cmd := exec.CommandContext(ctx, "docker", "exec", "-i", containerName, "sh", "-s")
 	cmd.Stdin = strings.NewReader(script)
 	if out, err := cmd.CombinedOutput(); err != nil {
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return fmt.Errorf("docker exec cursor trust seed: %w: %s", ctxErr, strings.TrimSpace(string(out)))
+		}
 		return fmt.Errorf("docker exec cursor trust seed: %w: %s", err, strings.TrimSpace(string(out)))
 	}
 	return nil
 }
 
-// PreAcceptCursorTrustSSH seeds Cursor workspace trust on a remote host via ssh.
+// PreAcceptCursorTrustSSH seeds Cursor workspace trust on a POSIX remote host
+// via ssh. Project-key generation assumes matching POSIX path semantics locally.
 func PreAcceptCursorTrustSSH(host, workspacePath string) error {
 	if err := ValidateSSHHost(host); err != nil {
 		return err

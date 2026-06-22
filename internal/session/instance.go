@@ -1663,10 +1663,10 @@ func (i *Instance) preAcceptCursorWorkspaceTrust() {
 	}
 	var err error
 	switch {
-	case i.IsSSH():
-		err = PreAcceptCursorTrustSSH(i.SSHHost, dir)
 	case i.IsSandboxed() && i.SandboxContainer != "":
 		err = PreAcceptCursorTrustInContainer(i.SandboxContainer, dir)
+	case i.IsSSH():
+		err = PreAcceptCursorTrustSSH(i.SSHHost, dir)
 	default:
 		err = PreAcceptCursorTrust(GetCursorConfigDir(), dir)
 	}
