@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.9.76] - 2026-06-24
+
+### Added
+
+- **Pin protects sessions from auto/bulk stops.** Pinned sessions are now skipped by the idle-timeout watcher, the bulk "remove all errored" TUI action, and the `session rm --all-errored` CLI command. Unpinning re-arms the idle clock cleanly from the next tick. The `--force` flag overrides the pin guard on the CLI. ([#1521](https://github.com/asheshgoplani/agent-deck/pull/1521))
+
 ## [1.9.75] - 2026-06-23
 
 ### Fixed
