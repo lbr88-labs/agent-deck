@@ -827,24 +827,74 @@ func (h *Home) openShellHere(inst *session.Instance) tea.Cmd {
 	if workdir == "" {
 		workdir = inst.ProjectPath
 	}
-	if err := tmuxSess.SplitShellPane(workdir); err != nil {
-		h.setError(fmt.Errorf("open shell here: %w", err))
-		return nil
-	}
 	req := terminal.AttachRequest{
 		Name:       tmuxSess.Name,
 		SocketName: tmuxSess.SocketName,
 	}
 	if resolveShellSplitMode() == session.ShellSplitITerm {
-		// Open the agent session in a new iTerm2 split pane so the user
-		// sees [agent | shell] in iTerm2 without leaving agent-deck.
+		// Launch iTerm2 split before mutating tmux so a failed osascript
+		// call does not leave an orphaned pane. Issue #1470.
 		if err := h.openInSplitPane(req); err != nil {
 			h.setError(fmt.Errorf("open shell here: iterm split: %w", err))
+			return nil
+		}
+		if err := tmuxSess.SplitShellPane(workdir); err != nil {
+			h.setError(fmt.Errorf("open shell here: %w", err))
 		}
 		return nil
 	}
-	// Default (tmux): attach to the agent session so the split is visible.
+	// Default (tmux): split first, then attach so the split is visible.
+	if err := tmuxSess.SplitShellPane(workdir); err != nil {
+		h.setError(fmt.Errorf("open shell here: %w", err))
+		return nil
+	}
 	return h.attachSession(inst)
+}
+
+// collapseOrNavUp implements the "h"/"left" collapse-or-parent navigation:
+// collapses an open group/session-windows, or moves the cursor to the parent
+// group of the focused item. Shared by case "h","left" and hotkeyOpenShellHere
+// so that the default "h" binding does not swallow left-nav on non-session
+// rows. Issue #1470.
+func (h *Home) collapseOrNavUp() {
+	if h.cursor >= len(h.flatItems) {
+		return
+	}
+	item := h.flatItems[h.cursor]
+	collapsed := false
+	if item.Type == session.ItemTypeGroup {
+		groupPath := item.Path
+		h.groupTree.CollapseGroup(groupPath)
+		h.rebuildFlatItems()
+		for i, fi := range h.flatItems {
+			if fi.Type == session.ItemTypeGroup && fi.Path == groupPath {
+				h.cursor = i
+				break
+			}
+		}
+		collapsed = true
+	} else if item.Type == session.ItemTypeWindow {
+		sid := item.WindowSessionID
+		h.windowsCollapsed[sid] = true
+		h.rebuildFlatItems()
+		h.moveCursorToSession(sid)
+	} else if item.Type == session.ItemTypeSession && h.sessionHasWindows(item) && !h.windowsCollapsed[item.Session.ID] {
+		h.windowsCollapsed[item.Session.ID] = true
+		h.rebuildFlatItems()
+	} else if item.Type == session.ItemTypeSession {
+		h.groupTree.CollapseGroup(item.Path)
+		h.rebuildFlatItems()
+		for i, fi := range h.flatItems {
+			if fi.Type == session.ItemTypeGroup && fi.Path == item.Path {
+				h.cursor = i
+				break
+			}
+		}
+		collapsed = true
+	}
+	if collapsed {
+		h.saveGroupState()
+	}
 }
 
 // buildRemoteAttachRequest constructs a terminal.AttachRequest that
@@ -7387,6 +7437,9 @@ func (h *Home) handleMainKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				return h, h.openShellHere(item.Session)
 			}
 		}
+		// Non-session item: delegate to collapse/parent navigation so the
+		// default "h" binding does not swallow left-nav on group/window rows.
+		h.collapseOrNavUp()
 		return h, nil
 
 	case "shift+enter":
@@ -7525,48 +7578,7 @@ func (h *Home) handleMainKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 	case "h", "left":
 		// Collapse group, session windows, or navigate up
-		if h.cursor < len(h.flatItems) {
-			item := h.flatItems[h.cursor]
-			collapsed := false
-			if item.Type == session.ItemTypeGroup {
-				groupPath := item.Path
-				h.groupTree.CollapseGroup(groupPath)
-				h.rebuildFlatItems()
-				for i, fi := range h.flatItems {
-					if fi.Type == session.ItemTypeGroup && fi.Path == groupPath {
-						h.cursor = i
-						break
-					}
-				}
-				collapsed = true
-			} else if item.Type == session.ItemTypeWindow {
-				// Collapse parent session's windows and jump to it
-				sid := item.WindowSessionID
-				h.windowsCollapsed[sid] = true
-				h.rebuildFlatItems()
-				h.moveCursorToSession(sid)
-				collapsed = false // no group state to save
-			} else if item.Type == session.ItemTypeSession && h.sessionHasWindows(item) && !h.windowsCollapsed[item.Session.ID] {
-				// Collapse this session's windows
-				h.windowsCollapsed[item.Session.ID] = true
-				h.rebuildFlatItems()
-				collapsed = false
-			} else if item.Type == session.ItemTypeSession {
-				// Move cursor to parent group
-				h.groupTree.CollapseGroup(item.Path)
-				h.rebuildFlatItems()
-				for i, fi := range h.flatItems {
-					if fi.Type == session.ItemTypeGroup && fi.Path == item.Path {
-						h.cursor = i
-						break
-					}
-				}
-				collapsed = true
-			}
-			if collapsed {
-				h.saveGroupState()
-			}
-		}
+		h.collapseOrNavUp()
 		return h, nil
 
 	case "shift+up", "ctrl+up", "+", "K":
@@ -13888,7 +13900,7 @@ func (h *Home) renderHelpBarFull() string {
 					primaryHints = append(primaryHints, h.helpKey(execShellKey, "Exec"))
 				}
 			}
-			if openShellHereKey != "" {
+			if openShellHereKey != "" && item.Session != nil && item.Type == session.ItemTypeSession {
 				primaryHints = append(primaryHints, h.helpKey(openShellHereKey, "Shell"))
 			}
 			if item.Session != nil && item.Session.IsMultiRepo() {
