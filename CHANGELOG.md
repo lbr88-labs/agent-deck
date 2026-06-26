@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.10.4] - 2026-06-26
+
+### Added
+
+- **Fleet fan-out CLI: launch parented children and track completions.** `agent-deck launch` gains `--inherit-group` (child inherits parent's group instead of cwd-derived), `--assert-done` / `--no-assert-done` (appends a done-signal instruction to the initial `-m` message for claude children, opt-out), and a new `agent-deck session children` subcommand listing direct children of a session with their status and completion time. A new file-based completion ledger (`completion-ledger/`) records when children finish so `session children` can report outcomes without touching the SQLite schema. The `fleet` skill is now included in the marketplace plugin. ([#1518](https://github.com/asheshgoplani/agent-deck/pull/1518))
+
 ## [1.9.77] - 2026-06-25
 
 ### Added
