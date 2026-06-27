@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.10.5] - 2026-06-27
+
+### Fixed
+
+- **Conductor: default HeartbeatInterval to 15 for fresh conductors.** Fresh conductors with heartbeat enabled were created with `HeartbeatInterval` at its zero value, causing them to never send heartbeats until explicitly configured. New conductors now initialize `HeartbeatInterval` to `15` (seconds) when heartbeat is enabled. ([#1511](https://github.com/asheshgoplani/agent-deck/pull/1511))
+
 ## [1.10.4] - 2026-06-26
 
 ### Added
