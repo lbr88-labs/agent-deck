@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.10.6] - 2026-06-28
+
+### Fixed
+
+- **CLI: global `-p`/`--profile` no longer shadows a subcommand's own `-p`.** `extractProfileFlag` previously scanned the entire arg list before subcommand dispatch, so `agent-deck launch . -p <parent>` had its `-p` swallowed as a phantom profile name and the child was never linked to its parent. The extractor now stops honoring the global flag once a subcommand token is reached, matching the convention that global flags precede the subcommand. Subcommands that define their own `-p` (`launch`/`add` `--parent`, `group move` `--position`) now receive it unmodified. ([#1529](https://github.com/asheshgoplani/agent-deck/pull/1529))
+
+### Docs
+
+- **Fleet skill: document `--parent` (long form) for explicit child parenting and warn against `-p`.** Added a "Need a specific parent?" note, `--parent` in the Useful flags list, and a `-p` pitfall note explaining how the short flag was mis-parsed as `--profile` on older builds, with recovery steps. ([#1531](https://github.com/asheshgoplani/agent-deck/pull/1531))
+
 ## [1.10.5] - 2026-06-27
 
 ### Fixed
