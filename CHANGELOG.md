@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.10.8] - 2026-07-01
+
+### Fixed
+
+- **TUI startup no longer blocks on a wedged `netstat` (macOS).** `Collector.Start()` previously ran the initial GPU probe and stat collection synchronously inside `Home.Init()`, before Bubble Tea's first paint. A `netstat -ib` call that wedged in the kernel (observed with VPN/utun interface churn) froze the TUI on a blank, input-dead screen for up to ~30 s. `Start()` now spawns all work into the background goroutine immediately and adds a 2-second context timeout to the `netstat -ib` call so a hanging invocation is bounded rather than infinite. ([#1548](https://github.com/asheshgoplani/agent-deck/pull/1548))
+- **Title sync no longer clobbers session names with Claude's auto-derived folder names.** Claude Code 2.1.19x began auto-deriving a session name from the cwd folder and stamping it with `nameSource="derived"`. The `#572` title-sync reconciler read `name` without checking `nameSource`, so the derived folder name overwrote agent-deck's `auto_name` handle. `ClaudeSessionNameIn` now treats `nameSource="derived"` as "no user rename", preserving the existing agent-deck name. Names without a `nameSource` (older Claude) are honored unchanged. ([#1545](https://github.com/asheshgoplani/agent-deck/pull/1545))
+
 ## [1.10.7] - 2026-06-30
 
 ### Added
