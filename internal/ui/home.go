@@ -15776,8 +15776,11 @@ func (h *Home) renderPreviewPane(width, height int) string {
 	b.WriteString(infoStyle.Render("📁 " + pathStr))
 	b.WriteString("\n")
 
-	// Activity time - shows when session was last active
-	activityTime := selected.GetLastActivityTime()
+	// Activity time - shows when session was last active. Uses the display-
+	// oriented accessor so sessions with no confirmed activity (error/idle/
+	// stopped) fall back to the persisted last-accessed time — matching the
+	// web — instead of leaking the tmux tracker's ~load-time seed.
+	activityTime := selected.DisplayLastActivityTime()
 	activityStr := formatRelativeTime(activityTime)
 	if selectedStatus == session.StatusRunning {
 		activityStr = "active now"
