@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Prompt-aware Codex approval command.** `agent-deck session approve <id> [once|always|session|N]` resolves a currently visible Codex approval menu with one digit keypress and no trailing Enter. It requires a live numbered approval overlay, revalidates the same prompt immediately before dispatch, and verifies that the original prompt clears without blindly retrying. This prevents `session send <id> "1"` from racing the approval overlay and submitting `1` as composer text or interrupting the resumed turn.
+
 ## [1.10.9] - 2026-07-02
 
 ### Fixed
