@@ -500,9 +500,11 @@ func TestHomePinCycleHotkey(t *testing.T) {
 	home.width = 100
 	home.height = 30
 
-	inst := session.NewInstance("test-session", "/tmp/project")
+	other := session.NewInstance("alpha-session", "/tmp/project")
+	inst := session.NewInstance("target-session", "/tmp/project")
 	home.instancesMu.Lock()
-	home.instances = []*session.Instance{inst}
+	home.instances = []*session.Instance{other, inst}
+	home.instanceByID[other.ID] = other
 	home.instanceByID[inst.ID] = inst
 	home.instancesMu.Unlock()
 	home.groupTree = session.NewGroupTree(home.instances)
@@ -510,33 +512,48 @@ func TestHomePinCycleHotkey(t *testing.T) {
 
 	sessionIdx := -1
 	for i, item := range home.flatItems {
-		if item.Type == session.ItemTypeSession {
+		if item.Type == session.ItemTypeSession && item.Session != nil && item.Session.ID == inst.ID {
 			sessionIdx = i
 			break
 		}
 	}
+	if sessionIdx == -1 {
+		t.Fatal("target session missing from flat items")
+	}
 	home.cursor = sessionIdx
+	assertTargetSelected := func(h *Home, step string) {
+		t.Helper()
+		if h.cursor >= len(h.flatItems) || h.flatItems[h.cursor].Session == nil {
+			t.Fatalf("%s: cursor %d does not select a session", step, h.cursor)
+		}
+		if got := h.flatItems[h.cursor].Session.ID; got != inst.ID {
+			t.Fatalf("%s: cursor selects %q, want target %q", step, got, inst.ID)
+		}
+	}
 
 	// Press ',' once: PinNone → PinTop
 	model1, _ := home.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{','}})
 	h1 := model1.(*Home)
-	if h1.instances[0].Pin != session.PinTop {
-		t.Errorf("after 1st press: pin = %q, want %q", h1.instances[0].Pin, session.PinTop)
+	if inst.Pin != session.PinTop {
+		t.Errorf("after 1st press: pin = %q, want %q", inst.Pin, session.PinTop)
 	}
+	assertTargetSelected(h1, "after 1st press")
 
 	// Press ',' again: PinTop → PinBottom
 	model2, _ := h1.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{','}})
 	h2 := model2.(*Home)
-	if h2.instances[0].Pin != session.PinBottom {
-		t.Errorf("after 2nd press: pin = %q, want %q", h2.instances[0].Pin, session.PinBottom)
+	if inst.Pin != session.PinBottom {
+		t.Errorf("after 2nd press: pin = %q, want %q", inst.Pin, session.PinBottom)
 	}
+	assertTargetSelected(h2, "after 2nd press")
 
 	// Press ',' a third time: PinBottom → PinNone
 	model3, _ := h2.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{','}})
 	h3 := model3.(*Home)
-	if h3.instances[0].Pin != session.PinNone {
-		t.Errorf("after 3rd press: pin = %q, want %q", h3.instances[0].Pin, session.PinNone)
+	if inst.Pin != session.PinNone {
+		t.Errorf("after 3rd press: pin = %q, want %q", inst.Pin, session.PinNone)
 	}
+	assertTargetSelected(h3, "after 3rd press")
 }
 
 func TestHomeMoveSessionWithDuplicateGroupNamesUsesSelectedPath(t *testing.T) {
