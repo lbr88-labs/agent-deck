@@ -48,6 +48,10 @@ func runTestMain(m *testing.M) int {
 
 	// Force _test profile for all tests in this package
 	os.Setenv("AGENTDECK_PROFILE", "_test")
+	// Unit tests construct hundreds of Home models for synchronous behavior
+	// checks. Their production workers are unrelated to those assertions and
+	// must not outlive each test.
+	homeBackgroundWorkersEnabled = false
 
 	// v1.7.38: stub syncOptOutToConfig to a no-op by default so feedback
 	// dialog tests that exercise stepRating 'n' / stepConfirm decline do
@@ -89,15 +93,12 @@ func cleanupTestSessions() {
 // armOrphanWatchdog installs an independent, os.Exit-based deadline that
 // guarantees this test binary terminates, and returns a func that disarms it.
 //
-// Why -test.timeout is not enough: this package starts background workers
-// eagerly in NewHomeWithProfileAndMode (statusWorker, the logWorker pool, and
-// StorageWatcher.pollLoop) and most tests never tear them down, so a full run
-// leaks hundreds of busy worker goroutines. When -test.timeout fires it panics
-// and dumps every goroutine stack under a stop-the-world; a heap of runnable
-// leaked workers can wedge that STW so the dump never completes and the process
-// lives on, pinning a CPU core. On 2026-06-21 seven such `ui.test` binaries —
-// reparented to PID 1 after their `go test` parent was interrupted — spun at
-// ~100% CPU for over two days and overheated the machine.
+// Why -test.timeout is not enough: before TestMain disabled Home's production
+// workers, every model started statusWorker, the log-worker pool, and
+// StorageWatcher.pollLoop, while most tests never tore them down. A timed-out
+// run then tried to dump hundreds of thousands of goroutine stacks and could
+// wedge before exiting. The worker gate prevents that leak; this watchdog stays
+// as a backstop for explicit worker tests and any future lifecycle regression.
 //
 // os.Exit performs no stop-the-world and terminates immediately, so it is the
 // only reliable backstop. The watchdog is armed for -test.timeout + grace, so
