@@ -2976,7 +2976,17 @@ func (i *Instance) ensureClaudeSessionIDFromDisk() {
 	// transcripts (e.g. a removed-then-recreated review session) cannot hijack
 	// a sibling's conversation. The Restart prelude already does this for
 	// #1147; this closes the same gap on the Start path.
-	if i.adoptExplicitClaudeSessionID("session_id_flag_explicit") {
+	explicitSessionID := i.adoptExplicitClaudeSessionID("session_id_flag_explicit")
+	if i.Tool == "claude" && i.ClaudeSessionID != "" {
+		if restored, err := RestoreOrphanedConversationBackup(i, GetClaudeConfigDirForInstance(i)); err == nil && restored != "" {
+			sessionLog.Info("resume: restored orphaned conversation backup id="+i.ClaudeSessionID+" reason=orphan_bak_restore",
+				slog.String("instance_id", i.ID),
+				slog.String("claude_session_id", i.ClaudeSessionID),
+				slog.String("path", restored),
+				slog.String("reason", "orphan_bak_restore"))
+		}
+	}
+	if explicitSessionID {
 		return
 	}
 	if i.ClaudeSessionID != "" {
@@ -3089,6 +3099,11 @@ func (i *Instance) Start() error {
 	// conductors, explicit telegram channel owners, and non-claude tools.
 	i.prepareWorkerScratchConfigDirForSpawn() // also runs plugin auto-install per fix C1
 
+	// Pre-accept Codex workspace trust for non-sandbox sessions so first launch
+	// does not stall on the trust dialog. Sandbox sessions seed trust after
+	// agent config sync in ensureSandboxContainer.
+	i.preAcceptCodexWorkspaceTrust()
+
 	// Build command based on tool type
 	// Priority: claude-compatible (built-in + custom wrapping claude) → built-in tools → custom tools → raw command
 	var command string
@@ -3143,10 +3158,11 @@ func (i *Instance) Start() error {
 		i.CopilotStartedAt = time.Now().UnixMilli()
 	case i.Tool == "opencode":
 		if i.IsForkAwaitingStart {
-			// Wrap the deferred fork script through buildOpenCodeCommand so the
-			// first-start command is byte-identical to the pre-deferred behavior
-			// (the script carries its own env prefix); restart falls through to the
-			// resume/fresh branch below via the stable "opencode" base Command.
+			// Wrap the deferred fork command through buildOpenCodeCommand so the
+			// env prefix is applied exactly once (the `--fork` command carries
+			// none); a later restart falls through to the resume/fresh branch
+			// below via the stable "opencode" base Command and the async-detected
+			// child session id (re-running `--fork` would re-fork the parent).
 			command = i.buildOpenCodeCommand(i.consumeForkStartCommand())
 			i.OpenCodeStartedAt = time.Now().UnixMilli()
 			sessionLog.Info("resume: none reason=fork_awaiting_start",
@@ -5196,36 +5212,56 @@ func (i *Instance) GetJSONLPathChecked(peers []*Instance) (string, error) {
 	return i.GetJSONLPath(), nil
 }
 
-// GetJSONLPath returns the path to the Claude session JSONL file for analytics
-// Returns empty string if this is not a Claude session or no session ID is available
+// resolveClaudeTranscriptPath returns the path to the Claude JSONL transcript for
+// the given session, or "" if it cannot be found. It first tries the projects/
+// subdirectory whose name Claude derives from the project path; if that misses, it
+// falls back to locating the transcript by its uniquely-named <sessionID>.jsonl
+// anywhere under projects/.
+//
+// The fallback matters on WSL: agent-deck stores a Linux project path (e.g.
+// /home/user or /mnt/d/proj), but Claude Code runs as a Windows-native process and
+// names its project directory from the Windows/UNC form of the cwd (e.g.
+// \\wsl.localhost\Ubuntu\home\user -> --wsl-localhost-Ubuntu-home-user, or
+// D:\proj -> D--proj). The two encodings never match, so the computed path misses
+// and analytics / last-response silently break. The session ID is a UUID, so
+// matching on the filename is unambiguous.
+func resolveClaudeTranscriptPath(configDir, projectPath, sessionID string) string {
+	if sessionID == "" {
+		return ""
+	}
+
+	// Resolve symlinks in project path (macOS: /tmp -> /private/tmp).
+	resolvedPath := projectPath
+	if resolved, err := filepath.EvalSymlinks(projectPath); err == nil {
+		resolvedPath = resolved
+	}
+
+	projectsDir := filepath.Join(configDir, "projects")
+
+	// Primary: the directory name Claude derives from the project path. Claude
+	// replaces every non-alphanumeric char with a hyphen.
+	primary := filepath.Join(projectsDir, ConvertToClaudeDirName(resolvedPath), sessionID+".jsonl")
+	if _, err := os.Stat(primary); err == nil {
+		return primary
+	}
+
+	// Fallback: the transcript may live under a differently-encoded directory name
+	// (notably WSL Linux path vs. Windows/UNC cwd). Locate it by its unique
+	// session-id filename. A UUID contains no glob metacharacters.
+	if matches, err := filepath.Glob(filepath.Join(projectsDir, "*", sessionID+".jsonl")); err == nil && len(matches) > 0 {
+		return matches[0]
+	}
+
+	return ""
+}
+
+// GetJSONLPath returns the path to the Claude session JSONL file for analytics.
+// Returns empty string if this is not a Claude session or the transcript is absent.
 func (i *Instance) GetJSONLPath() string {
 	if !IsClaudeCompatible(i.Tool) || i.ClaudeSessionID == "" {
 		return ""
 	}
-
-	configDir := GetClaudeConfigDir()
-
-	// Resolve symlinks in project path (macOS: /tmp -> /private/tmp)
-	resolvedPath := i.ProjectPath
-	if resolved, err := filepath.EvalSymlinks(i.ProjectPath); err == nil {
-		resolvedPath = resolved
-	}
-
-	// Convert project path to Claude's directory format
-	// Claude replaces ALL non-alphanumeric chars (spaces, !, etc.) with hyphens
-	// /Users/master/Code cloud/!Project -> -Users-master-Code-cloud--Project
-	projectDirName := ConvertToClaudeDirName(resolvedPath)
-	projectDir := filepath.Join(configDir, "projects", projectDirName)
-
-	// Build the JSONL file path
-	sessionFile := filepath.Join(projectDir, i.ClaudeSessionID+".jsonl")
-
-	// Verify file exists before returning
-	if _, err := os.Stat(sessionFile); os.IsNotExist(err) {
-		return ""
-	}
-
-	return sessionFile
+	return resolveClaudeTranscriptPath(GetClaudeConfigDir(), i.ProjectPath, i.ClaudeSessionID)
 }
 
 // getClaudeLastResponse extracts the last assistant message from Claude's JSONL file
@@ -5235,26 +5271,9 @@ func (i *Instance) getClaudeLastResponse() (*ResponseOutput, error) {
 		return nil, fmt.Errorf("no Claude session ID available for this instance")
 	}
 
-	configDir := GetClaudeConfigDir()
-
-	// Resolve symlinks in project path (macOS: /tmp -> /private/tmp)
-	resolvedPath := i.ProjectPath
-	if resolved, err := filepath.EvalSymlinks(i.ProjectPath); err == nil {
-		resolvedPath = resolved
-	}
-
-	// Convert project path to Claude's directory format
-	// Claude replaces ALL non-alphanumeric chars (spaces, !, etc.) with hyphens
-	// /Users/master/Code cloud/!Project -> -Users-master-Code-cloud--Project
-	projectDirName := ConvertToClaudeDirName(resolvedPath)
-	projectDir := filepath.Join(configDir, "projects", projectDirName)
-
-	// Use stored session ID directly
-	sessionFile := filepath.Join(projectDir, i.ClaudeSessionID+".jsonl")
-
-	// Check file exists
-	if _, err := os.Stat(sessionFile); os.IsNotExist(err) {
-		return nil, fmt.Errorf("session file not found: %s", sessionFile)
+	sessionFile := resolveClaudeTranscriptPath(GetClaudeConfigDir(), i.ProjectPath, i.ClaudeSessionID)
+	if sessionFile == "" {
+		return nil, fmt.Errorf("session file not found for claude_session_id %s", i.ClaudeSessionID)
 	}
 
 	// Read and parse the JSONL file
@@ -6003,6 +6022,20 @@ func (i *Instance) Restart() error {
 
 	// If Claude session with known ID AND tmux session exists, use respawn-pane.
 	if IsClaudeCompatible(i.Tool) && i.ClaudeSessionID != "" && i.tmuxSession != nil && i.tmuxSession.Exists() {
+		// A known-ID restart resumes straight to `claude --resume <uuid>`
+		// without passing through the Start-path prelude. If the live
+		// <id>.jsonl was lost to the #1533 account-switch bug but an
+		// orphaned <id>.jsonl.bak-<epoch> remains, restore it here so the
+		// resume finds its history instead of starting empty.
+		if i.Tool == "claude" {
+			if restored, rErr := RestoreOrphanedConversationBackup(i, GetClaudeConfigDirForInstance(i)); rErr == nil && restored != "" {
+				sessionLog.Info("resume: restored orphaned conversation backup id="+i.ClaudeSessionID+" reason=orphan_bak_restore_restart",
+					slog.String("instance_id", i.ID),
+					slog.String("claude_session_id", i.ClaudeSessionID),
+					slog.String("path", restored),
+					slog.String("reason", "orphan_bak_restore_restart"))
+			}
+		}
 		resumeCmd, containerName, err := i.prepareCommand(i.buildClaudeResumeCommand())
 		if err != nil {
 			return err
@@ -6990,20 +7023,37 @@ func (i *Instance) CreateForkedInstanceForTool(newTitle, newGroupPath string, op
 }
 
 // ForkOpenCode returns the command to create a forked OpenCode session.
-// Uses export/import to clone the session with a new ID, then launches
-// the forked session with opencode -s <new-id>.
+// Uses OpenCode's native `--fork` flag to branch the parent session into a new
+// session with its own id (discovered asynchronously after launch).
 // Deprecated: Use ForkOpenCodeWithOptions instead.
 func (i *Instance) ForkOpenCode(newTitle, newGroupPath string) (string, error) {
 	return i.ForkOpenCodeWithOptions(newTitle, newGroupPath, nil)
 }
 
-// ForkOpenCodeWithOptions returns the command to create a forked OpenCode session with custom options.
-// Uses export/import to clone the session with a new ID, then launches
-// the forked session with opencode -s <new-id> plus any model/agent flags.
+// ForkOpenCodeWithOptions returns the command to create a forked OpenCode session
+// with custom options. Uses OpenCode's native `opencode -s <parent-id> --fork`,
+// which branches the parent transcript into a fresh session while leaving the
+// parent intact, plus any model/agent flags.
 func (i *Instance) ForkOpenCodeWithOptions(newTitle, newGroupPath string, opts *OpenCodeOptions) (string, error) {
 	return i.forkOpenCodeWithOptionsInWorkDir(newTitle, newGroupPath, opts, i.ProjectPath)
 }
 
+// forkOpenCodeWithOptionsInWorkDir builds the one-time `cd <workDir> &&
+// opencode -s <parent-id> --fork` launch command for a forked OpenCode
+// instance. `--fork` is a newer OpenCode CLI flag that branches the session
+// named by -s/--continue; if the installed binary predates it the launched
+// command fails into a recoverable error state, mirroring how `codex fork` is
+// handled (CanForkCodex below).
+//
+// The launch is explicitly anchored to workDir with a `cd`: the multi-repo fork
+// path later repoints the tmux session WorkDir to the MultiRepoTempDir
+// container (internal/ui/home.go), yet async OpenCode session detection matches
+// by ProjectPath (DetectOpenCodeSession), so OpenCode must run in the requested
+// repo/worktree dir — not tmux's WorkDir — for the child session to be
+// discoverable. OpenCode mints the child session id, which that async detection
+// picks up; the previous export/import clone relied on the same path (and the
+// same `cd`), so no id is pre-assigned here. The env prefix is applied once by
+// buildOpenCodeCommand at start time.
 func (i *Instance) forkOpenCodeWithOptionsInWorkDir(newTitle, newGroupPath string, opts *OpenCodeOptions, workDir string) (string, error) {
 	if !i.CanForkOpenCode() {
 		return "", fmt.Errorf("cannot fork: no active OpenCode session")
@@ -7012,9 +7062,7 @@ func (i *Instance) forkOpenCodeWithOptionsInWorkDir(newTitle, newGroupPath strin
 		workDir = i.ProjectPath
 	}
 
-	envPrefix := i.buildEnvSourceCommand()
-
-	// Build extra flags from options (for fork, exclude session mode flags)
+	// Build extra flags from options (for fork, exclude session mode flags).
 	var extraFlags string
 	if opts != nil {
 		for _, arg := range opts.ToArgsForFork() {
@@ -7027,66 +7075,10 @@ func (i *Instance) forkOpenCodeWithOptionsInWorkDir(newTitle, newGroupPath strin
 		}
 	}
 
-	scriptPath, err := i.writeOpenCodeForkScript(workDir, envPrefix, extraFlags)
-	if err != nil {
-		return "", fmt.Errorf("failed to create fork script: %w", err)
-	}
-
-	return fmt.Sprintf("bash '%s'", scriptPath), nil
-}
-
-// writeOpenCodeForkScript writes a bash script that forks via export/import.
-// The script self-deletes after execution.
-func (i *Instance) writeOpenCodeForkScript(workDir, envPrefix, extraFlags string) (string, error) {
-	quotedWorkDir := shellescape.Quote(workDir)
-	quotedSessionID := shellescape.Quote(i.OpenCodeSessionID)
-	sedSessionID := strings.ReplaceAll(i.OpenCodeSessionID, ".", `\.`)
-	script := fmt.Sprintf(`#!/bin/bash
-cd %s || { printf 'cd failed to: %%s\n' %s; exit 1; }
-%s
-tmpfile=$(mktemp -t opencode-fork)
-trap "rm -f \"$tmpfile\" \"$0\"" EXIT
-
-opencode export %s 2>/dev/null > "$tmpfile"
-export_status=$?
-if [ $export_status -ne 0 ]; then
-  echo "Export failed (exit $export_status):"
-  cat "$tmpfile"
-  exit 1
-fi
-
-hash_cmd="md5sum"
-command -v md5sum >/dev/null 2>&1 || hash_cmd="md5"
-new_id="ses_$(date +%%s | $hash_cmd | head -c12)$(openssl rand -base64 20 | tr -dc a-zA-Z0-9 | head -c14)"
-if [[ "$OSTYPE" == "darwin"* ]]; then
-  sed -i "" "s/%s/$new_id/g" "$tmpfile" || { echo "Sed failed"; exit 1; }
-else
-  sed -i "s/%s/$new_id/g" "$tmpfile" || { echo "Sed failed"; exit 1; }
-fi
-opencode import "$tmpfile" 2>&1 || { echo "Import failed"; exit 1; }
-# OPENCODE_SESSION_ID is propagated via host-side SetEnvironment after tmux start.
-echo "Forked to: $new_id"
-opencode -s "$new_id"%s
-`, quotedWorkDir, quotedWorkDir, envPrefix, quotedSessionID,
-		sedSessionID, sedSessionID, extraFlags)
-
-	f, err := os.CreateTemp("", "opencode-fork-*.sh")
-	if err != nil {
-		return "", err
-	}
-	defer f.Close()
-
-	if _, err := f.WriteString(script); err != nil {
-		os.Remove(f.Name())
-		return "", err
-	}
-
-	if err := f.Chmod(0o755); err != nil {
-		os.Remove(f.Name())
-		return "", err
-	}
-
-	return f.Name(), nil
+	// workDir and the session id are shell-quoted to keep the launch command
+	// injection-safe (the id is also charset-validated upstream by CanForkOpenCode).
+	return fmt.Sprintf("cd %s && opencode -s %s --fork%s",
+		shellescape.Quote(workDir), shellescape.Quote(i.OpenCodeSessionID), extraFlags), nil
 }
 
 // CreateForkedOpenCodeInstance creates a new Instance configured for forking an OpenCode session
@@ -7495,6 +7487,11 @@ func (i *Instance) RefreshLiveSessionIDs() {
 // .mcp.json — agent-deck does not manage it yet.
 func (i *Instance) GetMCPInfo() *MCPInfo {
 	switch {
+	case IsCodexCompatible(i.Tool):
+		if i.isRemoteSession() {
+			return &MCPInfo{}
+		}
+		return GetCodexMCPInfo(i.getCodexHomeDir())
 	case IsClaudeCompatible(i.Tool):
 		return GetMCPInfo(i.ProjectPath)
 	case i.Tool == "gemini":
@@ -7510,7 +7507,7 @@ func (i *Instance) GetMCPInfo() *MCPInfo {
 // This should be called when a session starts or restarts, so we can track
 // which MCPs are actually loaded in the running Claude session vs just configured
 func (i *Instance) CaptureLoadedMCPs() {
-	if !IsClaudeCompatible(i.Tool) && i.Tool != "cursor" {
+	if !IsClaudeCompatible(i.Tool) && !IsCodexCompatible(i.Tool) && i.Tool != "cursor" {
 		i.LoadedMCPNames = nil
 		return
 	}
@@ -7529,6 +7526,20 @@ func (i *Instance) CaptureLoadedMCPs() {
 // Otherwise, MCPs will use stdio configs (npx ...)
 // Returns error if .mcp.json write fails
 func (i *Instance) regenerateMCPConfig() error {
+	if IsCodexCompatible(i.Tool) {
+		ClearCodexMCPCache(i.getCodexHomeDir())
+		mcpInfo := i.GetMCPInfo()
+		if mcpInfo == nil || len(mcpInfo.Global) == 0 {
+			return nil
+		}
+		if err := i.WriteGlobalMCPConfig(mcpInfo.Global); err != nil {
+			mcpLog.Debug("regen_codex_mcp_failed", slog.String("error", err.Error()))
+			return fmt.Errorf("failed to regenerate Codex MCP config: %w", err)
+		}
+		mcpLog.Debug("regen_codex_mcp_succeeded", slog.String("title", i.Title), slog.Int("mcp_count", len(mcpInfo.Global)))
+		return nil
+	}
+
 	if i.Tool == "cursor" {
 		ClearCursorMCPCache(i.ProjectPath)
 		mcpInfo := i.GetMCPInfo()
@@ -8323,6 +8334,13 @@ func ensureSandboxContainer(inst *Instance, userCfg *UserConfig, toolCommand str
 	var homeMounts []docker.VolumeMount
 	if homeDir != "" {
 		bindMounts, homeMounts = docker.RefreshAgentConfigs(homeDir, "")
+		if IsCodexCompatible(inst.Tool) {
+			if err := PreAcceptCodexSandboxWorkspaceTrust(homeDir); err != nil {
+				sessionLog.Warn("codex_sandbox_preaccept_trust_failed",
+					slog.String("instance_id", inst.ID),
+					slog.String("error", err.Error()))
+			}
+		}
 	}
 
 	if err := ensureContainerRunning(ctx, inst, ctr, userCfg, homeDir, bindMounts, homeMounts); err != nil {
