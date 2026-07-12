@@ -126,9 +126,10 @@ func tmuxArgs(socketName string, args ...string) []string {
 // `exec.Command("tmux", args...)`, preserving the contract of every
 // pre-v1.7.50 call site that was rewritten in #697.
 func tmuxExec(socketName string, args ...string) *exec.Cmd {
-	// #nosec G204 -- "tmux" is a fixed binary; args are constructed by
-	// agent-deck call sites (subcommand + internal -L socket plumbing),
-	// never from external input.
+	// #nosec G204,G702 -- "tmux" is a fixed binary and every dynamic value is
+	// passed as a distinct argv element, never through a shell. Call sites may
+	// supply user-selected paths, but those cannot alter the executable or argv
+	// boundaries.
 	cmd := exec.Command("tmux", tmuxArgs(socketName, args...)...)
 	cmd.WaitDelay = tmuxSubprocessWaitDelay
 	return cmd
