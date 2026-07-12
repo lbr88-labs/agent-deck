@@ -3,7 +3,7 @@
 // This is a byte-for-byte mirror of the Go formatter in
 // internal/ui/humanize_since.go. The two are pinned to the same canonical
 // parity table (Go: internal/ui/humanize_since_test.go, JS:
-// internal/web/static/app/timeFmt.test.js) so the TUI and web never diverge.
+// tests/web/unit/timeFmt.test.js) so the TUI and web never diverge.
 // Compact, two-component, floor math, month≈30d / year≈365d.
 
 const MIN = 60 * 1000
@@ -40,7 +40,7 @@ export function humanizeSince(ms) {
 // formatRelativeTime formats an ISO timestamp (or ms epoch) relative to `now`.
 // Absent / unparseable / Go-zero timestamps render as an em dash.
 export function formatRelativeTime(iso, now = Date.now()) {
-  if (!iso) return '—'
+  if (iso === null || iso === undefined || iso === '') return '—'
   const t = typeof iso === 'number' ? iso : new Date(iso).getTime()
   if (!Number.isFinite(t)) return '—'
   if (t <= GO_ZERO_MS) return '—'

@@ -6,7 +6,7 @@ import (
 )
 
 // Canonical parity table — MUST stay byte-identical to the JS mirror in
-// internal/web/static/app/timeFmt.test.js. See the design spec.
+// tests/web/unit/timeFmt.test.js. See the design spec.
 func TestHumanizeSince_ParityTable(t *testing.T) {
 	cases := []struct {
 		name string

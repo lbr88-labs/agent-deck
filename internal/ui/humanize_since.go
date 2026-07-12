@@ -9,7 +9,8 @@ import (
 // relative string, e.g. "just now", "45m ago", "3h 20m ago", "2d 5h ago",
 // "5mo 1w ago", "2y 3mo ago". It is the single source of truth for relative
 // timestamps in the TUI; the web mirrors it byte-for-byte in
-// internal/web/static/app/timeFmt.js. Both are pinned to the same parity table.
+// internal/web/static/app/timeFmt.js. Both are pinned to the same parity table
+// in internal/ui/humanize_since_test.go and tests/web/unit/timeFmt.test.js.
 //
 // Design: two components max (primary + next-smaller), secondary dropped when
 // zero, floor (truncate) math, month≈30d / year≈365d. Callers own the

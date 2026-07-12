@@ -5,6 +5,7 @@ const modPath = '../../../internal/web/static/app/timeFmt.js'
 const MIN = 60 * 1000
 const HOUR = 60 * MIN
 const DAY = 24 * HOUR
+const YEAR = 365 * DAY
 
 // Canonical parity table — MUST stay byte-identical to the Go table in
 // internal/ui/humanize_since_test.go. If these drift, the TUI and web show
@@ -53,6 +54,11 @@ describe('formatRelativeTime', () => {
     const now = Date.parse('2026-07-03T12:00:00Z')
     const iso = new Date(now - (3 * HOUR + 20 * MIN)).toISOString()
     expect(formatRelativeTime(iso, now)).toBe('3h 20m ago')
+  })
+
+  it('accepts numeric epoch zero', async () => {
+    const { formatRelativeTime } = await import(modPath)
+    expect(formatRelativeTime(0, YEAR)).toBe('1y ago')
   })
 
   it('treats future/skew as just now', async () => {
