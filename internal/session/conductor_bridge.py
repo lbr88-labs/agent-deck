@@ -2198,13 +2198,12 @@ def create_discord_bot(config: dict):
     channel_id = config["discord"]["channel_id"]
     authorized_user = config["discord"]["user_id"]
     listen_mode = str(config["discord"].get("listen_mode", "all") or "all").strip().lower()
+    if listen_mode not in {"all", "mentions", "mentions_all_channels"}:
+        log.warning("Unknown Discord listen_mode %r, falling back to 'all'", listen_mode)
+        listen_mode = "all"
     ignore_replies_to_others = bool(
         config["discord"].get("ignore_replies_to_others", False)
     )
-
-    if listen_mode not in {"all", "mentions"}:
-        log.warning("Unknown Discord listen_mode %r, falling back to 'all'", listen_mode)
-        listen_mode = "all"
 
     intents = discord.Intents.default()
     intents.message_content = True
@@ -2241,6 +2240,31 @@ def create_discord_bot(config: dict):
         if not bot.user:
             return text.strip()
         return re.sub(rf"<@!?{bot.user.id}>", "", text).strip()
+
+    def build_discord_context_tag(message: discord.Message) -> str:
+        """Build a `[from:... (id)] [channel:#... (id)|thread:... in #...|dm]` prefix
+        so the conductor knows which Discord channel/thread/DM a message came from.
+        Mirrors the Slack tagging convention (see resolve_slack_channel)."""
+        author = message.author
+        author_name = getattr(author, "display_name", None) or getattr(author, "name", "?")
+        from_tag = f"[from:{author_name} ({author.id})]"
+        channel = message.channel
+        ct = getattr(channel, "type", None)
+        thread_types = (
+            getattr(discord.ChannelType, "public_thread", None),
+            getattr(discord.ChannelType, "private_thread", None),
+            getattr(discord.ChannelType, "news_thread", None),
+        )
+        if ct == getattr(discord.ChannelType, "private", None):
+            chan_tag = "[dm]"
+        elif ct in thread_types:
+            parent = getattr(channel, "parent", None)
+            parent_name = f"#{parent.name}" if parent and getattr(parent, "name", None) else "?"
+            chan_tag = f"[thread:#{channel.name} ({channel.id}) in {parent_name}]"
+        else:
+            chan_name = getattr(channel, "name", "?")
+            chan_tag = f"[channel:#{chan_name} ({channel.id})]"
+        return f"{from_tag} {chan_tag}"
 
     async def should_ignore_reply_to_other(message: discord.Message) -> bool:
         if not ignore_replies_to_others:
@@ -2454,8 +2478,11 @@ def create_discord_bot(config: dict):
         # Ignore messages from other bots
         if message.author.bot:
             return
-        # Only listen in the configured channel
-        if message.channel.id != bot.target_channel_id:
+        # Channel scope, then mention — decided before the auth check so
+        # mentions_all_channels doesn't log "unauthorized" for every channel.
+        if listen_mode != "mentions_all_channels" and message.channel.id != bot.target_channel_id:
+            return
+        if listen_mode in ("mentions", "mentions_all_channels") and not message_mentions_bot(message):
             return
         # Authorization check
         if not is_authorized(message.author.id):
@@ -2467,9 +2494,7 @@ def create_discord_bot(config: dict):
         if await should_ignore_reply_to_other(message):
             return
         text = message.content
-        if listen_mode == "mentions":
-            if not message_mentions_bot(message):
-                return
+        if listen_mode in ("mentions", "mentions_all_channels"):
             text = strip_bot_mentions(text)
         # Ignore empty messages
         if not text:
@@ -2498,6 +2523,10 @@ def create_discord_bot(config: dict):
 
         if not cleaned_msg:
             cleaned_msg = text
+
+        # Prepend Discord channel/thread/DM context so the conductor knows
+        # where the message came from (mirrors the Slack tagging convention).
+        cleaned_msg = f"{build_discord_context_tag(message)} {cleaned_msg}"
 
         session_title = conductor_session_title(target["name"])
         profile = target["profile"]
