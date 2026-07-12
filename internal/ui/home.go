@@ -1075,6 +1075,10 @@ func NewHomeWithProfile(profile string) *Home {
 	return NewHomeWithProfileAndMode(profile)
 }
 
+// TestMain disables eager workers for unit tests. Production keeps the default
+// so status, log, pipe, and storage updates continue while the TUI is running.
+var homeBackgroundWorkersEnabled = true
+
 // NewHomeWithProfileAndMode creates a new Home with the specified profile.
 // All instances manage the notification bar equally via shared SQLite state.
 func NewHomeWithProfileAndMode(profile string) *Home {
@@ -1103,6 +1107,11 @@ func NewHomeWithProfileAndMode(profile string) *Home {
 	actualProfile := session.DefaultProfile
 	if storage != nil {
 		actualProfile = storage.Profile()
+	}
+
+	var statusWorkerDone chan struct{}
+	if homeBackgroundWorkersEnabled {
+		statusWorkerDone = make(chan struct{})
 	}
 
 	h := &Home{
@@ -1161,7 +1170,7 @@ func NewHomeWithProfileAndMode(profile string) *Home {
 		worktreeDirtyCache:        make(map[string]bool),
 		worktreeDirtyCacheTs:      make(map[string]time.Time),
 		statusTrigger:             make(chan statusUpdateRequest, 1), // Buffered to avoid blocking
-		statusWorkerDone:          make(chan struct{}),
+		statusWorkerDone:          statusWorkerDone,
 		idleTimeoutWatcher:        session.NewIdleTimeoutWatcher(session.IdleTimeoutWatcherConfig{}),
 		lastPersistedStatus:       make(map[string]string),
 		lastPersistedAutoNameDesc: make(map[string]string),
@@ -1249,55 +1258,44 @@ func NewHomeWithProfileAndMode(profile string) *Home {
 
 	h.liveSet = newPipeLiveSet(livePipeLRUCapacity)
 
-	// Initialize event-driven status detection
-	// Output callback: invoked when PipeManager detects %output from a session
-	outputCallback := func(sessionName string) {
-		h.instancesMu.RLock()
-		for _, inst := range h.instances {
-			if inst.GetTmuxSession() != nil && inst.GetTmuxSession().Name == sessionName {
-				h.logActivityMu.Lock()
-				lastUpdate := h.lastLogActivity[inst.ID]
-				if time.Since(lastUpdate) < logOutputDebounce {
+	if homeBackgroundWorkersEnabled {
+		// Initialize event-driven status detection. The output callback is invoked
+		// when PipeManager detects output from a session.
+		outputCallback := func(sessionName string) {
+			h.instancesMu.RLock()
+			for _, inst := range h.instances {
+				if inst.GetTmuxSession() != nil && inst.GetTmuxSession().Name == sessionName {
+					h.logActivityMu.Lock()
+					lastUpdate := h.lastLogActivity[inst.ID]
+					if time.Since(lastUpdate) < logOutputDebounce {
+						h.logActivityMu.Unlock()
+						break
+					}
+					h.lastLogActivity[inst.ID] = time.Now()
 					h.logActivityMu.Unlock()
+
+					select {
+					case h.logUpdateChan <- inst:
+					default:
+					}
 					break
 				}
-				h.lastLogActivity[inst.ID] = time.Now()
-				h.logActivityMu.Unlock()
-
-				select {
-				case h.logUpdateChan <- inst:
-				default:
-				}
-				break
 			}
+			h.instancesMu.RUnlock()
 		}
-		h.instancesMu.RUnlock()
+
+		// Control mode pipes provide event-driven, zero-subprocess status detection.
+		pm := tmux.NewPipeManager(h.ctx, outputCallback)
+		pm.SetWindowChangeCallback(func() {
+			tmux.RefreshSessionCache()
+		})
+		tmux.SetPipeManager(pm)
+		pm.SetWantPipe(func(name string) bool { return h.liveSet.want(name) })
+
+		go h.livePipeReconciler()
+		go h.statusWorker()
+		h.startLogWorkers()
 	}
-
-	// Control mode pipes: event-driven, zero-subprocess status detection
-	pm := tmux.NewPipeManager(h.ctx, outputCallback)
-
-	// Window change callback: refresh window cache immediately when tabs are added/closed
-	pm.SetWindowChangeCallback(func() {
-		tmux.RefreshSessionCache()
-	})
-
-	tmux.SetPipeManager(pm)
-
-	// Only the focused / attached / recently-viewed sessions hold a live pipe.
-	pm.SetWantPipe(func(name string) bool { return h.liveSet.want(name) })
-
-	// Live pipes are managed lazily by the reconciler: it connects the focused/
-	// attached session (and a few recent ones) and lets everything else ride the
-	// 2s status poll. This replaces the old "connect every session at startup"
-	// burst that opened ~N pipes at once and triggered attach-storm freezes.
-	go h.livePipeReconciler()
-
-	// Start background status worker (Priority 1C)
-	go h.statusWorker()
-
-	// Start log worker pool (Priority 2)
-	h.startLogWorkers()
 
 	// Initialize global search
 	// DISABLED: Global search opens 884+ directory watchers and loads 4.4 GB of JSONL
@@ -1323,7 +1321,7 @@ func NewHomeWithProfileAndMode(profile string) *Home {
 	// Initialize storage watcher for auto-reload
 	// Polls SQLite metadata for external changes (CLI commands, other instances)
 	// and triggers reload with state preservation
-	if storage != nil {
+	if homeBackgroundWorkersEnabled && storage != nil {
 		watcher, err := NewStorageWatcher(storage.GetDB())
 		if err != nil {
 			uiLog.Warn("storage_watcher_init_failed", slog.String("error", err.Error()))
