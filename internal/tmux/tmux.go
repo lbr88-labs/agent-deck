@@ -363,6 +363,140 @@ func HasSessionOnSocket(socketName, name string) bool {
 	return tmuxSessionExistsOnSocket(socketName, name)
 }
 
+// Per-socket session cache — backs ExistsCached() for sessions that live on an
+// ISOLATED socket (SocketName != DefaultSocketName()).
+//
+// The shared sessionCache above describes DefaultSocketName() only, and #755
+// forbids answering an isolated-socket session from it (a same-named entry is a
+// different session). PipeManager only holds control connections for wanted
+// (focused/attached) sessions. So without this cache, ExistsCached() had no
+// source of truth at all for an isolated-socket session and returned false on
+// every tick forever — silently starving those sessions of EnsureConfigured /
+// SyncSessionIDsToTmux and of COLORFGBG theme propagation.
+//
+// Refresh is stale-while-revalidate and keyed by SOCKET: one `list-sessions`
+// subprocess per distinct socket per TTL, spawned on a background goroutine.
+// Readers never block and never spawn — preserving the invariant that made
+// ExistsCached() safe for loops that walk every session each tick. Socket count
+// is O(1)-ish (a handful), never O(sessions), so this cannot recreate the
+// subprocess storm.
+const socketSessionCacheTTL = 5 * time.Second
+
+type socketSessionsEntry struct {
+	names       map[string]struct{}
+	refreshedAt time.Time
+	refreshing  bool
+	warm        bool // a probe has completed at least once (success or failure)
+}
+
+var (
+	socketSessionCacheMu sync.Mutex
+	socketSessionCache   = map[string]*socketSessionsEntry{}
+
+	// listSessionsOnSocket is a package var so tests can exercise the cache
+	// without a live tmux server.
+	listSessionsOnSocket = defaultListSessionsOnSocket
+)
+
+// ListSessionNamesOnSocket returns the set of live session names on one tmux
+// socket using a SINGLE bounded `list-sessions`. It is the socket-complete
+// alternative to probing each session with `has-session`: callers that need
+// liveness for N sessions should group them by socket and call this once per
+// distinct socket (O(sockets) subprocesses instead of O(sessions)).
+//
+// An error means the probe was indeterminate (timed out). Callers MUST treat
+// that as "assume alive" — never as "no sessions" — or a briefly-wedged server
+// will look like a pile of dead sessions. A successful probe returning an empty
+// set is authoritative (server present, no sessions / no server running).
+func ListSessionNamesOnSocket(socketName string) (map[string]struct{}, error) {
+	return listSessionsOnSocket(socketName)
+}
+
+// defaultListSessionsOnSocket returns the set of session names on the given
+// tmux socket via a single bounded `list-sessions`. A server with no sessions
+// (or no server at all) is an empty set, not an error.
+func defaultListSessionsOnSocket(socketName string) (map[string]struct{}, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), hasSessionProbeTimeout)
+	defer cancel()
+
+	out, err := tmuxExecContext(ctx, socketName, "list-sessions", "-F", "#{session_name}").Output()
+	if err != nil {
+		// "no server running" / "no sessions" are legitimate empty results; any
+		// other failure (timeout, exec error) is reported so the caller keeps
+		// the previous entry instead of flapping every session to "gone".
+		if ctx.Err() == context.DeadlineExceeded {
+			return nil, ctx.Err()
+		}
+		return map[string]struct{}{}, nil
+	}
+
+	names := map[string]struct{}{}
+	for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+		if line = strings.TrimSpace(line); line != "" {
+			names[line] = struct{}{}
+		}
+	}
+	return names, nil
+}
+
+// sessionExistsOnSocketCached answers "is <name> live on <socketName>?" from
+// the per-socket cache, never blocking. On a cold or stale entry it kicks a
+// single background refresh for that socket (at most one in flight per socket)
+// and answers from whatever it currently knows: false when cold.
+func sessionExistsOnSocketCached(socketName, name string) bool {
+	socket := strings.TrimSpace(socketName)
+
+	socketSessionCacheMu.Lock()
+	defer socketSessionCacheMu.Unlock()
+
+	entry, ok := socketSessionCache[socket]
+	if !ok {
+		entry = &socketSessionsEntry{names: map[string]struct{}{}}
+		socketSessionCache[socket] = entry
+	}
+
+	stale := !entry.warm || time.Since(entry.refreshedAt) > socketSessionCacheTTL
+	if stale && !entry.refreshing {
+		entry.refreshing = true
+		// Snapshot the lister under the lock: the background goroutine must not
+		// read the package var concurrently with a test swapping it.
+		go refreshSocketSessionCache(socket, listSessionsOnSocket)
+	}
+
+	_, exists := entry.names[name]
+	return exists
+}
+
+// refreshSocketSessionCache re-lists one socket off the caller's goroutine and
+// replaces its entry. A probe error (timeout) leaves the previous name set in
+// place so a briefly-wedged server does not flap every session to "not found";
+// a successful probe is authoritative, including an empty result.
+func refreshSocketSessionCache(socket string, list func(string) (map[string]struct{}, error)) {
+	names, err := list(socket)
+
+	socketSessionCacheMu.Lock()
+	defer socketSessionCacheMu.Unlock()
+
+	entry, ok := socketSessionCache[socket]
+	if !ok {
+		entry = &socketSessionsEntry{names: map[string]struct{}{}}
+		socketSessionCache[socket] = entry
+	}
+	entry.refreshing = false
+	entry.refreshedAt = time.Now()
+	entry.warm = true
+	if err == nil {
+		entry.names = names
+	}
+}
+
+// ResetSocketSessionCacheForTest clears the per-socket cache between tests.
+func ResetSocketSessionCacheForTest() {
+	socketSessionCacheMu.Lock()
+	defer socketSessionCacheMu.Unlock()
+	socketSessionCache = map[string]*socketSessionsEntry{}
+}
+
 // sessionExistsFromCache checks if a session exists using the cached data
 // Returns (exists, cacheValid) - if cache is stale/empty, cacheValid is false
 func sessionExistsFromCache(name string) (bool, bool) {
@@ -2178,6 +2312,48 @@ func (s *Session) Exists() bool {
 		return true // probe timed out: indeterminate, assume still alive
 	}
 	return err == nil
+}
+
+// ExistsCached is a cheap, non-blocking liveness check for hot periodic loops
+// that iterate over ALL sessions every tick (e.g. the background configure loop
+// and theme propagation). It NEVER spawns a subprocess on the calling
+// goroutine: a single wedged/absent server multiplied by ~1000 sessions is the
+// exact subprocess-storm that froze the UI main goroutine 4–7s per tick (see
+// the nav-freeze fix). It answers only from in-process state:
+//
+//   - a POSITIVE session-cache hit on the session's OWN socket, or
+//   - a live PipeManager control connection, or
+//   - a POSITIVE hit in the per-socket cache (isolated sockets).
+//
+// The socket guard mirrors Exists(): the shared sessionCache describes
+// DefaultSocketName() only, so a same-named entry on a different socket is not
+// this session (#755 / multi-socket cache aliasing). Sessions on an isolated
+// socket are therefore answered from a SEPARATE per-socket cache, refreshed in
+// the background by one `list-sessions` per socket per TTL. Without it those
+// sessions would read false FOREVER (never in the default cache; PipeManager
+// only connects wanted/attached sessions), permanently starving them of
+// EnsureConfigured and theme propagation — a bug the "retries next tick"
+// framing hid. Bounding the refresh by SOCKET count, not session count, keeps
+// the no-storm invariant that motivated this method.
+//
+// A false is still a deliberate under-report (cold cache, dead server, probe
+// failure): the only cost is that a cosmetic loop skips this session until the
+// cache warms. Callers MUST NOT feed ExistsCached() into destructive/restart
+// machinery — use Exists() (which confirms a negative with a real probe).
+func (s *Session) ExistsCached() bool {
+	if strings.TrimSpace(s.SocketName) == DefaultSocketName() {
+		if exists, cacheValid := sessionExistsFromCache(s.Name); cacheValid && exists {
+			return true
+		}
+	} else if sessionExistsOnSocketCached(s.SocketName, s.Name) {
+		return true
+	}
+	if pm := GetPipeManager(); pm != nil {
+		if pm.IsConnected(s.Name) {
+			return true
+		}
+	}
+	return false
 }
 
 // IsPaneDead returns true if the session's pane process has exited.

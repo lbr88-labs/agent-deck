@@ -2787,7 +2787,13 @@ func (h *Home) propagateThemeToSessions() {
 
 	safego.Go(uiLog, "apply_theme_to_sessions", func() {
 		for _, inst := range instances {
-			if tmuxSess := inst.GetTmuxSession(); tmuxSess != nil && tmuxSess.Exists() {
+			// ExistsCached() (cache/pipe only): iterating every instance with
+			// Exists() would subprocess-probe each uncached/dead session, storming
+			// the tmux server on a theme toggle. This runs off the UI goroutine so
+			// it can't freeze the main loop, but the storm class is the same one
+			// the tickMsg fix eliminates. A live-but-uncached session keeps its
+			// stale COLORFGBG until the next theme change — cosmetic only.
+			if tmuxSess := inst.GetTmuxSession(); tmuxSess != nil && tmuxSess.ExistsCached() {
 				_ = tmuxSess.SetEnvironment("COLORFGBG", colorfgbg)
 				_ = tmuxSess.ApplyThemeOptions()
 			}
@@ -3907,6 +3913,14 @@ func (h *Home) backgroundStatusUpdate() {
 	copy(instances, h.instances)
 	h.instancesMu.RUnlock()
 
+	// Active (non-archived) subset, computed once and reused by the loops that
+	// only concern live sessions. Archived sessions have torn-down panes, so
+	// walking them here only burns tmux subprocesses (Exists() / Capture())
+	// without changing anything the UI shows — with a large archive backlog that
+	// was the dominant cost in this sweep. Loops that need the full set (status
+	// skip-counting, idle lastSeen cleanup) keep using `instances`.
+	activeInstances := session.FilterInstancesByArchive(instances, false)
+
 	// Issue #1143: rate-limit the idle-timeout watcher to one tick per minute.
 	// The background sweep runs every 2s; capture-pane on every session every
 	// 2s would add unnecessary tmux load. 60s is the same cadence the spec
@@ -3925,9 +3939,15 @@ func (h *Home) backgroundStatusUpdate() {
 	// PERFORMANCE: Gradually configure unconfigured sessions in background
 	// Configure one session per tick to avoid blocking the status update
 	// This ensures all sessions get configured within ~1 minute even without user interaction
-	for _, inst := range instances {
+	for _, inst := range activeInstances {
 		if tmuxSess := inst.GetTmuxSession(); tmuxSess != nil {
-			if !tmuxSess.IsConfigured() && tmuxSess.Exists() {
+			// ExistsCached() (cache/pipe only, never a has-session subprocess):
+			// this loop evaluates the liveness check for EVERY unconfigured
+			// session each tick until it finds one to configure. With hundreds
+			// of unconfigured dead sessions, Exists() here would subprocess-probe
+			// each one — the same storm the tickMsg fix kills. A live-but-uncached
+			// session simply gets configured a tick later.
+			if !tmuxSess.IsConfigured() && tmuxSess.ExistsCached() {
 				tmuxSess.EnsureConfigured()
 				inst.SyncSessionIDsToTmux()
 				break // Only one per tick to avoid blocking
@@ -6165,17 +6185,45 @@ func (h *Home) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// connects focused/attached sessions; this only reconnects wanted
 			// sessions whose pipe dropped.
 			if pm := tmux.GetPipeManager(); pm != nil {
+				// Two-phase so NOTHING that can block runs on the bubbletea
+				// goroutine. Phase 1 (under RLock) filters with cheap map/slice
+				// lookups only: a session needs reconnecting iff it is WANTED
+				// (focused/attached) and its pipe has dropped. Phase 2 does the
+				// liveness probe and the reconnect off-thread.
+				//
+				// ts.Exists() must not run here: it falls back to a
+				// `tmux has-session` subprocess (up to hasSessionProbeTimeout=2s)
+				// for any session the pipe/cache doesn't cover — and a
+				// wanted-but-disconnected session on a wedged server is exactly
+				// the state that reaches this loop. Probing on the main goroutine
+				// (while holding instancesMu, stalling writers too) is what froze
+				// the UI for seconds at a time on every tick.
+				type reconnectTarget struct {
+					ts     *tmux.Session
+					socket string
+				}
+				var targets []reconnectTarget
 				h.instancesMu.RLock()
 				for _, inst := range h.instances {
-					if ts := inst.GetTmuxSession(); ts != nil && ts.Exists() {
-						if h.liveSet.want(ts.Name) && !pm.IsConnected(ts.Name) {
-							go func(name, socket string) {
-								_ = pm.Connect(name, socket)
-							}(ts.Name, inst.TmuxSocketName)
-						}
+					ts := inst.GetTmuxSession()
+					if ts == nil {
+						continue
 					}
+					if !h.liveSet.want(ts.Name) || pm.IsConnected(ts.Name) {
+						continue
+					}
+					targets = append(targets, reconnectTarget{ts: ts, socket: inst.TmuxSocketName})
 				}
 				h.instancesMu.RUnlock()
+
+				for _, t := range targets {
+					safego.Go(uiLog, "pipe_reconnect", func() {
+						if !t.ts.Exists() {
+							return
+						}
+						_ = pm.Connect(t.ts.Name, t.socket)
+					})
+				}
 			}
 		}
 
