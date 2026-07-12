@@ -196,6 +196,7 @@ func (h *HelpOverlay) View() string {
 	copyPaneKey := h.key(hotkeyCopyPane, "V")
 	sendKey := h.key(hotkeySendOutput, "x")
 	execShellKey := h.key(hotkeyExecShell, "E")
+	openShellHereKey := h.key(hotkeyOpenShellHere, "h")
 	notesKey := h.key(hotkeyEditNotes, "e")
 	if cfg, _ := session.LoadUserConfig(); cfg != nil && !cfg.GetShowNotes() {
 		notesKey = ""
@@ -276,6 +277,7 @@ func (h *HelpOverlay) View() string {
 				{copyPaneKey, "Copy visible terminal text, including links"},
 				{sendKey, "Send output to session"},
 				{execShellKey, "Exec shell in sandbox container"},
+				{openShellHereKey, "Open shell in session's worktree (split pane / tmux)"},
 				{editPathsKey, "Edit multi-repo paths"},
 				{editSessionKey, "Edit session settings (title/color/...)"},
 				{notesKey, "Edit notes"},

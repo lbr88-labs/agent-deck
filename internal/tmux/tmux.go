@@ -4417,7 +4417,7 @@ func (s *Session) sendKeysToTarget(target, keys string) error {
 	// This prevents issues like "Enter" being interpreted as the Enter key
 	// and provides a layer of safety against tmux special sequences
 	cmd := keySenderExec(s.SocketName, "send-keys", "-l", "-t", target, "--", keys)
-	return cmd.Run()
+	return runSendKeysBounded(cmd)
 }
 
 // ensureInsertMode prepends an Escape + `i` sequence so a vim-mode composer
@@ -4435,9 +4435,9 @@ func (s *Session) ensureInsertModeOnTarget(target string) {
 		return
 	}
 	// Escape: guarantee normal mode regardless of current state.
-	_ = keySenderExec(s.SocketName, "send-keys", "-t", target, "Escape").Run()
+	_ = runSendKeysBounded(keySenderExec(s.SocketName, "send-keys", "-t", target, "Escape"))
 	// i: enter insert mode so the following paste/Enter are taken literally.
-	_ = keySenderExec(s.SocketName, "send-keys", "-t", target, "i").Run()
+	_ = runSendKeysBounded(keySenderExec(s.SocketName, "send-keys", "-t", target, "i"))
 }
 
 // sendEnterRaw emits a single Enter keystroke without the vim-mode insert
@@ -4452,7 +4452,7 @@ func (s *Session) sendEnterRaw() error {
 func (s *Session) sendEnterRawToTarget(target string) error {
 	s.invalidateCache()
 	cmd := keySenderExec(s.SocketName, "send-keys", "-t", target, "Enter")
-	return cmd.Run()
+	return runSendKeysBounded(cmd)
 }
 
 // SendEnter sends an Enter key to the tmux session. When VimMode is set it
@@ -4483,7 +4483,7 @@ func (s *Session) OpenKeySender() (KeySender, error) {
 func (s *Session) SendNamedKey(key string) error {
 	s.invalidateCache()
 	cmd := keySenderExec(s.SocketName, "send-keys", "-t", s.Name, key)
-	return cmd.Run()
+	return runSendKeysBounded(cmd)
 }
 
 // SendKeysAndEnter sends literal text followed by Enter as two separate tmux
@@ -4593,14 +4593,14 @@ func splitIntoChunks(content string, maxSize int) []string {
 func (s *Session) SendCtrlC() error {
 	s.invalidateCache()
 	cmd := s.tmuxCmd("send-keys", "-t", s.Name, "C-c")
-	return cmd.Run()
+	return runSendKeysBounded(cmd)
 }
 
 // SendCtrlU sends Ctrl+U (clear line) to the tmux session
 func (s *Session) SendCtrlU() error {
 	s.invalidateCache()
 	cmd := s.tmuxCmd("send-keys", "-t", s.Name, "C-u")
-	return cmd.Run()
+	return runSendKeysBounded(cmd)
 }
 
 // WaitForShellPrompt polls the terminal until a shell prompt is detected
@@ -4793,6 +4793,22 @@ func (s *Session) GetWorkDir() string {
 		return ""
 	}
 	return strings.TrimSpace(string(output))
+}
+
+// SplitShellPane adds a vertical split pane to this session running shell
+// in workdir. If workdir is empty the pane inherits the session's current
+// working directory. Issue #1470.
+func (s *Session) SplitShellPane(workdir string) error {
+	shell := os.Getenv("SHELL")
+	if shell == "" {
+		shell = "/bin/sh"
+	}
+	args := []string{"split-window", "-h", "-t", s.Name}
+	if workdir != "" {
+		args = append(args, "-c", workdir)
+	}
+	args = append(args, shell)
+	return tmuxExec(s.SocketName, args...).Run()
 }
 
 // ListAllSessions returns all Agent Deck tmux sessions
