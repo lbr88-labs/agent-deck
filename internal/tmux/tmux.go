@@ -429,6 +429,21 @@ type TerminalInfo struct {
 	SupportsTrueColor bool   // Supports 24-bit color
 }
 
+// IsAtuinPTYProxy checks if the current shell session is running under atuin's
+// pty-proxy. Atuin pty-proxy acts as a PTY MITM between the terminal and the
+// shell, intercepting all I/O. It sets ATUIN_PTY_PROXY_ACTIVE when active.
+//
+// agent-deck's Bubble Tea TUI is incompatible with atuin pty-proxy because:
+//   - os.Stdin/os.Stdout are pipes to atuin's proxy, not direct terminal FDs
+//   - Alternate screen sequences (tea.WithAltScreen) may be swallowed
+//   - Mouse tracking sequences (tea.WithMouseCellMotion) may not be forwarded
+//
+// Users should use `atuin init zsh` (or bash/fish) instead of
+// `atuin pty-proxy init zsh` when running agent-deck.
+func IsAtuinPTYProxy() bool {
+	return os.Getenv("ATUIN_PTY_PROXY_ACTIVE") != ""
+}
+
 // DetectTerminal identifies the current terminal emulator from environment variables
 // Returns terminal name: "warp", "iterm2", "kitty", "alacritty", "vscode", "windows-terminal", or "unknown"
 func DetectTerminal() string {
@@ -843,6 +858,13 @@ type Session struct {
 	detectedTool     string
 	toolDetectedAt   time.Time
 	toolDetectExpiry time.Duration // How long before re-detecting (default 30s)
+
+	// Cached background-work probe (BackgroundWorkPending). The hook fast path in
+	// UpdateStatus has no captured pane content, so it must capture separately to
+	// check for in-flight background shells/agents; this bounds that to one
+	// capture per bgWorkCacheTTL while a session sits at the prompt.
+	bgWorkPending   bool
+	bgWorkCheckedAt time.Time
 
 	// Simple state tracking (hash-based)
 	stateTracker *StateTracker
@@ -1671,7 +1693,8 @@ func (s *Session) ApplyThemeOptions() error {
 			";", "set-option", "-t", s.Name, "status-right", s.themedStatusRight(themeStyle),
 		)
 	}
-	return s.tmuxCmd(args...).Run()
+	// Bounded — see tmuxPollTimeout.
+	return s.runBoundedRun(args...)
 }
 
 // GetEnvironment gets an environment variable from this tmux session.
@@ -2115,13 +2138,23 @@ var hasSessionProbeTimeout = 2 * time.Second
 // Uses cached session list when available (refreshed by RefreshExistingSessions)
 // Falls back to direct tmux call if cache is stale
 func (s *Session) Exists() bool {
-	// The session cache is populated by RefreshSessionCache against
-	// DefaultSocketName() only — entries describe the default tmux server
-	// alone. Sessions on isolated sockets must skip the cache, otherwise
-	// UpdateStatus would stamp StatusError on every poll for them (#755).
+	// #755: the cache describes the DefaultSocketName() server, so a session on
+	// a different socket must not be answered from it (a same-named entry is not
+	// the same session). Keep that guard.
+	//
+	// Within the guard, trust only a POSITIVE hit. A NEGATIVE/stale result is
+	// NOT trusted: the cache can transiently miss a live session when
+	// agent-deck sessions span multiple sockets (RefreshAllActivities merges one
+	// pipe per socket, and the subprocess fallback covers only DefaultSocketName,
+	// so a refresh sourced from the "wrong" socket omits this one). Confirm a
+	// "not in cache" reading with the live pipe / a direct probe on the
+	// session's OWN socket before declaring it dead. Trusting a negative cache
+	// hit flipped live sessions on a second socket to StatusError/tmux_missing
+	// (multi-socket cache aliasing), after which restart machinery could kill
+	// the still-running pane.
 	if strings.TrimSpace(s.SocketName) == DefaultSocketName() {
-		if exists, cacheValid := sessionExistsFromCache(s.Name); cacheValid {
-			return exists
+		if exists, cacheValid := sessionExistsFromCache(s.Name); cacheValid && exists {
+			return true
 		}
 	}
 
@@ -2276,7 +2309,9 @@ func (s *Session) ConfigureStatusBar() {
 	if args == nil {
 		return
 	}
-	_ = s.tmuxCmd(args...).Run()
+	// Bounded — see tmuxPollTimeout. This status set-option batch was one of the
+	// observed orphaned 100%-CPU tmux clients when the server was wedged.
+	_ = s.runBoundedRun(args...)
 }
 
 // EnableMouseMode enables mouse scrolling, clipboard integration, and optimal settings
@@ -2367,6 +2402,17 @@ func (s *Session) Kill() error {
 	// Verify old processes are dead; escalate to SIGKILL if needed
 	if len(oldPIDs) > 0 {
 		go s.ensureProcessesDead(oldPIDs, 0)
+	}
+
+	// Killing a session that no longer exists is success, not failure: tmux
+	// `kill-session` exits non-zero ("can't find session") for an already-dead
+	// session. Treating that as fatal made archiveSession abort and silently
+	// fail to persist the archive when re-archiving a session whose tmux was
+	// already gone (the post-Unarchive path — Unarchive clears the flag without
+	// restarting tmux). Only surface the error if the session is genuinely
+	// still alive after the kill attempt.
+	if err != nil && !s.Exists() {
+		return nil
 	}
 
 	return err
@@ -3119,6 +3165,18 @@ func (s *Session) GetStatus() (string, error) {
 				return "active", nil
 			}
 
+			// Foreground turn ended but background work is still in flight: a
+			// run_in_background shell, or a background agent the turn is awaiting.
+			// Claude shows this at the prompt ("N shells still running" /
+			// "Waiting for N background agent to finish") with no spinner, so the
+			// busy check above misses it and the session would flip to waiting
+			// (yellow) and fire a premature "finished" notification. Keep it green
+			// until the work actually completes (then the next poll settles to
+			// waiting and notifies — "done" now means foreground AND background).
+			if s.markBackgroundWorkActiveLocked(content, currentTS, shortName) {
+				return "active", nil
+			}
+
 			// Update content hash for spike detection (deferred until after early return above).
 			// The 500ms CapturePane cache means the spike path gets the same content,
 			// so we store the normalized result once and reuse it via cachedNormContent.
@@ -3288,6 +3346,16 @@ func (s *Session) GetStatus() (string, error) {
 						s.startupAt = time.Time{}
 						statusLog.Debug("sustained_error_banner", slog.String("session", shortName))
 						return "error", nil
+					}
+
+					// Background work in flight keeps the session green here too:
+					// a bg shell's output drives the spike, so without this the
+					// prompt check below would flip it to waiting and fire a
+					// premature completion (mirrors the busy-check path above).
+					if s.markBackgroundWorkActiveLocked(content, currentTS, shortName) {
+						s.stateTracker.activityCheckStart = time.Time{}
+						s.stateTracker.activityChangeCount = 0
+						return "active", nil
 					}
 
 					if s.hasPromptIndicator(content) {
@@ -3726,6 +3794,78 @@ func (s *Session) GetWaitingSince() time.Time {
 func (s *Session) hasBusyIndicator(content string) bool {
 	// Always use spinner movement detection regardless of resolvedPatterns
 	return s.hasBusyIndicatorResolved(content)
+}
+
+// isClaudeTool reports whether this session is running Claude Code, used to gate
+// Claude-shaped pane heuristics (e.g. the background-work footer). Reads cached
+// tool fields without locking; GetStatus callers already hold s.mu.
+func (s *Session) isClaudeTool() bool {
+	return strings.EqualFold(inferToolFromSessionFields(s.detectedTool, s.customToolName, s.Command), "claude")
+}
+
+// bgWorkCacheTTL bounds how often BackgroundWorkPending captures the pane while a
+// session sits at the prompt. CapturePane has its own 500ms cache; this adds a
+// coarser ceiling so the per-tick hook-fast-path probe stays cheap at scale.
+const bgWorkCacheTTL = 3 * time.Second
+
+// BackgroundWorkPending reports whether a Claude session at the prompt still has
+// background work in flight (run_in_background shells or a background agent the
+// turn is awaiting). It captures the pane itself — for the UpdateStatus hook fast
+// path, which short-circuits before GetStatus and so has no captured content —
+// and caches the result briefly (bgWorkCacheTTL). Returns false for non-Claude
+// sessions. Safe to call WITHOUT holding s.mu (acquires it internally; releases
+// it for the slow capture).
+func (s *Session) BackgroundWorkPending() bool {
+	s.mu.Lock()
+	if !s.isClaudeTool() {
+		s.mu.Unlock()
+		return false
+	}
+	if !s.bgWorkCheckedAt.IsZero() && time.Since(s.bgWorkCheckedAt) < bgWorkCacheTTL {
+		pending := s.bgWorkPending
+		s.mu.Unlock()
+		return pending
+	}
+	s.mu.Unlock()
+
+	rawContent, err := s.CapturePane()
+	if err != nil {
+		// Don't cache a capture failure as "no background work": refreshing the
+		// TTL would suppress retries for the full window and could let the
+		// waiting hook fire a premature completion. Keep the previous value and
+		// leave bgWorkCheckedAt unchanged so the next call re-captures.
+		s.mu.Lock()
+		pending := s.bgWorkPending
+		s.mu.Unlock()
+		return pending
+	}
+	pending := claudeBackgroundWorkPending(StripANSI(rawContent))
+
+	s.mu.Lock()
+	s.bgWorkPending = pending
+	s.bgWorkCheckedAt = time.Now()
+	s.mu.Unlock()
+	return pending
+}
+
+// markBackgroundWorkActiveLocked applies the "keep green while background work is
+// in flight" state update when a Claude session is at the prompt but still has
+// run_in_background shells / an awaited background agent. Returns true when it
+// fired (caller should return "active"). Accepts raw or stripped content
+// (StripANSI is idempotent). Must be called with s.mu held.
+func (s *Session) markBackgroundWorkActiveLocked(content string, currentTS int64, shortName string) bool {
+	if !s.isClaudeTool() || !claudeBackgroundWorkPending(StripANSI(content)) {
+		return false
+	}
+	s.stateTracker.lastChangeTime = time.Now()
+	s.stateTracker.realActivityConfirmed = true
+	s.stateTracker.acknowledged = false
+	s.resetPromptNoBusyHoldLocked()
+	s.stateTracker.lastActivityTimestamp = currentTS
+	s.lastStableStatus = "active"
+	s.startupAt = time.Time{}
+	statusLog.Debug("background_work_active", slog.String("session", shortName))
+	return true
 }
 
 var defaultResolvedPatternsCache sync.Map // map[string]*ResolvedPatterns
@@ -4646,8 +4786,9 @@ func (s *Session) GetWorkDir() string {
 		return ""
 	}
 
-	cmd := s.tmuxCmd("display-message", "-t", s.Name, "-p", "#{pane_current_path}")
-	output, err := cmd.Output()
+	// Bounded: a wedged server / destroyed target must not hang this poll (see
+	// tmuxPollTimeout). Bare .Output() here was one of the orphan-spin sources.
+	output, err := s.runBoundedOutput("display-message", "-t", s.Name, "-p", "#{pane_current_path}")
 	if err != nil {
 		return ""
 	}
@@ -4699,9 +4840,8 @@ func ListAllSessions() ([]*Session, error) {
 				DisplayName: displayName,
 				SocketName:  socket,
 			}
-			// Try to get working directory
-			workDirCmd := tmuxExec(socket, "display-message", "-t", line, "-p", "#{pane_current_path}")
-			if workDirOutput, err := workDirCmd.Output(); err == nil {
+			// Try to get working directory (bounded — see tmuxPollTimeout)
+			if workDirOutput, err := runBoundedOutput(socket, "display-message", "-t", line, "-p", "#{pane_current_path}"); err == nil {
 				sess.WorkDir = strings.TrimSpace(string(workDirOutput))
 			}
 			sessions = append(sessions, sess)
@@ -4999,8 +5139,9 @@ func RefreshStatusBarImmediate() error {
 	// Get all connected clients, filtering out control mode clients
 	// client_name is free-text (a pts path) so it goes LAST, after the 0/1
 	// control-mode flag, to stay collision-safe under tmuxFieldSep.
-	cmd := tmuxExec(socket, "list-clients", "-F", tmuxFmt("#{client_control_mode}", "#{client_name}"))
-	output, err := cmd.Output()
+	// Bounded — see tmuxPollTimeout. list-clients against a wedged server was a
+	// primary orphan-spin source when the client outlived its owning TUI.
+	output, err := runBoundedOutput(socket, "list-clients", "-F", tmuxFmt("#{client_control_mode}", "#{client_name}"))
 	if err != nil {
 		return nil
 	}
@@ -5066,8 +5207,8 @@ func GetAttachedSessionsOnSockets(sockets ...string) []string {
 func attachedSessionsOnSocket(socket string) ([]string, error) {
 	// session_name is sanitized to [A-Za-z0-9-], so it never contains
 	// tmuxFieldSep; no reordering needed here.
-	cmd := tmuxExec(socket, "list-clients", "-F", tmuxFmt("#{session_name}", "#{client_control_mode}"))
-	output, err := cmd.Output()
+	// Bounded — see tmuxPollTimeout.
+	output, err := runBoundedOutput(socket, "list-clients", "-F", tmuxFmt("#{session_name}", "#{client_control_mode}"))
 	if err != nil {
 		return nil, err
 	}
@@ -5183,6 +5324,119 @@ func ReadAndClearAckSignal() string {
 	return strings.TrimSpace(string(data))
 }
 
+// WriteAckSignal writes sessionID to the ack-signal file so the TUI's background
+// sync (which runs even while the TUI is paused inside tea.Exec) acknowledges the
+// session, updates the notification bar, and records the switch for detach
+// cursor-sync. This is the programmatic equivalent of the `echo <id> > signal`
+// step in buildAckSwitchScript; pairs with SwitchAttachedClients.
+func WriteAckSignal(sessionID string) error {
+	signalFile, err := GetAckSignalPath()
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(filepath.Dir(signalFile), 0o700); err != nil {
+		return err
+	}
+	// Write atomically: the reader does ReadFile-then-Remove, so a plain
+	// truncating WriteFile could be observed mid-write as an empty/partial file
+	// and the ack would be lost. Stage to a temp file and rename into place.
+	tmp := signalFile + ".tmp"
+	if err := os.WriteFile(tmp, []byte(sessionID+"\n"), 0o600); err != nil {
+		return err
+	}
+	if err := os.Rename(tmp, signalFile); err != nil {
+		_ = os.Remove(tmp)
+		return err
+	}
+	return nil
+}
+
+// attachedClientNames lists the names of non-control clients attached on socket
+// ("" = default server). Control-mode clients (PipeManager pipes) are excluded.
+// Returns nil when no server is running or no client is attached.
+func attachedClientNames(socket string) []string {
+	// client_name is free-text (a pts path) so it goes LAST, after the 0/1
+	// control-mode flag, to stay collision-safe under tmuxFieldSep.
+	cmd := tmuxExec(socket, "list-clients", "-F", tmuxFmt("#{client_control_mode}", "#{client_name}"))
+	output, err := cmd.Output()
+	if err != nil {
+		return nil
+	}
+	var names []string
+	for _, line := range strings.Split(strings.TrimSpace(string(output)), "\n") {
+		parts := strings.SplitN(line, tmuxFieldSep, 2)
+		if len(parts) != 2 || parts[1] == "" {
+			continue
+		}
+		if parts[0] == "1" { // control mode
+			continue
+		}
+		names = append(names, parts[1])
+	}
+	return names
+}
+
+// SwitchAttachedClients moves every non-control client attached on socket into
+// targetSession and writes the ack-signal for sessionID. Returns switched=true
+// iff at least one client was attached and switched.
+//
+// This is the programmatic equivalent of the Ctrl+b N quick-switch: like that
+// path it works while the TUI is suspended inside tea.Exec (tmux drives the
+// switch, not Bubble Tea). And like that path it only works when the attached
+// client and target session share a tmux server — querying clients on the
+// target's own socket means a client attached elsewhere yields switched=false,
+// so the caller falls back to a focus_request rather than mis-switching.
+func SwitchAttachedClients(socket, targetSession, sessionID string) (bool, error) {
+	clients := attachedClientNames(socket)
+	if len(clients) == 0 {
+		return false, nil
+	}
+	// Best-effort: the bar/cursor sync degrades without it, but the switch below
+	// is what the user actually asked for, so a failed ack must not abort it.
+	_ = WriteAckSignal(sessionID)
+
+	switched := false
+	var firstErr error
+	for _, c := range clients {
+		if err := tmuxExec(socket, "switch-client", "-c", c, "-t", targetSession).Run(); err != nil {
+			if firstErr == nil {
+				firstErr = err
+			}
+			continue
+		}
+		switched = true
+	}
+	return switched, firstErr
+}
+
+// DetachClientsOnSockets detaches every non-control client attached on any of
+// the given sockets ("" = default server). Returns detached=true iff at least
+// one client was detached.
+//
+// This is the cross-server companion to SwitchAttachedClients: switch-client
+// cannot move a client between tmux servers, so when a notification target lives
+// on a different socket than the attached session, detaching that client makes
+// agent-deck's paused attach (tea.Exec) return. The TUI then resumes and
+// consumes the focus_request to attach the target on its OWN socket — a
+// detach-and-reattach, which is the only way to "switch while attached" across
+// servers. Control-mode clients (PipeManager pipes) are left alone.
+func DetachClientsOnSockets(sockets ...string) (bool, error) {
+	detached := false
+	var firstErr error
+	for _, socket := range sockets {
+		for _, c := range attachedClientNames(socket) {
+			if err := tmuxExec(socket, "detach-client", "-c", c).Run(); err != nil {
+				if firstErr == nil {
+					firstErr = err
+				}
+				continue
+			}
+			detached = true
+		}
+	}
+	return detached, firstErr
+}
+
 // UnbindKey removes a key binding and restores default behavior.
 // After unbinding, attempts to restore the default behavior where number keys
 // select windows. The restore is best-effort since it may fail in environments
@@ -5217,8 +5471,8 @@ func UnbindMouseStatusClicks() {
 // GetActiveSession returns the session name the user is currently attached to.
 // Returns empty string and error if not attached to any session.
 func GetActiveSession() (string, error) {
-	cmd := tmuxExec(DefaultSocketName(), "display-message", "-p", "#{client_session}")
-	out, err := cmd.Output()
+	// Bounded — see tmuxPollTimeout.
+	out, err := runBoundedOutput(DefaultSocketName(), "display-message", "-p", "#{client_session}")
 	if err != nil {
 		return "", err
 	}

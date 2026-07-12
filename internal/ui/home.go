@@ -198,6 +198,15 @@ const (
 	// Below 12: minimal mode
 )
 
+// pendingTitle is a title change queued to survive a storage-watcher reload
+// swap (see Home.pendingTitleChanges). It carries the intended lock state
+// alongside the title so the reapply can restore both: a user rename is locked,
+// a Claude-name sync stays unlocked.
+type pendingTitle struct {
+	title  string
+	locked bool
+}
+
 // Home is the main application model
 type Home struct {
 	// Dimensions
@@ -469,12 +478,19 @@ type Home struct {
 	// live via < and > keybindings, persisted back to config on adjustment.
 	previewPct          int       // 10-90, default 65
 	previewPctOverlayAt time.Time // when to hide the split overlay (zero = hidden)
+	draggingDivider     bool      // true while the mouse is dragging the Sessions/Preview divider
 
 	// footerMode selects the bottom hint-bar style (config.toml [ui] footer).
 	// One of session.FooterCurated (default), FooterFull, FooterCompact, or
 	// FooterMinimal. Cached so every render of a frame agrees. Additive/opt-in:
 	// it only changes WHAT the footer advertises, never a keybinding.
 	footerMode string
+
+	// attachOnCreate, when true, makes creating a session via the new-session
+	// dialog attach to the new session's pane immediately instead of only
+	// moving the cursor to it (config.toml [ui] attach_on_create). Default
+	// false: today's select-only behavior. See sessionCreatedMsg handling.
+	attachOnCreate bool
 
 	// Performance observability (debug mode only, zero cost when off)
 	debugMode          bool         // true when AGENTDECK_DEBUG=1, enables perf overlay
@@ -512,8 +528,20 @@ type Home struct {
 
 	// Pending title changes: survives reload races.
 	// When a rename save is skipped (isReloading=true), the title change is
-	// stored here and re-applied after the reload completes.
-	pendingTitleChanges map[string]string
+	// stored here and re-applied after the reload completes. The lock state is
+	// carried alongside the title: a user rename is locked (so the #572
+	// Claude-name sync can't revert it to the cwd-folder default), while a
+	// sync-sourced title stays unlocked so it keeps syncing. Storing only the
+	// string lost that intent and left reapplied user renames unlocked (#697).
+	pendingTitleChanges map[string]pendingTitle
+
+	// Pending group operations: survive the save-abort → reload race.
+	// Group create/rename/move persist via the non-force saveInstances(),
+	// whose external-change guard aborts and triggers a reload when the on-disk
+	// mtime is newer than our last load. The reload rebuilds groupTree from
+	// disk, discarding the just-applied mutation. These are re-applied after
+	// the reload (mirrors pendingTitleChanges for session renames).
+	pendingGroupOps []pendingGroupOp
 
 	// UI state persistence across restarts
 	pendingCursorRestore *uiState // Consumed on first loadSessionsMsg to restore cursor
@@ -1258,7 +1286,7 @@ func NewHomeWithProfileAndMode(profile string) *Home {
 		notesEditor:               newNotesEditor(),
 		boundKeys:                 make(map[string]string),
 		undoStack:                 make([]deletedSessionEntry, 0, 10),
-		pendingTitleChanges:       make(map[string]string),
+		pendingTitleChanges:       make(map[string]pendingTitle),
 		debugMode:                 logging.IsDebugEnabled(),
 		lastClickIndex:            -1,
 	}
@@ -1283,6 +1311,7 @@ func NewHomeWithProfileAndMode(profile string) *Home {
 		h.remoteLatencyRefreshSec = cfg.UI.GetRemoteLatencyRefreshSecs(cfg.SystemStats.GetRefreshSeconds())
 		h.remoteSessionRefreshSec = cfg.UI.GetRemoteSessionRefreshSecs()
 		h.footerMode = cfg.UI.GetFooter()
+		h.attachOnCreate = cfg.UI.GetAttachOnCreate()
 	} else {
 		h.fullRepaint = (session.DisplaySettings{}).GetFullRepaint()
 		h.activeFilterExcludes = (session.DisplaySettings{}).GetActiveFilterExcludes()
@@ -1598,17 +1627,30 @@ func (h *Home) SetInitialSelection(idOrTitle string) {
 // h.initialSelect, if any. Returns true if a match was found and the cursor
 // was moved, false otherwise. Idempotent — after one successful apply, further
 // calls are no-ops so normal cursor navigation is not overridden.
+//
+// Unlike SelectSessionByID this method does NOT clear group scope or status
+// filters — the caller may have set a scope intentionally via -g/--group, and
+// --select must respect that constraint. Only sessions visible in the current
+// flat view are eligible.
 func (h *Home) applyInitialSelection() bool {
 	if h.initialSelectDone || h.initialSelect == "" {
 		return false
 	}
+	// Try id-path first: searches only the visible flat view, so group scope
+	// and status filters are naturally honoured (no reveal behaviour here).
+	if idx := h.flatItemIndexByID(h.initialSelect); idx >= 0 {
+		h.cursor = idx
+		h.initialSelectDone = true
+		h.syncViewport()
+		return true
+	}
+	// Fall back to a title match — initialSelect may be a title, not an id.
 	wanted := strings.ToLower(strings.TrimSpace(h.initialSelect))
 	for i, fi := range h.flatItems {
 		if fi.Type != session.ItemTypeSession || fi.Session == nil {
 			continue
 		}
-		if fi.Session.ID == h.initialSelect ||
-			strings.EqualFold(fi.Session.Title, h.initialSelect) ||
+		if strings.EqualFold(fi.Session.Title, h.initialSelect) ||
 			strings.ToLower(fi.Session.Title) == wanted {
 			h.cursor = i
 			h.initialSelectDone = true
@@ -1617,6 +1659,109 @@ func (h *Home) applyInitialSelection() bool {
 		}
 	}
 	return false
+}
+
+// flatItemIndexByID returns the flatItems index of the session row with the
+// given id, or -1 if it is not present in the current flat view.
+func (h *Home) flatItemIndexByID(id string) int {
+	for i, fi := range h.flatItems {
+		if fi.Type == session.ItemTypeSession && fi.Session != nil && fi.Session.ID == id {
+			return i
+		}
+	}
+	return -1
+}
+
+// SelectSessionByID reveals and selects the session with the given id within
+// the active (non-archived) view: if the target is hidden by a status filter or
+// group scope it clears them, and if its group is collapsed it expands the
+// group (and parents), then moves the cursor. Returns true if the session was
+// found and selected. Archived sessions and unknown/foreign ids return false
+// and leave the cursor unchanged.
+func (h *Home) SelectSessionByID(id string) bool {
+	if id == "" {
+		return false
+	}
+
+	// Fast path: already visible in the current flat view.
+	if idx := h.flatItemIndexByID(id); idx >= 0 {
+		h.cursor = idx
+		h.syncViewport()
+		return true
+	}
+
+	// Confirm the target exists in this profile, is not archived, and learn its
+	// group path for expansion.
+	var target *session.Instance
+	h.instancesMu.RLock()
+	for _, inst := range h.instances {
+		if inst.ID == id {
+			target = inst
+			break
+		}
+	}
+	h.instancesMu.RUnlock()
+	if target == nil || target.IsArchived() {
+		return false
+	}
+
+	// Reveal within the active view: drop filters that could hide the target and
+	// expand its containing group, then rebuild and locate it.
+	h.statusFilter = ""
+	h.groupScope = ""
+	if target.GroupPath != "" {
+		h.groupTree.ExpandGroupWithParents(target.GroupPath)
+	}
+	h.rebuildFlatItems()
+
+	if idx := h.flatItemIndexByID(id); idx >= 0 {
+		h.cursor = idx
+		h.syncViewport()
+		return true
+	}
+	return false
+}
+
+// consumeFocusRequest honors a pending `agent-deck session focus <id>` request.
+// It is called once per tick. The row is cleared unconditionally (consume-once)
+// so an unknown, stale, or foreign id never re-fires on a later tick or lingers
+// past its purpose. It returns a non-nil tea.Cmd only when the request asked to
+// --attach the session and that session is live: the caller runs the cmd to
+// open it (the same path as pressing Enter). A select-only request returns nil.
+func (h *Home) consumeFocusRequest(db *statedb.StateDB) tea.Cmd {
+	if db == nil {
+		return nil
+	}
+	// Atomic read-and-clear: a separate read-then-clear has a window where a
+	// concurrent CLI `session focus` write lands between them and gets wiped.
+	// Consume-once still holds — a stale/unknown id is cleared by the take below.
+	raw, err := session.TakeFocusRequest(db)
+	if err != nil || raw == "" {
+		return nil
+	}
+
+	id, attach, fresh := session.DecodeFocusRequestAttach(raw, time.Now().UnixNano(), session.FocusRequestTTL)
+	if !fresh {
+		return nil
+	}
+	if !h.SelectSessionByID(id) {
+		return nil
+	}
+	if !attach {
+		return nil
+	}
+	// Attach intent: open the session as if the user pressed Enter on it. Skip
+	// when the session has no live tmux pane (attachSession would no-op anyway).
+	inst := h.getInstanceByID(id)
+	if inst == nil || !inst.Exists() {
+		return nil
+	}
+	// attachSession returns nil when there's no local tmux pane to attach (e.g.
+	// GetTmuxSession()==nil on a cross-socket session) and sets h.isAttaching
+	// itself on the real attach path. Don't pre-set it here: a premature set
+	// followed by a nil return would leave isAttaching stuck true and suppress
+	// View() forever. Mirror the attach_on_create path and guard on the cmd.
+	return h.attachSession(inst)
 }
 
 // isInGroupScope returns true if the given path is within the active group scope.
@@ -1982,7 +2127,13 @@ func (h *Home) rebuildFlatItems() {
 		partitioned := make([]session.Item, 0, len(allItems))
 		for _, item := range allItems {
 			if item.Type == session.ItemTypeGroup {
-				if groupsWithMatches[item.Path] {
+				// Archived view: only show groups that actually contain archived
+				// sessions. Active view: keep every group header — groups are never
+				// themselves archived, so empty groups and groups whose sessions are
+				// all archived remain part of the active list (they render as empty
+				// groups, same as before anything was archived) and can sink under
+				// the view-mode divider instead of vanishing.
+				if !viewArchived || groupsWithMatches[item.Path] {
 					partitioned = append(partitioned, item)
 				}
 			} else if item.Type == session.ItemTypeSession && item.Session != nil {
@@ -2057,8 +2208,10 @@ func (h *Home) rebuildFlatItems() {
 	if h.groupViewMode != session.GroupViewNormal {
 		// Activity is computed from the full tree (collapse-agnostic) so a
 		// collapsed-but-populated group's header is placed by its real contents,
-		// not by the (absent) session rows under a collapsed header.
-		activity := h.groupTree.GroupActivityMap()
+		// not by the (absent) session rows under a collapsed header. It honors the
+		// archive view so a group whose sessions are all archived counts as empty
+		// in the active view and sinks below the divider.
+		activity := h.groupTree.GroupActivityMap(viewArchived)
 		h.flatItems = session.PartitionByViewMode(h.flatItems, h.groupViewMode, activity)
 	}
 
@@ -3816,6 +3969,14 @@ func (h *Home) logWorker() {
 	}
 }
 
+// shouldPollStatusInLoop reports whether the per-tick background status sweep
+// should run UpdateStatus() on inst. Archived sessions are skipped: their tmux
+// pane is torn down and their row status is display-frozen, so a poll can only
+// spend a serialized tmux subprocess without changing anything the UI renders.
+func shouldPollStatusInLoop(inst *session.Instance) bool {
+	return inst != nil && !inst.IsArchived()
+}
+
 // backgroundStatusUpdate runs independently of the TUI
 // Updates session statuses and syncs notification bar directly to tmux
 // This is called by the internal ticker even when TUI is paused (tea.Exec)
@@ -3948,7 +4109,7 @@ func (h *Home) backgroundStatusUpdate() {
 	var slowMu sync.Mutex
 	var slowSessions []string
 	pm := tmux.GetPipeManager()
-	var skipped int
+	var skipped int // sessions not polled this tick (archived + idle fast-path)
 
 	tracker := h.getTransitionTracker()
 
@@ -3957,6 +4118,18 @@ func (h *Home) backgroundStatusUpdate() {
 
 	for _, inst := range instances {
 		inst := inst // capture loop variable
+
+		// Skip archived sessions: their tmux pane is torn down and their row
+		// status is display-frozen (rowStatusGlyph forces the stopped glyph
+		// regardless of Status), so UpdateStatus can only burn a serialized tmux
+		// subprocess without changing anything the UI shows. With a large archive
+		// backlog this dominated the loop (observed: 723 archived of 742 total
+		// pushed the sweep to multi-second spikes). Unarchiving runs its own
+		// refresh, so the periodic loop never needs to poll archived sessions.
+		if !shouldPollStatusInLoop(inst) {
+			skipped++
+			continue
+		}
 
 		// Skip idle sessions when PipeManager knows they haven't produced output.
 		// Only skip if pipe is alive (otherwise we need UpdateStatus for Error detection).
@@ -4779,24 +4952,40 @@ func (h *Home) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// and the reload replaced instances with stale disk data.
 			if len(h.pendingTitleChanges) > 0 {
 				applied := false
-				for id, title := range h.pendingTitleChanges {
+				for id, pt := range h.pendingTitleChanges {
 					if inst := h.getInstanceByID(id); inst != nil {
-						if inst.Title != title {
-							inst.Title = title
+						if inst.Title != pt.title {
+							inst.Title = pt.title
 							inst.SyncTmuxDisplayName()
 							applied = true
 							uiLog.Info("pending_rename_reapplied",
 								slog.String("session_id", id),
-								slog.String("title", title))
+								slog.String("title", pt.title))
+						}
+						// Restore the lock state lost in the reload swap. Without
+						// this a reapplied user rename stays unlocked, so the next
+						// #572 Claude-name sync reverts it to the cwd-folder
+						// default — the "my rename keeps disappearing" bug (#697).
+						if inst.TitleLocked != pt.locked {
+							inst.TitleLocked = pt.locked
+							applied = true
 						}
 						inst.SetAutoName(false) // pending title is a genuine rename; keep the user-chosen name
 					}
 				}
 				// Clear pending changes and persist if any were re-applied
-				h.pendingTitleChanges = make(map[string]string)
+				h.pendingTitleChanges = make(map[string]pendingTitle)
 				if applied {
 					h.forceSaveInstances()
 				}
+			}
+
+			// Re-apply pending group create/rename/move ops lost to the same
+			// reload race (they persist via non-force saveInstances, which the
+			// external-change guard can abort). See pendingGroupOps.
+			if h.reapplyPendingGroupOps() {
+				h.rebuildFlatItems()
+				h.forceSaveInstances()
 			}
 
 			// Restore state if provided (from auto-reload)
@@ -4940,8 +5129,21 @@ func (h *Home) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 
 			// Save both instances AND groups (critical fix: was losing groups!)
-			// Use forceSave to bypass mtime check - new session creation MUST persist
+			// Use forceSave to bypass the external-change abort - new session creation MUST persist
 			h.forceSaveInstances()
+
+			// Auto-attach to the new session when [ui].attach_on_create is set,
+			// so creating a session "instantly opens" it instead of only moving
+			// the cursor to it. The session was just Start()ed (see
+			// createSessionInGroupWithWorktreeAndOptions), so its pane is live.
+			// attachSession returns nil when there is no local tmux pane to
+			// attach (e.g. a session whose tmux session could not be resolved);
+			// in that case we fall through to today's select-only behavior.
+			if h.attachOnCreate {
+				if attachTo := h.attachSession(msg.instance); attachTo != nil {
+					return h, tea.Batch(h.fetchPreview(msg.instance, msg.instance.ID, -1), attachTo)
+				}
+			}
 
 			// Start fetching preview for the new session
 			return h, h.fetchPreview(msg.instance, msg.instance.ID, -1)
@@ -5007,7 +5209,7 @@ func (h *Home) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 
 			// Save both instances AND groups
-			// Use forceSave to bypass mtime check - forked session MUST persist
+			// Use forceSave to bypass the external-change abort - forked session MUST persist
 			h.forceSaveInstances()
 
 			// forceSaveInstances can setError on a failed persist; fold the
@@ -5084,7 +5286,7 @@ func (h *Home) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 			uiLog.Warn("delete_instance_db_err", slog.String("id", msg.deletedID), slog.String("err", err.Error()))
 		}
 		// Save both instances AND groups (critical fix: was losing groups!)
-		// Use forceSave to bypass mtime check - delete MUST persist
+		// Use forceSave to bypass the external-change abort - delete MUST persist
 		h.forceSaveInstances()
 
 		// Show undo hint (using setError as a transient message)
@@ -5128,16 +5330,25 @@ func (h *Home) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 		h.cachedStatusCounts.valid.Store(false)
 		h.invalidatePreviewCache(msg.sessionID)
 		h.rebuildFlatItems()
-		h.saveInstances()
 		if inst := h.getInstanceByID(msg.sessionID); inst != nil {
+			// Persist via a targeted UPDATE, not saveInstances(): under concurrent
+			// writers the full-table save aborts on external-change and reloads,
+			// silently discarding the archive (archived_at reverts to 0).
+			if err := h.persistArchived(inst); err != nil {
+				h.setError(fmt.Errorf("failed to persist archive: %w", err))
+				return h, nil
+			}
 			h.setError(fmt.Errorf("archived '%s' (^ to view)", inst.Title))
 		}
 		return h, nil
 
 	case sessionUnarchivedMsg:
 		h.rebuildFlatItems()
-		h.saveInstances()
 		if inst := h.getInstanceByID(msg.sessionID); inst != nil {
+			if err := h.persistArchived(inst); err != nil {
+				h.setError(fmt.Errorf("failed to persist unarchive: %w", err))
+				return h, nil
+			}
 			h.setError(fmt.Errorf("unarchived '%s'", inst.Title))
 		}
 		return h, nil
@@ -5185,7 +5396,7 @@ func (h *Home) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		}
 
-		// Use forceSave to bypass mtime check - restore MUST persist
+		// Use forceSave to bypass the external-change abort - restore MUST persist
 		h.forceSaveInstances()
 		if msg.warning != "" {
 			h.setError(fmt.Errorf("restored '%s' (%s)", msg.instance.Title, msg.warning))
@@ -5960,6 +6171,16 @@ func (h *Home) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return h, nil
 
 	case tickMsg:
+		// Honor a pending `agent-deck session focus <id>` request from the CLI.
+		// A non-nil cmd means the request asked to --attach the session: open it
+		// now (same as Enter) and skip the rest of this tick's background work,
+		// which is moot once we hand the terminal to the session. Re-arm the tick
+		// (h.tick()) here too — unlike the Enter key path, returning early from the
+		// tickMsg case would otherwise break the self-rescheduling tick chain.
+		if focusCmd := h.consumeFocusRequest(statedb.GetGlobal()); focusCmd != nil {
+			return h, tea.Batch(focusCmd, h.tick())
+		}
+
 		var remoteFetchCmd tea.Cmd
 		var remoteLatencyCmd tea.Cmd
 
@@ -7069,9 +7290,50 @@ func (h *Home) clickedItemID(index int) string {
 	return ""
 }
 
+// handleDividerDrag processes mouse events for the Sessions/Preview divider
+// resize drag and reports whether it consumed the event. The lifecycle is:
+// left-press on the separator grabs it, motion resizes the split live, and
+// release persists the new ratio. It keys off draggingDivider + msg.Action
+// rather than msg.Button because X10 terminals report a drag release as
+// MouseButtonNone, not MouseButtonLeft.
+func (h *Home) handleDividerDrag(msg tea.MouseMsg) bool {
+	if h.draggingDivider {
+		switch msg.Action {
+		case tea.MouseActionMotion:
+			h.lastUserInputTime = time.Now()
+			h.setPreviewPctFromMouseX(msg.X)
+		case tea.MouseActionRelease:
+			h.draggingDivider = false
+			persistPreviewPct(h.getPreviewPct())
+		}
+		return true
+	}
+
+	// Grab the divider only on a left-press over the separator, dual layout only.
+	if msg.Button == tea.MouseButtonLeft && msg.Action == tea.MouseActionPress &&
+		h.getLayoutMode() == LayoutModeDual && h.isOnDivider(msg.X) {
+		h.draggingDivider = true
+		h.lastUserInputTime = time.Now()
+		return true
+	}
+	return false
+}
+
 // handleMouse handles mouse events (click to select, double-click to activate)
 func (h *Home) handleMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 	if h.hasModalVisible() {
+		// A modal opening mid-drag shouldn't leave the divider stuck grabbed.
+		// Treat it as a release so the dragged-to ratio is preserved.
+		if h.draggingDivider {
+			h.draggingDivider = false
+			persistPreviewPct(h.getPreviewPct())
+		}
+		return h, nil
+	}
+
+	// Divider resize drag takes precedence over list selection (the separator
+	// columns sit at x >= sessionsPaneWidth, where list clicks are ignored).
+	if h.handleDividerDrag(msg) {
 		return h, nil
 	}
 
@@ -7667,6 +7929,27 @@ func (h *Home) handleMainKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				if h.cursor >= len(h.flatItems) {
 					h.cursor = max(0, len(h.flatItems)-1)
 				}
+				h.saveInstances()
+			}
+		}
+		return h, nil
+
+	case ",":
+		// Cycle pin: off → top → bottom → off (pin-sessions #1335).
+		if h.cursor < len(h.flatItems) {
+			item := h.flatItems[h.cursor]
+			if item.Type == session.ItemTypeSession && item.Session != nil {
+				inst := item.Session
+				switch inst.Pin {
+				case session.PinNone:
+					inst.Pin = session.PinTop
+				case session.PinTop:
+					inst.Pin = session.PinBottom
+				case session.PinBottom:
+					inst.Pin = session.PinNone
+				}
+				h.rebuildFlatItems()
+				h.moveCursorToSession(inst.ID)
 				h.saveInstances()
 			}
 		}
@@ -8758,6 +9041,9 @@ func (h *Home) confirmAction() tea.Cmd {
 	case ConfirmDeleteGroup:
 		groupPath := h.confirmDialog.GetTargetID()
 		h.groupTree.DeleteGroup(groupPath)
+		// SaveGroups is additive (never prunes), so the removed group's rows must
+		// be deleted explicitly or it would resurrect on the next reload.
+		h.deleteGroupRows(groupPath)
 		h.instancesMu.Lock()
 		h.instances = h.groupTree.GetAllInstances()
 		h.instancesMu.Unlock()
@@ -9493,7 +9779,7 @@ func (h *Home) handleEditSessionDialogKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		// Mirror the rename-path #697 race fix: queue title so a watcher
 		// reload can re-apply it after the load swap.
 		if titleChanged {
-			h.pendingTitleChanges[sessionID] = inst.Title
+			h.pendingTitleChanges[sessionID] = pendingTitle{title: inst.Title, locked: inst.TitleLocked}
 			h.invalidatePreviewCache(sessionID)
 		}
 		h.rebuildFlatItems()
@@ -9635,6 +9921,114 @@ func (h *Home) handleSkillDialogKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	}
 }
 
+// groupOpKind identifies a group mutation recorded for reload-race recovery.
+type groupOpKind int
+
+const (
+	groupOpCreate groupOpKind = iota
+	groupOpCreateSub
+	groupOpRename
+	groupOpMove
+)
+
+// pendingGroupOp records a group create/rename/move so it can be re-applied if
+// the save-abort → reload race discards it (see Home.pendingGroupOps).
+type pendingGroupOp struct {
+	kind        groupOpKind
+	name        string // new/target group name (create, createSub, rename)
+	parentPath  string // parent group path (createSub)
+	oldPath     string // group path being renamed (rename)
+	defaultPath string // optional default path captured in the dialog (create, createSub)
+	sessionID   string // session being moved (move)
+	targetPath  string // destination group path (move)
+	// maxConcurrent is the [group_defaults].max_concurrent default seeded at
+	// record time (create/createSub), re-seeded on reapply because the
+	// reloaded tree loses DefaultMaxConcurrent. Pointer (nil = unset) to match
+	// GroupTree.DefaultMaxConcurrent.
+	maxConcurrent *int
+}
+
+// reapplyPendingGroupOps re-applies group mutations that a reload race may have
+// discarded, on top of the freshly-reloaded (external) tree. It returns true if
+// any op actually changed the tree, so the caller force-saves. Each op is
+// idempotent: create/createSub return the existing group, rename no-ops when
+// its old path is gone, and move no-ops when the session already sits in the
+// target — so a lingering op (save succeeded, cleared only on the next reload)
+// causes no duplicate or spurious save. Mirrors the pendingTitleChanges reapply.
+func (h *Home) reapplyPendingGroupOps() bool {
+	if len(h.pendingGroupOps) == 0 {
+		return false
+	}
+	// reapply temporarily overrides DefaultMaxConcurrent to honour each op's
+	// captured value; restore it afterwards so we don't leave transient state
+	// on the shared tree for later callers.
+	savedDefaultMaxConcurrent := h.groupTree.DefaultMaxConcurrent
+	defer func() { h.groupTree.DefaultMaxConcurrent = savedDefaultMaxConcurrent }()
+
+	applied := false
+	for _, op := range h.pendingGroupOps {
+		switch op.kind {
+		case groupOpCreate:
+			h.groupTree.DefaultMaxConcurrent = op.maxConcurrent
+			before := h.groupTree.GroupCount()
+			g := h.groupTree.CreateGroup(op.name)
+			if g != nil && h.groupTree.GroupCount() > before {
+				if op.defaultPath != "" {
+					h.groupTree.SetDefaultPathForGroup(g.Path, op.defaultPath)
+				}
+				applied = true
+				uiLog.Info("pending_group_reapplied", slog.String("kind", "create"), slog.String("name", op.name))
+			}
+		case groupOpCreateSub:
+			h.groupTree.DefaultMaxConcurrent = op.maxConcurrent
+			before := h.groupTree.GroupCount()
+			g := h.groupTree.CreateSubgroup(op.parentPath, op.name)
+			if g != nil && h.groupTree.GroupCount() > before {
+				if op.defaultPath != "" {
+					h.groupTree.SetDefaultPathForGroup(g.Path, op.defaultPath)
+				}
+				applied = true
+				uiLog.Info("pending_group_reapplied", slog.String("kind", "createSub"), slog.String("name", op.name))
+			}
+		case groupOpRename:
+			if _, exists := h.groupTree.Groups[op.oldPath]; exists {
+				// Collision guard: if the reloaded (external) tree already has a
+				// DIFFERENT group at the rename's target path, skip. Renaming
+				// would overwrite that group's map entry and silently orphan its
+				// sessions (they'd vanish from GetAllInstances and then be
+				// force-saved away). Better to drop our rename than lose data.
+				target := h.groupTree.RenameTargetPath(op.oldPath, op.name)
+				if _, collision := h.groupTree.Groups[target]; collision && target != op.oldPath {
+					uiLog.Warn("pending_group_rename_skipped_collision",
+						slog.String("old_path", op.oldPath), slog.String("target", target))
+					continue
+				}
+				if err := h.groupTree.RenameGroup(op.oldPath, op.name); err != nil {
+					uiLog.Warn("pending_group_rename_failed",
+						slog.String("old_path", op.oldPath), slog.String("name", op.name), slog.String("err", err.Error()))
+					continue
+				}
+				h.instancesMu.Lock()
+				h.instances = h.groupTree.GetAllInstances()
+				h.instancesMu.Unlock()
+				applied = true
+				uiLog.Info("pending_group_reapplied", slog.String("kind", "rename"), slog.String("old_path", op.oldPath), slog.String("name", op.name))
+			}
+		case groupOpMove:
+			if inst := h.getInstanceByID(op.sessionID); inst != nil && inst.GroupPath != op.targetPath {
+				h.groupTree.MoveSessionToGroup(inst, op.targetPath)
+				h.instancesMu.Lock()
+				h.instances = h.groupTree.GetAllInstances()
+				h.instancesMu.Unlock()
+				applied = true
+				uiLog.Info("pending_group_reapplied", slog.String("kind", "move"), slog.String("session_id", op.sessionID), slog.String("target", op.targetPath))
+			}
+		}
+	}
+	h.pendingGroupOps = nil
+	return applied
+}
+
 // handleGroupDialogKey handles keys when group dialog is visible
 func (h *Home) handleGroupDialogKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
@@ -9650,28 +10044,52 @@ func (h *Home) handleGroupDialogKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		case GroupDialogCreate:
 			name := h.groupDialog.GetValue()
 			if name != "" {
+				// Seed the new-group default from [group_defaults].max_concurrent.
+				if cfg, _ := session.LoadUserConfig(); cfg != nil {
+					h.groupTree.DefaultMaxConcurrent = cfg.GroupDefaults.MaxConcurrent
+				}
+				// Capture it into the pending op so a reload-race reapply, which
+				// runs against a freshly-reloaded tree that was never re-seeded,
+				// still honours the configured default instead of falling back to 1.
+				maxConcurrent := h.groupTree.DefaultMaxConcurrent
+				defaultPath := h.groupDialog.GetDefaultPath()
 				var created *session.Group
 				if h.groupDialog.HasParent() {
 					// Create subgroup under parent
 					parentPath := h.groupDialog.GetParentPath()
 					created = h.groupTree.CreateSubgroup(parentPath, name)
+					h.pendingGroupOps = append(h.pendingGroupOps, pendingGroupOp{
+						kind: groupOpCreateSub, name: name, parentPath: parentPath, defaultPath: defaultPath, maxConcurrent: maxConcurrent,
+					})
 				} else {
 					// Create root-level group
 					created = h.groupTree.CreateGroup(name)
+					h.pendingGroupOps = append(h.pendingGroupOps, pendingGroupOp{
+						kind: groupOpCreate, name: name, defaultPath: defaultPath, maxConcurrent: maxConcurrent,
+					})
 				}
 				// Issue #918: persist the optional default path captured in the dialog.
-				if created != nil {
-					if defaultPath := h.groupDialog.GetDefaultPath(); defaultPath != "" {
-						h.groupTree.SetDefaultPathForGroup(created.Path, defaultPath)
-					}
+				if created != nil && defaultPath != "" {
+					h.groupTree.SetDefaultPathForGroup(created.Path, defaultPath)
 				}
 				h.rebuildFlatItems()
-				h.saveInstances() // Persist the new group
+				h.saveInstances() // Persist the new group (reload-race safe via pendingGroupOps)
 			}
 		case GroupDialogRename:
 			name := h.groupDialog.GetValue()
 			if name != "" {
-				h.groupTree.RenameGroup(h.groupDialog.GetGroupPath(), name)
+				oldPath := h.groupDialog.GetGroupPath()
+				if err := h.groupTree.RenameGroup(oldPath, name); err != nil {
+					h.setError(err)
+					break
+				}
+				h.pendingGroupOps = append(h.pendingGroupOps, pendingGroupOp{
+					kind: groupOpRename, oldPath: oldPath, name: name,
+				})
+				// A rename re-paths the group and its subgroups; the old path rows
+				// must be deleted explicitly (additive SaveGroups won't prune them)
+				// or the group reappears under its old name on the next reload.
+				h.deleteGroupRows(oldPath)
 				h.instancesMu.Lock()
 				h.instances = h.groupTree.GetAllInstances()
 				h.instancesMu.Unlock()
@@ -9684,6 +10102,9 @@ func (h *Home) handleGroupDialogKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				item := h.flatItems[h.cursor]
 				if item.Type == session.ItemTypeSession {
 					h.groupTree.MoveSessionToGroup(item.Session, targetGroupPath)
+					h.pendingGroupOps = append(h.pendingGroupOps, pendingGroupOp{
+						kind: groupOpMove, sessionID: item.Session.ID, targetPath: targetGroupPath,
+					})
 					h.instancesMu.Lock()
 					h.instances = h.groupTree.GetAllInstances()
 					h.instancesMu.Unlock()
@@ -9734,16 +10155,31 @@ func (h *Home) handleGroupDialogKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 					// SetField so the rename also sets TitleLocked — a direct
 					// Title assignment would be reverted by the #572
 					// Claude-name sync on the next hook event.
+					// Mutate under instancesMu to match the edit-dialog rename
+					// path (SetField writes inst.Title/TitleLocked, which the
+					// status worker and reconciler read concurrently). Run the
+					// tmux-heavy postCommit after unlocking so a slow subprocess
+					// can't stall those readers.
+					locked := true // SetField(FieldTitle) locks; default for the nil-inst path
+					var postCommit func()
+					var setErr error
+					h.instancesMu.Lock()
 					if inst := h.getInstanceByID(sessionID); inst != nil {
-						if _, _, err := session.SetField(inst, session.FieldTitle, newName, nil); err != nil {
-							h.setError(err)
-						}
+						_, postCommit, setErr = session.SetField(inst, session.FieldTitle, newName, nil)
+						locked = inst.TitleLocked
+					}
+					h.instancesMu.Unlock()
+					if setErr != nil {
+						h.setError(setErr)
+					}
+					if postCommit != nil {
+						postCommit()
 					}
 					// Store pending title change so it survives reload races.
 					// If saveInstances() is skipped (isReloading=true), the reload
-					// replaces h.instances from disk, losing the in-memory rename.
-					// loadSessionsMsg re-applies pending changes after reload.
-					h.pendingTitleChanges[sessionID] = newName
+					// replaces h.instances from disk, losing the in-memory rename
+					// AND its lock. loadSessionsMsg re-applies both after reload.
+					h.pendingTitleChanges[sessionID] = pendingTitle{title: newName, locked: locked}
 					// Invalidate preview cache since title changed
 					h.invalidatePreviewCache(sessionID)
 					h.rebuildFlatItems()
@@ -9871,26 +10307,32 @@ func (h *Home) saveInstancesWithForce(force bool) {
 	// EXTERNAL CHANGE DETECTION: Check if file was modified since we last loaded.
 	// This catches external changes (e.g., from CLI) even when fsnotify fails
 	// (common on 9p/NFS filesystems in WSL2).
-	// NOTE: Skip this check when force=true because critical saves MUST happen
-	// (e.g., new session creation, fork, delete - these would lose data if skipped)
-	if !force {
-		h.reloadMu.Lock()
-		ourLoadMtime := h.lastLoadMtime
-		h.reloadMu.Unlock()
+	// #1550: force saves no longer skip this check. They still persist (they
+	// carry critical mutations like create/fork/delete, and the save is now
+	// upsert-only so it cannot delete another process's rows), but a detected
+	// external change schedules a reload after the save so this TUI stops
+	// holding a stale snapshot.
+	externalChange := false
+	h.reloadMu.Lock()
+	ourLoadMtime := h.lastLoadMtime
+	h.reloadMu.Unlock()
 
-		if h.storage != nil && !ourLoadMtime.IsZero() {
-			currentMtime, err := h.storage.GetFileMtime()
-			if err == nil && !currentMtime.IsZero() && currentMtime.After(ourLoadMtime) {
-				uiLog.Warn("save_abort_external_change",
-					slog.Time("our_load", ourLoadMtime),
-					slog.Time("current_mtime", currentMtime))
-				// File was modified externally - trigger reload instead of overwriting
-				if h.storageWatcher != nil {
-					h.storageWatcher.TriggerReload()
-				}
-				return
-			}
+	if h.storage != nil && !ourLoadMtime.IsZero() {
+		currentMtime, err := h.storage.GetFileMtime()
+		if err == nil && !currentMtime.IsZero() && currentMtime.After(ourLoadMtime) {
+			externalChange = true
+			uiLog.Warn("save_external_change_detected",
+				slog.Bool("force", force),
+				slog.Time("our_load", ourLoadMtime),
+				slog.Time("current_mtime", currentMtime))
 		}
+	}
+	if externalChange && !force {
+		// Routine save: abort and reload instead of overwriting with stale rows.
+		if h.storageWatcher != nil {
+			h.storageWatcher.TriggerReload()
+		}
+		return
 	}
 
 	if h.storage != nil {
@@ -9974,9 +10416,36 @@ func (h *Home) saveInstancesWithForce(force bool) {
 			}
 			// Clear pending title changes on successful save (rename was persisted)
 			if len(h.pendingTitleChanges) > 0 {
-				h.pendingTitleChanges = make(map[string]string)
+				h.pendingTitleChanges = make(map[string]pendingTitle)
+			}
+			// Clear pending group ops on successful save: the whole in-memory
+			// tree (including every recorded op's mutation) was just persisted,
+			// so there is nothing to re-apply. Leaving them would let a later,
+			// unrelated reload blindly re-apply a stale op against a diverged
+			// tree (resurrecting a deleted group, or a rename collision that
+			// drops sessions). Scopes op lifetime to record → save-or-abort,
+			// mirroring pendingTitleChanges.
+			h.pendingGroupOps = nil
+			// #1550: a force save raced an external change. Our rows are now
+			// persisted (upsert-only, nothing deleted); reload to pick up what
+			// the other process wrote while we were stale.
+			if externalChange && h.storageWatcher != nil {
+				h.storageWatcher.TriggerReload()
 			}
 		}
+	}
+}
+
+// deleteGroupRows removes a group and its descendants from the groups table.
+// SaveGroups is additive (upsert, never prune), so an intentional removal —
+// delete or the old path of a rename/move — must be persisted explicitly here,
+// otherwise the stale rows resurrect the group on the next reload.
+func (h *Home) deleteGroupRows(path string) {
+	if h.storage == nil || path == "" {
+		return
+	}
+	if err := h.storage.DeleteGroupSubtree(path); err != nil {
+		uiLog.Warn("delete_group_rows_failed", slog.String("path", path), slog.String("error", err.Error()))
 	}
 }
 
@@ -10255,6 +10724,11 @@ func (h *Home) createSessionInGroupWithWorktreeAndOptions(
 				session.GetUserMCPRootPath(), inst.MultiRepoTempDir, repoNames,
 			); ctxErr != nil {
 				uiLog.Warn("multi_repo_claude_context", slog.String("error", ctxErr.Error()))
+			}
+			if ctxErr := session.ApplyMultiRepoCodexContext(
+				inst.Tool, inst.MultiRepoEnabled, inst.MultiRepoTempDir,
+			); ctxErr != nil {
+				uiLog.Warn("multi_repo_codex_context", slog.String("error", ctxErr.Error()))
 			}
 		}
 
@@ -11455,6 +11929,22 @@ func (h *Home) closeSession(inst *session.Instance) tea.Cmd {
 	}
 }
 
+// persistArchived writes the instance's archive timestamp to the database with a
+// targeted single-row UPDATE. This deliberately bypasses saveInstances(), whose
+// external-change guard aborts (and reloads) under concurrent writers, silently
+// reverting the archive. The in-memory inst.ArchivedAt is already set by
+// archiveSession/unarchiveSession; this only persists it.
+func (h *Home) persistArchived(inst *session.Instance) error {
+	if h.storage == nil {
+		return nil
+	}
+	db := h.storage.GetDB()
+	if db == nil {
+		return nil
+	}
+	return db.SetArchived(inst.ID, inst.ArchivedAt)
+}
+
 // archiveSession stops a session and marks it archived.
 func (h *Home) archiveSession(inst *session.Instance) tea.Cmd {
 	// Snapshot the live Claude task description on the UI goroutine before the
@@ -11497,7 +11987,9 @@ func (h *Home) bulkRemoveErrored() tea.Cmd {
 	h.instancesMu.RLock()
 	ids := make([]string, 0, len(h.instances))
 	for _, inst := range h.instances {
-		if inst.Status == session.StatusError {
+		// pin-protects-from-stop: pinned errored sessions are left alone in
+		// bulk removal; an explicit Shift+D on the session still works.
+		if inst.Status == session.StatusError && inst.Pin == session.PinNone {
 			ids = append(ids, inst.ID)
 		}
 	}
@@ -11734,7 +12226,10 @@ func (h *Home) attachSession(inst *session.Instance) tea.Cmd {
 			sessionID = inst.ClaudeSessionID
 		}
 		if newName, changed := inst.ReconcileTitleFromClaude(sessionID); changed {
-			h.pendingTitleChanges[inst.ID] = newName
+			// A sync-sourced title stays unlocked (TitleLocked is false here,
+			// since ReconcileTitleFromClaude only runs on unlocked sessions) so
+			// it keeps tracking Claude's session name across reloads.
+			h.pendingTitleChanges[inst.ID] = pendingTitle{title: newName, locked: inst.TitleLocked}
 			h.invalidatePreviewCache(inst.ID)
 			h.rebuildFlatItems()
 			h.saveInstances()
@@ -13153,8 +13648,13 @@ func (h *Home) renderDualColumnLayout(contentHeight int) string {
 	rightContent = ensureExactHeight(rightContent, panelContentHeight)
 	rightPanel := rightTitle + "\n" + rightContent
 
-	// Build separator - must be exactly contentHeight lines
-	separatorStyle := lipgloss.NewStyle().Foreground(ColorBorder)
+	// Build separator - must be exactly contentHeight lines. Brighten it while
+	// the user is dragging it so the resize handle reads as active.
+	separatorColor := ColorBorder
+	if h.draggingDivider {
+		separatorColor = ColorAccent
+	}
+	separatorStyle := lipgloss.NewStyle().Foreground(separatorColor)
 	separatorLines := make([]string, contentHeight)
 	for i := range separatorLines {
 		separatorLines[i] = separatorStyle.Render(" │ ")
@@ -13273,14 +13773,16 @@ func renderSectionDivider(label string, width int) string {
 // sessionID is the detected session ID (empty = not connected).
 // detectedAt is when detection ran (zero = still detecting, used only when threeState is true).
 // threeState enables the "Detecting..." intermediate state (for tools like OpenCode/Codex).
-func renderToolStatusLine(b *strings.Builder, sessionID string, detectedAt time.Time, threeState bool) {
+// archived/status drive the honest connected-vs-archived-vs-stopped label when a
+// session id is on record (the id outlives the live pane).
+func renderToolStatusLine(b *strings.Builder, sessionID string, detectedAt time.Time, threeState, archived bool, status session.Status) {
 	labelStyle := lipgloss.NewStyle().Foreground(ColorText)
 	valueStyle := lipgloss.NewStyle().Foreground(ColorText)
 
 	if sessionID != "" {
-		statusStyle := lipgloss.NewStyle().Foreground(ColorGreen).Bold(true)
+		statusText, statusStyle := connectionStatusLine(archived, status)
 		b.WriteString(labelStyle.Render("Status:  "))
-		b.WriteString(statusStyle.Render("● Connected"))
+		b.WriteString(statusStyle.Render(statusText))
 		b.WriteString("\n")
 
 		b.WriteString(labelStyle.Render("Session: "))
@@ -14744,44 +15246,11 @@ func (h *Home) renderSessionItem(
 		treeConnector = treeLast
 	}
 
-	// Status indicator with consistent sizing
-	var statusIcon string
-	var statusStyle lipgloss.Style
-	switch instStatus {
-	case session.StatusRunning:
-		statusIcon = "●"
-		statusStyle = SessionStatusRunning
-	case session.StatusWaiting:
-		statusIcon = "◐"
-		statusStyle = SessionStatusWaiting
-	case session.StatusIdle:
-		statusIcon = "○"
-		statusStyle = SessionStatusIdle
-	case session.StatusError:
-		statusIcon = "✕"
-		statusStyle = SessionStatusError
-	case session.StatusStopped:
-		statusIcon = "■"
-		statusStyle = SessionStatusStopped
-	default:
-		statusIcon = "○"
-		statusStyle = SessionStatusIdle
-	}
-
-	// Honest Status v2: a distinct glyph for the two error substates a
-	// supervisor must act on differently — a dead-model no-op loop and an
-	// auth/login failure both render as "error", but a generic "✕" hides which.
-	// "⚡" = model unavailable (the Fable-down no-op), "🔒" = auth/login needed.
-	// Gated on StatusError so a stale cached substate cannot leak the glyph onto
-	// a session that is no longer in error (e.g. a stopped session).
-	if instStatus == session.StatusError {
-		switch instSubstate {
-		case session.SubstateModelUnavailable:
-			statusIcon = "⚡"
-		case session.SubstateAuth401:
-			statusIcon = "🔒"
-		}
-	}
+	// Status indicator with consistent sizing. rowStatusGlyph maps the coarse
+	// status (plus the Honest-Status-v2 error substates) to a glyph, and forces
+	// the stopped glyph for archived sessions whose snapshot still carries a
+	// stale live status.
+	statusIcon, statusStyle := rowStatusGlyph(instStatus, instSubstate, inst.IsArchived())
 
 	status := statusStyle.Render(statusIcon)
 
@@ -15972,12 +16441,13 @@ func (h *Home) renderPreviewPane(width, height int) string {
 
 		// Status line
 		if selected.ClaudeSessionID != "" {
-			statusStyle := lipgloss.NewStyle().Foreground(ColorGreen).Bold(true)
+			statusText, statusStyle := connectionStatusLine(selected.IsArchived(), selectedStatus)
 			b.WriteString(labelStyle.Render("Status:  "))
-			b.WriteString(statusStyle.Render("● Connected"))
+			b.WriteString(statusStyle.Render(statusText))
 			b.WriteString("\n")
 
-			// Full session ID on its own line
+			// Full session ID on its own line (kept even when archived/stopped so
+			// the conversation can be resumed)
 			b.WriteString(labelStyle.Render("Session: "))
 			b.WriteString(valueStyle.Render(selected.ClaudeSessionID))
 			b.WriteString("\n")
@@ -16167,9 +16637,9 @@ func (h *Home) renderPreviewPane(width, height int) string {
 		valueStyle := lipgloss.NewStyle().Foreground(ColorText)
 
 		if selected.GeminiSessionID != "" {
-			statusStyle := lipgloss.NewStyle().Foreground(ColorGreen).Bold(true)
+			statusText, statusStyle := connectionStatusLine(selected.IsArchived(), selectedStatus)
 			b.WriteString(labelStyle.Render("Status:  "))
-			b.WriteString(statusStyle.Render("● Connected"))
+			b.WriteString(statusStyle.Render(statusText))
 			b.WriteString("\n")
 
 			b.WriteString(labelStyle.Render("Session: "))
@@ -16223,9 +16693,9 @@ func (h *Home) renderPreviewPane(width, height int) string {
 		)
 
 		if selected.OpenCodeSessionID != "" {
-			statusStyle := lipgloss.NewStyle().Foreground(ColorGreen).Bold(true)
+			statusText, statusStyle := connectionStatusLine(selected.IsArchived(), selectedStatus)
 			b.WriteString(labelStyle.Render("Status:  "))
-			b.WriteString(statusStyle.Render("● Connected"))
+			b.WriteString(statusStyle.Render(statusText))
 			b.WriteString("\n")
 
 			b.WriteString(labelStyle.Render("Session: "))
@@ -16272,7 +16742,7 @@ func (h *Home) renderPreviewPane(width, height int) string {
 		b.WriteString(codexHeader)
 		b.WriteString("\n")
 
-		renderToolStatusLine(&b, selected.CodexSessionID, selected.CodexDetectedAt, true)
+		renderToolStatusLine(&b, selected.CodexSessionID, selected.CodexDetectedAt, true, selected.IsArchived(), selected.Status)
 		renderLaunchModelInfoLines(&b, selected)
 		if selected.CodexSessionID != "" {
 			renderDetectedAtLine(&b, selected.CodexDetectedAt)
@@ -16295,10 +16765,10 @@ func (h *Home) renderPreviewPane(width, height int) string {
 
 			genericID := selected.GetGenericSessionID()
 			if genericID != "" {
-				statusStyle := lipgloss.NewStyle().Foreground(ColorGreen).Bold(true)
+				statusText, statusStyle := connectionStatusLine(selected.IsArchived(), selectedStatus)
 				valueStyle := lipgloss.NewStyle().Foreground(ColorText)
 				b.WriteString(labelStyle.Render("Status:  "))
-				b.WriteString(statusStyle.Render("● Connected"))
+				b.WriteString(statusStyle.Render(statusText))
 				b.WriteString("\n")
 
 				b.WriteString(labelStyle.Render("Session: "))
@@ -17120,37 +17590,14 @@ func pickBadgeTime(createdAt, lastStartedAt time.Time, hookEvent *session.HookSt
 	return ts
 }
 
-// formatRelativeTime formats a time as a human-readable relative string
-// Examples: "just now", "2m ago", "1h ago", "3h ago", "1d ago"
+// formatRelativeTime formats a time as a human-readable relative string using
+// the shared compact two-component formatter (see humanizeSince). Examples:
+// "just now", "45m ago", "3h 20m ago", "2d 5h ago", "5mo 1w ago".
 func formatRelativeTime(t time.Time) string {
 	if t.IsZero() {
 		return "unknown"
 	}
-
-	d := time.Since(t)
-
-	switch {
-	case d < time.Minute:
-		return "just now"
-	case d < time.Hour:
-		mins := int(d.Minutes())
-		if mins == 1 {
-			return "1m ago"
-		}
-		return fmt.Sprintf("%dm ago", mins)
-	case d < 24*time.Hour:
-		hours := int(d.Hours())
-		if hours == 1 {
-			return "1h ago"
-		}
-		return fmt.Sprintf("%dh ago", hours)
-	default:
-		days := int(d.Hours() / 24)
-		if days == 1 {
-			return "1d ago"
-		}
-		return fmt.Sprintf("%dd ago", days)
-	}
+	return humanizeSince(time.Since(t))
 }
 
 // renderGroupPreview renders the preview pane for a group
