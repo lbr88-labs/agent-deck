@@ -608,6 +608,29 @@ func (inst *Instance) GetLastActivityTime() time.Time {
 	return inst.CreatedAt
 }
 
+// DisplayLastActivityTime returns the timestamp to show as "last active" in
+// the UI. It intentionally differs from GetLastActivityTime: that method
+// returns the tmux tracker's raw lastChangeTime (which is seeded with
+// time.Now() when the tracker is lazily created, so it leaks ~ the TUI load
+// time for sessions that never confirm real activity — e.g. error/idle/
+// stopped panes) and also feeds OpenCode rotation windows, so its semantics
+// must not change.
+//
+// Here we consult only CONFIRMED activity (LastObservedActivity guards on
+// realActivityConfirmed). When none has been observed we fall back to the
+// persisted last-accessed time — matching what the web serves — and finally
+// to CreatedAt. This keeps the TUI "⏱ last active" line in agreement with
+// the web instead of resetting to the most recent TUI load.
+func (inst *Instance) DisplayLastActivityTime() time.Time {
+	if ts, ok := inst.LastObservedActivity(); ok {
+		return ts
+	}
+	if !inst.LastAccessedAt.IsZero() {
+		return inst.LastAccessedAt
+	}
+	return inst.CreatedAt
+}
+
 // LastObservedActivity returns the last time the tmux tracker confirmed a
 // real busy spike for this session, and a bool that is false when no
 // confirmation has happened (the instance has no tmux session, or the
