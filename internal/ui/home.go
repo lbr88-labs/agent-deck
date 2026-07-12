@@ -12143,6 +12143,7 @@ func (h *Home) attachSession(inst *session.Instance) tea.Cmd {
 			h.pendingTitleChanges[inst.ID] = pendingTitle{title: newName, locked: inst.TitleLocked}
 			h.invalidatePreviewCache(inst.ID)
 			h.rebuildFlatItems()
+			h.moveCursorToSession(inst.ID)
 			h.saveInstances()
 			uiLog.Info("title_reconciled_on_attach",
 				slog.String("session_id", inst.ID),
