@@ -41,6 +41,10 @@ func handleSession(profile string, args []string) {
 		handleSessionStop(profile, args[1:])
 	case "remove":
 		handleSessionRemove(profile, args[1:])
+	case "archive":
+		handleSessionArchive(profile, args[1:])
+	case "unarchive":
+		handleSessionUnarchive(profile, args[1:])
 	case "restart":
 		handleSessionRestart(profile, args[1:])
 	case "revive":
@@ -103,6 +107,8 @@ func printSessionHelp() {
 	fmt.Println("  start <id>              Start a session's tmux process")
 	fmt.Println("  stop <id>               Stop/kill session process")
 	fmt.Println("  remove <id>             Remove session from registry (stopped/error only; --force to bypass)")
+	fmt.Println("  archive <id|title>      Stop session and hide it from active lists (retained in storage)")
+	fmt.Println("  unarchive <id|title>    Restore an archived session (does not restart it)")
 	fmt.Println("  restart [id] [--all]    Restart session (Claude: reload MCPs)")
 	fmt.Println("  revive [--all|--name]   Rebuild dead control pipes for errored sessions")
 	fmt.Println("  fork <id>               Fork Claude, OpenCode, Pi, or Codex session with context")
@@ -146,6 +152,8 @@ func printSessionHelp() {
 	fmt.Println("  agent-deck session set-title-lock SCRUM-351 off        # Re-enable title sync")
 	fmt.Println("  agent-deck session output my-project                 # Get last response from session")
 	fmt.Println("  agent-deck session output my-project --json          # Get response as JSON")
+	fmt.Println("  agent-deck session archive my-project                # Stop and hide the session")
+	fmt.Println("  agent-deck session unarchive my-project              # Restore an archived session")
 	fmt.Println()
 	fmt.Println("Set command fields:")
 	fmt.Println("  title              Session title")
@@ -402,6 +410,194 @@ func handleSessionStop(profile string, args []string) {
 		result["drained_title"] = drained.Title
 	}
 	out.Success(fmt.Sprintf("Stopped session: %s", inst.Title), result)
+}
+
+// handleSessionArchive stops a session and marks it archived so it is hidden
+// from active lists but retained in storage. Mirrors the TUI archive action
+// (home.go archiveSession) and WebMutator.ArchiveSession.
+func handleSessionArchive(profile string, args []string) {
+	fs := flag.NewFlagSet("session archive", flag.ExitOnError)
+	jsonOutput := fs.Bool("json", false, "Output as JSON")
+	quiet := fs.Bool("quiet", false, "Minimal output")
+	quietShort := fs.Bool("q", false, "Minimal output (short)")
+
+	fs.Usage = func() {
+		fmt.Println("Usage: agent-deck session archive <id|title> [options]")
+		fmt.Println()
+		fmt.Println("Stop a session and hide it from active lists (retained in storage).")
+		fmt.Println()
+		fmt.Println("Options:")
+		fs.PrintDefaults()
+	}
+
+	if err := fs.Parse(normalizeArgs(fs, args)); err != nil {
+		os.Exit(1)
+	}
+
+	identifier := fs.Arg(0)
+	quietMode := *quiet || *quietShort
+	out := NewCLIOutput(*jsonOutput, quietMode)
+
+	// An empty identifier is a usage error, not a missing session: exit 1 (not
+	// the ResolveSession NOT_FOUND exit 2, which is reserved for a genuinely
+	// unknown id/title).
+	if identifier == "" {
+		out.Error("session <id|title> required", ErrCodeInvalidOperation)
+		if !*jsonOutput {
+			fs.Usage()
+		}
+		os.Exit(1)
+	}
+
+	storage, instances, _, err := loadSessionData(profile)
+	if err != nil {
+		out.Error(err.Error(), ErrCodeNotFound)
+		os.Exit(1)
+	}
+
+	inst, errMsg, errCode := ResolveSession(identifier, instances)
+	if inst == nil {
+		out.Error(errMsg, errCode)
+		if errCode == ErrCodeNotFound {
+			os.Exit(2)
+		}
+		os.Exit(1)
+		return // unreachable, satisfies staticcheck SA5011
+	}
+
+	if inst.IsArchived() {
+		out.Error(fmt.Sprintf("session '%s' is already archived", inst.Title), ErrCodeInvalidOperation)
+		os.Exit(1)
+	}
+
+	// Only kill a live tmux session. Killing an already-dead session returns a
+	// fatal error that would abort the archive (see idempotent-Kill history),
+	// so gate on Exists() the way handleSessionStop does. Kill() sets
+	// Status=stopped in memory only; persistArchivedCLI persists it below.
+	//
+	// Unlike handleSessionStop we deliberately do NOT SyncSessionIDsFromTmux()
+	// here: archive persists via a targeted UPDATE (to survive concurrent TUI
+	// writers), which cannot carry the whole-row tool-id fields the sync
+	// populates. Late-discovered ids are dropped rather than saved via a
+	// non-targeted write that would reintroduce the archive-clobber race. The
+	// session's normal lifecycle already persists its tool ids.
+	killed := false
+	if inst.Exists() {
+		if err := inst.Kill(); err != nil {
+			out.Error(fmt.Sprintf("failed to stop session: %v", err), ErrCodeInvalidOperation)
+			os.Exit(1)
+		}
+		killed = true
+	}
+
+	inst.ArchivedAt = time.Now().UTC()
+	if err := persistArchivedCLI(storage, inst, killed); err != nil {
+		out.Error(fmt.Sprintf("failed to persist archive: %v", err), ErrCodeInvalidOperation)
+		os.Exit(1)
+	}
+
+	out.Success(fmt.Sprintf("Archived session: %s", inst.Title), map[string]interface{}{
+		"success":  true,
+		"id":       inst.ID,
+		"title":    inst.Title,
+		"archived": true,
+	})
+}
+
+// handleSessionUnarchive clears the archive flag without restarting tmux.
+// Mirrors the TUI unarchiveSession and WebMutator.UnarchiveSession.
+func handleSessionUnarchive(profile string, args []string) {
+	fs := flag.NewFlagSet("session unarchive", flag.ExitOnError)
+	jsonOutput := fs.Bool("json", false, "Output as JSON")
+	quiet := fs.Bool("quiet", false, "Minimal output")
+	quietShort := fs.Bool("q", false, "Minimal output (short)")
+
+	fs.Usage = func() {
+		fmt.Println("Usage: agent-deck session unarchive <id|title> [options]")
+		fmt.Println()
+		fmt.Println("Restore an archived session (does not restart its process).")
+		fmt.Println()
+		fmt.Println("Options:")
+		fs.PrintDefaults()
+	}
+
+	if err := fs.Parse(normalizeArgs(fs, args)); err != nil {
+		os.Exit(1)
+	}
+
+	identifier := fs.Arg(0)
+	quietMode := *quiet || *quietShort
+	out := NewCLIOutput(*jsonOutput, quietMode)
+
+	// Empty identifier is a usage error (exit 1), mirroring archive.
+	if identifier == "" {
+		out.Error("session <id|title> required", ErrCodeInvalidOperation)
+		if !*jsonOutput {
+			fs.Usage()
+		}
+		os.Exit(1)
+	}
+
+	storage, instances, _, err := loadSessionData(profile)
+	if err != nil {
+		out.Error(err.Error(), ErrCodeNotFound)
+		os.Exit(1)
+	}
+
+	inst, errMsg, errCode := ResolveSession(identifier, instances)
+	if inst == nil {
+		out.Error(errMsg, errCode)
+		if errCode == ErrCodeNotFound {
+			os.Exit(2)
+		}
+		os.Exit(1)
+		return // unreachable, satisfies staticcheck SA5011
+	}
+
+	if !inst.IsArchived() {
+		out.Error(fmt.Sprintf("session '%s' is not archived", inst.Title), ErrCodeInvalidOperation)
+		os.Exit(1)
+	}
+
+	// unarchive never kills tmux, so there is no post-kill status to persist.
+	inst.ArchivedAt = time.Time{}
+	if err := persistArchivedCLI(storage, inst, false); err != nil {
+		out.Error(fmt.Sprintf("failed to persist unarchive: %v", err), ErrCodeInvalidOperation)
+		os.Exit(1)
+	}
+
+	out.Success(fmt.Sprintf("Unarchived session: %s", inst.Title), map[string]interface{}{
+		"success":  true,
+		"id":       inst.ID,
+		"title":    inst.Title,
+		"archived": false,
+	})
+}
+
+// persistArchivedCLI writes the archive timestamp (and, when persistStatus is
+// set, the post-kill Status) via targeted UPDATEs. It deliberately avoids
+// saveSessionData: the full-save path has an external-change guard that aborts
+// and reloads under concurrent writers (a running TUI), which would silently
+// revert the archive. This mirrors home.go's persistArchived.
+//
+// persistStatus is true only when archive killed a live session: Kill() sets
+// Status=stopped in memory but writes nothing to the DB, so without this the
+// row keeps its pre-kill running/idle status and a later load misclassifies the
+// stopped session. PersistInstanceStatusesTx is the same targeted, abort-safe
+// primitive revive uses (single status column, no whole-row clobber).
+func persistArchivedCLI(storage *session.Storage, inst *session.Instance, persistStatus bool) error {
+	db := storage.GetDB()
+	if db == nil {
+		return fmt.Errorf("state database unavailable")
+	}
+	if persistStatus {
+		if err := db.PersistInstanceStatusesTx([]statedb.InstanceStatusUpdate{
+			{ID: inst.ID, Status: string(inst.Status)},
+		}); err != nil {
+			return err
+		}
+	}
+	return db.SetArchived(inst.ID, inst.ArchivedAt)
 }
 
 // drainGroupQueue starts the oldest queued instance in groupPath when a slot
