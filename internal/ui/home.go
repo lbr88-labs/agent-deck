@@ -1334,7 +1334,7 @@ func NewHomeWithProfileAndMode(profile string) *Home {
 	// Hook-based status detection (Claude Code lifecycle hooks)
 	userConfig, _ := session.LoadUserConfig()
 	hooksEnabled := userConfig == nil || userConfig.Claude.GetHooksEnabled()
-	if hooksEnabled {
+	if homeBackgroundWorkersEnabled && hooksEnabled {
 		configDir := session.GetClaudeConfigDir()
 		alreadyInstalled := session.CheckClaudeHooksInstalled(configDir)
 
@@ -1381,7 +1381,7 @@ func NewHomeWithProfileAndMode(profile string) *Home {
 	// No user prompt needed — config.yaml is Hermes's own config file, not a
 	// shared settings file. The shared hook watcher (h.hookWatcher) covers all
 	// tools, so start it here if Claude hooks didn't already start it.
-	if hermesCmd := strings.TrimSpace(session.GetToolCommand("hermes")); hermesCmd != "" {
+	if hermesCmd := strings.TrimSpace(session.GetToolCommand("hermes")); homeBackgroundWorkersEnabled && hermesCmd != "" {
 		// GetToolCommand may return a full command string with arguments
 		// (e.g. "hermes --gateway-url=..."). LookPath needs the binary name only.
 		// Trim first because Fields("") and Fields("   ") both return [], and
@@ -1408,7 +1408,7 @@ func NewHomeWithProfileAndMode(profile string) *Home {
 	}
 
 	// Cursor Agent CLI hooks: auto-inject silently when the cursor binary is available.
-	if cursorCmd := strings.TrimSpace(session.GetToolCommand("cursor")); cursorCmd != "" {
+	if cursorCmd := strings.TrimSpace(session.GetToolCommand("cursor")); homeBackgroundWorkersEnabled && cursorCmd != "" {
 		if cursorFields := strings.Fields(cursorCmd); len(cursorFields) > 0 {
 			cursorBin := cursorFields[0]
 			if _, err := exec.LookPath(cursorBin); err == nil {
