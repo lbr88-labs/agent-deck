@@ -3717,6 +3717,11 @@ func debounceFlipFromRunning(prev, derived Status, tmuxRaw, hookStatus string, p
 	return derived, false, false
 }
 
+func shouldDebounceTmuxFlipForTool(tool string) bool {
+	return tool == "" || IsClaudeCompatible(tool) || IsCodexCompatible(tool) ||
+		tool == "gemini" || tool == "hermes" || tool == "cursor"
+}
+
 func (i *Instance) UpdateStatus() error {
 	i.mu.Lock()
 	defer i.mu.Unlock()
@@ -3999,9 +4004,7 @@ func (i *Instance) UpdateStatus() error {
 	// this skip, each fresh CLI invocation (e.g. `agent-deck list --json`) sees
 	// tmuxFlipFromRunningPending = false and holds the status at running on the
 	// first sample, then exits before the second confirming sample can fire.
-	isHookTool := i.Tool == "" || IsClaudeCompatible(i.Tool) || IsCodexCompatible(i.Tool) ||
-		i.Tool == "gemini" || i.Tool == "hermes" || i.Tool == "cursor"
-	if isHookTool {
+	if shouldDebounceTmuxFlipForTool(i.Tool) {
 		if apply, nextPending, held := debounceFlipFromRunning(prevStatus, i.Status, status, i.hookStatus, i.tmuxFlipFromRunningPending); held {
 			i.tmuxFlipFromRunningPending = nextPending
 			i.Status = apply
