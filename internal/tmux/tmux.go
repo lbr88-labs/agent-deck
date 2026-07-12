@@ -427,7 +427,10 @@ func defaultListSessionsOnSocket(socketName string) (map[string]struct{}, error)
 		if ctx.Err() == context.DeadlineExceeded {
 			return nil, ctx.Err()
 		}
-		return map[string]struct{}{}, nil
+		if isEmptyTmuxServerResult(err) {
+			return map[string]struct{}{}, nil
+		}
+		return nil, err
 	}
 
 	names := map[string]struct{}{}
@@ -437,6 +440,18 @@ func defaultListSessionsOnSocket(socketName string) (map[string]struct{}, error)
 		}
 	}
 	return names, nil
+}
+
+// isEmptyTmuxServerResult distinguishes tmux's expected empty-server exits
+// from launch, permission, and other probe failures. exec.Cmd.Output stores
+// the command's stderr on ExitError; err.Error() alone does not include it.
+func isEmptyTmuxServerResult(err error) bool {
+	var exitErr *exec.ExitError
+	if !errors.As(err, &exitErr) {
+		return false
+	}
+	stderr := strings.ToLower(string(exitErr.Stderr))
+	return strings.Contains(stderr, "no server running") || strings.Contains(stderr, "no sessions")
 }
 
 // sessionExistsOnSocketCached answers "is <name> live on <socketName>?" from

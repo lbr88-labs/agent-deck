@@ -6221,7 +6221,12 @@ func (h *Home) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 						if !t.ts.Exists() {
 							return
 						}
-						_ = pm.Connect(t.ts.Name, t.socket)
+						if err := pm.Connect(t.ts.Name, t.socket); err != nil {
+							uiLog.Debug("pipe_reconnect_failed",
+								slog.String("session", t.ts.Name),
+								slog.String("socket", t.socket),
+								slog.String("error", err.Error()))
+						}
 					})
 				}
 			}
