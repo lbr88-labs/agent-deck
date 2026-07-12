@@ -118,6 +118,9 @@ with `--no-transition-notify`. To answer it:
 agent-deck session output <child-id> --json
 # Send the answer (child keeps running afterward):
 agent-deck session send <child-id> "<your answer>"
+
+# Codex numbered approval prompt: send one decision key, not composer text:
+agent-deck session approve <child-id> once
 ```
 
 `session send` flags: `--wait` (block until it finishes the turn, then print
@@ -200,6 +203,10 @@ All read-only / on-demand — none of them block your session:
 - `agent-deck session output <id> --json` — a child's latest full response.
 - `agent-deck session send <id> "<msg>" [--wait|--stream|--no-wait|--draft]` —
   send a follow-up / answer a `waiting` child.
+- `agent-deck session approve <id> [once|always|session|N]` — resolve one
+  visibly active Codex approval menu. Do not use `session send <id> "1"`:
+  Codex consumes the digit as a decision key, while `session send` adds a
+  trailing Enter that can land in the resumed turn.
 - `agent-deck status -q` — global count of sessions currently `waiting`; a cheap
   coarse heartbeat across everything, not just your children.
 - `agent-deck inbox drain --json <your-session-id>` — **consumes** the pushed

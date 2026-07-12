@@ -248,6 +248,18 @@ Default behavior:
 - If Claude leaves a pasted prompt unsent (`[Pasted text ...]`), retries `Enter` automatically.
 - Avoids unnecessary retry `Enter` presses when session is already `waiting`/`idle`.
 
+### session approve
+
+```bash
+agent-deck session approve <id|title> [once|always|session|N] [--timeout 5s] [-q] [--json]
+```
+
+Resolves one currently visible Codex numbered approval menu. It validates that
+the same menu is still visible immediately before sending one digit keypress,
+then verifies that the original prompt clears. It never sends Enter or retries
+the decision automatically. Do not use `session send <id> "1"` for a Codex
+approval: that path sends composer text followed by Enter.
+
 ### session output
 
 ```bash
