@@ -193,6 +193,7 @@ func (h *HelpOverlay) View() string {
 	quickApproveKey := h.key(hotkeyQuickApprove, "a")
 	promptSessionKey := h.key(hotkeyPromptSession, "o")
 	copyKey := h.key(hotkeyCopyOutput, "c")
+	copyPaneKey := h.key(hotkeyCopyPane, "V")
 	sendKey := h.key(hotkeySendOutput, "x")
 	execShellKey := h.key(hotkeyExecShell, "E")
 	notesKey := h.key(hotkeyEditNotes, "e")
@@ -272,6 +273,7 @@ func (h *HelpOverlay) View() string {
 				{copyKey, "Copy output to clipboard"},
 				{"C", "Copy preview info (Repo / Path / Branch)"},
 				{"Y", "Copy a code block from output"},
+				{copyPaneKey, "Copy visible terminal text, including links"},
 				{sendKey, "Send output to session"},
 				{execShellKey, "Exec shell in sandbox container"},
 				{editPathsKey, "Edit multi-repo paths"},

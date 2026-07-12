@@ -365,6 +365,11 @@ type Home struct {
 	hookWatcher        *session.StatusFileWatcher
 	pendingHooksPrompt bool // True if user should be prompted to install hooks
 
+	// Test seams for the visible-pane clipboard action. Production leaves both
+	// nil and uses fresh tmux capture plus the shared clipboard fallback chain.
+	paneCapture   paneCaptureFunc
+	paneClipboard paneClipboardFunc
+
 	// Context-% based /clear for conductor sessions with clear_on_compact
 	clearOnCompactSent map[string]time.Time // instanceID -> last /clear send time (debounce)
 
@@ -6004,6 +6009,17 @@ func (h *Home) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return h, nil
 
+	case copyPaneResultMsg:
+		switch {
+		case msg.err != nil:
+			h.setError(fmt.Errorf("Could not copy visible terminal text: %w", msg.err))
+		case msg.empty:
+			h.setError(fmt.Errorf("Nothing visible to copy (%s)", msg.sessionTitle))
+		default:
+			h.setError(fmt.Errorf("Copied visible terminal text to clipboard (%d lines, %s)", msg.lineCount, msg.sessionTitle))
+		}
+		return h, nil
+
 	case sendOutputResultMsg:
 		if msg.err != nil {
 			h.setError(fmt.Errorf("failed to send to %s: %v", msg.targetTitle, msg.err))
@@ -8615,6 +8631,17 @@ func (h *Home) handleMainKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			item := h.flatItems[h.cursor]
 			if item.Type == session.ItemTypeSession && item.Session != nil {
 				return h, h.copySessionInfo(item.Session)
+			}
+		}
+		return h, nil
+
+	case defaultHotkeyBindings[hotkeyCopyPane]:
+		// Copy the selected local session's current visible tmux pane. The key
+		// reaches this canonical case through the configurable hotkey lookup.
+		if h.cursor < len(h.flatItems) {
+			item := h.flatItems[h.cursor]
+			if item.Type == session.ItemTypeSession && item.Session != nil {
+				return h, h.copyVisiblePane(item.Session)
 			}
 		}
 		return h, nil
@@ -14128,6 +14155,9 @@ func (h *Home) renderHelpBarCompact() string {
 			if key := h.actionKey(hotkeyCopyOutput); key != "" {
 				contextHints = append(contextHints, h.helpKeyShort(key, "Copy"))
 			}
+			if key := h.actionKey(hotkeyCopyPane); key != "" {
+				contextHints = append(contextHints, h.helpKeyShort(key, "Copy pane"))
+			}
 			if key := h.actionKey(hotkeySendOutput); key != "" {
 				contextHints = append(contextHints, h.helpKeyShort(key, "Send"))
 			}
@@ -14228,6 +14258,7 @@ func (h *Home) renderHelpBarFull() string {
 	previewKey := h.actionKey(hotkeyTogglePreview)
 	forkKeys := joinHotkeyLabels(h.actionKey(hotkeyQuickFork), h.actionKey(hotkeyForkWithOptions))
 	copyKey := h.actionKey(hotkeyCopyOutput)
+	copyPaneKey := h.actionKey(hotkeyCopyPane)
 	sendKey := h.actionKey(hotkeySendOutput)
 	execShellKey := h.actionKey(hotkeyExecShell)
 	notesKey := h.actionKey(hotkeyEditNotes)
@@ -14316,6 +14347,9 @@ func (h *Home) renderHelpBarFull() string {
 			}
 			if copyKey != "" {
 				primaryHints = append(primaryHints, h.helpKey(copyKey, "Copy"))
+			}
+			if copyPaneKey != "" {
+				primaryHints = append(primaryHints, h.helpKey(copyPaneKey, "Copy pane"))
 			}
 			if sendKey != "" {
 				primaryHints = append(primaryHints, h.helpKey(sendKey, "Send"))
