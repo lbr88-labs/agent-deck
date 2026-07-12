@@ -119,11 +119,11 @@ jobs:
 
       - name: Build PR head
         working-directory: pr
-        run: make build
+        run: make GOTOOLCHAIN="$GOTOOLCHAIN" build
 
       - name: Build base
         working-directory: base
-        run: make build
+        run: make GOTOOLCHAIN="$GOTOOLCHAIN" build
 
       - name: Collect Lighthouse on PR head
         working-directory: pr
