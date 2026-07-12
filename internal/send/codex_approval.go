@@ -167,6 +167,7 @@ func detectCodexApprovalPrompt(content string) *codexApprovalPrompt {
 	var options []codexApprovalOption
 	hasYes := false
 	hasNo := false
+	firstOptionLine := -1
 	lastOptionLine := selectedLine
 	for i := blockStart; i <= blockEnd; i++ {
 		match := codexApprovalOptionPattern.FindStringSubmatch(lines[i])
@@ -182,6 +183,9 @@ func detectCodexApprovalPrompt(content string) *codexApprovalPrompt {
 		hasYes = hasYes || strings.HasPrefix(lower, "yes")
 		hasNo = hasNo || strings.HasPrefix(lower, "no")
 		options = append(options, codexApprovalOption{number: number, label: label})
+		if firstOptionLine < 0 {
+			firstOptionLine = i
+		}
 		lastOptionLine = i
 	}
 	if len(options) < 2 || !hasYes || !hasNo {
@@ -190,13 +194,15 @@ func detectCodexApprovalPrompt(content string) *codexApprovalPrompt {
 
 	// Include the stable request context above the menu, not just its generic
 	// option labels, so a queued second approval is recognized as a new prompt.
-	contextStart := selectedLine - 12
+	contextStart := firstOptionLine - 12
 	if contextStart < start {
 		contextStart = start
 	}
 	var fingerprintLines []string
 	for i := contextStart; i <= lastOptionLine; i++ {
-		normalized := strings.Join(strings.Fields(lines[i]), " ")
+		line := strings.TrimSpace(lines[i])
+		line = strings.TrimSpace(strings.TrimPrefix(line, "›"))
+		normalized := strings.Join(strings.Fields(line), " ")
 		if normalized != "" {
 			fingerprintLines = append(fingerprintLines, normalized)
 		}
@@ -218,6 +224,11 @@ func selectCodexApprovalOption(prompt *codexApprovalPrompt, choice string) (code
 	}
 
 	if number, err := strconv.Atoi(normalized); err == nil {
+		if number < 1 || number > 9 {
+			return codexApprovalOption{}, normalized, fmt.Errorf(
+				"Codex approval option %d cannot be sent as a single keypress", number,
+			)
+		}
 		for _, option := range prompt.options {
 			if option.number == number {
 				return option, strconv.Itoa(number), nil

@@ -114,6 +114,40 @@ func TestApproveCodexPrompt_NumericChoiceMustBeDisplayed(t *testing.T) {
 	}
 }
 
+func TestApproveCodexPrompt_RejectsMultiDigitOption(t *testing.T) {
+	prompt := strings.Replace(codexExecApprovalPrompt,
+		"  3. No, and tell Codex what to do differently (esc)",
+		"  10. No, and tell Codex what to do differently (esc)", 1)
+	target := &fakeCodexApprovalTarget{captures: []string{prompt}}
+
+	_, err := ApproveCodexPrompt(target, "10", CodexApprovalOptions{})
+	if err == nil || !strings.Contains(err.Error(), "single keypress") {
+		t.Fatalf("expected single-keypress error, got %v", err)
+	}
+	if len(target.sent) != 0 {
+		t.Fatalf("multi-digit option must fail before sending; sent %v", target.sent)
+	}
+}
+
+func TestApproveCodexPrompt_HighlightMovementDoesNotVerify(t *testing.T) {
+	moved := strings.Replace(codexExecApprovalPrompt, "› 1.", "  1.", 1)
+	moved = strings.Replace(moved, "  2.", "› 2.", 1)
+	target := &fakeCodexApprovalTarget{
+		captures: []string{codexExecApprovalPrompt, codexExecApprovalPrompt, moved},
+	}
+
+	result, err := ApproveCodexPrompt(target, "1", CodexApprovalOptions{
+		VerifyTimeout: 2 * time.Millisecond,
+		PollInterval:  100 * time.Microsecond,
+	})
+	if err == nil || !strings.Contains(err.Error(), "did not clear") {
+		t.Fatalf("highlight movement must not verify the prompt, got %v", err)
+	}
+	if !result.KeySent || result.Verified {
+		t.Fatalf("unexpected result: %+v", result)
+	}
+}
+
 func TestApproveCodexPrompt_FailsClosedWhenPromptChangesBeforeSend(t *testing.T) {
 	changed := strings.Replace(
 		codexExecApprovalPrompt,
