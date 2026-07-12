@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Prompt-aware Codex approval command.** `agent-deck session approve <id> [once|always|session|N]` resolves a currently visible Codex approval menu with one digit keypress and no trailing Enter. It requires a live numbered approval overlay, revalidates the same prompt immediately before dispatch, and verifies that the original prompt clears without blindly retrying. This prevents `session send <id> "1"` from racing the approval overlay and submitting `1` as composer text or interrupting the resumed turn.
+
 ### Fixed
 
 - **A manual session rename no longer reverts to the folder default after a reload race.** When a rename's save was skipped (`isReloading=true`), the title was queued in `pendingTitleChanges` and re-applied after the storage-watcher reload — but only the title *string* was queued, not its `TitleLocked` intent. The reapplied title therefore came back **unlocked**, so the very next `#572` Claude-name sync overwrote it with Claude Code 2.1.19x's auto-derived cwd-folder name (e.g. `myproject` → `myproject-3a`). The queue now carries the lock state alongside the title: a user rename is restored **locked** (survives the sync), while a sync-sourced title stays unlocked (keeps tracking Claude). Pinned by `TestHomeRenamePendingChangeRestoresTitleLock`. (related to [#697](https://github.com/asheshgoplani/agent-deck/issues/697))
