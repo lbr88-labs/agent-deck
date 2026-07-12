@@ -1075,6 +1075,10 @@ func NewHomeWithProfile(profile string) *Home {
 	return NewHomeWithProfileAndMode(profile)
 }
 
+// TestMain disables eager workers for unit tests. Production keeps the default
+// so status, log, pipe, and storage updates continue while the TUI is running.
+var homeBackgroundWorkersEnabled = true
+
 // NewHomeWithProfileAndMode creates a new Home with the specified profile.
 // All instances manage the notification bar equally via shared SQLite state.
 func NewHomeWithProfileAndMode(profile string) *Home {
@@ -1103,6 +1107,11 @@ func NewHomeWithProfileAndMode(profile string) *Home {
 	actualProfile := session.DefaultProfile
 	if storage != nil {
 		actualProfile = storage.Profile()
+	}
+
+	var statusWorkerDone chan struct{}
+	if homeBackgroundWorkersEnabled {
+		statusWorkerDone = make(chan struct{})
 	}
 
 	h := &Home{
@@ -1161,7 +1170,7 @@ func NewHomeWithProfileAndMode(profile string) *Home {
 		worktreeDirtyCache:        make(map[string]bool),
 		worktreeDirtyCacheTs:      make(map[string]time.Time),
 		statusTrigger:             make(chan statusUpdateRequest, 1), // Buffered to avoid blocking
-		statusWorkerDone:          make(chan struct{}),
+		statusWorkerDone:          statusWorkerDone,
 		idleTimeoutWatcher:        session.NewIdleTimeoutWatcher(session.IdleTimeoutWatcherConfig{}),
 		lastPersistedStatus:       make(map[string]string),
 		lastPersistedAutoNameDesc: make(map[string]string),
@@ -1249,55 +1258,44 @@ func NewHomeWithProfileAndMode(profile string) *Home {
 
 	h.liveSet = newPipeLiveSet(livePipeLRUCapacity)
 
-	// Initialize event-driven status detection
-	// Output callback: invoked when PipeManager detects %output from a session
-	outputCallback := func(sessionName string) {
-		h.instancesMu.RLock()
-		for _, inst := range h.instances {
-			if inst.GetTmuxSession() != nil && inst.GetTmuxSession().Name == sessionName {
-				h.logActivityMu.Lock()
-				lastUpdate := h.lastLogActivity[inst.ID]
-				if time.Since(lastUpdate) < logOutputDebounce {
+	if homeBackgroundWorkersEnabled {
+		// Initialize event-driven status detection. The output callback is invoked
+		// when PipeManager detects output from a session.
+		outputCallback := func(sessionName string) {
+			h.instancesMu.RLock()
+			for _, inst := range h.instances {
+				if inst.GetTmuxSession() != nil && inst.GetTmuxSession().Name == sessionName {
+					h.logActivityMu.Lock()
+					lastUpdate := h.lastLogActivity[inst.ID]
+					if time.Since(lastUpdate) < logOutputDebounce {
+						h.logActivityMu.Unlock()
+						break
+					}
+					h.lastLogActivity[inst.ID] = time.Now()
 					h.logActivityMu.Unlock()
+
+					select {
+					case h.logUpdateChan <- inst:
+					default:
+					}
 					break
 				}
-				h.lastLogActivity[inst.ID] = time.Now()
-				h.logActivityMu.Unlock()
-
-				select {
-				case h.logUpdateChan <- inst:
-				default:
-				}
-				break
 			}
+			h.instancesMu.RUnlock()
 		}
-		h.instancesMu.RUnlock()
+
+		// Control mode pipes provide event-driven, zero-subprocess status detection.
+		pm := tmux.NewPipeManager(h.ctx, outputCallback)
+		pm.SetWindowChangeCallback(func() {
+			tmux.RefreshSessionCache()
+		})
+		tmux.SetPipeManager(pm)
+		pm.SetWantPipe(func(name string) bool { return h.liveSet.want(name) })
+
+		go h.livePipeReconciler()
+		go h.statusWorker()
+		h.startLogWorkers()
 	}
-
-	// Control mode pipes: event-driven, zero-subprocess status detection
-	pm := tmux.NewPipeManager(h.ctx, outputCallback)
-
-	// Window change callback: refresh window cache immediately when tabs are added/closed
-	pm.SetWindowChangeCallback(func() {
-		tmux.RefreshSessionCache()
-	})
-
-	tmux.SetPipeManager(pm)
-
-	// Only the focused / attached / recently-viewed sessions hold a live pipe.
-	pm.SetWantPipe(func(name string) bool { return h.liveSet.want(name) })
-
-	// Live pipes are managed lazily by the reconciler: it connects the focused/
-	// attached session (and a few recent ones) and lets everything else ride the
-	// 2s status poll. This replaces the old "connect every session at startup"
-	// burst that opened ~N pipes at once and triggered attach-storm freezes.
-	go h.livePipeReconciler()
-
-	// Start background status worker (Priority 1C)
-	go h.statusWorker()
-
-	// Start log worker pool (Priority 2)
-	h.startLogWorkers()
 
 	// Initialize global search
 	// DISABLED: Global search opens 884+ directory watchers and loads 4.4 GB of JSONL
@@ -1323,7 +1321,7 @@ func NewHomeWithProfileAndMode(profile string) *Home {
 	// Initialize storage watcher for auto-reload
 	// Polls SQLite metadata for external changes (CLI commands, other instances)
 	// and triggers reload with state preservation
-	if storage != nil {
+	if homeBackgroundWorkersEnabled && storage != nil {
 		watcher, err := NewStorageWatcher(storage.GetDB())
 		if err != nil {
 			uiLog.Warn("storage_watcher_init_failed", slog.String("error", err.Error()))
@@ -1336,7 +1334,7 @@ func NewHomeWithProfileAndMode(profile string) *Home {
 	// Hook-based status detection (Claude Code lifecycle hooks)
 	userConfig, _ := session.LoadUserConfig()
 	hooksEnabled := userConfig == nil || userConfig.Claude.GetHooksEnabled()
-	if hooksEnabled {
+	if homeBackgroundWorkersEnabled && hooksEnabled {
 		configDir := session.GetClaudeConfigDir()
 		alreadyInstalled := session.CheckClaudeHooksInstalled(configDir)
 
@@ -1383,7 +1381,7 @@ func NewHomeWithProfileAndMode(profile string) *Home {
 	// No user prompt needed — config.yaml is Hermes's own config file, not a
 	// shared settings file. The shared hook watcher (h.hookWatcher) covers all
 	// tools, so start it here if Claude hooks didn't already start it.
-	if hermesCmd := strings.TrimSpace(session.GetToolCommand("hermes")); hermesCmd != "" {
+	if hermesCmd := strings.TrimSpace(session.GetToolCommand("hermes")); homeBackgroundWorkersEnabled && hermesCmd != "" {
 		// GetToolCommand may return a full command string with arguments
 		// (e.g. "hermes --gateway-url=..."). LookPath needs the binary name only.
 		// Trim first because Fields("") and Fields("   ") both return [], and
@@ -1410,7 +1408,7 @@ func NewHomeWithProfileAndMode(profile string) *Home {
 	}
 
 	// Cursor Agent CLI hooks: auto-inject silently when the cursor binary is available.
-	if cursorCmd := strings.TrimSpace(session.GetToolCommand("cursor")); cursorCmd != "" {
+	if cursorCmd := strings.TrimSpace(session.GetToolCommand("cursor")); homeBackgroundWorkersEnabled && cursorCmd != "" {
 		if cursorFields := strings.Fields(cursorCmd); len(cursorFields) > 0 {
 			cursorBin := cursorFields[0]
 			if _, err := exec.LookPath(cursorBin); err == nil {
@@ -7841,6 +7839,27 @@ func (h *Home) handleMainKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				if h.cursor >= len(h.flatItems) {
 					h.cursor = max(0, len(h.flatItems)-1)
 				}
+				h.saveInstances()
+			}
+		}
+		return h, nil
+
+	case ",":
+		// Cycle pin: off → top → bottom → off (pin-sessions #1335).
+		if h.cursor < len(h.flatItems) {
+			item := h.flatItems[h.cursor]
+			if item.Type == session.ItemTypeSession && item.Session != nil {
+				inst := item.Session
+				switch inst.Pin {
+				case session.PinNone:
+					inst.Pin = session.PinTop
+				case session.PinTop:
+					inst.Pin = session.PinBottom
+				case session.PinBottom:
+					inst.Pin = session.PinNone
+				}
+				h.rebuildFlatItems()
+				h.moveCursorToSession(inst.ID)
 				h.saveInstances()
 			}
 		}
@@ -17477,37 +17496,14 @@ func pickBadgeTime(createdAt, lastStartedAt time.Time, hookEvent *session.HookSt
 	return ts
 }
 
-// formatRelativeTime formats a time as a human-readable relative string
-// Examples: "just now", "2m ago", "1h ago", "3h ago", "1d ago"
+// formatRelativeTime formats a time as a human-readable relative string using
+// the shared compact two-component formatter (see humanizeSince). Examples:
+// "just now", "45m ago", "3h 20m ago", "2d 5h ago", "5mo 1w ago".
 func formatRelativeTime(t time.Time) string {
 	if t.IsZero() {
 		return "unknown"
 	}
-
-	d := time.Since(t)
-
-	switch {
-	case d < time.Minute:
-		return "just now"
-	case d < time.Hour:
-		mins := int(d.Minutes())
-		if mins == 1 {
-			return "1m ago"
-		}
-		return fmt.Sprintf("%dm ago", mins)
-	case d < 24*time.Hour:
-		hours := int(d.Hours())
-		if hours == 1 {
-			return "1h ago"
-		}
-		return fmt.Sprintf("%dh ago", hours)
-	default:
-		days := int(d.Hours() / 24)
-		if days == 1 {
-			return "1d ago"
-		}
-		return fmt.Sprintf("%dd ago", days)
-	}
+	return humanizeSince(time.Since(t))
 }
 
 // renderGroupPreview renders the preview pane for a group
