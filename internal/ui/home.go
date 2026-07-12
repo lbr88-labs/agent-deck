@@ -478,12 +478,19 @@ type Home struct {
 	// live via < and > keybindings, persisted back to config on adjustment.
 	previewPct          int       // 10-90, default 65
 	previewPctOverlayAt time.Time // when to hide the split overlay (zero = hidden)
+	draggingDivider     bool      // true while the mouse is dragging the Sessions/Preview divider
 
 	// footerMode selects the bottom hint-bar style (config.toml [ui] footer).
 	// One of session.FooterCurated (default), FooterFull, FooterCompact, or
 	// FooterMinimal. Cached so every render of a frame agrees. Additive/opt-in:
 	// it only changes WHAT the footer advertises, never a keybinding.
 	footerMode string
+
+	// attachOnCreate, when true, makes creating a session via the new-session
+	// dialog attach to the new session's pane immediately instead of only
+	// moving the cursor to it (config.toml [ui] attach_on_create). Default
+	// false: today's select-only behavior. See sessionCreatedMsg handling.
+	attachOnCreate bool
 
 	// Performance observability (debug mode only, zero cost when off)
 	debugMode          bool         // true when AGENTDECK_DEBUG=1, enables perf overlay
@@ -1068,6 +1075,10 @@ func NewHomeWithProfile(profile string) *Home {
 	return NewHomeWithProfileAndMode(profile)
 }
 
+// TestMain disables eager workers for unit tests. Production keeps the default
+// so status, log, pipe, and storage updates continue while the TUI is running.
+var homeBackgroundWorkersEnabled = true
+
 // NewHomeWithProfileAndMode creates a new Home with the specified profile.
 // All instances manage the notification bar equally via shared SQLite state.
 func NewHomeWithProfileAndMode(profile string) *Home {
@@ -1096,6 +1107,11 @@ func NewHomeWithProfileAndMode(profile string) *Home {
 	actualProfile := session.DefaultProfile
 	if storage != nil {
 		actualProfile = storage.Profile()
+	}
+
+	var statusWorkerDone chan struct{}
+	if homeBackgroundWorkersEnabled {
+		statusWorkerDone = make(chan struct{})
 	}
 
 	h := &Home{
@@ -1154,7 +1170,7 @@ func NewHomeWithProfileAndMode(profile string) *Home {
 		worktreeDirtyCache:        make(map[string]bool),
 		worktreeDirtyCacheTs:      make(map[string]time.Time),
 		statusTrigger:             make(chan statusUpdateRequest, 1), // Buffered to avoid blocking
-		statusWorkerDone:          make(chan struct{}),
+		statusWorkerDone:          statusWorkerDone,
 		idleTimeoutWatcher:        session.NewIdleTimeoutWatcher(session.IdleTimeoutWatcherConfig{}),
 		lastPersistedStatus:       make(map[string]string),
 		lastPersistedAutoNameDesc: make(map[string]string),
@@ -1190,6 +1206,7 @@ func NewHomeWithProfileAndMode(profile string) *Home {
 		h.remoteLatencyRefreshSec = cfg.UI.GetRemoteLatencyRefreshSecs(cfg.SystemStats.GetRefreshSeconds())
 		h.remoteSessionRefreshSec = cfg.UI.GetRemoteSessionRefreshSecs()
 		h.footerMode = cfg.UI.GetFooter()
+		h.attachOnCreate = cfg.UI.GetAttachOnCreate()
 	} else {
 		h.fullRepaint = (session.DisplaySettings{}).GetFullRepaint()
 		h.activeFilterExcludes = (session.DisplaySettings{}).GetActiveFilterExcludes()
@@ -1241,55 +1258,44 @@ func NewHomeWithProfileAndMode(profile string) *Home {
 
 	h.liveSet = newPipeLiveSet(livePipeLRUCapacity)
 
-	// Initialize event-driven status detection
-	// Output callback: invoked when PipeManager detects %output from a session
-	outputCallback := func(sessionName string) {
-		h.instancesMu.RLock()
-		for _, inst := range h.instances {
-			if inst.GetTmuxSession() != nil && inst.GetTmuxSession().Name == sessionName {
-				h.logActivityMu.Lock()
-				lastUpdate := h.lastLogActivity[inst.ID]
-				if time.Since(lastUpdate) < logOutputDebounce {
+	if homeBackgroundWorkersEnabled {
+		// Initialize event-driven status detection. The output callback is invoked
+		// when PipeManager detects output from a session.
+		outputCallback := func(sessionName string) {
+			h.instancesMu.RLock()
+			for _, inst := range h.instances {
+				if inst.GetTmuxSession() != nil && inst.GetTmuxSession().Name == sessionName {
+					h.logActivityMu.Lock()
+					lastUpdate := h.lastLogActivity[inst.ID]
+					if time.Since(lastUpdate) < logOutputDebounce {
+						h.logActivityMu.Unlock()
+						break
+					}
+					h.lastLogActivity[inst.ID] = time.Now()
 					h.logActivityMu.Unlock()
+
+					select {
+					case h.logUpdateChan <- inst:
+					default:
+					}
 					break
 				}
-				h.lastLogActivity[inst.ID] = time.Now()
-				h.logActivityMu.Unlock()
-
-				select {
-				case h.logUpdateChan <- inst:
-				default:
-				}
-				break
 			}
+			h.instancesMu.RUnlock()
 		}
-		h.instancesMu.RUnlock()
+
+		// Control mode pipes provide event-driven, zero-subprocess status detection.
+		pm := tmux.NewPipeManager(h.ctx, outputCallback)
+		pm.SetWindowChangeCallback(func() {
+			tmux.RefreshSessionCache()
+		})
+		tmux.SetPipeManager(pm)
+		pm.SetWantPipe(func(name string) bool { return h.liveSet.want(name) })
+
+		go h.livePipeReconciler()
+		go h.statusWorker()
+		h.startLogWorkers()
 	}
-
-	// Control mode pipes: event-driven, zero-subprocess status detection
-	pm := tmux.NewPipeManager(h.ctx, outputCallback)
-
-	// Window change callback: refresh window cache immediately when tabs are added/closed
-	pm.SetWindowChangeCallback(func() {
-		tmux.RefreshSessionCache()
-	})
-
-	tmux.SetPipeManager(pm)
-
-	// Only the focused / attached / recently-viewed sessions hold a live pipe.
-	pm.SetWantPipe(func(name string) bool { return h.liveSet.want(name) })
-
-	// Live pipes are managed lazily by the reconciler: it connects the focused/
-	// attached session (and a few recent ones) and lets everything else ride the
-	// 2s status poll. This replaces the old "connect every session at startup"
-	// burst that opened ~N pipes at once and triggered attach-storm freezes.
-	go h.livePipeReconciler()
-
-	// Start background status worker (Priority 1C)
-	go h.statusWorker()
-
-	// Start log worker pool (Priority 2)
-	h.startLogWorkers()
 
 	// Initialize global search
 	// DISABLED: Global search opens 884+ directory watchers and loads 4.4 GB of JSONL
@@ -1315,7 +1321,7 @@ func NewHomeWithProfileAndMode(profile string) *Home {
 	// Initialize storage watcher for auto-reload
 	// Polls SQLite metadata for external changes (CLI commands, other instances)
 	// and triggers reload with state preservation
-	if storage != nil {
+	if homeBackgroundWorkersEnabled && storage != nil {
 		watcher, err := NewStorageWatcher(storage.GetDB())
 		if err != nil {
 			uiLog.Warn("storage_watcher_init_failed", slog.String("error", err.Error()))
@@ -1328,7 +1334,7 @@ func NewHomeWithProfileAndMode(profile string) *Home {
 	// Hook-based status detection (Claude Code lifecycle hooks)
 	userConfig, _ := session.LoadUserConfig()
 	hooksEnabled := userConfig == nil || userConfig.Claude.GetHooksEnabled()
-	if hooksEnabled {
+	if homeBackgroundWorkersEnabled && hooksEnabled {
 		configDir := session.GetClaudeConfigDir()
 		alreadyInstalled := session.CheckClaudeHooksInstalled(configDir)
 
@@ -1375,7 +1381,7 @@ func NewHomeWithProfileAndMode(profile string) *Home {
 	// No user prompt needed — config.yaml is Hermes's own config file, not a
 	// shared settings file. The shared hook watcher (h.hookWatcher) covers all
 	// tools, so start it here if Claude hooks didn't already start it.
-	if hermesCmd := strings.TrimSpace(session.GetToolCommand("hermes")); hermesCmd != "" {
+	if hermesCmd := strings.TrimSpace(session.GetToolCommand("hermes")); homeBackgroundWorkersEnabled && hermesCmd != "" {
 		// GetToolCommand may return a full command string with arguments
 		// (e.g. "hermes --gateway-url=..."). LookPath needs the binary name only.
 		// Trim first because Fields("") and Fields("   ") both return [], and
@@ -1402,7 +1408,7 @@ func NewHomeWithProfileAndMode(profile string) *Home {
 	}
 
 	// Cursor Agent CLI hooks: auto-inject silently when the cursor binary is available.
-	if cursorCmd := strings.TrimSpace(session.GetToolCommand("cursor")); cursorCmd != "" {
+	if cursorCmd := strings.TrimSpace(session.GetToolCommand("cursor")); homeBackgroundWorkersEnabled && cursorCmd != "" {
 		if cursorFields := strings.Fields(cursorCmd); len(cursorFields) > 0 {
 			cursorBin := cursorFields[0]
 			if _, err := exec.LookPath(cursorBin); err == nil {
@@ -1505,17 +1511,30 @@ func (h *Home) SetInitialSelection(idOrTitle string) {
 // h.initialSelect, if any. Returns true if a match was found and the cursor
 // was moved, false otherwise. Idempotent — after one successful apply, further
 // calls are no-ops so normal cursor navigation is not overridden.
+//
+// Unlike SelectSessionByID this method does NOT clear group scope or status
+// filters — the caller may have set a scope intentionally via -g/--group, and
+// --select must respect that constraint. Only sessions visible in the current
+// flat view are eligible.
 func (h *Home) applyInitialSelection() bool {
 	if h.initialSelectDone || h.initialSelect == "" {
 		return false
 	}
+	// Try id-path first: searches only the visible flat view, so group scope
+	// and status filters are naturally honoured (no reveal behaviour here).
+	if idx := h.flatItemIndexByID(h.initialSelect); idx >= 0 {
+		h.cursor = idx
+		h.initialSelectDone = true
+		h.syncViewport()
+		return true
+	}
+	// Fall back to a title match — initialSelect may be a title, not an id.
 	wanted := strings.ToLower(strings.TrimSpace(h.initialSelect))
 	for i, fi := range h.flatItems {
 		if fi.Type != session.ItemTypeSession || fi.Session == nil {
 			continue
 		}
-		if fi.Session.ID == h.initialSelect ||
-			strings.EqualFold(fi.Session.Title, h.initialSelect) ||
+		if strings.EqualFold(fi.Session.Title, h.initialSelect) ||
 			strings.ToLower(fi.Session.Title) == wanted {
 			h.cursor = i
 			h.initialSelectDone = true
@@ -1524,6 +1543,109 @@ func (h *Home) applyInitialSelection() bool {
 		}
 	}
 	return false
+}
+
+// flatItemIndexByID returns the flatItems index of the session row with the
+// given id, or -1 if it is not present in the current flat view.
+func (h *Home) flatItemIndexByID(id string) int {
+	for i, fi := range h.flatItems {
+		if fi.Type == session.ItemTypeSession && fi.Session != nil && fi.Session.ID == id {
+			return i
+		}
+	}
+	return -1
+}
+
+// SelectSessionByID reveals and selects the session with the given id within
+// the active (non-archived) view: if the target is hidden by a status filter or
+// group scope it clears them, and if its group is collapsed it expands the
+// group (and parents), then moves the cursor. Returns true if the session was
+// found and selected. Archived sessions and unknown/foreign ids return false
+// and leave the cursor unchanged.
+func (h *Home) SelectSessionByID(id string) bool {
+	if id == "" {
+		return false
+	}
+
+	// Fast path: already visible in the current flat view.
+	if idx := h.flatItemIndexByID(id); idx >= 0 {
+		h.cursor = idx
+		h.syncViewport()
+		return true
+	}
+
+	// Confirm the target exists in this profile, is not archived, and learn its
+	// group path for expansion.
+	var target *session.Instance
+	h.instancesMu.RLock()
+	for _, inst := range h.instances {
+		if inst.ID == id {
+			target = inst
+			break
+		}
+	}
+	h.instancesMu.RUnlock()
+	if target == nil || target.IsArchived() {
+		return false
+	}
+
+	// Reveal within the active view: drop filters that could hide the target and
+	// expand its containing group, then rebuild and locate it.
+	h.statusFilter = ""
+	h.groupScope = ""
+	if target.GroupPath != "" {
+		h.groupTree.ExpandGroupWithParents(target.GroupPath)
+	}
+	h.rebuildFlatItems()
+
+	if idx := h.flatItemIndexByID(id); idx >= 0 {
+		h.cursor = idx
+		h.syncViewport()
+		return true
+	}
+	return false
+}
+
+// consumeFocusRequest honors a pending `agent-deck session focus <id>` request.
+// It is called once per tick. The row is cleared unconditionally (consume-once)
+// so an unknown, stale, or foreign id never re-fires on a later tick or lingers
+// past its purpose. It returns a non-nil tea.Cmd only when the request asked to
+// --attach the session and that session is live: the caller runs the cmd to
+// open it (the same path as pressing Enter). A select-only request returns nil.
+func (h *Home) consumeFocusRequest(db *statedb.StateDB) tea.Cmd {
+	if db == nil {
+		return nil
+	}
+	// Atomic read-and-clear: a separate read-then-clear has a window where a
+	// concurrent CLI `session focus` write lands between them and gets wiped.
+	// Consume-once still holds — a stale/unknown id is cleared by the take below.
+	raw, err := session.TakeFocusRequest(db)
+	if err != nil || raw == "" {
+		return nil
+	}
+
+	id, attach, fresh := session.DecodeFocusRequestAttach(raw, time.Now().UnixNano(), session.FocusRequestTTL)
+	if !fresh {
+		return nil
+	}
+	if !h.SelectSessionByID(id) {
+		return nil
+	}
+	if !attach {
+		return nil
+	}
+	// Attach intent: open the session as if the user pressed Enter on it. Skip
+	// when the session has no live tmux pane (attachSession would no-op anyway).
+	inst := h.getInstanceByID(id)
+	if inst == nil || !inst.Exists() {
+		return nil
+	}
+	// attachSession returns nil when there's no local tmux pane to attach (e.g.
+	// GetTmuxSession()==nil on a cross-socket session) and sets h.isAttaching
+	// itself on the real attach path. Don't pre-set it here: a premature set
+	// followed by a nil return would leave isAttaching stuck true and suppress
+	// View() forever. Mirror the attach_on_create path and guard on the cmd.
+	return h.attachSession(inst)
 }
 
 // isInGroupScope returns true if the given path is within the active group scope.
@@ -4894,6 +5016,19 @@ func (h *Home) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// Use forceSave to bypass the external-change abort - new session creation MUST persist
 			h.forceSaveInstances()
 
+			// Auto-attach to the new session when [ui].attach_on_create is set,
+			// so creating a session "instantly opens" it instead of only moving
+			// the cursor to it. The session was just Start()ed (see
+			// createSessionInGroupWithWorktreeAndOptions), so its pane is live.
+			// attachSession returns nil when there is no local tmux pane to
+			// attach (e.g. a session whose tmux session could not be resolved);
+			// in that case we fall through to today's select-only behavior.
+			if h.attachOnCreate {
+				if attachTo := h.attachSession(msg.instance); attachTo != nil {
+					return h, tea.Batch(h.fetchPreview(msg.instance, msg.instance.ID, -1), attachTo)
+				}
+			}
+
 			// Start fetching preview for the new session
 			return h, h.fetchPreview(msg.instance, msg.instance.ID, -1)
 		}
@@ -5920,6 +6055,16 @@ func (h *Home) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return h, nil
 
 	case tickMsg:
+		// Honor a pending `agent-deck session focus <id>` request from the CLI.
+		// A non-nil cmd means the request asked to --attach the session: open it
+		// now (same as Enter) and skip the rest of this tick's background work,
+		// which is moot once we hand the terminal to the session. Re-arm the tick
+		// (h.tick()) here too — unlike the Enter key path, returning early from the
+		// tickMsg case would otherwise break the self-rescheduling tick chain.
+		if focusCmd := h.consumeFocusRequest(statedb.GetGlobal()); focusCmd != nil {
+			return h, tea.Batch(focusCmd, h.tick())
+		}
+
 		var remoteFetchCmd tea.Cmd
 		var remoteLatencyCmd tea.Cmd
 
@@ -7029,9 +7174,50 @@ func (h *Home) clickedItemID(index int) string {
 	return ""
 }
 
+// handleDividerDrag processes mouse events for the Sessions/Preview divider
+// resize drag and reports whether it consumed the event. The lifecycle is:
+// left-press on the separator grabs it, motion resizes the split live, and
+// release persists the new ratio. It keys off draggingDivider + msg.Action
+// rather than msg.Button because X10 terminals report a drag release as
+// MouseButtonNone, not MouseButtonLeft.
+func (h *Home) handleDividerDrag(msg tea.MouseMsg) bool {
+	if h.draggingDivider {
+		switch msg.Action {
+		case tea.MouseActionMotion:
+			h.lastUserInputTime = time.Now()
+			h.setPreviewPctFromMouseX(msg.X)
+		case tea.MouseActionRelease:
+			h.draggingDivider = false
+			persistPreviewPct(h.getPreviewPct())
+		}
+		return true
+	}
+
+	// Grab the divider only on a left-press over the separator, dual layout only.
+	if msg.Button == tea.MouseButtonLeft && msg.Action == tea.MouseActionPress &&
+		h.getLayoutMode() == LayoutModeDual && h.isOnDivider(msg.X) {
+		h.draggingDivider = true
+		h.lastUserInputTime = time.Now()
+		return true
+	}
+	return false
+}
+
 // handleMouse handles mouse events (click to select, double-click to activate)
 func (h *Home) handleMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 	if h.hasModalVisible() {
+		// A modal opening mid-drag shouldn't leave the divider stuck grabbed.
+		// Treat it as a release so the dragged-to ratio is preserved.
+		if h.draggingDivider {
+			h.draggingDivider = false
+			persistPreviewPct(h.getPreviewPct())
+		}
+		return h, nil
+	}
+
+	// Divider resize drag takes precedence over list selection (the separator
+	// columns sit at x >= sessionsPaneWidth, where list clicks are ignored).
+	if h.handleDividerDrag(msg) {
 		return h, nil
 	}
 
@@ -7653,6 +7839,27 @@ func (h *Home) handleMainKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				if h.cursor >= len(h.flatItems) {
 					h.cursor = max(0, len(h.flatItems)-1)
 				}
+				h.saveInstances()
+			}
+		}
+		return h, nil
+
+	case ",":
+		// Cycle pin: off → top → bottom → off (pin-sessions #1335).
+		if h.cursor < len(h.flatItems) {
+			item := h.flatItems[h.cursor]
+			if item.Type == session.ItemTypeSession && item.Session != nil {
+				inst := item.Session
+				switch inst.Pin {
+				case session.PinNone:
+					inst.Pin = session.PinTop
+				case session.PinTop:
+					inst.Pin = session.PinBottom
+				case session.PinBottom:
+					inst.Pin = session.PinNone
+				}
+				h.rebuildFlatItems()
+				h.moveCursorToSession(inst.ID)
 				h.saveInstances()
 			}
 		}
@@ -10427,6 +10634,11 @@ func (h *Home) createSessionInGroupWithWorktreeAndOptions(
 				session.GetUserMCPRootPath(), inst.MultiRepoTempDir, repoNames,
 			); ctxErr != nil {
 				uiLog.Warn("multi_repo_claude_context", slog.String("error", ctxErr.Error()))
+			}
+			if ctxErr := session.ApplyMultiRepoCodexContext(
+				inst.Tool, inst.MultiRepoEnabled, inst.MultiRepoTempDir,
+			); ctxErr != nil {
+				uiLog.Warn("multi_repo_codex_context", slog.String("error", ctxErr.Error()))
 			}
 		}
 
@@ -13346,8 +13558,13 @@ func (h *Home) renderDualColumnLayout(contentHeight int) string {
 	rightContent = ensureExactHeight(rightContent, panelContentHeight)
 	rightPanel := rightTitle + "\n" + rightContent
 
-	// Build separator - must be exactly contentHeight lines
-	separatorStyle := lipgloss.NewStyle().Foreground(ColorBorder)
+	// Build separator - must be exactly contentHeight lines. Brighten it while
+	// the user is dragging it so the resize handle reads as active.
+	separatorColor := ColorBorder
+	if h.draggingDivider {
+		separatorColor = ColorAccent
+	}
+	separatorStyle := lipgloss.NewStyle().Foreground(separatorColor)
 	separatorLines := make([]string, contentHeight)
 	for i := range separatorLines {
 		separatorLines[i] = separatorStyle.Render(" │ ")
@@ -15998,8 +16215,11 @@ func (h *Home) renderPreviewPane(width, height int) string {
 	b.WriteString(infoStyle.Render("📁 " + pathStr))
 	b.WriteString("\n")
 
-	// Activity time - shows when session was last active
-	activityTime := selected.GetLastActivityTime()
+	// Activity time - shows when session was last active. Uses the display-
+	// oriented accessor so sessions with no confirmed activity (error/idle/
+	// stopped) fall back to the persisted last-accessed time — matching the
+	// web — instead of leaking the tmux tracker's ~load-time seed.
+	activityTime := selected.DisplayLastActivityTime()
 	activityStr := formatRelativeTime(activityTime)
 	if selectedStatus == session.StatusRunning {
 		activityStr = "active now"
@@ -17279,37 +17499,14 @@ func pickBadgeTime(createdAt, lastStartedAt time.Time, hookEvent *session.HookSt
 	return ts
 }
 
-// formatRelativeTime formats a time as a human-readable relative string
-// Examples: "just now", "2m ago", "1h ago", "3h ago", "1d ago"
+// formatRelativeTime formats a time as a human-readable relative string using
+// the shared compact two-component formatter (see humanizeSince). Examples:
+// "just now", "45m ago", "3h 20m ago", "2d 5h ago", "5mo 1w ago".
 func formatRelativeTime(t time.Time) string {
 	if t.IsZero() {
 		return "unknown"
 	}
-
-	d := time.Since(t)
-
-	switch {
-	case d < time.Minute:
-		return "just now"
-	case d < time.Hour:
-		mins := int(d.Minutes())
-		if mins == 1 {
-			return "1m ago"
-		}
-		return fmt.Sprintf("%dm ago", mins)
-	case d < 24*time.Hour:
-		hours := int(d.Hours())
-		if hours == 1 {
-			return "1h ago"
-		}
-		return fmt.Sprintf("%dh ago", hours)
-	default:
-		days := int(d.Hours() / 24)
-		if days == 1 {
-			return "1d ago"
-		}
-		return fmt.Sprintf("%dd ago", days)
-	}
+	return humanizeSince(time.Since(t))
 }
 
 // renderGroupPreview renders the preview pane for a group
