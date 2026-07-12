@@ -24,6 +24,7 @@ func TestOperationalToolchainPinsMatchGoMod(t *testing.T) {
 
 	files := []string{
 		"Makefile",
+		".github/workflows/lighthouse-ci.yml",
 		".flox/env/manifest.toml",
 		".flox/env/manifest.lock",
 		"scripts/verify-preview-ansi-bleed.sh",
@@ -47,5 +48,14 @@ func TestOperationalToolchainPinsMatchGoMod(t *testing.T) {
 		if strings.Contains(string(contents), "GOTOOLCHAIN") && !strings.Contains(string(contents), want) {
 			t.Errorf("%s configures GOTOOLCHAIN without the go.mod version %s", name, want)
 		}
+	}
+
+	workflow, err := os.ReadFile(filepath.Join(repoRoot, ".github/workflows/lighthouse-ci.yml"))
+	if err != nil {
+		t.Fatalf("read Lighthouse workflow: %v", err)
+	}
+	const forcedBuild = `run: make GOTOOLCHAIN="$GOTOOLCHAIN" build`
+	if got := strings.Count(string(workflow), forcedBuild); got != 2 {
+		t.Errorf("Lighthouse workflow has %d forced-toolchain build commands, want 2", got)
 	}
 }
