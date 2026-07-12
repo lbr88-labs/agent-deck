@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -208,6 +209,12 @@ func initColorProfile() {
 }
 
 func main() {
+	// Make bare `tmux` invocations resolve even when launched from a minimal
+	// environment (notably a `terminal-notifier -execute` notification click,
+	// whose launchd PATH omits Homebrew's /opt/homebrew/bin). Must run before any
+	// tmux probe below. No-op when tmux is already on PATH.
+	ensureTmuxOnPath()
+
 	// Extract global -p/--profile flag before subcommand dispatch
 	profile, args := extractProfileFlag(os.Args[1:])
 	if profile != "" {
@@ -841,6 +848,23 @@ func main() {
 	ui.EnableModifyOtherKeys(os.Stdout)
 	defer ui.DisableModifyOtherKeys(os.Stdout)
 
+	// Check for atuin pty-proxy incompatibility (#1558).
+	// Atuin pty-proxy intercepts PTY I/O and breaks Bubble Tea's TUI rendering.
+	// The alternate screen, mouse tracking, and raw-mode interactions all fail
+	// because os.Stdin/os.Stdout are proxied pipes, not direct terminal FDs.
+	if tmux.IsAtuinPTYProxy() {
+		fmt.Fprint(os.Stderr, "WARNING: Agent Deck's TUI is incompatible with atuin pty-proxy.\n"+
+			"The TUI may appear blank or fail to render.\n"+
+			"\n"+
+			"To fix this, replace the pty-proxy init with the normal init in your shell config:\n"+
+			"  - zsh:   replace 'eval \"$(atuin pty-proxy init zsh)\"' with 'eval \"$(atuin init zsh)\"' in .zshrc\n"+
+			"  - bash:  replace 'eval \"$(atuin pty-proxy init bash)\"' with 'eval \"$(atuin init bash)\"' in .bashrc\n"+
+			"  - fish:  replace 'atuin pty-proxy init fish | source' with 'atuin init fish | source' in config.fish\n"+
+			"\n"+
+			"Atuin pty-proxy is only needed for the atuin TUI overlay feature,\n"+
+			"and is not required for normal atuin shell history functionality.\n")
+	}
+
 	p := tea.NewProgram(
 		homeModel,
 		tea.WithAltScreen(),
@@ -1203,6 +1227,7 @@ func handleAdd(profile string, args []string) {
 	jsonOutput := fs.Bool("json", false, "Output as JSON")
 	quiet := fs.Bool("quiet", false, "Minimal output")
 	quietShort := fs.Bool("q", false, "Minimal output (short)")
+	attach := fs.Bool("attach", false, "Start and attach to the session immediately after creating it (requires an interactive terminal; not supported with --ssh)")
 
 	// Worktree flags
 	worktreeBranch := fs.String("w", "", "Create session in git worktree for branch")
@@ -1213,7 +1238,7 @@ func handleAdd(profile string, args []string) {
 
 	// MCP flag - can be specified multiple times
 	var mcpFlags []string
-	fs.Func("mcp", "MCP to attach (can specify multiple times)", func(s string) error {
+	fs.Func("mcp", "MCP to attach (can specify multiple times; Codex writes $CODEX_HOME/config.toml)", func(s string) error {
 		mcpFlags = append(mcpFlags, s)
 		return nil
 	})
@@ -1299,6 +1324,7 @@ func handleAdd(profile string, args []string) {
 		fmt.Println("  agent-deck -p work add               # Add to 'work' profile")
 		fmt.Println("  agent-deck add -t \"Sub-task\" --parent \"Main Project\"  # Create sub-session")
 		fmt.Println("  agent-deck add -t \"Research\" -c claude --mcp memory --mcp sequential-thinking /tmp/x")
+		fmt.Println("  agent-deck add -c codex --mcp memory .  # writes to Codex config.toml")
 		fmt.Println("  agent-deck add -t \"Bot\" -c claude --channel plugin:telegram@user/repo .  # subscribe to plugin channel")
 		fmt.Println("  agent-deck add -c opencode --wrapper \"nvim +'terminal {command}' +'startinsert'\" .")
 		fmt.Println("  agent-deck add -c \"codex --dangerously-bypass-approvals-and-sandbox\" .")
@@ -1755,8 +1781,8 @@ func handleAdd(profile string, args []string) {
 			}
 		}
 
-		// Write MCPs to .mcp.json
-		if err := session.WriteMCPJsonFromConfig(path, mcpFlags); err != nil {
+		// Write MCPs to the selected tool's MCP store.
+		if err := newInstance.WriteLocalMCPConfig(mcpFlags); err != nil {
 			fmt.Printf("Error: failed to write MCPs: %v\n", err)
 			os.Exit(1)
 		}
@@ -1764,6 +1790,40 @@ func handleAdd(profile string, args []string) {
 
 	quietMode := *quiet || *quietShort
 	out := NewCLIOutput(*jsonOutput, quietMode)
+
+	// --attach: create → start → attach, so `add --attach` "instantly opens"
+	// the new session in one step. Refused loudly (never silently) under
+	// --json or without an interactive terminal; the session is left created
+	// and started in those cases. Remote (ssh) sessions use a different attach
+	// path and are out of scope here.
+	if *attach {
+		if *jsonOutput {
+			out.Error("--attach cannot be combined with --json; session was created", ErrCodeInvalidOperation)
+			os.Exit(3)
+		}
+		if *sshHost != "" {
+			out.Error("--attach is not supported with --ssh (remote sessions); session was created", ErrCodeInvalidOperation)
+			os.Exit(3)
+		}
+		if err := newInstance.Start(); err != nil {
+			out.Error(fmt.Sprintf("failed to start session: %v", err), ErrCodeInvalidOperation)
+			os.Exit(1)
+		}
+		newInstance.PostStartSync(3 * time.Second)
+		if err := storage.SaveWithGroups(instances, groupTree); err != nil {
+			fmt.Fprintf(os.Stderr, "Error: failed to save session state: %v\n", err)
+			os.Exit(1)
+		}
+		if err := attachInstanceInteractive(newInstance); err != nil {
+			if errors.Is(err, errAttachNoTTY) {
+				fmt.Fprintf(os.Stderr, "Error: %v; session was created and started\n", err)
+				os.Exit(3)
+			}
+			fmt.Fprintf(os.Stderr, "Error: failed to attach: %v\n", err)
+			os.Exit(1)
+		}
+		return
+	}
 
 	// Build human-readable output
 	var humanLines []string
@@ -1951,6 +2011,8 @@ func handleList(profile string, args []string) {
 			Channels      []string  `json:"channels,omitempty"`
 			ExtraArgs     []string  `json:"extra_args,omitempty"`
 			Color         string    `json:"color,omitempty"` // issue #391
+			Archived      bool      `json:"archived"`
+			ArchivedAt    time.Time `json:"archived_at,omitempty"`
 		}
 		// Warm tmux pane-title cache + load hook statuses so the CLI
 		// reports the same Status the TUI and /api/menu do (issue #610).
@@ -1974,6 +2036,8 @@ func handleList(profile string, args []string) {
 				Channels:      inst.Channels,
 				ExtraArgs:     inst.ExtraArgs,
 				Color:         inst.Color,
+				Archived:      inst.IsArchived(),
+				ArchivedAt:    inst.ArchivedAt,
 			}
 			if tmuxSess := inst.GetTmuxSession(); tmuxSess != nil {
 				sj.TmuxSession = tmuxSess.Name
