@@ -133,7 +133,7 @@ var defaultHotkeyBindings = map[string]string{
 	hotkeyCopyOutput:       "c",
 	hotkeySendOutput:       "x",
 	hotkeyExecShell:        "E",
-	hotkeyOpenShellHere:    "h",
+	hotkeyOpenShellHere:    "H",
 	hotkeyEditNotes:        "e",
 	hotkeyEditPaths:        "p",
 	hotkeyEditSession:      "P",

@@ -1,7 +1,6 @@
 package ui
 
 import (
-	"os"
 	"testing"
 
 	"github.com/asheshgoplani/agent-deck/internal/session"
@@ -37,14 +36,8 @@ func TestResolveShellSplitMode_AutoDetect(t *testing.T) {
 // TestResolveShellSplitMode_DefaultIsTmux verifies that the safe default (tmux)
 // is returned when no config and no iTerm env vars are set. Issue #1470.
 func TestResolveShellSplitMode_DefaultIsTmux(t *testing.T) {
-	prev := os.Getenv("LC_TERMINAL")
-	prevTP := os.Getenv("TERM_PROGRAM")
-	os.Setenv("LC_TERMINAL", "")
-	os.Setenv("TERM_PROGRAM", "")
-	defer func() {
-		os.Setenv("LC_TERMINAL", prev)
-		os.Setenv("TERM_PROGRAM", prevTP)
-	}()
+	t.Setenv("LC_TERMINAL", "")
+	t.Setenv("TERM_PROGRAM", "")
 
 	if got := resolveShellSplitMode(); got != session.ShellSplitTmux {
 		t.Errorf("resolveShellSplitMode() with no env = %q, want %q", got, session.ShellSplitTmux)

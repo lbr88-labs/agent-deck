@@ -853,9 +853,7 @@ func (h *Home) openShellHere(inst *session.Instance) tea.Cmd {
 
 // collapseOrNavUp implements the "h"/"left" collapse-or-parent navigation:
 // collapses an open group/session-windows, or moves the cursor to the parent
-// group of the focused item. Shared by case "h","left" and hotkeyOpenShellHere
-// so that the default "h" binding does not swallow left-nav on non-session
-// rows. Issue #1470.
+// group of the focused item. Issue #1470.
 func (h *Home) collapseOrNavUp() {
 	if h.cursor >= len(h.flatItems) {
 		return

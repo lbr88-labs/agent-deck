@@ -108,6 +108,9 @@ func TestBuildITerm2SplitPaneAppleScript_Escaping(t *testing.T) {
 	if strings.Contains(script, ` \ `) {
 		t.Errorf("unescaped backslash leaked into split-pane AppleScript literal:\n%s", script)
 	}
+	if !strings.Contains(script, `\\ world`) {
+		t.Errorf("expected escaped backslash in split-pane AppleScript literal:\n%s", script)
+	}
 }
 
 func TestBuildITerm2AppleScript_EscapesDoubleQuotes(t *testing.T) {

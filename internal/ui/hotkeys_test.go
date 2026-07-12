@@ -201,19 +201,20 @@ func TestNormalizeMainKeyWithConfiguredHotkeys(t *testing.T) {
 }
 
 // TestOpenShellHereHotkey verifies the new open_shell_here action is wired
-// correctly: default key "h", present in hotkeyActionOrder, overridable.
+// correctly: default key "H" preserves lowercase h navigation, is present in
+// hotkeyActionOrder, and remains overridable.
 // Issue #1470.
 func TestOpenShellHereHotkey(t *testing.T) {
-	// Default binding is "h".
+	// Default binding is "H" so lowercase h keeps its collapse/parent behavior.
 	bindings := resolveHotkeys(nil)
-	if got := bindings[hotkeyOpenShellHere]; got != "h" {
-		t.Errorf("default open_shell_here binding = %q, want \"h\"", got)
+	if got := bindings[hotkeyOpenShellHere]; got != "H" {
+		t.Errorf("default open_shell_here binding = %q, want \"H\"", got)
 	}
 
 	// User can override to a different key.
-	overridden := resolveHotkeys(map[string]string{"open_shell_here": "H"})
-	if got := overridden[hotkeyOpenShellHere]; got != "H" {
-		t.Errorf("overridden open_shell_here binding = %q, want \"H\"", got)
+	overridden := resolveHotkeys(map[string]string{"open_shell_here": "ctrl+h"})
+	if got := overridden[hotkeyOpenShellHere]; got != "ctrl+h" {
+		t.Errorf("overridden open_shell_here binding = %q, want \"ctrl+h\"", got)
 	}
 
 	// User can unbind it.
