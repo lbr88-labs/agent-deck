@@ -185,6 +185,7 @@ func handleSessionStart(profile string, args []string) {
 	quietShort := fs.Bool("q", false, "Minimal output (short)")
 	message := fs.String("message", "", "Initial message to send once agent is ready")
 	messageShort := fs.String("m", "", "Initial message to send once agent is ready (short)")
+	messageFile := fs.String("message-file", "", "Read the initial message from a file ('-' for stdin); avoids shell quoting of long prompts")
 	yoloMode := fs.Bool("yolo", false, "Enable YOLO mode when starting Gemini or Codex sessions")
 	attach := fs.Bool("attach", false, "Attach to the session after starting (requires an interactive terminal)")
 
@@ -200,6 +201,8 @@ func handleSessionStart(profile string, args []string) {
 		fmt.Println("  agent-deck session start my-project")
 		fmt.Println("  agent-deck session start my-project --message \"Research MCP patterns\"")
 		fmt.Println("  agent-deck session start my-project -m \"Explain this codebase\"")
+		fmt.Println("  agent-deck session start my-project --message-file task.md   # long prompt from file, no shell quoting")
+		fmt.Println("  git diff | agent-deck session start my-project --message-file -   # initial message from stdin")
 	}
 
 	if err := fs.Parse(normalizeArgs(fs, args)); err != nil {
@@ -211,7 +214,11 @@ func handleSessionStart(profile string, args []string) {
 	out := NewCLIOutput(*jsonOutput, quietMode)
 
 	// Merge message flags
-	initialMessage := mergeFlags(*message, *messageShort)
+	initialMessage, err := resolveMessageInput(mergeFlags(*message, *messageShort), *messageFile, os.Stdin)
+	if err != nil {
+		out.Error(err.Error(), ErrCodeInvalidOperation)
+		os.Exit(1)
+	}
 
 	// Load sessions
 	storage, instances, groups, err := loadSessionData(profile)
@@ -2510,6 +2517,7 @@ func handleSessionSend(profile string, args []string) {
 	wait := fs.Bool("wait", false, "Block until agent finishes processing, then print output")
 	stream := fs.Bool("stream", false, "Stream JSONL events (Claude only) to stdout instead of returning a snapshot")
 	draft := fs.Bool("draft", false, "Pre-fill the prompt without submitting (incompatible with --wait/--stream/--no-wait)")
+	messageFile := fs.String("message-file", "", "Read the message from a file ('-' for stdin) instead of a positional argument; avoids shell quoting of long prompts")
 	timeout := fs.Duration("timeout", 10*time.Minute, "Max time to wait for the agent to become ready and (with --wait) to finish processing")
 	streamIdle := fs.Duration("stream-idle", 10*time.Second, "Max idle time before --stream aborts with error")
 	streamCharBudget := fs.Int("stream-char-budget", 4000, "Char budget for text flush in --stream mode")
@@ -2529,6 +2537,8 @@ func handleSessionSend(profile string, args []string) {
 		fmt.Println("  agent-deck session send my-project \"quick ping\" --no-wait")
 		fmt.Println("  agent-deck session send my-project \"trace progress\" --stream")
 		fmt.Println("  agent-deck session send my-project \"cwd: /path/to/dir\" --draft")
+		fmt.Println("  agent-deck session send my-project --message-file answer.md   # long reply from file")
+		fmt.Println("  git diff | agent-deck session send my-project --message-file -   # message from stdin")
 	}
 
 	if err := fs.Parse(normalizeArgs(fs, args)); err != nil {
@@ -2538,9 +2548,10 @@ func handleSessionSend(profile string, args []string) {
 
 	out := NewCLIOutput(*jsonOutput, *quiet)
 
-	if len(remaining) < 2 {
+	needPositionalMessage := *messageFile == ""
+	if len(remaining) < 1 || (needPositionalMessage && len(remaining) < 2) {
 		fs.Usage()
-		out.Error("session and message are required", ErrCodeInvalidOperation)
+		out.Error("session and message (or --message-file) are required", ErrCodeInvalidOperation)
 		os.Exit(1)
 	}
 
@@ -2555,7 +2566,11 @@ func handleSessionSend(profile string, args []string) {
 	}
 
 	sessionRef := remaining[0]
-	message := strings.Join(remaining[1:], " ")
+	message, err := resolveMessageInput(strings.Join(remaining[1:], " "), *messageFile, os.Stdin)
+	if err != nil {
+		out.Error(err.Error(), ErrCodeInvalidOperation)
+		os.Exit(1)
+	}
 
 	// Load sessions
 	_, instances, _, err := loadSessionData(profile)

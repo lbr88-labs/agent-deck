@@ -1040,7 +1040,7 @@ func reorderArgsForFlagParsing(args []string) []string {
 		"t": true, "title": true,
 		"g": true, "group": true,
 		"c": true, "cmd": true,
-		"m": true, "message": true,
+		"m": true, "message": true, "message-file": true,
 		"p": true, "parent": true,
 		"mcp":            true,
 		"channel":        true,
