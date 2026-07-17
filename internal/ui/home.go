@@ -574,6 +574,21 @@ type Home struct {
 	// just events written to the local cost_events table.
 	remoteCosts   map[string]*costs.RemoteCostSummary // remoteName -> summary
 	remoteCostsMu sync.RWMutex
+
+	// Claim polling ([performance] claim_polling): ownership gating for
+	// background work in multi-instance setups.
+	claimPolling  bool
+	ownedMu       sync.RWMutex
+	ownedSessions map[string]bool
+	// orphanPolled holds sessions the primary is slow-polling this sweep
+	// because no scoped instance claims them (nil when no orphan sweep is
+	// due). Deliberately separate from ownedSessions: orphans must never be
+	// claimed, pinned to pipes, idle-watched, or revived, and must never
+	// poison the next sweep's prevOwned snapshot. Replaced wholesale
+	// (copy-on-write) under ownedMu, same discipline as ownedSessions.
+	orphanPolled    map[string]bool
+	groupScopeMu    sync.RWMutex // Guards groupScope for cross-goroutine read in reconcileClaims
+	lastOrphanSweep time.Time    // last time the primary polled for orphaned sessions
 	// Cost tracking
 	costStore            *costs.Store
 	costPricer           *costs.Pricer
@@ -1312,6 +1327,9 @@ func NewHomeWithProfileAndMode(profile string) *Home {
 	// status-bar cost-line template once. The template + hide flag are
 	// reused on every render; see (*Home).renderStats.
 	if cfg, _ := session.LoadUserConfig(); cfg != nil {
+		// [performance] claim_polling: snapshot once at startup. Defaults to
+		// false (today's behavior); stays false when config is unreadable.
+		h.claimPolling = cfg.ClaimPollingEnabled()
 		h.fullRepaint = cfg.Display.GetFullRepaint()
 		h.defaultFilter = cfg.Display.GetDefaultFilter()
 		h.activeFilterLabel = cfg.Display.ActiveFilterLabel
@@ -1612,7 +1630,9 @@ func (h *Home) SetCostBudget(budget *costs.BudgetChecker) {
 // SetGroupScope limits the TUI to sessions within the given group path.
 // The path is normalized: lowercased and spaces replaced with hyphens.
 func (h *Home) SetGroupScope(path string) {
+	h.groupScopeMu.Lock()
 	h.groupScope = strings.ToLower(strings.ReplaceAll(path, " ", "-"))
+	h.groupScopeMu.Unlock()
 }
 
 // SetInitialSelection queues a session to preselect on first render (#709).
@@ -1711,7 +1731,9 @@ func (h *Home) SelectSessionByID(id string) bool {
 	// Reveal within the active view: drop filters that could hide the target and
 	// expand its containing group, then rebuild and locate it.
 	h.statusFilter = ""
+	h.groupScopeMu.Lock()
 	h.groupScope = ""
+	h.groupScopeMu.Unlock()
 	if target.GroupPath != "" {
 		h.groupTree.ExpandGroupWithParents(target.GroupPath)
 	}
@@ -1770,10 +1792,7 @@ func (h *Home) consumeFocusRequest(db *statedb.StateDB) tea.Cmd {
 // isInGroupScope returns true if the given path is within the active group scope.
 // Returns true for all paths when no scope is set.
 func (h *Home) isInGroupScope(path string) bool {
-	if h.groupScope == "" {
-		return true
-	}
-	return path == h.groupScope || strings.HasPrefix(path, h.groupScope+"/")
+	return pathInScope(path, h.groupScope)
 }
 
 // scopedGroupPaths returns group paths filtered to the active scope.
@@ -2527,9 +2546,12 @@ func (h *Home) recordFocusedSession() {
 //   - each session connects on its REAL socket, not a guessed default;
 //   - names with no live instance (deleted/restarted sessions) are dropped
 //     instead of being retried on every tick;
-//   - attached sessions are pinned across EVERY socket in use, so an attached
-//     session on an isolated socket keeps its live pipe rather than being
-//     evicted to the 2s status poll.
+//   - attached sessions are pinned across every socket passed in, so an
+//     attached session on an isolated socket keeps its live pipe rather than
+//     being evicted to the 2s status poll. GetAttachedSessionsOnSockets
+//     (tmux.go) always scans the default socket in addition to whatever is
+//     passed here; the claim-polling filter above only limits which EXTRA
+//     (non-default) sockets get scanned, not the default one.
 func (h *Home) reconcileLivePipes() {
 	pm := tmux.GetPipeManager()
 	if pm == nil {
@@ -2537,13 +2559,22 @@ func (h *Home) reconcileLivePipes() {
 	}
 
 	// Snapshot live instances: session name -> socket (the source of truth).
+	// nameToID feeds only the claim-polling ownership filter below; don't
+	// build it on every 500ms tick when the flag is off.
 	h.instancesMu.RLock()
 	socketByName := make(map[string]string, len(h.instances))
+	var nameToID map[string]string
+	if h.claimPolling {
+		nameToID = make(map[string]string, len(h.instances))
+	}
 	sockets := make([]string, 0, len(h.instances))
 	socketSeen := make(map[string]bool, len(h.instances))
 	for _, inst := range h.instances {
 		if ts := inst.GetTmuxSession(); ts != nil {
 			socketByName[ts.Name] = inst.TmuxSocketName
+			if nameToID != nil {
+				nameToID[ts.Name] = inst.ID
+			}
 			if !socketSeen[inst.TmuxSocketName] {
 				socketSeen[inst.TmuxSocketName] = true
 				sockets = append(sockets, inst.TmuxSocketName)
@@ -2555,6 +2586,25 @@ func (h *Home) reconcileLivePipes() {
 	h.focusMu.Lock()
 	focused := h.focusedSessionName
 	h.focusMu.Unlock()
+
+	h.ownedMu.RLock()
+	ownedSnapshot := h.ownedSessions
+	h.ownedMu.RUnlock()
+	socketByName = filterPipeCandidates(socketByName, nameToID, ownedSnapshot, focused, h.claimPolling)
+	if h.claimPolling {
+		// Rebuild the socket list from the filtered candidates so the attached
+		// scan does not touch other instances' sockets. With claim polling off,
+		// filterPipeCandidates is a no-op and sockets already matches
+		// socketByName, so skip the redundant O(n) rebuild every tick.
+		sockets = sockets[:0]
+		socketSeen = map[string]bool{}
+		for _, s := range socketByName {
+			if !socketSeen[s] {
+				socketSeen[s] = true
+				sockets = append(sockets, s)
+			}
+		}
+	}
 
 	attached := tmux.GetAttachedSessionsOnSockets(sockets...)
 	desired := desiredLivePipes(h.liveSet, focused, attached, socketByName)
@@ -4001,6 +4051,19 @@ func (h *Home) backgroundStatusUpdate() {
 		return
 	}
 
+	// Get instances snapshot
+	h.instancesMu.RLock()
+	instances := make([]*session.Instance, len(h.instances))
+	copy(instances, h.instances)
+	h.instancesMu.RUnlock()
+
+	// Claim reconciliation: decide which sessions THIS instance polls. This
+	// runs BEFORE the tmux-alive and empty-instances early returns below:
+	// claims lifecycle (heartbeats, orphan sweep, primary election) is
+	// DB-only and must not freeze just because tmux is down or the instance
+	// list is briefly empty.
+	h.reconcileClaims(instances)
+
 	// Fast-fail: skip entire status loop when tmux server is dead.
 	// Without this, every subprocess call takes ~3s to fail, causing 30-50s UI freezes.
 	if !tmux.IsServerAlive() {
@@ -4022,15 +4085,9 @@ func (h *Home) backgroundStatusUpdate() {
 		perfLog.Warn("slow_refresh", slog.Duration("duration", refreshDur))
 	}
 
-	// Get instances snapshot
-	h.instancesMu.RLock()
-	if len(h.instances) == 0 {
-		h.instancesMu.RUnlock()
+	if len(instances) == 0 {
 		return
 	}
-	instances := make([]*session.Instance, len(h.instances))
-	copy(instances, h.instances)
-	h.instancesMu.RUnlock()
 
 	// Active (non-archived) subset, computed once and reused by the loops that
 	// only concern live sessions. Archived sessions have torn-down panes, so
@@ -4050,6 +4107,11 @@ func (h *Home) backgroundStatusUpdate() {
 		lastNano := h.idleTimeoutLastTick.Load()
 		if lastNano == 0 || time.Duration(nowNano-lastNano) >= idleTickEvery {
 			if h.idleTimeoutLastTick.CompareAndSwap(lastNano, nowNano) {
+				// Full set, not ownedOnly: Tick's lastSeen cleanup has a
+				// documented invariant that it must see every instance to
+				// prune dead entries correctly. Sessions with
+				// IdleTimeoutSecs>0 are rare, so the cross-instance dedupe
+				// win here was negligible against that correctness leak.
 				h.idleTimeoutWatcher.Tick(instances)
 			}
 		}
@@ -4149,7 +4211,7 @@ func (h *Home) backgroundStatusUpdate() {
 		// backlog this dominated the loop (observed: 723 archived of 742 total
 		// pushed the sweep to multi-second spikes). Unarchiving runs its own
 		// refresh, so the periodic loop never needs to poll archived sessions.
-		if !shouldPollStatusInLoop(inst) {
+		if !h.shouldSweepInstance(inst) {
 			skipped++
 			continue
 		}
@@ -4214,6 +4276,45 @@ func (h *Home) backgroundStatusUpdate() {
 		slowMu.Unlock()
 	}
 
+	// SQLite reads: shared statuses from other instances, read once and
+	// reused by the acknowledgment loop at its original end-of-sweep
+	// position below (no second DB read). Applying the owner's status for
+	// non-owned sessions happens here, before the render snapshot, so it
+	// lands in the same sweep. With claim polling off this block applies
+	// nothing, and writes stay after the snapshot so the auto-name persist
+	// keeps reading the freshly refreshed snapshot — flag-off ordering is
+	// identical to before claim polling existed.
+	var sharedStatuses map[string]statedb.StatusRow
+	if db := statedb.GetGlobal(); db != nil {
+		if statuses, err := db.ReadAllStatuses(); err == nil {
+			sharedStatuses = statuses
+			for _, inst := range instances {
+				s, ok := sharedStatuses[inst.ID]
+				if !ok {
+					continue
+				}
+				// Sessions NOT freshly polled by this instance this sweep
+				// (neither owned nor orphan-due) render the owner's status
+				// from the shared row. Gated on isPolledByMe, not isOwned:
+				// an orphan we just polled above must keep its fresh
+				// UpdateStatus result — applying the older DB row here would
+				// clobber it, the WriteStatus loop below would persist the
+				// stale value, and the lastPersistedStatus dedup would then
+				// freeze it. Tool is NOT imported from the shared row: it's
+				// hydrated once from the instances table and effectively
+				// immutable mid-session, and render paths read inst.Tool
+				// lock-free, so writing it here from a background goroutine
+				// would be a data race.
+				if h.claimPolling && !h.isPolledByMe(inst.ID) && s.Status != "" {
+					if session.Status(s.Status) != inst.GetStatusThreadSafe() {
+						statusChanged.Store(true)
+					}
+					inst.SetStatusThreadSafe(session.Status(s.Status))
+				}
+			}
+		}
+	}
+
 	// Invalidate cache if status changed
 	if statusChanged.Load() {
 		h.cachedStatusCounts.valid.Store(false)
@@ -4221,7 +4322,7 @@ func (h *Home) backgroundStatusUpdate() {
 	}
 	h.refreshSessionRenderSnapshot(instances)
 
-	// SQLite sync: heartbeat, status writes, ack reads (enables multi-instance coordination)
+	// SQLite writes: heartbeat, status writes (enables multi-instance coordination)
 	if db := statedb.GetGlobal(); db != nil {
 		// Heartbeat: mark this process as alive
 		_ = db.Heartbeat()
@@ -4229,13 +4330,23 @@ func (h *Home) backgroundStatusUpdate() {
 		// Clean dead instances every ~20s (not every tick)
 		if time.Since(h.lastDeadInstanceCleanup) > 20*time.Second {
 			_ = db.CleanDeadInstances(30 * time.Second)
+			if h.claimPolling {
+				_ = db.PruneStaleSessionClaims()
+			}
 			h.lastDeadInstanceCleanup = time.Now()
 		}
 
 		// Write statuses only when changed to reduce SQLite write pressure.
+		// Sessions neither owned nor orphan-polled this sweep are not written:
+		// the owning instance (or, for orphans, this primary's orphan sweep)
+		// is the source of truth for that session's status row. Orphans MUST
+		// be written here — that's the entire point of polling them above.
 		currentIDs := make(map[string]struct{}, len(instances))
 		for _, inst := range instances {
 			currentIDs[inst.ID] = struct{}{}
+			if !h.isPolledByMe(inst.ID) {
+				continue
+			}
 			status := string(inst.GetStatusThreadSafe())
 			if prev, ok := h.lastPersistedStatus[inst.ID]; ok && prev == status {
 				continue
@@ -4279,15 +4390,15 @@ func (h *Home) backgroundStatusUpdate() {
 			}
 		}
 
-		// Read acknowledgments from SQLite (picks up acks from other instances)
-		if ackStatuses, err := db.ReadAllStatuses(); err == nil {
+		// Read acknowledgments from SQLite (picks up acks from other instances).
+		// Reuses the sharedStatuses map read before the render snapshot.
+		if sharedStatuses != nil {
 			for _, inst := range instances {
-				if s, ok := ackStatuses[inst.ID]; ok && s.Acknowledged {
+				if s, ok := sharedStatuses[inst.ID]; ok && s.Acknowledged {
 					inst.SetAcknowledgedFromShared(true)
 				}
 			}
 		}
-
 	}
 
 	// Always sync notification bar - must check for signal file (Ctrl+b N acknowledgments)
@@ -4604,14 +4715,22 @@ func (h *Home) processStatusUpdate(req statusUpdateRequest) {
 
 	// Step 1: Always update visible sessions (Priority 1B - visible first)
 	for _, inst := range instancesCopy {
-		if visibleIDs[inst.ID] {
-			oldStatus := inst.GetStatusThreadSafe()
-			_ = inst.UpdateStatus() // Ignore errors in background worker
-			if inst.GetStatusThreadSafe() != oldStatus {
-				statusChanged = true
-			}
-			updated[inst.ID] = true
+		if !visibleIDs[inst.ID] {
+			continue
 		}
+		// Skip sessions this instance neither owns nor is orphan-polling this
+		// sweep: mirrors the background sweep's gate so the incremental poll
+		// path can't defeat the dedup claim polling promises (flag off or nil
+		// owned map keeps isPolledByMe fail-open, so no behavior change there).
+		if !h.isPolledByMe(inst.ID) {
+			continue
+		}
+		oldStatus := inst.GetStatusThreadSafe()
+		_ = inst.UpdateStatus() // Ignore errors in background worker
+		if inst.GetStatusThreadSafe() != oldStatus {
+			statusChanged = true
+		}
+		updated[inst.ID] = true
 	}
 
 	// Step 2: Round-robin through non-visible sessions (Priority 1A - batching)
@@ -4627,6 +4746,13 @@ func (h *Home) processStatusUpdate(req statusUpdateRequest) {
 
 		// Skip if already updated (visible)
 		if updated[inst.ID] {
+			continue
+		}
+
+		// Skip sessions this instance neither owns nor is orphan-polling this
+		// sweep (mirrors the background sweep's gate); just advance the cursor
+		// past it like any other skip below, don't stall the round-robin.
+		if !h.isPolledByMe(inst.ID) {
 			continue
 		}
 
@@ -5629,7 +5755,7 @@ func (h *Home) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 		go func(instances []*session.Instance) {
 			rev := session.NewReviver()
 			_ = rev.ReviveAll(instances)
-		}(append([]*session.Instance(nil), h.instances...))
+		}(h.ownedOnly(append([]*session.Instance(nil), h.instances...)))
 		return h, h.reviverTick()
 
 	case clearMaintenanceMsg:
@@ -9306,6 +9432,7 @@ func (h *Home) performFinalShutdown(shutdownPool bool) tea.Cmd {
 		// Release primary claim and unregister from the heartbeat table
 		if db := statedb.GetGlobal(); db != nil {
 			_ = db.ResignPrimary()
+			_ = db.ReleaseAllClaims()
 			_ = db.UnregisterInstance()
 		}
 		// Clean up notification bar (clear tmux status bars and unbind keys)
