@@ -1023,16 +1023,18 @@ type loadSessionsMsg struct {
 }
 
 type sessionCreatedMsg struct {
-	instance *session.Instance
-	err      error
-	tempID   string // matches creatingSessions key for placeholder removal
+	instance     *session.Instance
+	err          error
+	tempID       string // matches creatingSessions key for placeholder removal
+	setupWarning string // non-fatal worktree setup-script failure, shown after a successful create
 }
 
 type sessionForkedMsg struct {
-	instance *session.Instance
-	sourceID string // ID of the source session that was forked (for cleanup)
-	notice   string // non-fatal degradation notice shown after a successful fork
-	err      error
+	instance     *session.Instance
+	sourceID     string // ID of the source session that was forked (for cleanup)
+	notice       string // non-fatal degradation notice shown after a successful fork
+	err          error
+	setupWarning string // non-fatal worktree setup-script failure, shown after a successful fork
 }
 
 type refreshMsg struct{}
@@ -5234,6 +5236,11 @@ func (h *Home) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 			h.instancesMu.Unlock()
 			// Force save to persist the session even during reload
 			h.forceSaveInstances()
+			// Surface a non-fatal setup-script warning without masking any
+			// persistence error forceSaveInstances may have set.
+			if msg.setupWarning != "" {
+				h.setError(noticeError(h.err, msg.setupWarning))
+			}
 			// Trigger another reload to pick up the new session in the UI
 			if h.storageWatcher != nil {
 				h.storageWatcher.TriggerReload()
@@ -5281,6 +5288,12 @@ func (h *Home) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// Use forceSave to bypass the external-change abort - new session creation MUST persist
 			h.forceSaveInstances()
 
+			// Surface a non-fatal setup-script warning, folded into any
+			// persistence error so an unsaved session never looks merely degraded.
+			if msg.setupWarning != "" {
+				h.setError(noticeError(h.err, msg.setupWarning))
+			}
+
 			// Auto-attach to the new session when [ui].attach_on_create is set,
 			// so creating a session "instantly opens" it instead of only moving
 			// the cursor to it. The session was just Start()ed (see
@@ -5288,7 +5301,9 @@ func (h *Home) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// attachSession returns nil when there is no local tmux pane to
 			// attach (e.g. a session whose tmux session could not be resolved);
 			// in that case we fall through to today's select-only behavior.
-			if h.attachOnCreate {
+			// Skip auto-attach when a setup warning is pending: attaching would
+			// hide the footer before the user can read it.
+			if h.attachOnCreate && msg.setupWarning == "" {
 				if attachTo := h.attachSession(msg.instance); attachTo != nil {
 					return h, tea.Batch(h.fetchPreview(msg.instance, msg.instance.ID, -1), attachTo)
 				}
@@ -5316,6 +5331,11 @@ func (h *Home) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 			h.instances = append(h.instances, msg.instance)
 			h.instancesMu.Unlock()
 			h.forceSaveInstances()
+			// Surface a non-fatal setup-script warning without masking any
+			// persistence error forceSaveInstances may have set.
+			if msg.setupWarning != "" {
+				h.setError(noticeError(h.err, msg.setupWarning))
+			}
 			if h.storageWatcher != nil {
 				h.storageWatcher.TriggerReload()
 			}
@@ -5366,6 +5386,11 @@ func (h *Home) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// fork that wasn't actually saved doesn't look successful (#1299 review).
 			if msg.notice != "" {
 				h.setError(noticeError(h.err, msg.notice))
+			}
+			// Same for a non-fatal setup-script warning; folding composes it with
+			// any existing error/notice rather than overwriting.
+			if msg.setupWarning != "" {
+				h.setError(noticeError(h.err, msg.setupWarning))
 			}
 
 			// Start fetching preview for the forked session
@@ -10767,6 +10792,8 @@ func (h *Home) createSessionInGroupWithWorktreeAndOptions(
 	autoName bool,
 ) tea.Cmd {
 	return func() tea.Msg {
+		var setupWarning string // non-fatal worktree setup-script failure, if any
+
 		uiLog.Info("create_session_start",
 			slog.String("name", name),
 			slog.String("path", path),
@@ -10797,8 +10824,12 @@ func (h *Home) createSessionInGroupWithWorktreeAndOptions(
 				if err := os.MkdirAll(filepath.Dir(worktreePath), 0o755); err != nil {
 					return sessionCreatedMsg{err: fmt.Errorf("failed to create parent directory: %w", err), tempID: tempID}
 				}
-				if err := createWorktreeWithSetupAndLog(backend, worktreePath, worktreeBranch); err != nil {
+				setupErr, err := createWorktreeWithSetupAndLog(backend, worktreePath, worktreeBranch)
+				if err != nil {
 					return sessionCreatedMsg{err: fmt.Errorf("failed to create worktree: %w", err), tempID: tempID}
+				}
+				if setupErr != nil {
+					setupWarning = formatSetupWarning(setupErr)
 				}
 			}
 			path = worktreePath
@@ -10969,25 +11000,45 @@ func (h *Home) createSessionInGroupWithWorktreeAndOptions(
 			return sessionCreatedMsg{err: err, tempID: tempID}
 		}
 		uiLog.Info("session_create_succeeded", slog.String("id", inst.ID))
-		return sessionCreatedMsg{instance: inst, tempID: tempID}
+		return sessionCreatedMsg{instance: inst, tempID: tempID, setupWarning: setupWarning}
 	}
 }
 
 // createWorktreeWithSetupAndLog creates a worktree via the supplied backend.
 // For git backends it also runs .worktreeinclude and worktree-setup.sh; for
 // jujutsu backends only the workspace is created (setup-script behavior is
-// git-only per the vcsbackend convention). Returns only the creation error;
-// setup failures are non-fatal and logged to uiLog.
-func createWorktreeWithSetupAndLog(backend vcs.Backend, wtPath, branch string) error {
+// git-only per the vcsbackend convention).
+//
+// setupErr is the non-fatal setup-script failure (nil on success): the worktree
+// is created regardless, but the caller surfaces setupErr to the user. err is
+// the fatal worktree-creation error. The full setup output is logged here; only
+// the concise setupErr is returned for display (see formatSetupWarning).
+func createWorktreeWithSetupAndLog(backend vcs.Backend, wtPath, branch string) (setupErr error, err error) {
 	var buf bytes.Buffer
-	setupErr, err := vcsbackend.CreateWorktreeWithSetup(backend, wtPath, branch, &buf, &buf, session.GetWorktreeSettings().SetupTimeout())
+	setupErr, err = vcsbackend.CreateWorktreeWithSetup(backend, wtPath, branch, &buf, &buf, session.GetWorktreeSettings().SetupTimeout())
 	if err != nil {
-		return err
+		return nil, err
 	}
 	if setupErr != nil {
 		uiLog.Warn("worktree_setup_script_failed", slog.String("error", setupErr.Error()), slog.String("output", buf.String()))
 	}
-	return nil
+	return setupErr, nil
+}
+
+// setupWarningMaxLen bounds the setup-script failure text shown in the footer,
+// which is height-constrained and auto-dismisses. The full output is in uiLog.
+const setupWarningMaxLen = 300
+
+// formatSetupWarning turns a non-fatal setup-script error into a single bounded,
+// sanitized footer line: ANSI stripped, whitespace collapsed, capped. The
+// verbose output stays in the log (see createWorktreeWithSetupAndLog).
+func formatSetupWarning(setupErr error) string {
+	msg := strings.Join(strings.Fields(tmux.StripANSI(setupErr.Error())), " ")
+	// Truncate by rune, not byte, so a multi-byte character is never split.
+	if runes := []rune(msg); len(runes) > setupWarningMaxLen {
+		msg = string(runes[:setupWarningMaxLen]) + "…"
+	}
+	return "worktree setup script failed: " + msg
 }
 
 // createSessionTool maps a free-form command to (tool, command). Built-in
@@ -11736,6 +11787,8 @@ func (h *Home) forkSessionCmdWithOptions(
 	sourceID := source.ID // Capture for closure
 
 	return func() tea.Msg {
+		var setupWarning string // non-fatal worktree setup-script failure, if any
+
 		// Check tmux availability before forking
 		if err := tmux.IsTmuxAvailable(); err != nil {
 			return sessionForkedMsg{err: fmt.Errorf("cannot fork session: %w", err), sourceID: sourceID}
@@ -11771,15 +11824,19 @@ func (h *Home) forkSessionCmdWithOptions(
 			if forkState.WithState {
 				switch backend.Type() {
 				case vcs.TypeGit:
-					if err := forkWithStateWorktree(
+					setupErr, err := forkWithStateWorktree(
 						source.ProjectPath,
 						opts.WorktreeRepoRoot,
 						opts.WorktreePath,
 						opts.WorktreeBranch,
 						forkState,
 						defaultForkWithStateWorktreeDeps(),
-					); err != nil {
+					)
+					if err != nil {
 						return sessionForkedMsg{err: err, sourceID: sourceID}
+					}
+					if setupErr != nil {
+						setupWarning = formatSetupWarning(setupErr)
 					}
 				case vcs.TypeJujutsu:
 					if err := forkWithStateWorkspaceJJ(
@@ -11809,8 +11866,12 @@ func (h *Home) forkSessionCmdWithOptions(
 				if err := os.MkdirAll(filepath.Dir(opts.WorktreePath), 0o755); err != nil {
 					return sessionForkedMsg{err: fmt.Errorf("failed to create directory: %w", err), sourceID: sourceID}
 				}
-				if err := createWorktreeWithSetupAndLog(backend, opts.WorktreePath, opts.WorktreeBranch); err != nil {
+				setupErr, err := createWorktreeWithSetupAndLog(backend, opts.WorktreePath, opts.WorktreeBranch)
+				if err != nil {
 					return sessionForkedMsg{err: fmt.Errorf("worktree creation failed: %w", err), sourceID: sourceID}
+				}
+				if setupErr != nil {
+					setupWarning = formatSetupWarning(setupErr)
 				}
 			}
 		}
@@ -11820,7 +11881,7 @@ func (h *Home) forkSessionCmdWithOptions(
 			return sessionForkedMsg{err: err, sourceID: sourceID}
 		}
 
-		return sessionForkedMsg{instance: inst, sourceID: sourceID, notice: forkNotice}
+		return sessionForkedMsg{instance: inst, sourceID: sourceID, notice: forkNotice, setupWarning: setupWarning}
 	}
 }
 
@@ -11867,12 +11928,15 @@ func rollbackForkWithStateWorktree(repoRoot, worktreePath, branch string) error 
 // session's HEAD, and materializes the parent's working-tree state, mirroring
 // the CLI safeguards from #1263. Defined after forkSessionCmdWithOptions so the
 // call site (not this definition) is the structurally-first reference.
-func forkWithStateWorktree(parentPath, repoRoot, worktreePath, branch string, state git.WorktreeStateOptions, deps forkWithStateWorktreeDeps) error {
+//
+// setupErr is the non-fatal setup-script failure (nil on success); the fork is
+// complete regardless, but the caller surfaces it. err is the fatal error.
+func forkWithStateWorktree(parentPath, repoRoot, worktreePath, branch string, state git.WorktreeStateOptions, deps forkWithStateWorktreeDeps) (setupErr error, err error) {
 	if state.WithIgnored {
 		state.WithState = true
 	}
 	if !state.WithState {
-		return errors.New("forkWithStateWorktree called without WithState")
+		return nil, errors.New("forkWithStateWorktree called without WithState")
 	}
 	// Destination collision is the more actionable refusal, so check it before
 	// the local path-existence guard (mirrors #1263's CLI precedence).
@@ -11881,21 +11945,21 @@ func forkWithStateWorktree(parentPath, repoRoot, worktreePath, branch string, st
 		if errors.As(err, &collErr) {
 			switch collErr.Kind {
 			case git.CollisionWorktreeExists:
-				return fmt.Errorf("branch %q already has a worktree at %s; choose a new destination branch for --with-state", collErr.Branch, collErr.Path)
+				return nil, fmt.Errorf("branch %q already has a worktree at %s; choose a new destination branch for --with-state", collErr.Branch, collErr.Path)
 			case git.CollisionBranchExists:
-				return fmt.Errorf("branch %q already exists; choose a new destination branch for --with-state", collErr.Branch)
+				return nil, fmt.Errorf("branch %q already exists; choose a new destination branch for --with-state", collErr.Branch)
 			}
 		}
-		return fmt.Errorf("failed to validate destination: %w", err)
+		return nil, fmt.Errorf("failed to validate destination: %w", err)
 	}
 	if _, statErr := deps.statPath(worktreePath); statErr == nil {
-		return fmt.Errorf("worktree path already exists: %s", worktreePath)
+		return nil, fmt.Errorf("worktree path already exists: %s", worktreePath)
 	} else if !errors.Is(statErr, os.ErrNotExist) {
-		return fmt.Errorf("failed to stat worktree path: %w", statErr)
+		return nil, fmt.Errorf("failed to stat worktree path: %w", statErr)
 	}
 	kind, detectErr := deps.detectInProgressOperation(parentPath)
 	if detectErr != nil {
-		return fmt.Errorf("failed to inspect parent session state: %w", detectErr)
+		return nil, fmt.Errorf("failed to inspect parent session state: %w", detectErr)
 	}
 	if kind != "" {
 		abortCmd := map[string]string{
@@ -11905,21 +11969,21 @@ func forkWithStateWorktree(parentPath, repoRoot, worktreePath, branch string, st
 			"revert":      "git revert --abort",
 			"bisect":      "git bisect reset",
 		}[kind]
-		return fmt.Errorf("parent session is mid-%s; finish or abort the %s before forking with state (cd %q && %s)", kind, kind, parentPath, abortCmd)
+		return nil, fmt.Errorf("parent session is mid-%s; finish or abort the %s before forking with state (cd %q && %s)", kind, kind, parentPath, abortCmd)
 	}
 	if err := deps.mkdirAll(filepath.Dir(worktreePath), 0o755); err != nil {
-		return fmt.Errorf("failed to create directory: %w", err)
+		return nil, fmt.Errorf("failed to create directory: %w", err)
 	}
 	if deps.hasSubmodules(parentPath) {
 		uiLog.Warn("fork_with_state_submodules_detected", slog.String("parent", parentPath))
 	}
 	parentHead, err := deps.headCommit(parentPath)
 	if err != nil {
-		return fmt.Errorf("failed to resolve parent session HEAD: %w", err)
+		return nil, fmt.Errorf("failed to resolve parent session HEAD: %w", err)
 	}
 	createdBranch, err := deps.createAtStartPoint(repoRoot, worktreePath, branch, parentHead)
 	if err != nil {
-		return fmt.Errorf("worktree creation failed: %w", err)
+		return nil, fmt.Errorf("worktree creation failed: %w", err)
 	}
 	if err := deps.materialize(parentPath, worktreePath, state.WithIgnored); err != nil {
 		var cleanupErrs []string
@@ -11932,24 +11996,27 @@ func forkWithStateWorktree(parentPath, repoRoot, worktreePath, branch string, st
 			}
 		}
 		if len(cleanupErrs) == 0 {
-			return fmt.Errorf("failed to materialize parent state: %w; new worktree cleaned up", err)
+			return nil, fmt.Errorf("failed to materialize parent state: %w; new worktree cleaned up", err)
 		}
 		branchHint := ""
 		if createdBranch {
 			branchHint = fmt.Sprintf(" && git -C %q branch -D %q", repoRoot, branch)
 		}
-		return fmt.Errorf("failed to materialize parent state: %w; cleanup also failed (%s); manual cleanup required: rm -rf %q%s", err, strings.Join(cleanupErrs, "; "), worktreePath, branchHint)
+		return nil, fmt.Errorf("failed to materialize parent state: %w; cleanup also failed (%s); manual cleanup required: rm -rf %q%s", err, strings.Join(cleanupErrs, "; "), worktreePath, branchHint)
 	}
 	if err := deps.processInclude(repoRoot, worktreePath, io.Discard); err != nil {
 		uiLog.Warn("fork_with_state_worktreeinclude_failed", slog.String("path", worktreePath), slog.String("err", err.Error()))
 	}
-	if err := deps.runSetup(repoRoot, worktreePath, io.Discard, io.Discard, session.GetWorktreeSettings().SetupTimeout()); err != nil {
+	var setupBuf bytes.Buffer
+	if scriptErr := deps.runSetup(repoRoot, worktreePath, &setupBuf, &setupBuf, session.GetWorktreeSettings().SetupTimeout()); scriptErr != nil {
 		// Non-fatal: the worktree and parent state are already created. Mirror
 		// #1263's CLI, which warns on a failed setup script rather than failing
-		// the whole fork.
-		uiLog.Warn("fork_with_state_setup_failed", slog.String("path", worktreePath), slog.String("err", err.Error()))
+		// the whole fork. The full output is logged; the concise error is
+		// returned so the caller can surface it in the UI.
+		uiLog.Warn("fork_with_state_setup_failed", slog.String("path", worktreePath), slog.String("err", scriptErr.Error()), slog.String("output", setupBuf.String()))
+		return scriptErr, nil
 	}
-	return nil
+	return nil, nil
 }
 
 // forkWithStateWorkspaceJJ is the jujutsu equivalent of forkWithStateWorktree:
