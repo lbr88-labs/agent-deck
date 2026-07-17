@@ -1375,14 +1375,29 @@ func (s *StateDB) ReadAllStatuses() (map[string]StatusRow, error) {
 	return result, rows.Err()
 }
 
+// touchWithRetry stamps metadata.last_modified, retrying on SQLITE_BUSY.
+//
+// Touch() is a plain Exec, so under a concurrent writer it fails where the
+// retry-wrapped row UPDATE beside it would have succeeded — leaving the row
+// changed but the change unannounced. Every targeted writer that stamps its
+// own signal must retry the stamp as hard as it retried the write.
+func (s *StateDB) touchWithRetry() error {
+	return withBusyRetry(func() error { return s.Touch() })
+}
+
 // SetAcknowledged sets or clears the acknowledged flag for an instance.
 func (s *StateDB) SetAcknowledged(id string, ack bool) error {
 	v := 0
 	if ack {
 		v = 1
 	}
-	_, err := s.db.Exec("UPDATE instances SET acknowledged = ? WHERE id = ?", v, id)
-	return err
+	if err := withBusyRetry(func() error {
+		_, err := s.db.Exec("UPDATE instances SET acknowledged = ? WHERE id = ?", v, id)
+		return err
+	}); err != nil {
+		return err
+	}
+	return s.touchWithRetry()
 }
 
 // SetArchived sets or clears the archive timestamp for a single instance via a
@@ -1391,11 +1406,20 @@ func (s *StateDB) SetAcknowledged(id string, ack bool) error {
 // that path's external-change guard aborts the save and reloads, silently
 // discarding the archive (see #archive-abort). A scoped UPDATE always lands.
 // A zero `at` clears the flag (unarchive).
+//
+// The scoped UPDATE bypasses saveInstances(), which is also the only code path
+// that calls Touch(). Touch() explicitly here: it stamps metadata.last_modified,
+// the timestamp StorageWatcher polls to notice out-of-process writes. Without it
+// a running TUI never reloads, and its next forced full-table save replays a
+// stale snapshot over this row, reverting the archive.
 func (s *StateDB) SetArchived(id string, at time.Time) error {
-	return withBusyRetry(func() error {
+	if err := withBusyRetry(func() error {
 		_, err := s.db.Exec("UPDATE instances SET archived_at = ? WHERE id = ?", archivedAtUnix(at), id)
 		return err
-	})
+	}); err != nil {
+		return err
+	}
+	return s.touchWithRetry()
 }
 
 // --- Heartbeat ---
