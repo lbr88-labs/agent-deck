@@ -444,6 +444,7 @@ branch_prefix       = "fork/" # auto branch name = <branch_prefix><sanitized-tit
 Done with a session but not ready to delete it? Archive it. Archiving stops the tmux process and hides the session from the default list — the conversation, metadata, worktree, and parent linkage are all preserved.
 
 - `A` archives the selected session; `Shift+U` restores it to the active list **without** auto-starting the process
+- `R` on an archived session restores it to the active list and restarts its process
 - `^` filters the TUI to archived sessions; the web UI has a dedicated **Archived** tab
 - Search and filters work across archived sessions
 - Deleting (`d`) is the destructive cousin — it removes the session from the registry (with a 30-second `Ctrl+Z` undo window)

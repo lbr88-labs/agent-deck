@@ -5686,10 +5686,18 @@ func (h *Home) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 			session.UpdateClaudeSessionsWithDedup(h.instances)
 			h.instancesMu.Unlock()
 			h.invalidatePreviewCache(msg.sessionID)
+			if msg.unarchived {
+				h.cachedStatusCounts.valid.Store(false)
+				h.rebuildFlatItems()
+			}
 			// Save the updated session state (new tmux session name)
 			h.saveInstances()
 			if msg.warning != "" {
 				h.setError(fmt.Errorf("%s", msg.warning))
+			} else if msg.unarchived {
+				if inst := h.getInstanceByID(msg.sessionID); inst != nil {
+					h.setError(fmt.Errorf("unarchived and restarted '%s'", inst.Title))
+				}
 			}
 		}
 		// Clear animation so ENTER can attach immediately.
@@ -12428,10 +12436,11 @@ func (h *Home) bulkRemoveErrored() tea.Cmd {
 
 // sessionRestartedMsg signals that a session was restarted.
 type sessionRestartedMsg struct {
-	sessionID string
-	err       error
-	warning   string
-	fresh     bool
+	sessionID  string
+	err        error
+	warning    string
+	fresh      bool
+	unarchived bool
 }
 
 // mcpRestartedMsg signals that an MCP-triggered restart completed and should auto-attach
@@ -12440,7 +12449,37 @@ type mcpRestartedMsg struct {
 	err     error
 }
 
-// restartSession restarts a dead/errored session by creating a new tmux session.
+// restartWithArchiveTransition makes restart from the archived view a durable
+// unarchive + restart operation. If restart fails, it restores the exact archive
+// timestamp so the session does not move lists without a running process.
+func restartWithArchiveTransition(
+	inst *session.Instance,
+	persist func(*session.Instance) error,
+	restart func() error,
+) (bool, error) {
+	if !inst.IsArchived() {
+		return false, restart()
+	}
+
+	archivedAt := inst.ArchivedAt
+	inst.ArchivedAt = time.Time{}
+	if err := persist(inst); err != nil {
+		inst.ArchivedAt = archivedAt
+		return false, fmt.Errorf("failed to unarchive session before restart: %w", err)
+	}
+
+	if err := restart(); err != nil {
+		inst.ArchivedAt = archivedAt
+		if rollbackErr := persist(inst); rollbackErr != nil {
+			return false, fmt.Errorf("restart failed: %w; restoring archive state failed: %v", err, rollbackErr)
+		}
+		return false, err
+	}
+	return true, nil
+}
+
+// restartSession restarts a session, unarchiving it first when invoked from
+// the archived view.
 func (h *Home) restartSession(inst *session.Instance) tea.Cmd {
 	id := inst.ID
 	mcpUILog.Debug(
@@ -12463,12 +12502,13 @@ func (h *Home) restartSession(inst *session.Instance) tea.Cmd {
 			return sessionRestartedMsg{sessionID: id, err: err}
 		}
 
-		err := current.Restart()
+		unarchived, err := restartWithArchiveTransition(current, h.persistArchived, current.Restart)
 		mcpUILog.Debug("restart_session_result", slog.String("id", id), slog.Any("error", err))
 		return sessionRestartedMsg{
-			sessionID: id,
-			err:       err,
-			warning:   current.ConsumeCodexRestartWarning(),
+			sessionID:  id,
+			err:        err,
+			warning:    current.ConsumeCodexRestartWarning(),
+			unarchived: unarchived,
 		}
 	}
 }
