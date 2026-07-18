@@ -21,6 +21,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"al.essio.dev/pkg/shellescape"
@@ -404,6 +405,12 @@ type Instance struct {
 	// Use GetStatus()/SetStatus() and GetTool()/SetTool() for thread-safe access.
 	// UpdateStatus() acquires the write lock internally.
 	mu sync.RWMutex
+
+	// spawnGen is bumped on every Start/StartWithMessage/Stop so the fast-death
+	// watcher (#1580) can detect that a newer spawn or a deliberate stop has
+	// superseded it — race-free, without reading the mutex-guarded status fields
+	// from its own goroutine.
+	spawnGen atomic.Uint64
 
 	// lastErrorCheck tracks when we last confirmed the session doesn't exist
 	// Used to skip expensive Exists() checks for ghost sessions (sessions in JSON but not in tmux)
@@ -3232,6 +3239,11 @@ func (i *Instance) Start() error {
 		return fmt.Errorf("tmux session not initialized")
 	}
 
+	// #1580 diagnosability: clear any stale spawn-failure sidecar and drop a
+	// spawn_attempt trace so a spawn that dies before anything else runs still
+	// leaves a durable record.
+	i.recordSpawnAttempt()
+
 	// Prepare scratch CLAUDE_CONFIG_DIR for non-conductor claude workers
 	// (issue #59, v1.7.68). Runs before command-building so the
 	// CLAUDE_CONFIG_DIR= prefix picks up the scratch path. No-op for
@@ -3378,7 +3390,21 @@ func (i *Instance) Start() error {
 
 	// Start the tmux session
 	if err := i.tmuxSession.Start(command); err != nil {
+		// #1580: persist the tmux-level failure so the preview / session show /
+		// lifecycle log can surface it instead of a bare "error".
+		i.recordTmuxStartFailure(command, err)
 		return fmt.Errorf("failed to start tmux session: %w", err)
+	}
+
+	// #1580: watch for a fast death of the initial process (broken command,
+	// bad PATH, immediate non-zero exit). tmux tears the pane down on exit for
+	// non-remain-on-exit sessions, so this captures the dying output while the
+	// pane is still alive and records it if the session vanishes early. The
+	// watcher is handed value snapshots + a supersede generation so it never
+	// touches i's mutex-guarded fields from its own goroutine.
+	if command != "" {
+		gen := i.spawnGen.Add(1)
+		go i.watchForFastDeath(command, gen, i.tmuxSession, i.ID, i.Tool, sessionLog)
 	}
 
 	// CFG-07: emit a single-shot log line documenting which priority level
@@ -3492,6 +3518,10 @@ func (i *Instance) StartWithMessage(message string) error {
 	if i.tmuxSession == nil {
 		return fmt.Errorf("tmux session not initialized")
 	}
+
+	// #1580 diagnosability: clear any stale spawn-failure sidecar and drop a
+	// spawn_attempt trace (same as Start()).
+	i.recordSpawnAttempt()
 
 	// Prepare scratch CLAUDE_CONFIG_DIR for non-conductor claude workers
 	// (issue #59, v1.7.68). Same call as in Start() — both spawn paths
@@ -3624,7 +3654,15 @@ func (i *Instance) StartWithMessage(message string) error {
 
 	// Start the tmux session
 	if err := i.tmuxSession.Start(command); err != nil {
+		// #1580: persist the tmux-level failure (sister path to Start()).
+		i.recordTmuxStartFailure(command, err)
 		return fmt.Errorf("failed to start tmux session: %w", err)
+	}
+
+	// #1580: fast-death watcher (sister path to Start()).
+	if command != "" {
+		gen := i.spawnGen.Add(1)
+		go i.watchForFastDeath(command, gen, i.tmuxSession, i.ID, i.Tool, sessionLog)
 	}
 
 	// CFG-07: emit a single-shot log line documenting which priority level
@@ -5037,6 +5075,12 @@ func (i *Instance) Preview() (string, error) {
 
 	content, err := i.tmuxSession.CapturePane()
 	if err != nil {
+		// #1580: the pane is gone (fast spawn death). Surface the recorded
+		// spawn-failure diagnostic instead of a bare error so the preview pane
+		// explains what happened.
+		if fallback := i.spawnFailurePreview(); fallback != "" {
+			return fallback, nil
+		}
 		return "", err
 	}
 
@@ -5054,7 +5098,26 @@ func (i *Instance) PreviewFull() (string, error) {
 		return "", fmt.Errorf("tmux session not initialized")
 	}
 
-	return i.tmuxSession.CaptureFullHistory()
+	content, err := i.tmuxSession.CaptureFullHistory()
+	if err != nil {
+		// #1580: pane gone — fall back to the recorded spawn failure.
+		if fallback := i.spawnFailurePreview(); fallback != "" {
+			return fallback, nil
+		}
+		return "", err
+	}
+	return content, nil
+}
+
+// spawnFailurePreview returns the formatted spawn-failure record for this
+// instance, or "" when there is none. Used as a preview fallback when the tmux
+// pane no longer exists (#1580).
+func (i *Instance) spawnFailurePreview() string {
+	rec, err := readSpawnFailureRecord(i.ID)
+	if err != nil || rec == nil {
+		return ""
+	}
+	return rec.FormatForDisplay()
 }
 
 // PreviewWindowFull returns the full scrollback of a specific tmux window.
@@ -6127,6 +6190,9 @@ func (i *Instance) killInternal(sync bool) error {
 	}
 	i.Status = StatusStopped
 	i.mu.Unlock()
+	// #1580: supersede any in-flight fast-death watcher so a deliberate stop is
+	// never mistaken for a spawn failure.
+	i.spawnGen.Add(1)
 
 	// Clean up sandbox container (only if name matches our prefix convention).
 	// Runs regardless of tmux kill result to avoid orphaned containers.
