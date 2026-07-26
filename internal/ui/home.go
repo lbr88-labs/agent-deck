@@ -7383,6 +7383,33 @@ func (h *Home) handleNewDialogKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 		// Get values including worktree settings.
 		name, path, command, branchName, worktreeEnabled := h.newDialog.GetValuesWithWorktree()
+		// #1706: a relative entry must be anchored to this process's cwd here,
+		// before it reaches the directory-exists check, os.MkdirAll, the
+		// worktree/VCS probe or the instance itself — tmux would otherwise
+		// resolve it against the tmux server's cwd and put the session
+		// somewhere other than the folder we created. Runs after the remote
+		// branch above returns, so remote paths are never touched.
+		//
+		// Multi-repo paths are resolved here too (not at their use site further
+		// down) so the single "cannot resolve" refusal happens while the dialog
+		// is still open and can show the error. A declared path that stayed
+		// relative could also never match a hook-reported cwd (#1731).
+		multiRepoPaths, multiRepoEnabled := h.newDialog.GetMultiRepoPaths()
+		absPath, absErr := absLocalProjectPath(path)
+		if absErr == nil {
+			path = absPath
+			for i, p := range multiRepoPaths {
+				if multiRepoPaths[i], absErr = absLocalProjectPath(p); absErr != nil {
+					break
+				}
+			}
+		}
+		if absErr != nil {
+			// filepath.Abs only fails when this process has no usable cwd, so
+			// there is nothing to anchor a relative path to.
+			h.newDialog.SetError("Cannot resolve a relative path here — enter an absolute path")
+			return h, nil
+		}
 
 		// Remember the submitted tool so the next new-session dialog preselects
 		// it (UX top-3 #2). Best-effort: persisted in the profile StateDB, never
@@ -7455,10 +7482,10 @@ func (h *Home) handleNewDialogKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 		geminiYoloMode := h.newDialog.IsGeminiYoloMode()
 		sandboxMode := h.newDialog.IsSandboxEnabled()
-		multiRepoPaths, multiRepoEnabled := h.newDialog.GetMultiRepoPaths()
 		var additionalPaths []string
 		if multiRepoEnabled && len(multiRepoPaths) > 1 {
-			// First path stays as ProjectPath, rest are additional
+			// First path stays as ProjectPath, rest are additional.
+			// Already absolutized above (#1706).
 			path = multiRepoPaths[0]
 			additionalPaths = multiRepoPaths[1:]
 		}
