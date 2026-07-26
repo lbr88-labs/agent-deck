@@ -691,10 +691,11 @@ type Home struct {
 
 // reloadState preserves UI state during storage reload
 type reloadState struct {
-	cursorSessionID string          // ID of session at cursor (if cursor on session)
-	cursorGroupPath string          // Path of group at cursor (if cursor on group)
-	expandedGroups  map[string]bool // Expanded group paths
-	viewOffset      int             // Scroll position
+	cursorSessionID  string          // ID of session at cursor (if cursor on session)
+	cursorGroupPath  string          // Path of group at cursor (if cursor on group)
+	cursorCreatingID string          // tempID of creating placeholder at cursor (if cursor on placeholder)
+	expandedGroups   map[string]bool // Expanded group paths
+	viewOffset       int             // Scroll position
 }
 
 // uiState persists cursor, preview mode, and status filter across restarts
@@ -709,6 +710,7 @@ type uiState struct {
 type selectedItemIdentity struct {
 	groupPath       string
 	sessionID       string
+	creatingID      string
 	windowSessionID string
 	windowIndex     int
 	remoteName      string
@@ -1999,6 +2001,8 @@ func (h *Home) preserveState() reloadState {
 		case session.ItemTypeSession:
 			if item.Session != nil {
 				state.cursorSessionID = item.Session.ID
+			} else if item.CreatingID != "" {
+				state.cursorCreatingID = item.CreatingID
 			}
 		case session.ItemTypeGroup:
 			state.cursorGroupPath = item.Path
@@ -2041,6 +2045,18 @@ func (h *Home) restoreState(state reloadState) {
 			if item.Type == session.ItemTypeSession &&
 				item.Session != nil &&
 				item.Session.ID == state.cursorSessionID {
+				h.cursor = i
+				found = true
+				break
+			}
+		}
+	}
+
+	// Creating-session placeholder: match by tempID so selection survives
+	// reloads/rebuilds during the (long) worktree setup window.
+	if !found && state.cursorCreatingID != "" {
+		for i, item := range h.flatItems {
+			if item.CreatingID == state.cursorCreatingID {
 				h.cursor = i
 				found = true
 				break
@@ -2163,6 +2179,8 @@ func (h *Home) captureSelectedItemIdentity() selectedItemIdentity {
 	case session.ItemTypeSession:
 		if item.Session != nil {
 			identity.sessionID = item.Session.ID
+		} else if item.CreatingID != "" {
+			identity.creatingID = item.CreatingID
 		}
 	case session.ItemTypeWindow:
 		identity.windowSessionID = item.WindowSessionID
@@ -2186,6 +2204,9 @@ func (h *Home) restoreSelectedItemIdentity(identity selectedItemIdentity) bool {
 			h.cursor = i
 			return true
 		case identity.sessionID != "" && item.Type == session.ItemTypeSession && item.Session != nil && item.Session.ID == identity.sessionID:
+			h.cursor = i
+			return true
+		case identity.creatingID != "" && item.CreatingID == identity.creatingID:
 			h.cursor = i
 			return true
 		case identity.groupPath != "" && item.Type == session.ItemTypeGroup && item.Path == identity.groupPath:
@@ -5141,10 +5162,16 @@ func (h *Home) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 						if currentItem.Session != nil {
 							msg.restoreState.cursorSessionID = currentItem.Session.ID
 							msg.restoreState.cursorGroupPath = ""
+							msg.restoreState.cursorCreatingID = ""
+						} else if currentItem.CreatingID != "" {
+							msg.restoreState.cursorCreatingID = currentItem.CreatingID
+							msg.restoreState.cursorSessionID = ""
+							msg.restoreState.cursorGroupPath = ""
 						}
 					case session.ItemTypeGroup:
 						msg.restoreState.cursorGroupPath = currentItem.Path
 						msg.restoreState.cursorSessionID = ""
+						msg.restoreState.cursorCreatingID = ""
 					}
 				}
 				msg.restoreState.viewOffset = h.viewOffset
@@ -15793,28 +15820,31 @@ func (h *Home) renderCreatingSessionItem(
 	// Leading hotkey gutter so creating rows align with group/session rows.
 	b.WriteString(strings.Repeat(" ", leftGutterWidth))
 
-	// Selection styling
-	if selected {
-		b.WriteString(lipgloss.NewStyle().
-			Foreground(ColorAccent).
-			Bold(true).
-			Render("▸ "))
-	} else {
-		b.WriteString("  ")
-	}
-
-	// Tree connector
-	if item.Level > 0 {
-		b.WriteString(TreeConnectorStyle.Render("├── "))
-	}
-
-	// Spinner + title
+	// Same selection styles as real session rows so a selected placeholder
+	// reads as selected at a glance (highlight bar, not just a dim marker).
+	treeStyle := TreeConnectorStyle
+	selectionPrefix := "  "
 	spinnerStyle := lipgloss.NewStyle().Foreground(ColorPurple)
 	titleStyle := lipgloss.NewStyle().Foreground(ColorText).Italic(true)
+	subtitleStyle := lipgloss.NewStyle().Foreground(ColorTextDim).Italic(true)
+	if selected {
+		selectionPrefix = SessionSelectionPrefix.Render("▶ ")
+		treeStyle = TreeConnectorSelStyle
+		titleStyle = SessionTitleSelStyle.Italic(true)
+		subtitleStyle = SessionTitleSelStyle.Italic(true).Faint(true)
+		spinnerStyle = SessionStatusSelStyle
+	}
+
+	b.WriteString(selectionPrefix)
+
+	if item.Level > 0 {
+		b.WriteString(treeStyle.Render("├── "))
+	}
+
 	b.WriteString(spinnerStyle.Render(spinner))
 	b.WriteString(" ")
 	b.WriteString(titleStyle.Render(item.CreatingTitle))
-	b.WriteString(lipgloss.NewStyle().Foreground(ColorTextDim).Italic(true).Render(" (creating worktree...)"))
+	b.WriteString(subtitleStyle.Render(" (creating worktree...)"))
 	b.WriteString("\n")
 }
 
