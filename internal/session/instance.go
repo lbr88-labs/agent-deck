@@ -219,6 +219,14 @@ type Instance struct {
 	// pendingCodexRestartWarning is consumed by UI/CLI after Restart() succeeds.
 	// It is intentionally transient and never persisted.
 	pendingCodexRestartWarning string `json:"-"`
+
+	// Hermes CLI integration. Hermes mints a new session ID each launch and does
+	// not export it (no env var / hook), so agent-deck captures it from
+	// `hermes sessions list` at restart time and resumes with --resume. Not
+	// persisted (json:"-"): it is re-captured on every restart, so it needs no
+	// lifetime beyond a single Restart() call — which also keeps it out of the
+	// JSON marshaling that could otherwise race the restart-time write.
+	HermesSessionID string `json:"-"`
 	// restartEnv contains one-shot environment overrides while RestartWithEnv is
 	// building the replacement process. It is cleared before the call returns.
 	restartEnv map[string]string
@@ -5393,6 +5401,12 @@ func (i *Instance) clearSessionBindingForFreshStart() {
 		i.CopilotDetectedAt = time.Time{}
 		i.CopilotStartedAt = 0
 	}
+
+	if i.Tool == "hermes" {
+		// Drop the captured resume ID so the next launch starts a new session
+		// and Restart() re-captures rather than resuming the old conversation.
+		i.HermesSessionID = ""
+	}
 }
 
 func (i *Instance) recreateTmuxSession() {
@@ -6838,6 +6852,15 @@ func (i *Instance) restart(env map[string]string) error {
 		command = i.buildOpenCodeCommand("opencode")
 	} else if IsCodexCompatible(i.Tool) && i.CodexSessionID != "" {
 		command = i.buildCodexCommand(i.Command)
+	} else if i.Tool == "hermes" {
+		// Re-capture the pane's hermes session ID on EVERY restart (hermes
+		// doesn't export it). Overwriting rather than caching once self-heals a
+		// stale ID: if the previously-resumed session was pruned, the query
+		// returns the current most-recent session, or "" — in which case
+		// buildHermesCommand starts fresh instead of resuming a dead ID forever.
+		// Scoped to the working dir to avoid picking up an unrelated session.
+		i.HermesSessionID = captureHermesSessionID(i.EffectiveWorkingDir())
+		command = i.buildHermesCommand(i.Command)
 	} else {
 		// Route to appropriate command builder based on tool
 		switch {
@@ -6861,8 +6884,6 @@ func (i *Instance) restart(env map[string]string) error {
 			command = i.buildCrushCommand(i.Command)
 		case i.Tool == "cursor":
 			command = i.buildCursorCommand(i.Command, true)
-		case i.Tool == "hermes":
-			command = i.buildHermesCommand(i.Command)
 		default:
 			// Check if this is a custom tool with session resume config
 			if toolDef := GetToolDef(i.Tool); toolDef != nil {
@@ -7264,6 +7285,14 @@ func (i *Instance) CanRestart() bool {
 		return true
 	}
 
+	// Hermes resumes via `--resume <id>`; the ID is captured from
+	// `hermes sessions list` at restart time. Always restartable (resumes when a
+	// session is found, else starts fresh) rather than only when dead/errored,
+	// which left a live hermes session silently un-restartable.
+	if i.Tool == "hermes" {
+		return true
+	}
+
 	// Custom tools: check if they have session resume support
 	if i.CanRestartGeneric() {
 		return true
@@ -7287,6 +7316,10 @@ func (i *Instance) CanRestartFresh() bool {
 	}
 	if i.Tool == "codex" {
 		return i.CodexSessionID != ""
+	}
+	// Hermes fresh-restart discards the resume binding and starts a new session.
+	if i.Tool == "hermes" {
+		return true
 	}
 	return i.CanRestartGeneric()
 }
