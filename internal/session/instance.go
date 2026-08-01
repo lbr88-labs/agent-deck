@@ -72,6 +72,7 @@ const (
 	SubstateIdleAtEmptyPrompt = tmux.SubstateIdleAtEmptyPrompt
 	SubstateModelUnavailable  = tmux.SubstateModelUnavailable
 	SubstateAuth401           = tmux.SubstateAuth401
+	SubstateUsageLimit        = tmux.SubstateUsageLimit
 )
 
 const wrapperPlaceholder = "{command}"
@@ -211,11 +212,21 @@ type Instance struct {
 	lastOpenCodeScanAt time.Time // Rate-limits expensive `opencode session list` scans
 
 	// Codex CLI integration
-	CodexSessionID   string    `json:"codex_session_id,omitempty"`
-	CodexDetectedAt  time.Time `json:"codex_detected_at,omitempty"`
-	CodexStartedAt   int64     `json:"-"` // Unix millis when we started Codex (for session matching, not persisted)
-	lastCodexScanAt  time.Time // Rate-limits expensive ~/.codex/sessions scans
-	lastCodexProbeAt time.Time // Rate-limits expensive Codex process-file probes
+	CodexSessionID  string    `json:"codex_session_id,omitempty"`
+	CodexDetectedAt time.Time `json:"codex_detected_at,omitempty"`
+	CodexStartedAt  int64     `json:"-"` // Unix millis when we started Codex (for session matching, not persisted)
+	lastCodexScanAt time.Time // Rate-limits expensive ~/.codex/sessions scans
+	// Usage-limit detection (#1802), all guarded by i.mu.
+	// lastUsageLimitScanAt throttles the transcript read (records scan START).
+	// usageLimitedCached memoises the verdict for that window, and
+	// usageLimitSessionID records the session id it was formed for so a rebind
+	// cannot inherit it. usageLimitScanGen versions in-flight scans so one slower
+	// than the interval cannot publish over a newer result.
+	lastUsageLimitScanAt time.Time
+	usageLimitedCached   bool
+	usageLimitSessionID  string
+	usageLimitScanGen    uint64
+	lastCodexProbeAt     time.Time // Rate-limits expensive Codex process-file probes
 	// pendingCodexRestartWarning is consumed by UI/CLI after Restart() succeeds.
 	// It is intentionally transient and never persisted.
 	pendingCodexRestartWarning string `json:"-"`
@@ -8219,6 +8230,20 @@ func (i *Instance) Substate() Substate {
 	if held, _ := i.IsAuthHeld(); held {
 		return SubstateAuth401
 	}
+	// A RECENT quota rejection is checked before the pane verdict, including the
+	// pane's auth banner: it is the latest assistant turn and a 429 proves the
+	// request was authenticated, so a stale "Please run /login" line still in the
+	// scrollback must not win on category order and mislabel a session whose
+	// credentials demonstrably work.
+	//
+	// "Recent" is load-bearing rather than decorative. A 429 only proves
+	// authentication AT ITS OWN TIMESTAMP, so an old one must not mask newer pane
+	// evidence — a freshly rendered 401, or a dropped socket that never arms the
+	// credential hold. usageLimited enforces that bound (usageLimitMaxAge), which
+	// is what keeps this ordering honest (#1802).
+	if i.usageLimited() {
+		return SubstateUsageLimit
+	}
 	tmuxSess := i.GetTmuxSession()
 	if tmuxSess == nil {
 		return SubstateNone
@@ -8235,6 +8260,12 @@ func (i *Instance) CachedSubstate() Substate {
 	if i.AuthHeldCached() {
 		return SubstateAuth401
 	}
+	// Deliberately NOT wired for usage-limit: this path must stay
+	// filesystem-free, and nothing in the background status pass populates a
+	// usage-limit mirror, so a branch here would be dead on the TUI/Web/transition
+	// surfaces while looking supported. usage-limit is a live-Substate signal in
+	// this change (CLI/JSON/fleet); wiring the cached path belongs with whatever
+	// populates it. See usagelimit.go (#1802).
 	tmuxSess := i.GetTmuxSession()
 	if tmuxSess == nil {
 		return SubstateNone
