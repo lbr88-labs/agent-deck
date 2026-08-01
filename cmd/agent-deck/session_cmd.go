@@ -2914,6 +2914,9 @@ func handleSessionSend(profile string, args []string) {
 		if session.IsClaudeCompatible(inst.Tool) {
 			if freshID := inst.GetSessionIDFromTmux(); freshID != "" {
 				inst.ClaudeSessionID = freshID
+				// #1815: own pane env — weak vouch (see
+				// NoteClaudeSessionIDFromOwnPane).
+				session.NoteClaudeSessionIDFromOwnPane(inst)
 				inst.ClaudeDetectedAt = time.Now()
 			}
 		}
@@ -4033,6 +4036,8 @@ func streamSessionSend(inst *session.Instance, sessionRef, profile string, sentA
 	if session.IsClaudeCompatible(inst.Tool) {
 		if fresh := inst.GetSessionIDFromTmux(); fresh != "" {
 			inst.ClaudeSessionID = fresh
+			// #1815: own pane env — weak vouch.
+			session.NoteClaudeSessionIDFromOwnPane(inst)
 			inst.ClaudeDetectedAt = time.Now()
 		}
 	}
@@ -4144,6 +4149,8 @@ func handleSessionOutput(profile string, args []string) {
 	if session.IsClaudeCompatible(inst.Tool) {
 		if freshID := inst.GetSessionIDFromTmux(); freshID != "" {
 			inst.ClaudeSessionID = freshID
+			// #1815: own pane env — weak vouch.
+			session.NoteClaudeSessionIDFromOwnPane(inst)
 			inst.ClaudeDetectedAt = time.Now()
 		}
 	}

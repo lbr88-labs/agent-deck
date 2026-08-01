@@ -21,6 +21,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"al.essio.dev/pkg/shellescape"
 	"github.com/BurntSushi/toml"
 	"github.com/charmbracelet/bubbles/textarea"
 	tea "github.com/charmbracelet/bubbletea"
@@ -7383,6 +7384,12 @@ func (h *Home) createSessionFromGlobalSearch(result *GlobalSearchResult) tea.Cmd
 		// would otherwise override the extractGroupPath default with "".
 		inst := session.NewInstanceWithGroupAndTool(title, projectPath, h.resolveNewSessionGroup(), "claude")
 		inst.ClaudeSessionID = result.SessionID
+		// #1815: the user picked this exact conversation for this brand-new
+		// instance — an explicit ownership declaration, not a disk-scan
+		// guess. Route it through the chokepoint like every other explicit
+		// writer (launch_cmd.go, mutators.go) instead of relying on a fresh
+		// instance's taint map being empty by construction.
+		session.MarkClaudeSessionIDVerified(inst)
 
 		// Build resume command with config dir and permission flags
 		userConfig, _ := session.LoadUserConfig()
@@ -7395,10 +7402,35 @@ func (h *Home) createSessionFromGlobalSearch(result *GlobalSearchResult) tea.Cmd
 		var cmdBuilder strings.Builder
 		if session.IsClaudeConfigDirExplicitForGroup(inst.GroupPath) {
 			configDir := session.GetClaudeConfigDirForGroup(inst.GroupPath)
-			cmdBuilder.WriteString(fmt.Sprintf("CLAUDE_CONFIG_DIR=%s ", configDir))
+			// #1815 (Codex review on #1830): quote exactly as
+			// Instance.buildBashExportPrefix does (instance.go, audit F2) —
+			// this string is baked into inst.Command and ends up in a
+			// `bash -c` payload, so an unquoted config_dir containing
+			// whitespace, ;, or $(...) breaks the command or injects.
+			cmdBuilder.WriteString(fmt.Sprintf("CLAUDE_CONFIG_DIR=%s ", shellescape.Quote(configDir)))
 		}
-		cmdBuilder.WriteString("claude --resume ")
-		cmdBuilder.WriteString(result.SessionID)
+		// #1815: the TUI picker builds a resume command too, so it routes
+		// through the same resume-time identity guard as restart / start /
+		// fork. The id was just recorded onto inst above (the user picked
+		// this conversation FOR this session), so the check passes by
+		// construction today — it is here so a future change that reuses an
+		// existing instance here cannot resume a conversation that instance
+		// does not own. Only the identity half applies: the user's explicit
+		// pick must not be downgraded to a fresh session by the
+		// conversation-data heuristics.
+		if allowed, _ := session.ResumeIdentityAllowed(inst, result.SessionID); allowed {
+			cmdBuilder.WriteString("claude --resume ")
+			cmdBuilder.WriteString(result.SessionID)
+		} else {
+			freshID := session.NewClaudeSessionUUID()
+			inst.ClaudeSessionID = freshID
+			// #1815: a freshly minted id is vouched ownership, same as every
+			// other minted-id writer (Instance.replaceRefusedClaudeSessionID,
+			// buildClaudeCommandWithMessage's own mint path).
+			session.MarkClaudeSessionIDVerified(inst)
+			cmdBuilder.WriteString("claude --session-id ")
+			cmdBuilder.WriteString(freshID)
+		}
 		if opts.SkipPermissions {
 			cmdBuilder.WriteString(" --dangerously-skip-permissions")
 		} else if opts.AllowSkipPermissions {
@@ -11414,6 +11446,33 @@ func (h *Home) createSessionInGroupWithWorktreeAndOptions(
 		// Apply generic tool options (claude, codex, etc.)
 		if len(toolOptionsJSON) > 0 {
 			inst.ToolOptionsJSON = toolOptionsJSON
+		}
+
+		// #1815: an operator who typed a conversation UUID into the "resume by
+		// session ID" panel field made an explicit ownership declaration for
+		// THIS session, exactly like --resume-session on the CLI (see
+		// launch_cmd.go / main.go). Vouch for it here too, or the chokepoint
+		// sees no recorded ClaudeSessionID (only opts.ResumeSessionID inside
+		// ToolOptionsJSON, which canResumeClaudeSession never reads) and
+		// silently mints a fresh id instead of resuming the one the operator
+		// picked (review finding on #1830).
+		//
+		// The field is free-text (internal/ui/claudeoptions.go's resumeIDInput
+		// applies no validation), so a well-formed-UUID check is required
+		// before trusting it as an ownership declaration: without it, a value
+		// containing shell metacharacters would still be vouched as verified
+		// here and later reach the unquoted `--resume %s` command build
+		// (review finding on #1830). A malformed value is left unassigned and
+		// falls through to the normal fresh-id path instead.
+		if tool == "claude" && len(toolOptionsJSON) > 0 {
+			if opts, err := session.UnmarshalClaudeOptions(toolOptionsJSON); err == nil && opts != nil &&
+				opts.SessionMode == "resume" {
+				if candidate := strings.TrimSpace(opts.ResumeSessionID); candidate != "" && session.IsBareClaudeSessionUUID(candidate) {
+					inst.ClaudeSessionID = candidate
+					session.MarkClaudeSessionIDVerified(inst)
+					inst.ClaudeDetectedAt = time.Now()
+				}
+			}
 		}
 
 		if launchModelID != "" {
@@ -19439,6 +19498,8 @@ func getSessionContent(inst *session.Instance) (string, error) {
 func getSessionContentWithLive(inst *session.Instance, liveClaudeID string) (string, error) {
 	if session.IsClaudeCompatible(inst.Tool) && liveClaudeID != "" && liveClaudeID != inst.ClaudeSessionID {
 		inst.ClaudeSessionID = liveClaudeID
+		// #1815: read from this session's OWN pane env — weak vouch.
+		session.NoteClaudeSessionIDFromOwnPane(inst)
 	}
 
 	// Use best-effort: richer recovery than GetLastResponse if the refreshed
