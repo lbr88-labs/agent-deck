@@ -37,23 +37,28 @@ type StorageData struct {
 
 // InstanceData represents the serializable session data
 type InstanceData struct {
-	ID                  string    `json:"id"`
-	Title               string    `json:"title"`
-	ProjectPath         string    `json:"project_path"`
-	GroupPath           string    `json:"group_path"`
-	Order               int       `json:"order"`
-	ParentSessionID     string    `json:"parent_session_id,omitempty"`     // Links to parent session (sub-session support)
-	IsConductor         bool      `json:"is_conductor,omitempty"`          // True if this session is a conductor orchestrator
-	NoTransitionNotify  bool      `json:"no_transition_notify,omitempty"`  // Suppress transition event dispatch
-	TitleLocked         bool      `json:"title_locked,omitempty"`          // #697: block Claude session-name sync into Title
-	AutoName            bool      `json:"auto_name,omitempty"`             // marks Title as a machine-generated quick-session handle
-	AutoNameDescription string    `json:"auto_name_description,omitempty"` // last captured Claude task description for an AutoName session
-	Command             string    `json:"command"`
-	Wrapper             string    `json:"wrapper,omitempty"`
-	Tool                string    `json:"tool"`
-	Status              Status    `json:"status"`
-	CreatedAt           time.Time `json:"created_at"`
-	LastAccessedAt      time.Time `json:"last_accessed_at,omitempty"`
+	ID                 string `json:"id"`
+	Title              string `json:"title"`
+	ProjectPath        string `json:"project_path"`
+	GroupPath          string `json:"group_path"`
+	Order              int    `json:"order"`
+	ParentSessionID    string `json:"parent_session_id,omitempty"`    // Links to parent session (sub-session support)
+	IsConductor        bool   `json:"is_conductor,omitempty"`         // True if this session is a conductor orchestrator
+	NoTransitionNotify bool   `json:"no_transition_notify,omitempty"` // Suppress transition event dispatch
+	TitleLocked        bool   `json:"title_locked,omitempty"`         // #697: block Claude session-name sync into Title
+	// SubcommandPassthrough mirrors Instance.SubcommandPassthrough (#1821).
+	// Persisted via the tool_data extras zone (see
+	// WriteSubcommandPassthroughToToolData), not a dedicated SQL column, so
+	// it round-trips across binary versions without a schema migration.
+	SubcommandPassthrough bool      `json:"subcommand_passthrough,omitempty"`
+	AutoName              bool      `json:"auto_name,omitempty"`             // marks Title as a machine-generated quick-session handle
+	AutoNameDescription   string    `json:"auto_name_description,omitempty"` // last captured Claude task description for an AutoName session
+	Command               string    `json:"command"`
+	Wrapper               string    `json:"wrapper,omitempty"`
+	Tool                  string    `json:"tool"`
+	Status                Status    `json:"status"`
+	CreatedAt             time.Time `json:"created_at"`
+	LastAccessedAt        time.Time `json:"last_accessed_at,omitempty"`
 	// LastStartedAt mirrors Instance.LastStartedAt (issue #30 / #1704 fix).
 	// Persisted via the tool_data extras zone (see last_started_persist.go),
 	// not a typed SQL column. Zero means unknown (old record or never
@@ -937,6 +942,11 @@ func instanceToRow(inst *Instance) (*statedb.InstanceRow, error) {
 	// the positional MarshalToolData signature so legacy binaries that don't
 	// know the key preserve it via MergeToolDataExtras.
 	toolData = WriteIdleTimeoutSecsToToolData(toolData, inst.IdleTimeoutSecs)
+	// #1821: subcommand_passthrough lives in the same extras zone — see
+	// Instance.SubcommandPassthrough's doc for why losing it on reload must
+	// never silently re-enable claude/codex account-routing treatment for a
+	// command that was never explicitly validated as one.
+	toolData = WriteSubcommandPassthroughToToolData(toolData, inst.SubcommandPassthrough)
 	// #1815: the resume-identity taint travels with the id it describes, so a
 	// writer that saves a discovered conversation id without ever passing
 	// through the resume builder (e.g. `switch-account --no-restart`) cannot
@@ -1129,6 +1139,7 @@ func (s *Storage) LoadLite() ([]*InstanceData, []*GroupData, error) {
 			AutoLinkedChannels:        autoLinkedChannels2,
 			Color:                     color2,
 			IdleTimeoutSecs:           ReadIdleTimeoutSecsFromToolData(r.ToolData),
+			SubcommandPassthrough:     ReadSubcommandPassthroughFromToolData(r.ToolData),
 			ClaudeSessionIDUnverified: ReadClaudeSessionUnverifiedFromToolData(r.ToolData),
 			LastStartedAt:             ReadLastStartedAtFromToolData(r.ToolData),
 		}
@@ -1250,6 +1261,7 @@ func (s *Storage) LoadWithGroups() ([]*Instance, []*GroupData, error) {
 			AutoLinkedChannels:        autoLinkedChannels,
 			Color:                     color,
 			IdleTimeoutSecs:           ReadIdleTimeoutSecsFromToolData(r.ToolData),
+			SubcommandPassthrough:     ReadSubcommandPassthroughFromToolData(r.ToolData),
 			ClaudeSessionIDUnverified: ReadClaudeSessionUnverifiedFromToolData(r.ToolData),
 			LastStartedAt:             ReadLastStartedAtFromToolData(r.ToolData),
 		}
@@ -1499,6 +1511,7 @@ func (s *Storage) convertToInstances(data *StorageData) ([]*Instance, []*GroupDa
 			AutoLinkedChannels:           instData.AutoLinkedChannels,
 			Color:                        instData.Color,
 			IdleTimeoutSecs:              instData.IdleTimeoutSecs,
+			SubcommandPassthrough:        instData.SubcommandPassthrough,
 			LastStartedAt:                instData.LastStartedAt,
 			Sandbox:                      instData.Sandbox,
 			SandboxContainer:             instData.SandboxContainer,
