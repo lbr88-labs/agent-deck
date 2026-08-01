@@ -3164,6 +3164,11 @@ func executeSend(target sendRetryTarget, tool, message string, noWait bool, tun 
 		res.held = guard.Held
 		res.draftSaved = guard.SavedDraft
 		res.draftCleared = guard.DraftCleared
+		// Provenance for the #1777 attribution gate, taken from the capture
+		// the guard already made just before we type: with no paste marker
+		// parked in the composer then, a marker seen during verification is
+		// the collapsed form of our own payload and may be nudged.
+		tun.retry.composerPasteFreeBeforeSend = guard.ComposerPasteMarkerFree
 	}
 
 	delivery, err := sendWithRetryTarget(target, message, skipClaudeDeliveryVerify(tool), tun.retry)
@@ -3307,6 +3312,27 @@ type sendRetryOptions struct {
 	// error instead of the prior best-effort `nil`. Closes the silent-drop
 	// path reported in issue #876.
 	verifyDelivery bool
+
+	// composerPasteFreeBeforeSend is the pre-send provenance evidence for the
+	// #1777 attribution gate: the caller positively observed, immediately
+	// before this send, a composer holding no "[Pasted text …]" marker. Only
+	// then can a marker seen during the verify loop be attributed to the
+	// collapse of our own payload and receive an Enter nudge. Left false, a
+	// composer paste marker counts as foreign content and no nudge fires —
+	// the fail-safe default for callers that cannot establish provenance.
+	composerPasteFreeBeforeSend bool
+}
+
+// composerPasteFree captures the pane and reports whether the composer is
+// currently free of a "[Pasted text …]" marker — the pre-send provenance
+// probe for sendRetryOptions.composerPasteFreeBeforeSend (issue #1777). A
+// capture failure returns false (fail safe: no evidence, no attribution).
+func composerPasteFree(target sendRetryTarget) bool {
+	raw, err := target.CapturePaneFresh()
+	if err != nil {
+		return false
+	}
+	return !send.ComposerHoldsPasteMarker(raw, tmux.StripANSI)
 }
 
 // sendWithRetryTarget sends the message and runs the bounded submit
@@ -3415,12 +3441,25 @@ func sendWithRetryTarget(target sendRetryTarget, message string, skipVerify bool
 	// Take the first run of non-whitespace content, capped, to avoid false
 	// positives from matching common short strings.
 	deliveryToken := messageDeliveryToken(message)
+	// attrib is the #1777 attribution gate. EVERY bare Enter in this loop —
+	// including the unsent-prompt branch, which used to press unconditionally
+	// whenever a "[Pasted text …]" marker appeared anywhere in the pane —
+	// goes through attrib.NudgeEnter, so no branch can submit composer
+	// content agent-deck cannot attribute to its own delivery.
+	attrib := send.EnterAttribution{
+		Message:        message,
+		OwnPasteMarker: opts.composerPasteFreeBeforeSend,
+	}
 	for retry := 0; retry < opts.maxRetries; retry++ {
 		time.Sleep(opts.checkDelay)
 
 		unsentPromptDetected := false
-		if rawContent, captureErr := target.CapturePaneFresh(); captureErr == nil {
-			content := tmux.StripANSI(rawContent)
+		// paneNow is this iteration's observation (raw ANSI + whether the
+		// capture succeeded at all), and is what the attribution gate reads.
+		captured, captureErr := target.CapturePaneFresh()
+		paneNow := send.CaptureOutcome(captured, captureErr)
+		if paneNow.OK {
+			content := tmux.StripANSI(captured)
 			unsentPromptDetected = send.HasUnsentPastedPrompt(content) || send.HasUnsentComposerPrompt(content, message)
 			if !sawDeliveryEvidence && deliveryToken != "" && strings.Contains(content, deliveryToken) {
 				sawDeliveryEvidence = true
@@ -3434,7 +3473,7 @@ func sendWithRetryTarget(target sendRetryTarget, message string, skipVerify bool
 			waitingNoMarkerChecks = 0
 			waitingNoActivityChecks = 0
 			activeChecks = 0
-			_ = target.SendEnter()
+			attrib.NudgeEnter(target, paneNow, tmux.StripANSI)
 			continue
 		}
 
@@ -3466,10 +3505,33 @@ func sendWithRetryTarget(target sendRetryTarget, message string, skipVerify bool
 				// visible but the input handler wasn't ready, so sent keys were
 				// discarded. Clear stale input and re-send the full message.
 				if waitingNoActivityChecks >= fullResendThreshold && fullResendCount < maxFullResends {
+					// The resend types the message and presses Enter, so it
+					// submits whatever the composer still holds. Ctrl+C is
+					// meant to empty it first — but a failed Ctrl+C, or one
+					// the agent ignored, would leave foreign content to be
+					// submitted with our payload appended (#1777). Re-read
+					// the pane and skip the resend unless the composer is
+					// verifiably clear of content we cannot attribute.
+					//
+					// fullResendCount and waitingNoActivityChecks are consumed
+					// below, ONLY once a resend is actually about to fire —
+					// not here. Either abort path (Ctrl+C error, or a pane
+					// that still reads as foreign after it) sends nothing, so
+					// charging the finite resend budget or resetting the
+					// waiting-check counter here would burn a scarce slot for
+					// no send and force a fresh fullResendThreshold wait
+					// before the next attempt, right after Ctrl+C may have
+					// already wiped the composer (#1778 review finding 3).
+					if ctrlCErr := target.SendCtrlC(); ctrlCErr != nil {
+						continue
+					}
+					time.Sleep(200 * time.Millisecond)
+					if attrib.EnterWouldSubmitForeignDraft(
+						send.CaptureOutcome(target.CapturePaneFresh()), tmux.StripANSI) {
+						continue
+					}
 					fullResendCount++
 					waitingNoActivityChecks = 0
-					_ = target.SendCtrlC()
-					time.Sleep(200 * time.Millisecond)
 					// A successful resend is not yet evidence of receipt — the
 					// next iteration must still observe a positive signal — so
 					// we intentionally do NOT set sawDeliveryEvidence here, even
@@ -3485,7 +3547,7 @@ func sendWithRetryTarget(target sendRetryTarget, message string, skipVerify bool
 				// retries) then every 2nd iteration. This addresses bracketed
 				// paste timing failures that are most likely early on.
 				if retry < 5 || retry%2 == 0 {
-					_ = target.SendEnter()
+					attrib.NudgeEnter(target, paneNow, tmux.StripANSI)
 				}
 			}
 			continue
@@ -3497,7 +3559,7 @@ func sendWithRetryTarget(target sendRetryTarget, message string, skipVerify bool
 		// Increased from 2 to 4 because some TUI frameworks take longer
 		// to process and reflect state.
 		if retry < 4 {
-			_ = target.SendEnter()
+			attrib.NudgeEnter(target, paneNow, tmux.StripANSI)
 		}
 	}
 
