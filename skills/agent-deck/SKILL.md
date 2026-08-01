@@ -894,6 +894,8 @@ Kernel tracks inodes, not names. Running processes keep a reference to the renam
 
 ### `-c "claude <subcommand> ..."` silently rewritten — injected flags demote the subcommand (#1800)
 
+> **This is a known bug, not intended behaviour.** Tracked as [#1800](https://github.com/asheshgoplani/agent-deck/issues/1800); a fix is in flight. Delete this entire section once that fix ships — the workaround below is a stopgap, not the supported way to run claude subcommands.
+
 Passing a claude **subcommand** as the session command — e.g. `-c "claude remote-control --name X"` or `-c "claude mcp serve"` — does not run the command you gave. Tool detection splits it into `claude` + extra args and re-appends the extras *after* agent-deck's injected flags, so the pane runs:
 
 ```
