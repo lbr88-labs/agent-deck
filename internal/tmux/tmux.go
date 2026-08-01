@@ -2303,11 +2303,41 @@ func (s *Session) Start(command string) error {
 	// Bind Ctrl+Q to detach at the tmux level as fallback for terminals where
 	// XON/XOFF flow control intercepts the key before it reaches the PTY stdin
 	// reader (e.g. iTerm2 on macOS). Only binds on agentdeck-managed sessions.
+	//
+	// #1808: tmux key bindings live on the SERVER (one per socket), not on the
+	// session — a baked-in `if-shell [ "#{session_name}" = "<s.Name>" ]`
+	// guard, re-installed by every Start(), only ever matched whichever
+	// session started most recently on this socket. Because the binding is
+	// "-n -T root", tmux's root key table consumes Ctrl+Q on every client
+	// attached to the socket before it ever reaches the pane — so in every
+	// other session sharing the socket, the guard's empty else-branch did NOT
+	// let the key fall through to the running app; it silently swallowed the
+	// keypress instead, so Ctrl+Q simply did nothing until a client attached
+	// to the one session Start() most recently ran on the socket. Use
+	// if-shell -F to re-evaluate a tmux FORMAT against the CURRENT client's
+	// session at keypress time instead of baking in one session name — this
+	// scopes the detach to "whichever agentdeck session this client is
+	// attached to" rather than "the one session that happened to Start()
+	// last", and matches the same prefix-match pattern
+	// BindMouseStatusRightDetach already uses for its detach binding.
+	//
+	// #1820: the guard used to be a `run-shell` shell script with the
+	// session name substituted into a single-quoted shell word by tmux's
+	// FORMATS expansion BEFORE the string reached /bin/sh — a session name
+	// containing a single quote (tmux permits quotes in names; only "."
+	// and ":" are forbidden) could break out of the quoting and have the
+	// remainder executed as shell commands on whichever socket owns the
+	// pane, including the user's own default tmux server. `if-shell -F`
+	// evaluates its pattern (#{m:pattern,string}) entirely inside tmux's own
+	// format engine — nothing is ever handed to a shell, so no session name
+	// can break out of anything — and "detach-client" runs directly on the
+	// invoking client's own command queue (no run-shell subprocess), so it
+	// detaches exactly the client that pressed the key even when the session
+	// has more than one client attached (e.g. a web `tmux -C` control client
+	// alongside a native terminal client; see controlpipe.go).
 	// Bounded — see tmuxMutationTimeout. Best-effort already, and it runs on
 	// the session-create path where a wedged client would stall the create.
-	_ = s.runBoundedMutation("bind-key", "-n", "-T", "root", "C-q",
-		"if-shell", fmt.Sprintf("[ \"#{session_name}\" = \"%s\" ]", s.Name),
-		"detach-client", "")
+	_ = s.runBoundedMutation(append([]string{"bind-key", "-n", "-T", "root", "C-q"}, ctrlQDetachBindArgs()...)...)
 
 	// Apply user-specified tmux option overrides from config (after defaults).
 	// These are batched into a single call when multiple overrides are present.
@@ -6056,15 +6086,38 @@ func UnbindKey(key string) error {
 	return nil
 }
 
+// ctrlQDetachIfShellFormat returns the tmux FORMAT used to guard the
+// socket-wide (server-wide) "-n -T root C-q" binding in Session.Start: true
+// (non-"0", non-empty) exactly when the invoking client's current session
+// name starts with SessionPrefix.
+//
+// #{m:pattern,string} is evaluated entirely inside the tmux server's own
+// format engine at keypress time, against whichever session the invoking
+// client is currently attached to — never handed to a shell, so a session
+// name can never break out of any quoting (see the #1820 doc comment on the
+// call site in Session.Start for the injection this replaced). Same
+// prefix-match pattern as BindMouseStatusRightDetach below.
+func ctrlQDetachIfShellFormat() string {
+	return fmt.Sprintf("#{m:%s*,#{session_name}}", SessionPrefix)
+}
+
+// ctrlQDetachBindArgs returns the bind-key arguments (after "C-q") that
+// install the Ctrl+Q detach guard: a pure `if-shell -F ... detach-client`
+// command, never a run-shell/embedded-shell-script form. Kept as its own
+// function so tests can assert on the exact args Session.Start installs.
+func ctrlQDetachBindArgs() []string {
+	return []string{"if-shell", "-F", ctrlQDetachIfShellFormat(), "detach-client", ""}
+}
+
 // BindMouseStatusRightDetach binds a mouse click on the status-right area to detach.
 // Only fires inside agentdeck sessions (guards against detaching the user's outer tmux).
 func BindMouseStatusRightDetach() error {
-	// Guard: only detach if current session is an agentdeck-managed session
-	// The inner `tmux display-message` / `tmux detach-client` invocations run
-	// inside the tmux server that fired run-shell, so they stay on the right
-	// socket automatically.
-	script := `S=$(tmux display-message -p '#{session_name}'); case "$S" in agentdeck_*) tmux detach-client ;; esac`
-	return tmuxExec(DefaultSocketName(), "bind", "-n", "MouseDown1StatusRight", "run-shell", script).Run()
+	// Guard: only detach if current session is an agentdeck-managed session.
+	// #{m:pattern,string} is evaluated entirely inside tmux's format engine
+	// (see ctrlQDetachIfShellFormat) — never handed to a shell, so a session
+	// name containing shell metacharacters can't break out of anything.
+	return tmuxExec(DefaultSocketName(), "bind", "-n", "MouseDown1StatusRight",
+		"if-shell", "-F", ctrlQDetachIfShellFormat(), "detach-client", "").Run()
 }
 
 // UnbindMouseStatusClicks removes mouse click bindings from the status bar.
