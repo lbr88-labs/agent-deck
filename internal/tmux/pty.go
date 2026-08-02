@@ -12,6 +12,7 @@ import (
 	"os/exec"
 	"os/signal"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -290,6 +291,15 @@ func (p *attachStdinPump) run(ctx context.Context) (SwitchIntent, bool) {
 		// Poll first so the read below never blocks longer than the interval.
 		if !PollFdReady(fd, AttachStdinPollInterval) {
 			continue
+		}
+		// Re-check cancellation: ctx can be cancelled while this goroutine was
+		// parked inside poll, and a keystroke can land in that same window. The
+		// stale byte still gets read below without this check — harmless today
+		// only because the unconditional flush in QuiesceAttachInput discards it
+		// moments later, but that's an incidental backstop, not a reason to read
+		// stdin after the caller has already asked us to stop.
+		if ctx.Err() != nil {
+			return SwitchNone, false
 		}
 
 		n, err := p.in.Read(buf)
@@ -600,11 +610,16 @@ func (s *Session) AttachWithOptions(ctx context.Context, opts AttachOptions) (Sw
 	detachCh := make(chan struct{})
 
 	// switchOutcome is written by the stdin goroutine before it closes
-	// detachCh when a session-switch key is pressed. The close establishes a
-	// happens-before edge, so the main goroutine can read it after <-detachCh
-	// without additional synchronization. It stays SwitchNone for a plain
-	// detach or a pane-process exit.
-	var switchOutcome SwitchIntent
+	// detachCh when a session-switch key is pressed. On the <-detachCh path the
+	// close establishes a happens-before edge, so that read needs no extra
+	// synchronization. But QuiesceAttachInput's stdinReaderStopTimeout backstop
+	// means cleanupAttach can return (and this function read switchOutcome at
+	// the bottom) before the pump goroutine exits — a wedged reader can still be
+	// mid-write here when the main goroutine reads it, which is a real
+	// happens-before gap the race detector can catch under CI's -race build.
+	// atomic.Int32 closes it cheaply; SwitchIntent is a small int, so storing it
+	// as one loses nothing.
+	var switchOutcome atomic.Int32
 
 	// Channel for I/O errors (buffered to prevent goroutine leaks)
 	ioErrors := make(chan error, 2)
@@ -655,7 +670,10 @@ func (s *Session) AttachWithOptions(ctx context.Context, opts AttachOptions) (Sw
 		}
 		// Write switchOutcome before closing detachCh: the close establishes
 		// the happens-before edge the main goroutine relies on after <-detachCh.
-		switchOutcome = outcome
+		// The atomic store is the belt-and-suspenders half, for the backstop
+		// timeout path where cleanupAttach can read switchOutcome before this
+		// goroutine ever reaches this line.
+		switchOutcome.Store(int32(outcome))
 		close(detachCh)
 		cancel()
 	}()
@@ -733,7 +751,7 @@ func (s *Session) AttachWithOptions(ctx context.Context, opts AttachOptions) (Sw
 	}
 
 	cleanupAttach()
-	return switchOutcome, attachErr
+	return SwitchIntent(switchOutcome.Load()), attachErr
 }
 
 // AttachWindow attaches to a specific window within this tmux session.

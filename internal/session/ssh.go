@@ -365,6 +365,17 @@ func (r *SSHRunner) Attach(sessionID string) error {
 			if !tmux.PollFdReady(fd, tmux.AttachStdinPollInterval) {
 				continue
 			}
+			// Re-check the stop signal: it can fire while this goroutine was
+			// parked inside poll, and a keystroke can land in that same window.
+			// Reading it here isn't user-visible today only because the
+			// unconditional flush in QuiesceAttachInput discards it moments
+			// later — an incidental backstop, not a reason to read stdin after
+			// the caller already asked us to stop.
+			select {
+			case <-stdinReaderStop:
+				return
+			default:
+			}
 
 			n, err := os.Stdin.Read(buf)
 			if err != nil {
