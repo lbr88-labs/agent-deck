@@ -412,6 +412,11 @@ func (r *SSHRunner) Attach(sessionID string) error {
 	}
 
 	// Cleanup: close PTY and wait for output to drain.
+	// Stop the stdin reader first, before the PTY closes: a keystroke that
+	// lands during the drain would otherwise be consumed and written to a
+	// closed PTY, losing it. Mirrors cleanupAttach in internal/tmux/pty.go,
+	// which cancels the pump before closing the PTY.
+	close(stdinReaderStop)
 	_ = ptmx.Close()
 	if cmd.Process != nil {
 		_ = cmd.Process.Kill()
@@ -420,13 +425,12 @@ func (r *SSHRunner) Attach(sessionID string) error {
 	case <-outputDone:
 	case <-time.After(50 * time.Millisecond):
 	}
-	// Hand stdin back to the TUI: stop the reader, then drop whatever the
-	// remote's teardown left in the input queue and arm the reply quarantine.
-	// The join-before-flush ordering is the load-bearing invariant here, so this
-	// calls the same tmux.QuiesceAttachInput the local attach path uses rather
-	// than re-implementing it — that function's mutation-checked tests are what
+	// Hand stdin back to the TUI: drop whatever the remote's teardown left in
+	// the input queue and arm the reply quarantine. The join-before-flush
+	// ordering is the load-bearing invariant here, so this calls the same
+	// tmux.QuiesceAttachInput the local attach path uses rather than
+	// re-implementing it — that function's mutation-checked tests are what
 	// protect the ordering, and an inline copy here would inherit none of them.
-	close(stdinReaderStop)
 	tmux.QuiesceAttachInput(
 		stdinReaderDone,
 		tmux.AttachStdinReaderStopTimeout,
