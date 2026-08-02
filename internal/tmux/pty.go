@@ -673,7 +673,7 @@ func (s *Session) AttachWithOptions(ctx context.Context, opts AttachOptions) (Sw
 		// The atomic store is the belt-and-suspenders half, for the backstop
 		// timeout path where cleanupAttach can read switchOutcome before this
 		// goroutine ever reaches this line.
-		switchOutcome.Store(int32(outcome))
+		switchOutcome.Store(int32(outcome)) // #nosec G115 -- SwitchIntent is a 3-value iota enum, always in int32 range
 		close(detachCh)
 		cancel()
 	}()
