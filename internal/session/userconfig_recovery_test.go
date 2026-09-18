@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 // TestGetProposeOnStartup_DefaultsTrue pins the default: absent
@@ -31,6 +32,34 @@ func TestGetProposeOnStartup_ExplicitTrue(t *testing.T) {
 	c := UserConfig{Recovery: RecoverySettings{ProposeOnStartup: &on}}
 	if !c.Recovery.GetProposeOnStartup() {
 		t.Error("propose_on_startup=true not honored")
+	}
+}
+
+// TestGetActiveWindow_Default pins the window default: the proposal must
+// cover "machine went down last night, relaunched this morning" by default.
+func TestGetActiveWindow_Default(t *testing.T) {
+	var c UserConfig
+	if got := c.Recovery.GetActiveWindow(); got != DefaultRecoveryActiveWindow {
+		t.Errorf("active_window default = %v, want %v", got, DefaultRecoveryActiveWindow)
+	}
+}
+
+func TestGetActiveWindow_ParseAndOptOut(t *testing.T) {
+	cases := []struct {
+		raw  string
+		want time.Duration
+	}{
+		{"4h", 4 * time.Hour},
+		{"45m", 45 * time.Minute},
+		{"0", 0},                                 // explicit opt-out: no recency filter
+		{"-1h", 0},                               // negative treated as opt-out
+		{"garbage", DefaultRecoveryActiveWindow}, // typo must not break startup
+	}
+	for _, tc := range cases {
+		c := UserConfig{Recovery: RecoverySettings{ActiveWindow: tc.raw}}
+		if got := c.Recovery.GetActiveWindow(); got != tc.want {
+			t.Errorf("GetActiveWindow(%q) = %v, want %v", tc.raw, got, tc.want)
+		}
 	}
 }
 

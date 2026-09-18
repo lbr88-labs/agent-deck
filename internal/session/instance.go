@@ -568,6 +568,15 @@ type Instance struct {
 	lastActivityPersisted time.Time
 	lastActivityPersistMu sync.Mutex
 
+	// Durable "pane was alive recently" record (tool_data.last_seen_alive_at).
+	// Stamped by every observer that confirms the tmux session EXISTS, cleared
+	// when the operator deliberately stops the session — the crash-recovery
+	// proposal reads this instead of the (timestamp-less) status column. See
+	// last_seen_alive.go for the write discipline; same shape as #1846.
+	lastSeenAliveAt        time.Time
+	lastSeenAlivePersisted time.Time
+	lastSeenAlivePersistMu sync.Mutex
+
 	// restartTmuxRecordErr holds why the last restart could not record the
 	// tmux session name it minted, or nil once one did. Callers that have no
 	// other save on their path (the CLI --restart commands) read it through
@@ -6332,6 +6341,18 @@ func classifyTerminatedPane(exitCode int, haveExitCode bool, tool string) Status
 		if exitCode == 0 {
 			return StatusStopped
 		}
+		// A pane torn down BY SIGNAL is an operator/terminal action, not an
+		// agent crash: tmux kill-session and kill-pane deliver SIGHUP (129),
+		// tmux kill-server, terminal close, systemd scope stop, and most
+		// "stop it for me" paths deliver SIGTERM (143). Labelling those
+		// "crashed" made the error backlog meaningless — sessions the user
+		// deliberately stopped read as crashed, burying real crash victims.
+		// SIGKILL (137: OOM-killer, kill -9) stays an error: nobody stops a
+		// session that way on purpose. Note exit codes above 128 are
+		// 128+signal on POSIX shells, which is what tmux reports here.
+		if exitCode == 129 || exitCode == 143 {
+			return StatusStopped
+		}
 		return StatusError
 	}
 	if tool == "opencode" {
@@ -6346,6 +6367,20 @@ func (i *Instance) UpdateStatus() error {
 	// Cheap no-op unless the cold-load fold below (or an earlier
 	// UpdateHookStatus within the throttle window) left something behind.
 	defer i.persistLastActivity(false)
+	// Crash-recovery liveness evidence: flushed with the same discipline.
+	// Only the confirmed-ALIVE path below folds a fresh timestamp in; every
+	// early return here is a non-observation, not an un-alive. When a death
+	// is instead classified as OPERATOR INTENT (clean exit / signal
+	// teardown → stopped), eraseAliveEvidence makes the deferred
+	// ClearSeenAlive run after Unlock so a deliberate stop can never be
+	// proposed as "open when the machine died".
+	defer i.persistLastSeenAlive(false)
+	var eraseAliveEvidence bool
+	defer func() {
+		if eraseAliveEvidence {
+			i.ClearSeenAlive()
+		}
+	}()
 	i.mu.Lock()
 	defer i.mu.Unlock()
 
@@ -6384,6 +6419,10 @@ func (i *Instance) UpdateStatus() error {
 			i.Status = StatusIdle
 		} else if i.Status != StatusStopped {
 			i.Status = i.terminatedPaneStatus()
+			if i.Status == StatusStopped {
+				i.lastSeenAliveAt = time.Time{}
+				eraseAliveEvidence = true
+			}
 			// Was this death a credential failure? If so the status stays error
 			// but the substate now says auth-401, and the automatic boot paths
 			// hold off (see auth_hold.go).
@@ -6411,6 +6450,10 @@ func (i *Instance) UpdateStatus() error {
 			// applyTerminatedPaneStatus drops i.mu for the query and keeps the
 			// stopped-state guard on write.
 			i.applyTerminatedPaneStatus()
+			if i.Status == StatusStopped {
+				i.lastSeenAliveAt = time.Time{}
+				eraseAliveEvidence = true
+			}
 			// Attribute the death to authentication when the pane's last live
 			// sample showed a credential banner: the fleet-death case, which no
 			// restart can fix (see auth_hold.go). Runs regardless of the
@@ -6429,6 +6472,10 @@ func (i *Instance) UpdateStatus() error {
 	if i.tmuxSession.IsPaneDead() {
 		if i.Status != StatusStopped {
 			i.applyTerminatedPaneStatus()
+			if i.Status == StatusStopped {
+				i.lastSeenAliveAt = time.Time{}
+				eraseAliveEvidence = true
+			}
 			i.refreshAuthHoldOnDeathLocked()
 		}
 		i.lastErrorCheck = time.Now()
@@ -6442,6 +6489,15 @@ func (i *Instance) UpdateStatus() error {
 
 	// Session exists - clear error check timestamp
 	i.lastErrorCheck = time.Time{}
+
+	// Confirmed ALIVE: the tmux session exists and its pane is not dead.
+	// This is the one positive liveness observation per sweep — record it
+	// for crash recovery ("was this session open when the machine died?").
+	// A stopped session must not re-stamp: its pane may briefly outlive the
+	// kill, and operator intent has already cleared the evidence.
+	if i.Status != StatusStopped {
+		i.noteSeenAliveLocked(time.Now())
+	}
 
 	// Tiered polling: skip expensive checks for idle sessions with no new activity
 	if i.Status == StatusIdle {
@@ -9585,6 +9641,10 @@ func (i *Instance) killInternal(sync bool) error {
 	// `session restart` would be refused with only --force as a way through.
 	i.clearAuthHoldLocked()
 	i.mu.Unlock()
+	// Operator intent: erase the crash-recovery liveness evidence. Whatever
+	// the status column ends up reading afterwards, a session the user
+	// stopped must never be proposed as "open when the machine died".
+	i.ClearSeenAlive()
 	// (gen already bumped at the top of killInternal, before the tmux kill —
 	// see the comment there for why it must happen first, not here.)
 	if i.Tool == "hermes" {

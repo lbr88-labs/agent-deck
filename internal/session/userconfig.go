@@ -379,6 +379,20 @@ type RecoverySettings struct {
 	//	[recovery]
 	//	propose_on_startup = false
 	ProposeOnStartup *bool `toml:"propose_on_startup,omitempty"`
+
+	// ActiveWindow bounds the recovery proposal to sessions agent-deck still
+	// SAW ALIVE within this duration before launch (tool_data
+	// .last_seen_alive_at, refreshed by every liveness sweep). This is what
+	// makes the proposal "the sessions I had open when the machine died"
+	// instead of "every session that ever errored": the error backlog has no
+	// timestamps and grows forever, while the stamp stops advancing the
+	// moment the power goes. Go duration string ("45m", "24h"). Default:
+	// "24h". "0" disables the filter entirely (fall back to status-only —
+	// the pre-v2 behaviour, not recommended on a long-lived host).
+	//
+	//	[recovery]
+	//	active_window = "4h"
+	ActiveWindow string `toml:"active_window,omitempty"`
 }
 
 // GetProposeOnStartup reports whether the startup recovery dialog is enabled.
@@ -387,6 +401,31 @@ func (r RecoverySettings) GetProposeOnStartup() bool {
 		return true
 	}
 	return *r.ProposeOnStartup
+}
+
+// DefaultRecoveryActiveWindow is how far back a liveness stamp still counts
+// as "open when the machine died". Wide enough to cover a machine that went
+// down in the evening and is relaunched the next morning; narrow enough to
+// exclude the weeks-deep error backlog.
+const DefaultRecoveryActiveWindow = 24 * time.Hour
+
+// GetActiveWindow parses the configured window. Empty → 24h default.
+// "0" (or a negative) → 0, the explicit opt-out that disables recency
+// filtering. An unparseable value falls back to the default rather than
+// erroring: a typo in config.toml must not take down startup.
+func (r RecoverySettings) GetActiveWindow() time.Duration {
+	raw := strings.TrimSpace(r.ActiveWindow)
+	if raw == "" {
+		return DefaultRecoveryActiveWindow
+	}
+	d, err := time.ParseDuration(raw)
+	if err != nil {
+		return DefaultRecoveryActiveWindow
+	}
+	if d < 0 {
+		return 0
+	}
+	return d
 }
 
 // UISettings controls TUI layout proportions.

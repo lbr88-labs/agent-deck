@@ -162,7 +162,7 @@ func TestView_ShowsCountTitleAndCandidates(t *testing.T) {
 	defer d.Hide()
 
 	view := d.View()
-	for _, want := range []string{"3 sessions look crashed", "frontend-agent", "backend-agent", "data-pipeline", "enter restore"} {
+	for _, want := range []string{"3 sessions were open before the restart", "frontend-agent", "backend-agent", "data-pipeline", "enter restore"} {
 		if !strings.Contains(view, want) {
 			t.Errorf("view should contain %q", want)
 		}
@@ -180,8 +180,8 @@ func TestView_SingularTitle(t *testing.T) {
 	d.Show(as)
 	defer d.Hide()
 
-	if !strings.Contains(d.View(), "1 session looks crashed") {
-		t.Error("singular count should read '1 session looks crashed'")
+	if !strings.Contains(d.View(), "1 session was open before the restart") {
+		t.Error("singular count should read '1 session was open before the restart'")
 	}
 }
 

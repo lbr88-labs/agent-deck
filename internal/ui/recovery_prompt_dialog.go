@@ -138,16 +138,16 @@ func (d *RecoveryPromptDialog) View() string {
 	candidates := d.assessment.Candidates
 	var lines []string
 
-	sessionWord := "sessions look"
+	sessionWord := "sessions were open"
 	if len(candidates) == 1 {
-		sessionWord = "session looks"
+		sessionWord = "session was open"
 	}
-	lines = append(lines, titleStyle.Render(fmt.Sprintf("⚠ %d %s crashed", len(candidates), sessionWord)))
+	lines = append(lines, titleStyle.Render(fmt.Sprintf("⚠ %d %s before the restart", len(candidates), sessionWord)))
 	if d.assessment.MassDeath {
 		lines = append(lines, noteStyle.Render("This looks like a full crash (tmux server killed, or the host rebooted),"))
 		lines = append(lines, noteStyle.Render("not one bad session."))
 	} else {
-		lines = append(lines, noteStyle.Render("Their tmux session is gone, but agent-deck still expected them running."))
+		lines = append(lines, noteStyle.Render("agent-deck saw these panes alive shortly before it lost them."))
 	}
 	lines = append(lines, "")
 

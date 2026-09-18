@@ -971,12 +971,32 @@ func runAgentDeckMain() {
 			fmt.Println("Headless mode: TUI disabled")
 			fmt.Printf("Web server: http://%s\n", server.Addr())
 			// No bubbletea loop runs here, so the TUI's startup recovery
-			// prompt can never fire. Surface the same signal as a line:
-			// sessions the registry still believes are alive whose tmux
-			// session is gone (power loss, killed tmux server).
+			// prompt can never fire. Surface the same signal as a line,
+			// with the same criterion: sessions agent-deck saw alive
+			// within the recovery window whose tmux session is now gone
+			// (power loss, killed tmux server) — not the stale error
+			// backlog, which has no timestamps.
 			if _, instances, _, err := loadSessionData(effectiveProfile); err == nil {
-				if as := fleet.NewDetector().Assess(instances); as.Down > 0 {
-					fmt.Printf("NOTE: %d session(s) look crashed (tmux session gone). Run `agent-deck fleet status`, or `agent-deck fleet recover --yes` to restore.\n", as.Down)
+				activeWindow := session.DefaultRecoveryActiveWindow
+				if userCfg, cfgErr := session.LoadUserConfig(); cfgErr == nil && userCfg != nil {
+					activeWindow = userCfg.Recovery.GetActiveWindow()
+				}
+				det := fleet.NewDetector()
+				det.IncludeIdle = true
+				as := det.Assess(instances)
+				if activeWindow > 0 {
+					cutoff := time.Now().Add(-activeWindow)
+					filtered := make([]fleet.Candidate, 0, len(as.Candidates))
+					for _, c := range as.Candidates {
+						if c.Instance != nil && c.Instance.LastSeenAliveAt().After(cutoff) {
+							filtered = append(filtered, c)
+						}
+					}
+					as.Candidates = filtered
+					as.Down = len(filtered)
+				}
+				if as.Down > 0 {
+					fmt.Printf("NOTE: %d session(s) were open before the restart. Run `agent-deck fleet status`, or `agent-deck fleet recover --yes` to restore them.\n", as.Down)
 				}
 			}
 			var shutdownOnce sync.Once

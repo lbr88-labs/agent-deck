@@ -79,8 +79,12 @@ type InstanceData struct {
 	// last_activity_persist.go). Zero means unknown (old record or never
 	// active).
 	LastActivityAt time.Time `json:"last_activity_at,omitempty"`
-	ArchivedAt     time.Time `json:"archived_at,omitempty"`
-	TmuxSession    string    `json:"tmux_session"`
+	// LastSeenAliveAt mirrors Instance.lastSeenAliveAt: durable "the pane
+	// existed at time T" evidence for crash-recovery proposals. Zero means
+	// never observed (old record, never started, or operator-stopped).
+	LastSeenAliveAt time.Time `json:"last_seen_alive_at,omitempty"`
+	ArchivedAt      time.Time `json:"archived_at,omitempty"`
+	TmuxSession     string    `json:"tmux_session"`
 	// TmuxSocketName is the tmux -L selector captured at Instance creation
 	// (issue #687, v1.7.50). Empty for pre-v1.7.50 rows — those keep hitting
 	// the default server after upgrade.
@@ -1193,6 +1197,9 @@ func instanceToRow(inst *Instance) (*statedb.InstanceRow, error) {
 	// timestamp badge and preview survive a TUI restart instead of
 	// collapsing back to CreatedAt/LastAccessedAt.
 	toolData = WriteLastActivityAtToToolData(toolData, inst.LastActivityAt())
+	// Crash-recovery liveness evidence rides the same extras zone (see
+	// last_seen_alive.go); a full save must not drop it.
+	toolData = WriteLastSeenAliveAtToToolData(toolData, inst.LastSeenAliveAt())
 	// PR #1942 review (P1c): the DeepSeek headless task rides the same extras
 	// zone. For a one-shot the task IS the invocation, so a row that forgets it
 	// can only ever be "restarted" into dsh's usage error.
@@ -1384,6 +1391,7 @@ func (s *Storage) LoadLite() ([]*InstanceData, []*GroupData, error) {
 			GenericSessionCommand:     genericScopeCommand(r.ToolData),
 			GenericSessionLocation:    genericScopeLocation(r.ToolData),
 			LastActivityAt:            ReadLastActivityAtFromToolData(r.ToolData),
+			LastSeenAliveAt:           ReadLastSeenAliveAtFromToolData(r.ToolData),
 			DeepSeekTask:              ReadDeepSeekTaskFromToolData(r.ToolData),
 			OmpPendingForkCommand:     readOmpPendingForkFromToolData(r.ToolData, r.Tool),
 		}
@@ -1519,6 +1527,7 @@ func (s *Storage) LoadWithGroups() ([]*Instance, []*GroupData, error) {
 			GenericSessionCommand:     genericScopeCommand(r.ToolData),
 			GenericSessionLocation:    genericScopeLocation(r.ToolData),
 			LastActivityAt:            ReadLastActivityAtFromToolData(r.ToolData),
+			LastSeenAliveAt:           ReadLastSeenAliveAtFromToolData(r.ToolData),
 			DeepSeekTask:              ReadDeepSeekTaskFromToolData(r.ToolData),
 			OmpPendingForkCommand:     readOmpPendingForkFromToolData(r.ToolData, r.Tool),
 		}
@@ -1790,15 +1799,18 @@ func (s *Storage) convertToInstances(data *StorageData) ([]*Instance, []*GroupDa
 			// throttle has an accurate baseline.
 			lastActivityAt:        instData.LastActivityAt,
 			lastActivityPersisted: instData.LastActivityAt,
-			Sandbox:               instData.Sandbox,
-			SandboxContainer:      instData.SandboxContainer,
-			SSHHost:               instData.SSHHost,
-			SSHRemotePath:         instData.SSHRemotePath,
-			MultiRepoEnabled:      instData.MultiRepoEnabled,
-			AdditionalPaths:       instData.AdditionalPaths,
-			MultiRepoTempDir:      instData.MultiRepoTempDir,
-			tmuxSession:           tmuxSess,
-			stateDB:               s.db,
+			// Same discipline for the crash-recovery liveness stamp.
+			lastSeenAliveAt:        instData.LastSeenAliveAt,
+			lastSeenAlivePersisted: instData.LastSeenAliveAt,
+			Sandbox:                instData.Sandbox,
+			SandboxContainer:       instData.SandboxContainer,
+			SSHHost:                instData.SSHHost,
+			SSHRemotePath:          instData.SSHRemotePath,
+			MultiRepoEnabled:       instData.MultiRepoEnabled,
+			AdditionalPaths:        instData.AdditionalPaths,
+			MultiRepoTempDir:       instData.MultiRepoTempDir,
+			tmuxSession:            tmuxSess,
+			stateDB:                s.db,
 		}
 		// Convert multi-repo worktree data
 		for _, wt := range instData.MultiRepoWorktrees {

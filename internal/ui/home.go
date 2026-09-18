@@ -7744,23 +7744,45 @@ func (h *Home) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		}
 
-		// Propose crash recovery once per launch: sessions the registry still
-		// marks running/waiting/starting/error but whose tmux session is gone
-		// are exactly what an ungraceful shutdown — power loss, OOM, a
-		// SIGKILL'd tmux server — leaves behind. Read-only scan; internal/fleet
-		// never mutates a session until the operator restores it from the
-		// dialog. Gated on setupWizard: a first-run host has an empty state.db
-		// so Down is always 0 there, but skip the extra scan anyway rather
-		// than stack a second modal behind the wizard.
+		// Propose crash recovery once per launch. The criterion is NOT the
+		// status column — it carries no timestamp, so a fresh power-loss
+		// victim and a weeks-old error are indistinguishable, and the
+		// backlog only grows. The liveness stamp (tool_data
+		// .last_seen_alive_at, refreshed by every confirmed-ALIVE status
+		// sweep, cleared on a deliberate stop) is the signal: it advances
+		// while a pane exists and stops advancing the moment the power
+		// goes. Propose exactly the down sessions whose stamp is still
+		// inside the configured window — "the sessions I had open when the
+		// machine died". Idle sessions are included (IncludeIdle): a shell
+		// left open is stamped like any other pane; never-started sessions
+		// have no stamp and drop out in the filter below. Gated on
+		// setupWizard: a first-run host has an empty state.db so there is
+		// nothing to propose anyway, and a second modal must not stack
+		// behind the wizard.
 		if !h.startupRecoveryChecked {
 			h.startupRecoveryChecked = true
 			if msg.err == nil && (h.setupWizard == nil || !h.setupWizard.IsVisible()) {
 				promptEnabled := true
+				activeWindow := session.DefaultRecoveryActiveWindow
 				if cfg, cfgErr := session.LoadUserConfig(); cfgErr == nil && cfg != nil {
 					promptEnabled = cfg.Recovery.GetProposeOnStartup()
+					activeWindow = cfg.Recovery.GetActiveWindow()
 				}
 				if promptEnabled && h.recoveryPrompt != nil {
-					as := fleet.NewDetector().Assess(msg.instances)
+					det := fleet.NewDetector()
+					det.IncludeIdle = true
+					as := det.Assess(msg.instances)
+					if activeWindow > 0 {
+						cutoff := time.Now().Add(-activeWindow)
+						filtered := make([]fleet.Candidate, 0, len(as.Candidates))
+						for _, c := range as.Candidates {
+							if c.Instance != nil && c.Instance.LastSeenAliveAt().After(cutoff) {
+								filtered = append(filtered, c)
+							}
+						}
+						as.Candidates = filtered
+						as.Down = len(filtered)
+					}
 					if as.Down > 0 {
 						h.recoveryPrompt.Show(as)
 						h.recoveryPrompt.SetSize(h.width, h.height)

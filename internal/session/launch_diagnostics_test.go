@@ -99,8 +99,14 @@ func TestUpdateStatusDeadPaneOverridesFreshWaitingHook(t *testing.T) {
 	if err := inst.UpdateStatus(); err != nil {
 		t.Fatal(err)
 	}
-	if got := inst.GetStatusThreadSafe(); got != StatusError {
-		t.Fatalf("status = %q, want %q: a dead pane must outrank a fresh waiting hook", got, StatusError)
+	// The invariant under test: a dead pane outranks the fresh waiting hook —
+	// the hook must not resurrect a dead process. The CLASSIFICATION of the
+	// death is separate: SIGTERM teardown of the pane process is an operator/
+	// supervisor action (timeout, stop tooling), which since the crash-recovery
+	// work classifies as StatusStopped, not StatusError — a deliberate stop
+	// must never display as crashed.
+	if got := inst.GetStatusThreadSafe(); got != StatusStopped {
+		t.Fatalf("status = %q, want %q: a dead pane must outrank a fresh waiting hook (SIGTERM teardown = operator intent)", got, StatusStopped)
 	}
 }
 
