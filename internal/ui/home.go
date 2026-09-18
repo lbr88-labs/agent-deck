@@ -34,6 +34,7 @@ import (
 	"github.com/asheshgoplani/agent-deck/internal/costs"
 	"github.com/asheshgoplani/agent-deck/internal/docker"
 	"github.com/asheshgoplani/agent-deck/internal/feedback"
+	"github.com/asheshgoplani/agent-deck/internal/fleet"
 	"github.com/asheshgoplani/agent-deck/internal/git"
 	"github.com/asheshgoplani/agent-deck/internal/hub"
 	"github.com/asheshgoplani/agent-deck/internal/intervalhook"
@@ -301,6 +302,8 @@ type Home struct {
 	geminiModelDialog         *GeminiModelDialog    // For selecting Gemini model
 	promptInputDialog         *PromptInputDialog    // For prompting the highlighted session from the list without attaching (#1410)
 	sessionPickerDialog       *SessionPickerDialog  // For sending output to another session
+	recoveryPrompt            *RecoveryPromptDialog // Proposes restarting sessions found dead-but-should-be-alive at launch (internal/fleet)
+	startupRecoveryChecked    bool                  // one-shot guard: only run the fleet scan on the first session load per process
 	codeBlockDialog           *CodeBlockDialog      // For copying a fenced code block from session output (#1412)
 	sessionSwitcher           *SessionSwitcher      // In-attach session switcher (Ctrl+Tab / Ctrl+S)
 	scrollbackPager           *ScrollbackPager      // In-attach scrollback pager for the deck's control-mode view (#1491)
@@ -1682,6 +1685,13 @@ type maintenanceCompleteMsg struct {
 // clearMaintenanceMsg signals auto-clear of maintenance banner
 type clearMaintenanceMsg struct{}
 
+// recoverySweepDoneMsg is sent when the background crash-recovery sweep
+// started from the startup recovery prompt finishes (success, partial, or
+// halted). The summary drives the maintenance-banner result line.
+type recoverySweepDoneMsg struct {
+	summary fleet.Summary
+}
+
 // copyResultMsg is sent when async clipboard copy completes
 type copyResultMsg struct {
 	sessionTitle string
@@ -1864,6 +1874,7 @@ func NewHomeWithProfileAndMode(profile string) *Home {
 		geminiModelDialog:    NewGeminiModelDialog(),
 		promptInputDialog:    NewPromptInputDialog(),
 		sessionPickerDialog:  NewSessionPickerDialog(),
+		recoveryPrompt:       NewRecoveryPromptDialog(),
 		codeBlockDialog:      NewCodeBlockDialog(),
 		sessionSwitcher:      NewSessionSwitcher(),
 		scrollbackPager:      NewScrollbackPager(),
@@ -7733,6 +7744,31 @@ func (h *Home) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		}
 
+		// Propose crash recovery once per launch: sessions the registry still
+		// marks running/waiting/starting/error but whose tmux session is gone
+		// are exactly what an ungraceful shutdown — power loss, OOM, a
+		// SIGKILL'd tmux server — leaves behind. Read-only scan; internal/fleet
+		// never mutates a session until the operator restores it from the
+		// dialog. Gated on setupWizard: a first-run host has an empty state.db
+		// so Down is always 0 there, but skip the extra scan anyway rather
+		// than stack a second modal behind the wizard.
+		if !h.startupRecoveryChecked {
+			h.startupRecoveryChecked = true
+			if msg.err == nil && (h.setupWizard == nil || !h.setupWizard.IsVisible()) {
+				promptEnabled := true
+				if cfg, cfgErr := session.LoadUserConfig(); cfgErr == nil && cfg != nil {
+					promptEnabled = cfg.Recovery.GetProposeOnStartup()
+				}
+				if promptEnabled && h.recoveryPrompt != nil {
+					as := fleet.NewDetector().Assess(msg.instances)
+					if as.Down > 0 {
+						h.recoveryPrompt.Show(as)
+						h.recoveryPrompt.SetSize(h.width, h.height)
+					}
+				}
+			}
+		}
+
 		if msg.err != nil {
 			h.setError(msg.err)
 		} else {
@@ -8803,6 +8839,21 @@ func (h *Home) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case clearMaintenanceMsg:
 		h.maintenanceMsg = ""
 		return h, nil
+
+	case recoverySweepDoneMsg:
+		// The background sweep kicked off from the startup recovery prompt
+		// finished. Report the result on the maintenance banner and refresh
+		// the list so restored sessions show their new status.
+		s := msg.summary
+		text := fmt.Sprintf("Crash recovery: %d recovered, %d unverified, %d failed", s.Recovered, s.Unverified, s.Failed)
+		if s.Halted {
+			text += fmt.Sprintf(" — halted early: %s", s.HaltReason)
+		}
+		h.maintenanceMsg = text
+		h.maintenanceMsgTime = time.Now()
+		return h, tea.Batch(h.loadSessions, tea.Tick(30*time.Second, func(_ time.Time) tea.Msg {
+			return clearMaintenanceMsg{}
+		}))
 
 	case feedbackSentMsg:
 		// Route the result into the dialog so stepSent renders success or an explicit
@@ -10138,6 +10189,9 @@ func (h *Home) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if h.confirmDialog.IsVisible() {
 			return h.handleConfirmDialogKey(msg)
 		}
+		if h.recoveryPrompt != nil && h.recoveryPrompt.IsVisible() {
+			return h.handleRecoveryPromptKey(msg)
+		}
 		if h.hubAdminDialog != nil && h.hubAdminDialog.IsVisible() {
 			return h.handleHubAdminDialogKey(msg)
 		}
@@ -11179,6 +11233,7 @@ func (h *Home) hasModalVisible() bool {
 		(h.actionMenu != nil && h.actionMenu.IsVisible()) ||
 		(h.shortcutSettings != nil && h.shortcutSettings.IsVisible()) ||
 		h.setupWizard.IsVisible() || h.settingsPanel.IsVisible() ||
+		(h.recoveryPrompt != nil && h.recoveryPrompt.IsVisible()) ||
 		(h.toolVisibilityPanel != nil && h.toolVisibilityPanel.IsVisible()) ||
 		h.watcherPanel.IsVisible() || // hotkeyWatcherPanel overlay
 		h.helpOverlay.IsVisible() || h.search.IsVisible() || h.globalSearch.IsVisible() ||
@@ -14065,6 +14120,44 @@ func (h *Home) handleMCPDialogKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	default:
 		h.mcpDialog.Update(msg)
 		return h, nil
+	}
+}
+
+// handleRecoveryPromptKey handles keys when the startup recovery prompt is
+// visible. Navigation and selection keys delegate to the dialog; Enter starts
+// the sequential recovery sweep over the checked sessions as a background
+// tea.Cmd, so the sweep's per-boot spacing never blocks the update loop.
+func (h *Home) handleRecoveryPromptKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	if h.recoveryPrompt == nil || !h.recoveryPrompt.IsVisible() {
+		return h, nil
+	}
+	if msg.String() == "enter" {
+		as := h.recoveryPrompt.SelectedAssessment()
+		h.recoveryPrompt.Hide()
+		if as.Down == 0 {
+			return h, nil
+		}
+		return h, h.startRecoverySweep(as)
+	}
+	var cmd tea.Cmd
+	h.recoveryPrompt, cmd = h.recoveryPrompt.Update(msg)
+	return h, cmd
+}
+
+// startRecoverySweep launches the internal/fleet recovery sweep in the
+// background and reports the result via recoverySweepDoneMsg. Persist is
+// wired to the targeted per-row persist seam — never a whole-table save from
+// a stale snapshot (2026-06-04 lesson, see internal/fleet/recover.go).
+func (h *Home) startRecoverySweep(as fleet.Assessment) tea.Cmd {
+	h.maintenanceMsg = fmt.Sprintf("Restoring %d crashed session(s) in the background — boots are spaced out one at a time", as.Down)
+	h.maintenanceMsgTime = time.Now()
+	storage := h.storage
+	return func() tea.Msg {
+		rec := fleet.NewRecoverer()
+		if storage != nil {
+			rec.Persist = storage.PersistRecoveredInstances
+		}
+		return recoverySweepDoneMsg{summary: rec.Recover(as)}
 	}
 }
 
@@ -20539,6 +20632,9 @@ func (h *Home) renderFrame() string {
 	}
 	if h.confirmDialog.IsVisible() {
 		return h.confirmDialog.View()
+	}
+	if h.recoveryPrompt != nil && h.recoveryPrompt.IsVisible() {
+		return h.recoveryPrompt.View()
 	}
 	if h.hubAdminDialog != nil && h.hubAdminDialog.IsVisible() {
 		return h.hubAdminDialog.View()

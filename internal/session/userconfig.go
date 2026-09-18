@@ -261,6 +261,9 @@ type UserConfig struct {
 
 	// Performance holds opt-in resource tuning for multi-instance setups.
 	Performance PerformanceSettings `toml:"performance,omitempty"`
+
+	// Recovery controls the startup crash-recovery prompt (internal/fleet).
+	Recovery RecoverySettings `toml:"recovery,omitempty"`
 }
 
 // SelfHealSettings controls the self-heal supervision policy (SELF-HEAL-DESIGN.md
@@ -359,6 +362,31 @@ func (c *UserConfig) ClaimPollingEnabled() bool {
 		return false
 	}
 	return *c.Performance.ClaimPolling
+}
+
+// RecoverySettings controls the startup crash-recovery prompt: when
+// agent-deck launches and finds sessions the registry still believes are
+// running/waiting/starting/error but whose tmux session is gone (the
+// signature of an ungraceful shutdown — power loss, OOM, a killed tmux
+// server — not a normal `session stop`), it offers to restart them instead
+// of silently leaving them down. See internal/fleet for the detection and
+// recovery mechanics; `agent-deck fleet status`/`recover` cover the same
+// ground non-interactively.
+type RecoverySettings struct {
+	// ProposeOnStartup shows the recovery dialog on launch. Default: true
+	// (nil = true). Set false to rely on `agent-deck fleet recover` instead.
+	//
+	//	[recovery]
+	//	propose_on_startup = false
+	ProposeOnStartup *bool `toml:"propose_on_startup,omitempty"`
+}
+
+// GetProposeOnStartup reports whether the startup recovery dialog is enabled.
+func (r RecoverySettings) GetProposeOnStartup() bool {
+	if r.ProposeOnStartup == nil {
+		return true
+	}
+	return *r.ProposeOnStartup
 }
 
 // UISettings controls TUI layout proportions.

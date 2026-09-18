@@ -28,6 +28,7 @@ import (
 
 	"github.com/asheshgoplani/agent-deck/internal/costs"
 	"github.com/asheshgoplani/agent-deck/internal/feedback"
+	"github.com/asheshgoplani/agent-deck/internal/fleet"
 	"github.com/asheshgoplani/agent-deck/internal/git"
 	"github.com/asheshgoplani/agent-deck/internal/intervalhook"
 	"github.com/asheshgoplani/agent-deck/internal/logging"
@@ -969,6 +970,15 @@ func runAgentDeckMain() {
 			// reads live data from storage on each request.
 			fmt.Println("Headless mode: TUI disabled")
 			fmt.Printf("Web server: http://%s\n", server.Addr())
+			// No bubbletea loop runs here, so the TUI's startup recovery
+			// prompt can never fire. Surface the same signal as a line:
+			// sessions the registry still believes are alive whose tmux
+			// session is gone (power loss, killed tmux server).
+			if _, instances, _, err := loadSessionData(effectiveProfile); err == nil {
+				if as := fleet.NewDetector().Assess(instances); as.Down > 0 {
+					fmt.Printf("NOTE: %d session(s) look crashed (tmux session gone). Run `agent-deck fleet status`, or `agent-deck fleet recover --yes` to restore.\n", as.Down)
+				}
+			}
 			var shutdownOnce sync.Once
 			shutdown := func() {
 				shutdownOnce.Do(func() {
