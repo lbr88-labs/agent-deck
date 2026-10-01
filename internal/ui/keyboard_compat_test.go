@@ -149,12 +149,13 @@ func TestDisableKittyKeyboard(t *testing.T) {
 	}
 }
 
-// TestEnableKittyKeyboard tests that EnableKittyKeyboard pushes mode 1.
+// TestEnableKittyKeyboard tests that EnableKittyKeyboard pushes the flags needed
+// for unambiguous keys, event types, and modifier-key release reporting.
 func TestEnableKittyKeyboard(t *testing.T) {
 	var buf bytes.Buffer
 	EnableKittyKeyboard(&buf)
 	got := buf.String()
-	want := "\x1b[>1u"
+	want := "\x1b[>27u"
 	if got != want {
 		t.Errorf("EnableKittyKeyboard wrote %q, want %q", got, want)
 	}
@@ -167,7 +168,7 @@ func TestKittyKeyboardPushPopBalance(t *testing.T) {
 	EnableKittyKeyboard(&buf)
 	DisableKittyKeyboard(&buf)
 	got := buf.String()
-	want := "\x1b[>1u\x1b[<u"
+	want := "\x1b[>27u\x1b[<u"
 	if got != want {
 		t.Errorf("push+pop sequence = %q, want %q", got, want)
 	}
@@ -206,6 +207,34 @@ func TestCSIuReader_ShiftTab(t *testing.T) {
 	}
 	if string(out) != "\x1b[Z" {
 		t.Errorf("CSIuReader translated %q to %q, want %q", input, string(out), "\x1b[Z")
+	}
+}
+
+func TestCSIuReaderPreservesAltModifiers(t *testing.T) {
+	tests := []struct {
+		name  string
+		input string
+		want  string
+	}{
+		{name: "CSI u Alt+j", input: "\x1b[106;3u", want: "\x1bj"},
+		{name: "CSI u Alt+1", input: "\x1b[49;3u", want: "\x1b1"},
+		{name: "CSI u Alt+Space", input: "\x1b[32;3u", want: "\x1b "},
+		{name: "modifyOtherKeys Alt+j", input: "\x1b[27;3;106~", want: "\x1bj"},
+		{name: "modifyOtherKeys Alt+1", input: "\x1b[27;3;49~", want: "\x1b1"},
+		{name: "modifyOtherKeys Alt+Space", input: "\x1b[27;3;32~", want: "\x1b "},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			r := NewCSIuReader(bytes.NewReader([]byte(tt.input)))
+			got, err := io.ReadAll(r)
+			if err != nil {
+				t.Fatalf("ReadAll error: %v", err)
+			}
+			if string(got) != tt.want {
+				t.Fatalf("translated %q to %q, want %q", tt.input, string(got), tt.want)
+			}
+		})
 	}
 }
 
@@ -702,17 +731,15 @@ func TestCSIuReader_Underscore(t *testing.T) {
 	}
 }
 
-// TestRestoreLegacyKeyboardCmd verifies that the helper returned by
-// RestoreLegacyKeyboardCmd writes the Kitty pop sequence to the supplied
-// writer and returns a no-op message. This is a regression guard for the
-// tmux re-enter fix from PR #613: if a future refactor drops the
-// DisableKittyKeyboard call from the Update handler, the integration test
-// below fails; if a refactor changes the escape sequence, this test fails.
-func TestRestoreLegacyKeyboardCmd(t *testing.T) {
+// TestEnableTUIKeyboardProtocolsCmd verifies that attach return resets any keyboard
+// mode left by tmux and re-enables the protocols the dashboard consumes. A
+// Kitty pop by itself leaves Bubble Tea's alternate screen in legacy mode, so
+// Alacritty collapses Ctrl+Tab to ordinary Tab after the first attach.
+func TestEnableTUIKeyboardProtocolsCmd(t *testing.T) {
 	var buf bytes.Buffer
-	cmd := RestoreLegacyKeyboardCmd(&buf)
+	cmd := EnableTUIKeyboardProtocolsCmd(&buf)
 	if cmd == nil {
-		t.Fatal("RestoreLegacyKeyboardCmd returned nil")
+		t.Fatal("EnableTUIKeyboardProtocolsCmd returned nil")
 	}
 
 	msg := cmd()
@@ -721,9 +748,9 @@ func TestRestoreLegacyKeyboardCmd(t *testing.T) {
 	}
 
 	got := buf.String()
-	want := "\x1b[<u"
+	want := "\x1b[<u\x1b[>27u\x1b[>4;1m"
 	if got != want {
-		t.Errorf("cmd() wrote %q to writer, want %q (Kitty pop sequence)", got, want)
+		t.Errorf("cmd() wrote %q to writer, want %q (dashboard protocol reset)", got, want)
 	}
 }
 

@@ -34,6 +34,7 @@ import (
 	"github.com/asheshgoplani/agent-deck/internal/costs"
 	"github.com/asheshgoplani/agent-deck/internal/docker"
 	"github.com/asheshgoplani/agent-deck/internal/feedback"
+	"github.com/asheshgoplani/agent-deck/internal/fleet"
 	"github.com/asheshgoplani/agent-deck/internal/git"
 	"github.com/asheshgoplani/agent-deck/internal/hub"
 	"github.com/asheshgoplani/agent-deck/internal/intervalhook"
@@ -301,6 +302,8 @@ type Home struct {
 	geminiModelDialog         *GeminiModelDialog    // For selecting Gemini model
 	promptInputDialog         *PromptInputDialog    // For prompting the highlighted session from the list without attaching (#1410)
 	sessionPickerDialog       *SessionPickerDialog  // For sending output to another session
+	recoveryPrompt            *RecoveryPromptDialog // Proposes restarting sessions found dead-but-should-be-alive at launch (internal/fleet)
+	startupRecoveryChecked    bool                  // one-shot guard: only run the fleet scan on the first session load per process
 	codeBlockDialog           *CodeBlockDialog      // For copying a fenced code block from session output (#1412)
 	sessionSwitcher           *SessionSwitcher      // In-attach session switcher (Ctrl+Tab / Ctrl+S)
 	scrollbackPager           *ScrollbackPager      // In-attach scrollback pager for the deck's control-mode view (#1491)
@@ -943,11 +946,14 @@ func (h *Home) attachOptions(sess *tmux.Session) tmux.AttachOptions {
 	if scrollByte == detach || (switchByte != 0 && scrollByte == switchByte) {
 		scrollByte = 0
 	}
+	beginCtrlReleaseHandoff, cancelCtrlReleaseHandoff := ctrlReleaseHandoffCallbacks(os.Stdout)
 	opts := tmux.AttachOptions{
-		DetachByte:         detach,
-		SwitchKeyByte:      switchByte,
-		ScrollbackKeyByte:  scrollByte,
-		ScrollbackOnPageUp: scroll.OnPageUp,
+		DetachByte:               detach,
+		SwitchKeyByte:            switchByte,
+		ScrollbackKeyByte:        scrollByte,
+		ScrollbackOnPageUp:       scroll.OnPageUp,
+		BeginCtrlReleaseHandoff:  beginCtrlReleaseHandoff,
+		CancelCtrlReleaseHandoff: cancelCtrlReleaseHandoff,
 	}
 	// Gate the bare-PageUp trigger on the pane's screen state: when the attached
 	// app is in the alternate screen (Claude fullscreen), leave PageUp for the
@@ -1247,6 +1253,15 @@ func normalizeOverviewKeyToken(pressed string) string {
 	if pressed == string(ctrlShiftTabMarker) {
 		pressed = "ctrl+shift+tab"
 	}
+	if pressed == string(ctrlReleaseMarker) {
+		pressed = "ctrl-release"
+	}
+	if pressed == string(ctrlTabFallback) {
+		pressed = "ctrl+tab-fallback"
+	}
+	if pressed == string(ctrlShiftFallback) {
+		pressed = "ctrl+shift+tab-fallback"
+	}
 	return pressed
 }
 
@@ -1544,10 +1559,31 @@ const (
 	switcherPrevious
 )
 
+func quickSwitchIntent(intent tmux.SwitchIntent) (direction switcherDirection, waitForRelease, ctrlReleased bool) {
+	switch intent {
+	case tmux.SwitchNextRequested:
+		return switcherNext, true, false
+	case tmux.SwitchPreviousRequested:
+		return switcherPrevious, true, false
+	case tmux.SwitchNextFallbackRequested:
+		return switcherNext, false, false
+	case tmux.SwitchPreviousFallbackRequested:
+		return switcherPrevious, false, false
+	case tmux.SwitchNextReleasedRequested:
+		return switcherNext, true, true
+	case tmux.SwitchPreviousReleasedRequested:
+		return switcherPrevious, true, true
+	default:
+		return switcherStay, false, false
+	}
+}
+
 type openSwitcherMsg struct {
 	fromSessionID   string // session we just detached from
 	attachedWorkDir string // pane_current_path captured after attach returns
 	quickDirection  switcherDirection
+	waitForRelease  bool // true for CSI-u; false for xterm modifyOtherKeys
+	ctrlReleased    bool // final Ctrl release was coalesced with the attached press
 }
 
 // openScrollbackMsg is emitted when the user pressed the scrollback trigger
@@ -1648,6 +1684,13 @@ type maintenanceCompleteMsg struct {
 
 // clearMaintenanceMsg signals auto-clear of maintenance banner
 type clearMaintenanceMsg struct{}
+
+// recoverySweepDoneMsg is sent when the background crash-recovery sweep
+// started from the startup recovery prompt finishes (success, partial, or
+// halted). The summary drives the maintenance-banner result line.
+type recoverySweepDoneMsg struct {
+	summary fleet.Summary
+}
 
 // copyResultMsg is sent when async clipboard copy completes
 type copyResultMsg struct {
@@ -1831,6 +1874,7 @@ func NewHomeWithProfileAndMode(profile string) *Home {
 		geminiModelDialog:    NewGeminiModelDialog(),
 		promptInputDialog:    NewPromptInputDialog(),
 		sessionPickerDialog:  NewSessionPickerDialog(),
+		recoveryPrompt:       NewRecoveryPromptDialog(),
 		codeBlockDialog:      NewCodeBlockDialog(),
 		sessionSwitcher:      NewSessionSwitcher(),
 		scrollbackPager:      NewScrollbackPager(),
@@ -4767,6 +4811,10 @@ func (h *Home) Init() tea.Cmd {
 	}
 
 	cmds := []tea.Cmd{
+		// Bubble Tea has entered its alternate screen before Init runs. Kitty
+		// keyboard state is screen-local, so enabling it here (rather than before
+		// Program.Run) is what makes physical Ctrl+Tab distinct in Alacritty.
+		EnableTUIKeyboardProtocolsCmd(os.Stdout),
 		h.loadSessions,
 
 		h.tick(),
@@ -7696,6 +7744,53 @@ func (h *Home) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		}
 
+		// Propose crash recovery once per launch. The criterion is NOT the
+		// status column — it carries no timestamp, so a fresh power-loss
+		// victim and a weeks-old error are indistinguishable, and the
+		// backlog only grows. The liveness stamp (tool_data
+		// .last_seen_alive_at, refreshed by every confirmed-ALIVE status
+		// sweep, cleared on a deliberate stop) is the signal: it advances
+		// while a pane exists and stops advancing the moment the power
+		// goes. Propose exactly the down sessions whose stamp is still
+		// inside the configured window — "the sessions I had open when the
+		// machine died". Idle sessions are included (IncludeIdle): a shell
+		// left open is stamped like any other pane; never-started sessions
+		// have no stamp and drop out in the filter below. Gated on
+		// setupWizard: a first-run host has an empty state.db so there is
+		// nothing to propose anyway, and a second modal must not stack
+		// behind the wizard.
+		if !h.startupRecoveryChecked {
+			h.startupRecoveryChecked = true
+			if msg.err == nil && (h.setupWizard == nil || !h.setupWizard.IsVisible()) {
+				promptEnabled := true
+				activeWindow := session.DefaultRecoveryActiveWindow
+				if cfg, cfgErr := session.LoadUserConfig(); cfgErr == nil && cfg != nil {
+					promptEnabled = cfg.Recovery.GetProposeOnStartup()
+					activeWindow = cfg.Recovery.GetActiveWindow()
+				}
+				if promptEnabled && h.recoveryPrompt != nil {
+					det := fleet.NewDetector()
+					det.IncludeIdle = true
+					as := det.Assess(msg.instances)
+					if activeWindow > 0 {
+						cutoff := time.Now().Add(-activeWindow)
+						filtered := make([]fleet.Candidate, 0, len(as.Candidates))
+						for _, c := range as.Candidates {
+							if c.Instance != nil && c.Instance.LastSeenAliveAt().After(cutoff) {
+								filtered = append(filtered, c)
+							}
+						}
+						as.Candidates = filtered
+						as.Down = len(filtered)
+					}
+					if as.Down > 0 {
+						h.recoveryPrompt.Show(as)
+						h.recoveryPrompt.SetSize(h.width, h.height)
+					}
+				}
+			}
+		}
+
 		if msg.err != nil {
 			h.setError(msg.err)
 		} else {
@@ -8710,13 +8805,14 @@ func (h *Home) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// create+attach. Mirror the statusUpdateMsg attach-return cleanup so
 		// detaching from a newly created remote session leaves the terminal in
 		// the same state as detaching from an existing one: re-enable mouse
-		// reporting, restore legacy keyboard mode, force a resize, and schedule
+		// reporting, restore the dashboard keyboard protocols, force a resize,
+		// and schedule
 		// the delayed repaint (see the statusUpdateMsg case for the rationale).
 		h.beginAttachReturnGrace(time.Now())
 		return h, tea.Batch(
 			h.fetchRemoteSessions,
 			tea.EnableMouseCellMotion,
-			RestoreLegacyKeyboardCmd(os.Stdout),
+			EnableTUIKeyboardProtocolsCmd(os.Stdout),
 			tea.WindowSize(),
 			tea.Tick(attachReturnRefreshDelay, func(time.Time) tea.Msg { return attachReturnRefreshMsg{} }),
 		)
@@ -8765,6 +8861,21 @@ func (h *Home) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case clearMaintenanceMsg:
 		h.maintenanceMsg = ""
 		return h, nil
+
+	case recoverySweepDoneMsg:
+		// The background sweep kicked off from the startup recovery prompt
+		// finished. Report the result on the maintenance banner and refresh
+		// the list so restored sessions show their new status.
+		s := msg.summary
+		text := fmt.Sprintf("Crash recovery: %d recovered, %d unverified, %d failed", s.Recovered, s.Unverified, s.Failed)
+		if s.Halted {
+			text += fmt.Sprintf(" — halted early: %s", s.HaltReason)
+		}
+		h.maintenanceMsg = text
+		h.maintenanceMsgTime = time.Now()
+		return h, tea.Batch(h.loadSessions, tea.Tick(30*time.Second, func(_ time.Time) tea.Msg {
+			return clearMaintenanceMsg{}
+		}))
 
 	case feedbackSentMsg:
 		// Route the result into the dialog so stepSent renders success or an explicit
@@ -9136,8 +9247,13 @@ func (h *Home) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if reloading {
 			// syncCmd still has to run: the inline refresh it replaced happened
 			// before this early return, so dropping it here would leave the row we
-			// just detached from unreconciled.
-			return h, tea.Batch(tea.EnableMouseCellMotion, syncCmd)
+			// just detached from unreconciled. Keyboard protocols must also be
+			// restored after Bubble Tea re-enters its alternate screen.
+			return h, tea.Batch(
+				tea.EnableMouseCellMotion,
+				EnableTUIKeyboardProtocolsCmd(os.Stdout),
+				syncCmd,
+			)
 		}
 
 		h.followAttachReturnCwd(msg)
@@ -9148,9 +9264,9 @@ func (h *Home) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// We'll let the next tickMsg handle background save if needed.
 
 		// Re-enable mouse mode after returning from tea.Exec (tmux detach-client
-		// resets mouse reporting), restore legacy keyboard reporting (tmux's
-		// extended-keys setting leaves Kitty/modifyOtherKeys on the outer terminal;
-		// see RestoreLegacyKeyboardCmd for the full rationale), force-poll
+		// resets mouse reporting), restore the dashboard keyboard protocols after
+		// Bubble Tea re-enters its alternate screen (see
+		// EnableTUIKeyboardProtocolsCmd), force-poll
 		// terminal dimensions (#936: SIGWINCH propagation through nested SSH is
 		// late or lost — a host-terminal Cmd++ zoom during attach would otherwise
 		// land us back in the menu with stale pre-zoom column counts, making the
@@ -9159,7 +9275,7 @@ func (h *Home) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// cache changes that settle just after tmux restores the outer client.
 		return h, tea.Batch(
 			tea.EnableMouseCellMotion,
-			RestoreLegacyKeyboardCmd(os.Stdout),
+			EnableTUIKeyboardProtocolsCmd(os.Stdout),
 			tea.WindowSize(),
 			syncCmd,
 			tea.Tick(attachReturnRefreshDelay, func(time.Time) tea.Msg { return attachReturnRefreshMsg{} }),
@@ -9190,15 +9306,15 @@ func (h *Home) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 		var switchCmd tea.Cmd
 		switch msg.quickDirection {
 		case switcherNext:
-			switchCmd = h.openQuickSessionSwitcher(msg.fromSessionID, true, true)
+			switchCmd = h.openQuickSessionSwitcher(msg.fromSessionID, true, true, msg.waitForRelease)
 		case switcherPrevious:
-			switchCmd = h.openQuickSessionSwitcher(msg.fromSessionID, true, false)
+			switchCmd = h.openQuickSessionSwitcher(msg.fromSessionID, true, false, msg.waitForRelease)
 		default:
 			h.openSessionSwitcher(msg.fromSessionID, true)
 		}
 		return h, tea.Batch(
 			tea.EnableMouseCellMotion,
-			RestoreLegacyKeyboardCmd(os.Stdout),
+			EnableTUIKeyboardProtocolsAfterSwitchCmd(os.Stdout, msg.ctrlReleased),
 			tea.WindowSize(),
 			syncCmd,
 			switchCmd,
@@ -9222,7 +9338,7 @@ func (h *Home) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 		captureCmd := h.openScrollbackPager(msg.fromSessionID)
 		return h, tea.Batch(
 			tea.EnableMouseCellMotion,
-			RestoreLegacyKeyboardCmd(os.Stdout),
+			EnableTUIKeyboardProtocolsCmd(os.Stdout),
 			tea.WindowSize(),
 			syncCmd,
 			captureCmd,
@@ -10094,6 +10210,9 @@ func (h *Home) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		if h.confirmDialog.IsVisible() {
 			return h.handleConfirmDialogKey(msg)
+		}
+		if h.recoveryPrompt != nil && h.recoveryPrompt.IsVisible() {
+			return h.handleRecoveryPromptKey(msg)
 		}
 		if h.hubAdminDialog != nil && h.hubAdminDialog.IsVisible() {
 			return h.handleHubAdminDialogKey(msg)
@@ -11136,6 +11255,7 @@ func (h *Home) hasModalVisible() bool {
 		(h.actionMenu != nil && h.actionMenu.IsVisible()) ||
 		(h.shortcutSettings != nil && h.shortcutSettings.IsVisible()) ||
 		h.setupWizard.IsVisible() || h.settingsPanel.IsVisible() ||
+		(h.recoveryPrompt != nil && h.recoveryPrompt.IsVisible()) ||
 		(h.toolVisibilityPanel != nil && h.toolVisibilityPanel.IsVisible()) ||
 		h.watcherPanel.IsVisible() || // hotkeyWatcherPanel overlay
 		h.helpOverlay.IsVisible() || h.search.IsVisible() || h.globalSearch.IsVisible() ||
@@ -11414,12 +11534,14 @@ func (h *Home) handleMainDispatch(msg tea.KeyMsg, directAction ActionID) (tea.Mo
 	}
 
 	switch key {
-	case "ctrl+tab", "ctrl+shift+tab":
+	case "ctrl+tab", "ctrl+shift+tab", "ctrl+tab-fallback", "ctrl+shift+tab-fallback":
 		fromID := ""
 		if sel := h.getSelectedSession(); sel != nil {
 			fromID = sel.ID
 		}
-		return h, h.openQuickSessionSwitcher(fromID, false, key == "ctrl+tab")
+		forward := key == "ctrl+tab" || key == "ctrl+tab-fallback"
+		waitForRelease := key == "ctrl+tab" || key == "ctrl+shift+tab"
+		return h, h.openQuickSessionSwitcher(fromID, false, forward, waitForRelease)
 
 	case hotkeyQuit:
 		return h.tryQuit()
@@ -13099,7 +13221,7 @@ func (h *Home) handleMainDispatch(msg tea.KeyMsg, directAction ActionID) (tea.Mo
 
 func isStructuralOverviewKey(key string) bool {
 	switch key {
-	case "up", "down", "left", "right", "enter", "esc", " ", "ctrl+tab", "ctrl+shift+tab":
+	case "up", "down", "left", "right", "enter", "esc", " ", "ctrl+tab", "ctrl+shift+tab", "ctrl+tab-fallback", "ctrl+shift+tab-fallback":
 		return true
 	default:
 		return false
@@ -13592,6 +13714,10 @@ func (h *Home) performFinalShutdown(shutdownPool bool) tea.Cmd {
 		h.saveUIState()
 		// Save both instances AND groups on quit (critical fix: was losing groups!)
 		h.saveInstances()
+		// This command still runs while Bubble Tea owns the alternate screen.
+		// Pop the keyboard mode there before Bubble Tea switches back to the
+		// user's main screen.
+		DisableTUIKeyboardProtocols(os.Stdout)
 
 		return tea.Quit()
 	}
@@ -14016,6 +14142,44 @@ func (h *Home) handleMCPDialogKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	default:
 		h.mcpDialog.Update(msg)
 		return h, nil
+	}
+}
+
+// handleRecoveryPromptKey handles keys when the startup recovery prompt is
+// visible. Navigation and selection keys delegate to the dialog; Enter starts
+// the sequential recovery sweep over the checked sessions as a background
+// tea.Cmd, so the sweep's per-boot spacing never blocks the update loop.
+func (h *Home) handleRecoveryPromptKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	if h.recoveryPrompt == nil || !h.recoveryPrompt.IsVisible() {
+		return h, nil
+	}
+	if msg.String() == "enter" {
+		as := h.recoveryPrompt.SelectedAssessment()
+		h.recoveryPrompt.Hide()
+		if as.Down == 0 {
+			return h, nil
+		}
+		return h, h.startRecoverySweep(as)
+	}
+	var cmd tea.Cmd
+	h.recoveryPrompt, cmd = h.recoveryPrompt.Update(msg)
+	return h, cmd
+}
+
+// startRecoverySweep launches the internal/fleet recovery sweep in the
+// background and reports the result via recoverySweepDoneMsg. Persist is
+// wired to the targeted per-row persist seam — never a whole-table save from
+// a stale snapshot (2026-06-04 lesson, see internal/fleet/recover.go).
+func (h *Home) startRecoverySweep(as fleet.Assessment) tea.Cmd {
+	h.maintenanceMsg = fmt.Sprintf("Restoring %d crashed session(s) in the background — boots are spaced out one at a time", as.Down)
+	h.maintenanceMsgTime = time.Now()
+	storage := h.storage
+	return func() tea.Msg {
+		rec := fleet.NewRecoverer()
+		if storage != nil {
+			rec.Persist = storage.PersistRecoveredInstances
+		}
+		return recoverySweepDoneMsg{summary: rec.Recover(as)}
 	}
 }
 
@@ -17748,16 +17912,13 @@ func (h *Home) attachSession(inst *session.Instance) tea.Cmd {
 					attachedWorkDir: fromWorkDir,
 				}
 			}
-			quickDirection := switcherStay
-			if res.intent == tmux.SwitchNextRequested {
-				quickDirection = switcherNext
-			} else if res.intent == tmux.SwitchPreviousRequested {
-				quickDirection = switcherPrevious
-			}
+			quickDirection, waitForRelease, ctrlReleased := quickSwitchIntent(res.intent)
 			return openSwitcherMsg{
 				fromSessionID:   fromID,
 				attachedWorkDir: fromWorkDir,
 				quickDirection:  quickDirection,
+				waitForRelease:  waitForRelease,
+				ctrlReleased:    ctrlReleased,
 			}
 		}
 
@@ -20493,6 +20654,9 @@ func (h *Home) renderFrame() string {
 	}
 	if h.confirmDialog.IsVisible() {
 		return h.confirmDialog.View()
+	}
+	if h.recoveryPrompt != nil && h.recoveryPrompt.IsVisible() {
+		return h.recoveryPrompt.View()
 	}
 	if h.hubAdminDialog != nil && h.hubAdminDialog.IsVisible() {
 		return h.hubAdminDialog.View()
@@ -24490,6 +24654,20 @@ func (h *Home) renderSessionInfoCard(inst *session.Instance, width, height int) 
 	return b.String()
 }
 
+func renderLaunchFailureDetails(failure *session.SpawnFailureRecord, retainedPane string) string {
+	retainedPane = strings.TrimSpace(retainedPane)
+	// PreviewFull prefixes retained dead panes with the authoritative exit
+	// status/signal. Prefer that over the startup-watch record, which captures
+	// output and elapsed time but cannot recover tmux's exact termination code.
+	if strings.HasPrefix(retainedPane, "The session process ") {
+		return retainedPane
+	}
+	if failure != nil {
+		return failure.FormatForDisplay()
+	}
+	return retainedPane
+}
+
 // renderPreviewPane renders the right panel with live preview
 func (h *Home) renderPreviewPane(width, height int) string {
 	var b strings.Builder
@@ -25256,16 +25434,23 @@ func (h *Home) renderPreviewPane(width, height int) string {
 		dimStyle := lipgloss.NewStyle().Foreground(ColorText)
 		keyStyle := lipgloss.NewStyle().Foreground(ColorAccent).Bold(true)
 
-		b.WriteString(warnStyle.Render("✕ No tmux session running"))
-		b.WriteString("\n\n")
-		b.WriteString(dimStyle.Render("This can happen if:"))
-		b.WriteString("\n")
-		b.WriteString(dimStyle.Render("  - Session was added but not yet started"))
-		b.WriteString("\n")
-		b.WriteString(dimStyle.Render("  - tmux server was restarted"))
-		b.WriteString("\n")
-		b.WriteString(dimStyle.Render("  - Terminal was closed or system rebooted"))
-		b.WriteString("\n\n")
+		h.previewCacheMu.RLock()
+		retainedPane := h.previewCache[pvKey]
+		h.previewCacheMu.RUnlock()
+		failureDetails := renderLaunchFailureDetails(selected.SpawnFailure(), retainedPane)
+		if failureDetails != "" {
+			b.WriteString(warnStyle.Render("✕ Launch failed"))
+			b.WriteString("\n\n")
+			b.WriteString(dimStyle.Render(failureDetails))
+			b.WriteString("\n")
+		} else {
+			b.WriteString(warnStyle.Render("✕ No tmux session running"))
+			b.WriteString("\n\n")
+			b.WriteString(dimStyle.Render("No launch diagnostic was recorded."))
+			b.WriteString("\n")
+			b.WriteString(dimStyle.Render("The session may have been interrupted before Agent Deck observed the failure."))
+			b.WriteString("\n\n")
+		}
 		b.WriteString(dimStyle.Render("Actions:"))
 		b.WriteString("\n")
 		if restartKey := h.actionKey(hotkeyRestart); restartKey != "" {
@@ -26529,12 +26714,12 @@ func (h *Home) openSessionSwitcher(fromID string, reattachOnCancel bool) bool {
 	return true
 }
 
-// openQuickSessionSwitcher opens the MRU picker, immediately advances away
-// from the current session, and arms the idle attach timer. This is the
-// Windows-style Ctrl+Tab path: the first press targets the most recently used
-// other session, while repeated Ctrl+Tab / Ctrl+Shift+Tab presses cycle before
-// the one-second idle commit fires.
-func (h *Home) openQuickSessionSwitcher(fromID string, reattachOnCancel, forward bool) tea.Cmd {
+// openQuickSessionSwitcher opens the MRU picker and immediately advances away
+// from the current session. This is the Windows-style Ctrl+Tab path: the first
+// press targets the most recently used other session, repeated Ctrl+Tab /
+// Ctrl+Shift+Tab presses cycle while Ctrl remains held, and the CSI-u Ctrl
+// release event commits the highlighted session.
+func (h *Home) openQuickSessionSwitcher(fromID string, reattachOnCancel, forward, waitForRelease bool) tea.Cmd {
 	if !h.openSessionSwitcher(fromID, reattachOnCancel) {
 		return nil
 	}
@@ -26544,13 +26729,18 @@ func (h *Home) openQuickSessionSwitcher(fromID string, reattachOnCancel, forward
 		h.sessionSwitcher.prev()
 	}
 	h.sessionSwitcher.lastCycleAt = time.Now()
-	return h.armSwitcherCommit()
+	h.sessionSwitcher.commitOnCtrlRelease = waitForRelease
+	if !waitForRelease {
+		return h.armSwitcherCommit()
+	}
+	return nil
 }
 
-// armSwitcherCommit (re)starts the idle-commit countdown and returns the timer
-// command. Quick-cycle keys call this, so the timer only fires once the user
-// stops tapping — the closest we can get to "commit on key release".
+// armSwitcherCommit (re)starts the idle-commit countdown for the configurable
+// Ctrl-letter fallback. Native Ctrl+Tab uses the terminal's real Ctrl release
+// event instead.
 func (h *Home) armSwitcherCommit() tea.Cmd {
+	h.sessionSwitcher.commitOnCtrlRelease = false
 	gen := h.sessionSwitcher.bumpCommitGen()
 	return tea.Tick(switcherIdleCommit, func(time.Time) tea.Msg {
 		return switcherCommitMsg{gen: gen}
@@ -26665,9 +26855,10 @@ func (h *Home) attachToSwitchTarget(id string) tea.Cmd {
 // visible. Two interaction modes share the overlay:
 //
 //   - Ctrl+Tab (forward) / Ctrl+Shift+Tab (backward): the primary quick mode.
-//     Ctrl+S / Ctrl+A remain the configurable Ctrl-letter fallback pair.
-//     Each tap re-arms the idle-commit timer (so it fires ~1s after you stop),
-//     and the advance is throttled so holding the key cannot spin the list.
+//     The overlay remains open while Ctrl is held and attaches on the final
+//     Ctrl release. Ctrl+S / Ctrl+A remain the configurable Ctrl-letter
+//     fallback pair and retain idle commit because their modifier release is
+//     not portably reported. Cycling is throttled so key-repeat cannot spin.
 //   - Up / Down: deliberate browsing. These cancel the pending auto-commit, so
 //     you stay in the switcher until you press Enter (or Esc).
 //
@@ -26691,18 +26882,41 @@ func (h *Home) handleSessionSwitcherKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		// Detach key: leave the switcher (and any session), landing in the overview.
 		h.sessionSwitcher.Hide()
 		return h, nil
-	case "ctrl+s", "ctrl+tab":
+	case "ctrl-release":
+		if !h.sessionSwitcher.commitOnCtrlRelease {
+			return h, nil
+		}
+		return h, h.commitSessionSwitch()
+	case "ctrl+s":
 		h.sessionSwitcher.cycle(true, time.Now())
 		return h, h.armSwitcherCommit()
-	case "ctrl+a", "ctrl+shift+tab":
+	case "ctrl+tab":
+		h.sessionSwitcher.bumpCommitGen()
+		h.sessionSwitcher.commitOnCtrlRelease = true
+		h.sessionSwitcher.cycle(true, time.Now())
+		return h, nil
+	case "ctrl+tab-fallback":
+		h.sessionSwitcher.cycle(true, time.Now())
+		return h, h.armSwitcherCommit()
+	case "ctrl+a":
+		h.sessionSwitcher.cycle(false, time.Now())
+		return h, h.armSwitcherCommit()
+	case "ctrl+shift+tab":
+		h.sessionSwitcher.bumpCommitGen()
+		h.sessionSwitcher.commitOnCtrlRelease = true
+		h.sessionSwitcher.cycle(false, time.Now())
+		return h, nil
+	case "ctrl+shift+tab-fallback":
 		h.sessionSwitcher.cycle(false, time.Now())
 		return h, h.armSwitcherCommit()
 	case "up":
 		h.sessionSwitcher.prev()
+		h.sessionSwitcher.commitOnCtrlRelease = false
 		h.sessionSwitcher.bumpCommitGen() // cancel pending auto-commit: manual mode
 		return h, nil
 	case "down":
 		h.sessionSwitcher.next()
+		h.sessionSwitcher.commitOnCtrlRelease = false
 		h.sessionSwitcher.bumpCommitGen()
 		return h, nil
 	default:

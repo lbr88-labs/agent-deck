@@ -1764,6 +1764,38 @@ func (s *StateDB) WriteLastActivityAt(id string, at time.Time) error {
 	})
 }
 
+// WriteLastSeenAliveAt atomically rewrites tool_data.last_seen_alive_at —
+// the durable "pane was alive recently" record behind crash-recovery
+// proposals (see session/last_seen_alive.go). A zero time REMOVES the key
+// (operator stop must erase liveness evidence, not park it at epoch);
+// non-zero writes Unix seconds. Same json_set/withBusyRetry shape as
+// WriteLastActivityAt, for the same reason: the observer has no save cycle
+// it can rely on to flush the in-memory value in time.
+func (s *StateDB) WriteLastSeenAliveAt(id string, at time.Time) error {
+	return withBusyRetry(func() error {
+		if at.IsZero() {
+			_, err := s.db.Exec(
+				`UPDATE instances
+				   SET tool_data = json_remove(
+				         COALESCE(tool_data, '{}'),
+				         '$.last_seen_alive_at')
+				 WHERE id = ?`,
+				id,
+			)
+			return err
+		}
+		_, err := s.db.Exec(
+			`UPDATE instances
+			   SET tool_data = json_set(
+			         COALESCE(tool_data, '{}'),
+			         '$.last_seen_alive_at', ?)
+			 WHERE id = ?`,
+			at.Unix(), id,
+		)
+		return err
+	})
+}
+
 // WriteLastAccessed atomically updates the last_accessed column for one
 // instance. MarkAccessed (#1846) uses this so each attach/detach is durable
 // on its own instead of waiting for a full saveInstances that may never run

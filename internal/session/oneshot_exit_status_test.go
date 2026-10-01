@@ -31,6 +31,14 @@ func TestClassifyTerminatedPane_CleanExitVsCrash(t *testing.T) {
 		{"crash exit 1", 1, true, "shell", StatusError},
 		{"crash exit 137 (SIGKILL)", 137, true, "claude", StatusError},
 		{"crash exit 2 (opencode)", 2, true, "opencode", StatusError},
+		// Signal teardowns are operator/terminal actions, not agent crashes:
+		// tmux kill-session/kill-pane deliver SIGHUP (129), kill-server /
+		// terminal close / systemd stop deliver SIGTERM (143). These must
+		// read as stopped — a deliberate stop must never display as crashed.
+		{"tmux kill-session SIGHUP", 129, true, "claude", StatusStopped},
+		{"SIGTERM teardown", 143, true, "shell", StatusStopped},
+		{"SIGHUP teardown (omp)", 129, true, "omp", StatusStopped},
+		{"SIGKILL stays a crash", 137, true, "omp", StatusError},
 
 		// No exit code (pane torn down): fall back to the per-tool heuristic.
 		{"no exit code, opencode clean /exit", 0, false, "opencode", StatusStopped},

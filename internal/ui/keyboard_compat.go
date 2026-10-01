@@ -4,18 +4,17 @@
 // such as Ghostty, Foot, and Alacritty.
 //
 // Background: Bubble Tea v1.3.10 does not parse Kitty keyboard protocol
-// sequences. On Wayland, terminals send keys using CSI u encoding by default,
-// which causes uppercase shortcuts and uppercase text input to be silently
-// dropped. This file provides:
+// sequences. Agent Deck requests extended keyboard reporting so terminals can
+// distinguish combinations such as Ctrl+Tab and Shift+Enter, then translates
+// the resulting sequences before Bubble Tea sees them. This file provides:
 //
-//  1. DisableKittyKeyboard / RestoreKittyKeyboard — escape sequences that ask
-//     the terminal to fall back to legacy key reporting before the TUI starts.
+//  1. Keyboard-mode helpers that negotiate Kitty CSI u and xterm
+//     modifyOtherKeys while the TUI owns the terminal, then restore the shell.
 //
-//  2. ParseCSIu — a CSI u sequence parser, available as a public API for
-//     future use or for terminals that ignore the protocol-disable request.
+//  2. ParseCSIu — a CSI u sequence parser used by the compatibility reader.
 //
 //  3. NewCSIuReader — a reader that translates CSI u sequences to legacy bytes
-//     on the fly, as a belt-and-suspenders fallback.
+//     on the fly for Bubble Tea.
 package ui
 
 import (
@@ -23,6 +22,7 @@ import (
 	"io"
 	"os"
 	"time"
+	"unicode/utf8"
 
 	"github.com/asheshgoplani/agent-deck/internal/termreply"
 	tea "github.com/charmbracelet/bubbletea"
@@ -42,6 +42,9 @@ const (
 	shiftEnterMarker   rune = 0xE5E5
 	ctrlTabMarker      rune = 0xE5E6
 	ctrlShiftTabMarker rune = 0xE5E7
+	ctrlReleaseMarker  rune = 0xE5E8
+	ctrlTabFallback    rune = 0xE5E9
+	ctrlShiftFallback  rune = 0xE5EA
 )
 
 // DisableKittyKeyboard writes the escape sequence that pops the Kitty keyboard
@@ -53,33 +56,52 @@ func DisableKittyKeyboard(w io.Writer) {
 	_, _ = io.WriteString(w, "\x1b[<u")
 }
 
-// RestoreLegacyKeyboardCmd returns a tea.Cmd that pops the Kitty keyboard
-// protocol stack, restoring legacy key reporting on the given writer.
+// EnableTUIKeyboardProtocolsCmd returns a tea.Cmd that resets any keyboard
+// mode left by the foreground process and enables the protocols consumed by
+// the dashboard on the given writer.
 //
-// This is the cleanup half of the attach/detach symmetry: when the dashboard
-// hands control to tmux via tea.Exec, tmux's extended-keys setting activates
-// Kitty/modifyOtherKeys on the outer terminal. Those settings persist after
-// the user detaches, so the outer terminal keeps sending CSI u sequences that
-// Bubble Tea v1.3.10 cannot parse, silently dropping shifted keys (capitals)
-// on the dashboard. Dispatching this command after tea.Exec returns undoes the
-// state tmux set.
+// Bubble Tea invokes Home.Init after entering its alternate screen and invokes
+// attach callbacks after restoring that screen. Kitty-compatible terminals
+// keep separate keyboard state for the main and alternate screens, so both
+// boundaries must enable the protocol after the alternate screen is active.
 //
 // Takes a writer so tests can substitute a buffer for os.Stdout.
-func RestoreLegacyKeyboardCmd(w io.Writer) tea.Cmd {
+func EnableTUIKeyboardProtocolsCmd(w io.Writer) tea.Cmd {
 	return func() tea.Msg {
-		DisableKittyKeyboard(w)
+		EnableTUIKeyboardProtocols(w)
 		return nil
 	}
 }
 
-// EnableKittyKeyboard writes the escape sequence that pushes Kitty keyboard
-// mode 1 (disambiguate) onto the protocol stack. This re-enables extended key
-// reporting so that sequences like Shift+Enter are sent as CSI u codes.
+// EnableTUIKeyboardProtocolsAfterSwitchCmd restores dashboard keyboard mode
+// after an attached session switch. When the attach reader already consumed
+// the final Ctrl release in the same read as Ctrl+Tab, the returned command
+// relays that release only after protocol restoration has completed.
+func EnableTUIKeyboardProtocolsAfterSwitchCmd(w io.Writer, ctrlReleased bool) tea.Cmd {
+	return func() tea.Msg {
+		EnableTUIKeyboardProtocols(w)
+		if !ctrlReleased {
+			return nil
+		}
+		return tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{ctrlReleaseMarker}}
+	}
+}
+
+func ctrlReleaseHandoffCallbacks(w io.Writer) (begin, cancel func()) {
+	return func() { EnableKittyKeyboard(w) }, func() { DisableKittyKeyboard(w) }
+}
+
+// EnableKittyKeyboard writes the escape sequence that pushes the Kitty keyboard
+// flags consumed by NewCSIuReader onto the protocol stack: disambiguated escape
+// codes (1), event types (2), all keys as escape codes (8), and associated text
+// (16). The latter two are required for standalone Ctrl release events without
+// losing shifted punctuation or keyboard-layout text while all-key reporting is
+// active.
 // Call this before attaching to a session that needs Kitty keyboard support
 // (e.g. Claude Code). Pair with DisableKittyKeyboard to pop the stack on
 // return.
 func EnableKittyKeyboard(w io.Writer) {
-	_, _ = io.WriteString(w, "\x1b[>1u")
+	_, _ = io.WriteString(w, "\x1b[>27u")
 }
 
 // EnableModifyOtherKeys writes the xterm escape sequence that requests
@@ -114,11 +136,31 @@ func RestoreKittyKeyboard(w io.Writer) {
 	_, _ = io.WriteString(w, "\x1b[<u")
 }
 
+// EnableTUIKeyboardProtocols resets any leaked Kitty keyboard mode and enables
+// the terminal protocols consumed by NewCSIuReader while the dashboard owns the
+// terminal. Keeping this sequence in one helper prevents startup negotiation
+// from drifting away from the input parser's capabilities.
+func EnableTUIKeyboardProtocols(w io.Writer) {
+	DisableKittyKeyboard(w)
+	EnableKittyKeyboard(w)
+	EnableModifyOtherKeys(w)
+}
+
+// DisableTUIKeyboardProtocols restores the terminal protocols changed by
+// EnableTUIKeyboardProtocols before control returns to the user's shell.
+func DisableTUIKeyboardProtocols(w io.Writer) {
+	DisableModifyOtherKeys(w)
+	RestoreKittyKeyboard(w)
+}
+
 // ParseCSIu parses a Kitty keyboard protocol (CSI u) escape sequence and
 // returns the equivalent tea.KeyMsg. Returns nil if the data is not a valid
 // CSI u sequence.
 //
-// The CSI u format is:  ESC '[' <codepoint> [';' <modifier>] 'u'
+// The full CSI u format is:
+//
+//	ESC '[' <codepoint> [';' <modifier> [':' <event>]
+//	    [';' <associated-text-codepoints>]] 'u'
 //
 // Modifier encoding (1 + bitmask):
 //
@@ -129,39 +171,58 @@ func RestoreKittyKeyboard(w io.Writer) {
 //	5 = ctrl       (1 + 4)
 //	6 = shift+ctrl (1 + 1 + 4)
 func ParseCSIu(data []byte) *tea.KeyMsg {
+	msg, _ := parseCSIuEvent(data)
+	return msg
+}
+
+// parseCSIuEvent parses a CSI-u key event. handled distinguishes a valid event
+// that intentionally produces no Bubble Tea key (notably key releases) from an
+// invalid sequence that must pass through untouched.
+func parseCSIuEvent(data []byte) (*tea.KeyMsg, bool) {
 	// Minimum sequence: ESC [ <digit> u  (4 bytes)
 	if len(data) < 4 {
-		return nil
+		return nil, false
 	}
 	if data[0] != 0x1b || data[1] != '[' {
-		return nil
+		return nil, false
 	}
 	// Must end with 'u'
 	if data[len(data)-1] != 'u' {
-		return nil
+		return nil, false
 	}
 
-	// Parse the interior: <codepoint> or <codepoint>;<modifier>
+	// Parse the interior. Alternate key codes are not requested, but tolerate
+	// them by using the primary codepoint before the first colon.
 	interior := data[2 : len(data)-1]
-	semicolon := bytes.IndexByte(interior, ';')
+	fields := bytes.Split(interior, []byte{';'})
+	if len(fields) < 1 || len(fields) > 3 {
+		return nil, false
+	}
+	codepointField := fields[0]
+	if colon := bytes.IndexByte(codepointField, ':'); colon >= 0 {
+		codepointField = codepointField[:colon]
+	}
+	codepoint := parseDecimalBytes(codepointField)
+	if codepoint < 0 {
+		return nil, false
+	}
 
-	var codepoint int
-	modifier := 1 // default: no modifier
-
-	if semicolon < 0 {
-		// No modifier section
-		codepoint = parseDecimalBytes(interior)
-		if codepoint < 0 {
-			return nil
+	modifier := 1  // default: no modifier
+	eventType := 1 // press is the protocol default
+	if len(fields) >= 2 {
+		modifierEvent := bytes.Split(fields[1], []byte{':'})
+		if len(modifierEvent) < 1 || len(modifierEvent) > 2 {
+			return nil, false
 		}
-	} else {
-		codepoint = parseDecimalBytes(interior[:semicolon])
-		if codepoint < 0 {
-			return nil
-		}
-		modifier = parseDecimalBytes(interior[semicolon+1:])
+		modifier = parseDecimalBytes(modifierEvent[0])
 		if modifier < 1 {
-			return nil
+			return nil, false
+		}
+		if len(modifierEvent) == 2 {
+			eventType = parseDecimalBytes(modifierEvent[1])
+			if eventType < 1 || eventType > 3 {
+				return nil, false
+			}
 		}
 	}
 
@@ -171,6 +232,47 @@ func ParseCSIu(data []byte) *tea.KeyMsg {
 	altHeld := (bitmask & 0x02) != 0
 	ctrlHeld := (bitmask & 0x04) != 0
 
+	// With report-all-keys enabled, modifier keys get their own events. Emit one
+	// private marker only when the last physical Ctrl key is released; if the
+	// other Ctrl remains down, the protocol keeps ctrlHeld set. All other
+	// releases and modifier-only events are consumed so Bubble Tea never treats
+	// them as duplicate presses or private-use text.
+	const (
+		leftShiftKey   = 57441
+		leftControlKey = 57442
+		rightMetaKey   = 57452
+		rightCtrlKey   = 57448
+	)
+	if eventType == 3 {
+		if (codepoint == leftControlKey || codepoint == rightCtrlKey) && !ctrlHeld {
+			msg := tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{ctrlReleaseMarker}}
+			return &msg, true
+		}
+		return nil, true
+	}
+	if codepoint >= leftShiftKey && codepoint <= rightMetaKey {
+		return nil, true
+	}
+
+	// Associated text is authoritative for text-producing keys in report-all
+	// mode. It preserves shifted punctuation and the active keyboard layout;
+	// the primary codepoint is intentionally the unshifted physical key.
+	if len(fields) == 3 {
+		textFields := bytes.Split(fields[2], []byte{':'})
+		runes := make([]rune, 0, len(textFields))
+		for _, field := range textFields {
+			value := parseDecimalBytes(field)
+			if value < 0 || value > utf8.MaxRune || !utf8.ValidRune(rune(value)) {
+				return nil, false
+			}
+			runes = append(runes, rune(value))
+		}
+		if len(runes) > 0 {
+			msg := tea.KeyMsg{Type: tea.KeyRunes, Runes: runes, Alt: altHeld}
+			return &msg, true
+		}
+	}
+
 	// Map well-known control codepoints to tea key types.
 	switch codepoint {
 	case 13: // CR = Enter
@@ -179,11 +281,11 @@ func ParseCSIu(data []byte) *tea.KeyMsg {
 			// relay it via a Private-Use-Area rune. home.go's
 			// normalizeMainKey rewrites this back to "shift+enter". See
 			// issue #1093.
-			msg := tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{shiftEnterMarker}}
-			return &msg
+			msg := tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{shiftEnterMarker}, Alt: altHeld}
+			return &msg, true
 		}
-		msg := tea.KeyMsg{Type: tea.KeyEnter}
-		return &msg
+		msg := tea.KeyMsg{Type: tea.KeyEnter, Alt: altHeld}
+		return &msg, true
 	case 9: // HT = Tab
 		if ctrlHeld && !altHeld {
 			marker := ctrlTabMarker
@@ -191,41 +293,44 @@ func ParseCSIu(data []byte) *tea.KeyMsg {
 				marker = ctrlShiftTabMarker
 			}
 			msg := tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{marker}}
-			return &msg
+			return &msg, true
 		}
 		if shiftHeld {
-			msg := tea.KeyMsg{Type: tea.KeyShiftTab}
-			return &msg
+			msg := tea.KeyMsg{Type: tea.KeyShiftTab, Alt: altHeld}
+			return &msg, true
 		}
-		msg := tea.KeyMsg{Type: tea.KeyTab}
-		return &msg
+		msg := tea.KeyMsg{Type: tea.KeyTab, Alt: altHeld}
+		return &msg, true
 	case 27: // ESC
-		msg := tea.KeyMsg{Type: tea.KeyEsc}
-		return &msg
+		msg := tea.KeyMsg{Type: tea.KeyEsc, Alt: altHeld}
+		return &msg, true
 	case 127: // DEL = Backspace
-		msg := tea.KeyMsg{Type: tea.KeyBackspace}
-		return &msg
+		msg := tea.KeyMsg{Type: tea.KeyBackspace, Alt: altHeld}
+		return &msg, true
 	case 32: // Space
-		msg := tea.KeyMsg{Type: tea.KeySpace}
-		return &msg
+		msg := tea.KeyMsg{Type: tea.KeySpace, Alt: altHeld}
+		return &msg, true
 	}
 
 	// Ctrl-modified regular keys: Ctrl+a = 0x01, Ctrl+b = 0x02, …
 	if ctrlHeld && codepoint >= 97 && codepoint <= 122 {
 		// 'a'=97 -> ctrl sequence 1, 'b'=98 -> 2, …
 		ctrlRune := rune(codepoint - 96)
-		msg := tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{ctrlRune}}
-		return &msg
+		msg := tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{ctrlRune}, Alt: altHeld}
+		return &msg, true
 	}
 
 	// Regular rune: apply shift to lowercase letters.
 	r := rune(codepoint) // #nosec G115 -- codepoint parsed from CSI/xterm sequence, validated >= 0 above
+	if !utf8.ValidRune(r) {
+		return nil, false
+	}
 	if shiftHeld && r >= 'a' && r <= 'z' {
 		r = r - 'a' + 'A'
 	}
 
-	msg := tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}}
-	return &msg
+	msg := tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}, Alt: altHeld}
+	return &msg, true
 }
 
 // ParseModifyOtherKeys parses an xterm modifyOtherKeys escape sequence and
@@ -279,40 +384,43 @@ func ParseModifyOtherKeys(data []byte) *tea.KeyMsg {
 	case 13:
 		if shiftHeld {
 			// See ParseCSIu / shiftEnterMarker comment. Issue #1093.
-			msg := tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{shiftEnterMarker}}
+			msg := tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{shiftEnterMarker}, Alt: altHeld}
 			return &msg
 		}
-		msg := tea.KeyMsg{Type: tea.KeyEnter}
+		msg := tea.KeyMsg{Type: tea.KeyEnter, Alt: altHeld}
 		return &msg
 	case 9:
 		if ctrlHeld && !altHeld {
-			marker := ctrlTabMarker
+			// xterm modifyOtherKeys has no release-event protocol. Use a
+			// distinct marker so the switcher can retain its idle-commit
+			// compatibility path instead of waiting forever for Ctrl release.
+			marker := ctrlTabFallback
 			if shiftHeld {
-				marker = ctrlShiftTabMarker
+				marker = ctrlShiftFallback
 			}
 			msg := tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{marker}}
 			return &msg
 		}
 		if shiftHeld {
-			msg := tea.KeyMsg{Type: tea.KeyShiftTab}
+			msg := tea.KeyMsg{Type: tea.KeyShiftTab, Alt: altHeld}
 			return &msg
 		}
-		msg := tea.KeyMsg{Type: tea.KeyTab}
+		msg := tea.KeyMsg{Type: tea.KeyTab, Alt: altHeld}
 		return &msg
 	case 27:
-		msg := tea.KeyMsg{Type: tea.KeyEsc}
+		msg := tea.KeyMsg{Type: tea.KeyEsc, Alt: altHeld}
 		return &msg
 	case 127:
-		msg := tea.KeyMsg{Type: tea.KeyBackspace}
+		msg := tea.KeyMsg{Type: tea.KeyBackspace, Alt: altHeld}
 		return &msg
 	case 32:
-		msg := tea.KeyMsg{Type: tea.KeySpace}
+		msg := tea.KeyMsg{Type: tea.KeySpace, Alt: altHeld}
 		return &msg
 	}
 
 	if ctrlHeld && codepoint >= 97 && codepoint <= 122 {
 		ctrlRune := rune(codepoint - 96)
-		msg := tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{ctrlRune}}
+		msg := tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{ctrlRune}, Alt: altHeld}
 		return &msg
 	}
 
@@ -321,8 +429,58 @@ func ParseModifyOtherKeys(data []byte) *tea.KeyMsg {
 		r = r - 'a' + 'A'
 	}
 
-	msg := tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}}
+	msg := tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}, Alt: altHeld}
 	return &msg
+}
+
+// translateKittyFunctionalEvent converts the event-typed form of Kitty legacy
+// functional keys back to the escape sequences Bubble Tea v1 understands.
+// Examples: CSI 1;1:1 A becomes CSI A, and CSI 5;1:1 ~ becomes CSI 5 ~.
+// Release events are consumed rather than replayed as duplicate key presses.
+func translateKittyFunctionalEvent(data []byte) ([]byte, bool) {
+	if len(data) < 6 || data[0] != 0x1b || data[1] != '[' {
+		return nil, false
+	}
+	final := data[len(data)-1]
+	switch final {
+	case '~', 'A', 'B', 'C', 'D', 'E', 'F', 'H', 'P', 'Q', 'R', 'S':
+		// Kitty's legacy functional-key terminators.
+	default:
+		return nil, false
+	}
+	interior := data[2 : len(data)-1]
+	fields := bytes.Split(interior, []byte{';'})
+	if len(fields) < 2 {
+		return nil, false
+	}
+	modifierEvent := bytes.Split(fields[len(fields)-1], []byte{':'})
+	if len(modifierEvent) != 2 {
+		return nil, false
+	}
+	modifier := parseDecimalBytes(modifierEvent[0])
+	eventType := parseDecimalBytes(modifierEvent[1])
+	if modifier < 1 || eventType < 1 || eventType > 3 {
+		return nil, false
+	}
+	if eventType == 3 {
+		return nil, true
+	}
+
+	baseFields := fields[:len(fields)-1]
+	out := []byte{0x1b, '['}
+	if final == '~' {
+		out = append(out, bytes.Join(baseFields, []byte{';'})...)
+		if modifier != 1 {
+			out = append(out, ';')
+			out = append(out, modifierEvent[0]...)
+		}
+	} else if modifier != 1 {
+		out = append(out, bytes.Join(baseFields, []byte{';'})...)
+		out = append(out, ';')
+		out = append(out, modifierEvent[0]...)
+	}
+	out = append(out, final)
+	return out, true
 }
 
 // parseDecimalBytes parses a decimal integer from a byte slice.
@@ -372,9 +530,8 @@ func (r *csiuFileReader) Read(p []byte) (int, error) {
 	return r.inner.Read(p)
 }
 
-// NewCSIuReader returns a reader that wraps r and translates any CSI u
-// sequences to their legacy equivalents. This is a belt-and-suspenders
-// fallback for terminals that do not honor DisableKittyKeyboard.
+// NewCSIuReader returns a reader that wraps r and translates CSI u and
+// modifyOtherKeys sequences to their legacy equivalents for Bubble Tea.
 //
 // If r is a *os.File, the returned reader also implements the *os.File
 // interface (preserving Fd() for terminal raw-mode setup by Bubble Tea).
@@ -452,6 +609,38 @@ func (c *csiuReader) Read(p []byte) (int, error) {
 			}
 			// More bytes incoming — loop to bundle them with the ESC.
 		}
+	}
+}
+
+// appendLegacyKey converts a parsed key to the byte sequence Bubble Tea's
+// legacy input decoder expects. In legacy terminal encoding, an ESC prefix
+// carries the Alt modifier for both printable and special keys.
+func appendLegacyKey(out []byte, msg *tea.KeyMsg, fallback []byte) []byte {
+	start := len(out)
+	if msg.Alt {
+		out = append(out, 0x1b)
+	}
+
+	switch msg.Type {
+	case tea.KeyEnter:
+		return append(out, '\r')
+	case tea.KeyTab:
+		return append(out, '\t')
+	case tea.KeyShiftTab:
+		return append(out, []byte("\x1b[Z")...)
+	case tea.KeyEsc:
+		return append(out, 0x1b)
+	case tea.KeyBackspace:
+		return append(out, 127)
+	case tea.KeySpace:
+		return append(out, ' ')
+	case tea.KeyRunes:
+		for _, r := range msg.Runes {
+			out = append(out, []byte(string(r))...)
+		}
+		return out
+	default:
+		return append(out[:start], fallback...)
 	}
 }
 
@@ -541,29 +730,15 @@ func (c *csiuReader) translate(final bool) []byte {
 
 		seq := c.inBuf[i : j+1]
 		if c.inBuf[j] != 'u' {
+			if translated, handled := translateKittyFunctionalEvent(seq); handled {
+				out = append(out, translated...)
+				i = j + 1
+				continue
+			}
 			// Check for modifyOtherKeys format: ESC[27;modifier;codepoint~
 			if c.inBuf[j] == '~' {
 				if msg := ParseModifyOtherKeys(seq); msg != nil {
-					switch msg.Type {
-					case tea.KeyEnter:
-						out = append(out, '\r')
-					case tea.KeyTab:
-						out = append(out, '\t')
-					case tea.KeyShiftTab:
-						out = append(out, []byte("\x1b[Z")...)
-					case tea.KeyEsc:
-						out = append(out, 0x1b)
-					case tea.KeyBackspace:
-						out = append(out, 127)
-					case tea.KeySpace:
-						out = append(out, ' ')
-					case tea.KeyRunes:
-						for _, r := range msg.Runes {
-							out = append(out, []byte(string(r))...)
-						}
-					default:
-						out = append(out, seq...)
-					}
+					out = appendLegacyKey(out, msg, seq)
 					i = j + 1
 					continue
 				}
@@ -575,35 +750,15 @@ func (c *csiuReader) translate(final bool) []byte {
 		}
 
 		// Potential CSI u sequence: c.inBuf[i..j] inclusive
-		msg := ParseCSIu(seq)
-		if msg == nil {
+		msg, handled := parseCSIuEvent(seq)
+		if !handled {
 			// Not a valid CSI u, pass through
 			out = append(out, seq...)
 			i = j + 1
 			continue
 		}
-
-		// Translate to legacy bytes
-		switch msg.Type {
-		case tea.KeyEnter:
-			out = append(out, '\r')
-		case tea.KeyTab:
-			out = append(out, '\t')
-		case tea.KeyShiftTab:
-			out = append(out, []byte("\x1b[Z")...)
-		case tea.KeyEsc:
-			out = append(out, 0x1b)
-		case tea.KeyBackspace:
-			out = append(out, 127)
-		case tea.KeySpace:
-			out = append(out, ' ')
-		case tea.KeyRunes:
-			for _, r := range msg.Runes {
-				out = append(out, []byte(string(r))...)
-			}
-		default:
-			// Unknown mapped type, pass original sequence through
-			out = append(out, seq...)
+		if msg != nil {
+			out = appendLegacyKey(out, msg, seq)
 		}
 
 		i = j + 1

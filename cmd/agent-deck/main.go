@@ -28,6 +28,7 @@ import (
 
 	"github.com/asheshgoplani/agent-deck/internal/costs"
 	"github.com/asheshgoplani/agent-deck/internal/feedback"
+	"github.com/asheshgoplani/agent-deck/internal/fleet"
 	"github.com/asheshgoplani/agent-deck/internal/git"
 	"github.com/asheshgoplani/agent-deck/internal/intervalhook"
 	"github.com/asheshgoplani/agent-deck/internal/logging"
@@ -40,8 +41,8 @@ import (
 	"github.com/asheshgoplani/agent-deck/internal/web"
 )
 
-var Version = "1.13.9" // overridden at build time via -ldflags "-X main.Version=..."
-var Commit = ""        // overridden at build time via -ldflags "-X main.Commit=..."
+var Version = "1.13.13" // overridden at build time via -ldflags "-X main.Version=..."
+var Commit = ""         // overridden at build time via -ldflags "-X main.Commit=..."
 
 // Table column widths for list command output
 const (
@@ -305,6 +306,11 @@ func initColorProfile() {
 }
 
 func runAgentDeckMain() {
+	// Desktop launchers, user services, and already-running shells commonly
+	// omit ~/.local/bin even though agent harness installers place binaries
+	// there. Repair that inherited environment before any session is built.
+	ensureUserToolsOnPath()
+
 	// Make bare `tmux` invocations resolve even when launched from a minimal
 	// environment (notably a `terminal-notifier -execute` notification click,
 	// whose launchd PATH omits Homebrew's /opt/homebrew/bin). Must run before any
@@ -964,6 +970,35 @@ func runAgentDeckMain() {
 			// reads live data from storage on each request.
 			fmt.Println("Headless mode: TUI disabled")
 			fmt.Printf("Web server: http://%s\n", server.Addr())
+			// No bubbletea loop runs here, so the TUI's startup recovery
+			// prompt can never fire. Surface the same signal as a line,
+			// with the same criterion: sessions agent-deck saw alive
+			// within the recovery window whose tmux session is now gone
+			// (power loss, killed tmux server) — not the stale error
+			// backlog, which has no timestamps.
+			if _, instances, _, err := loadSessionData(effectiveProfile); err == nil {
+				activeWindow := session.DefaultRecoveryActiveWindow
+				if userCfg, cfgErr := session.LoadUserConfig(); cfgErr == nil && userCfg != nil {
+					activeWindow = userCfg.Recovery.GetActiveWindow()
+				}
+				det := fleet.NewDetector()
+				det.IncludeIdle = true
+				as := det.Assess(instances)
+				if activeWindow > 0 {
+					cutoff := time.Now().Add(-activeWindow)
+					filtered := make([]fleet.Candidate, 0, len(as.Candidates))
+					for _, c := range as.Candidates {
+						if c.Instance != nil && c.Instance.LastSeenAliveAt().After(cutoff) {
+							filtered = append(filtered, c)
+						}
+					}
+					as.Candidates = filtered
+					as.Down = len(filtered)
+				}
+				if as.Down > 0 {
+					fmt.Printf("NOTE: %d session(s) were open before the restart. Run `agent-deck fleet status`, or `agent-deck fleet recover --yes` to restore them.\n", as.Down)
+				}
+			}
 			var shutdownOnce sync.Once
 			shutdown := func() {
 				shutdownOnce.Do(func() {
@@ -998,31 +1033,6 @@ func runAgentDeckMain() {
 			_ = server.Shutdown(ctx)
 		}()
 	}
-
-	// Disable the Kitty keyboard protocol before starting the TUI.
-	// Wayland terminals (Ghostty, Foot, Alacritty) send keys using CSI u
-	// encoding by default; Bubble Tea v1.3.10 does not parse those sequences,
-	// so uppercase shortcuts and uppercase text input (including '_') are
-	// silently dropped. Pushing keyboard mode 0 (legacy) restores standard
-	// key reporting. Terminals that don't support the protocol ignore this
-	// sequence safely.
-	//
-	// As a belt-and-suspenders fallback, we also wrap os.Stdin with
-	// NewCSIuReader, which translates any remaining CSI u sequences (including
-	// Shift+hyphen → '_', codepoint 95) to their legacy byte equivalents
-	// before Bubble Tea sees them. This handles terminals that send CSI u
-	// sequences even after the disable request (e.g. tmux with extended-keys).
-	ui.DisableKittyKeyboard(os.Stdout)
-	defer ui.RestoreKittyKeyboard(os.Stdout)
-
-	// Issue #1093: also request xterm modifyOtherKeys mode 1 so iTerm2 (and
-	// other xterm-compatible terminals) send Shift+Enter as a distinct
-	// CSI 27;2;13~ sequence instead of plain '\r'. Without this, Bubble Tea
-	// v1.3.10 cannot distinguish Shift+Enter from Enter on a fresh launch,
-	// and the "open in new iTerm window" binding shipped in #1077 falls
-	// through to the in-pane attach handler. Plain Enter is unaffected.
-	ui.EnableModifyOtherKeys(os.Stdout)
-	defer ui.DisableModifyOtherKeys(os.Stdout)
 
 	// Check for atuin pty-proxy incompatibility (#1558).
 	// Atuin pty-proxy intercepts PTY I/O and breaks Bubble Tea's TUI rendering.
@@ -1072,7 +1082,10 @@ func runAgentDeckMain() {
 		p.Send(ui.MaintenanceCompleteMsg{Result: result})
 	})
 
-	if _, err := p.Run(); err != nil {
+	if err := runWithKeyboardCleanup(func() error {
+		_, err := p.Run()
+		return err
+	}, os.Stdout); err != nil {
 		uiLog := logging.ForComponent(logging.CompUI)
 		uiLog.Error("tui_run_failed", slog.String("error", err.Error()))
 		os.Exit(1)
@@ -1082,6 +1095,16 @@ func runAgentDeckMain() {
 		// process resurrection by a racing executable replacement.
 		cancelRuntimeHandoff()
 	}
+}
+
+// runWithKeyboardCleanup runs Bubble Tea and restores keyboard protocols after
+// Program.Run returns. At that point Bubble Tea has already switched from its
+// alternate screen back to the terminal's main screen, so this complements the
+// alternate-screen cleanup performed by Home's final shutdown path. Both are
+// needed because Kitty-compatible terminals keep keyboard state per screen.
+func runWithKeyboardCleanup(run func() error, w io.Writer) (err error) {
+	defer ui.DisableTUIKeyboardProtocols(w)
+	return run()
 }
 
 // globalFlagSubcommands lists every token that main()'s dispatch switch treats

@@ -1,12 +1,15 @@
 package tuitest
 
 import (
+	"bytes"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/creack/pty"
 )
 
 // skipIfNoTmuxServer skips the test if tmux binary is missing or server isn't running.
@@ -148,6 +151,77 @@ func truncate(s string, max int) string {
 func killSession(t *testing.T, sessionName string) {
 	t.Helper()
 	_ = exec.Command("tmux", "kill-session", "-t", sessionName).Run()
+}
+
+// TestSmoke_TUIRequestsCtrlReleaseReportingInAltScreen launches the real TUI on
+// a PTY and verifies the Kitty flags needed for Ctrl release reporting are
+// enabled after Bubble Tea enters its alternate screen. Kitty-compatible
+// terminals keep separate keyboard protocol state per screen, so enabling them
+// only on the main screen leaves the dashboard without release events.
+func TestSmoke_TUIRequestsCtrlReleaseReportingInAltScreen(t *testing.T) {
+	binary := buildBinary(t)
+	cmd := exec.Command(binary)
+	cmd.Env = append(os.Environ(), "AGENTDECK_PROFILE=_test", "AGENTDECK_SKIP_UPDATE_CHECK=1")
+
+	terminal, err := pty.Start(cmd)
+	if err != nil {
+		t.Fatalf("start TUI PTY: %v", err)
+	}
+	done := make(chan struct{})
+	defer func() {
+		close(done)
+		_ = terminal.Close()
+		_ = cmd.Process.Kill()
+		_, _ = cmd.Process.Wait()
+	}()
+
+	chunks := make(chan []byte, 1)
+	readErrs := make(chan error, 1)
+	go func() {
+		buffer := make([]byte, 4096)
+		for {
+			n, readErr := terminal.Read(buffer)
+			if n > 0 {
+				chunk := append([]byte(nil), buffer[:n]...)
+				select {
+				case chunks <- chunk:
+				case <-done:
+					return
+				}
+			}
+			if readErr != nil {
+				select {
+				case readErrs <- readErr:
+				case <-done:
+				}
+				return
+			}
+		}
+	}()
+
+	altScreen := []byte("\x1b[?1049h")
+	kittyEnable := []byte("\x1b[>27u")
+	timeout := time.NewTimer(5 * time.Second)
+	defer timeout.Stop()
+	var output bytes.Buffer
+	for {
+		select {
+		case chunk := <-chunks:
+			_, _ = output.Write(chunk)
+			altIndex := bytes.Index(output.Bytes(), altScreen)
+			kittyIndex := bytes.LastIndex(output.Bytes(), kittyEnable)
+			if altIndex >= 0 && kittyIndex > altIndex {
+				return
+			}
+		case readErr := <-readErrs:
+			t.Fatalf("read TUI startup output: %v (output %q)", readErr, truncate(output.String(), 1000))
+		case <-timeout.C:
+			t.Fatalf(
+				"TUI did not enable Kitty Ctrl-release reporting after entering alternate screen (output %q)",
+				truncate(output.String(), 1000),
+			)
+		}
+	}
 }
 
 // TestSmoke_TUIRenders builds the binary, launches it in tmux, and verifies the TUI renders.
