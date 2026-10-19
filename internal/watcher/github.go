@@ -109,7 +109,7 @@ func (a *GitHubAdapter) Listen(ctx context.Context, events chan<- Event) error {
 		shutCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
 		_ = a.server.Shutdown(shutCtx)
-		<-errCh
+		_ = <-errCh // Shutdown's expected server-close result does not replace cancellation.
 		return nil
 	case srvErr := <-errCh:
 		if errors.Is(srvErr, http.ErrServerClosed) {

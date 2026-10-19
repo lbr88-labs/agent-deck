@@ -94,8 +94,8 @@ func (a *WebhookAdapter) Listen(ctx context.Context, events chan<- Event) error 
 		shutCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
 		_ = a.server.Shutdown(shutCtx)
-		// Drain the server error
-		<-errCh
+		// Shutdown's expected server-close result does not replace cancellation.
+		_ = <-errCh
 		return nil
 	case srvErr := <-errCh:
 		if errors.Is(srvErr, http.ErrServerClosed) {

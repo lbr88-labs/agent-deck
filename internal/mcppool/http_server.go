@@ -394,7 +394,7 @@ func (s *HTTPServer) Stop() error {
 			// #1163: SIGKILL the entire process group (negative pid), not just
 			// the leader, so grandchildren cannot be orphaned under PID 1.
 			_ = syscall.Kill(-s.process.Process.Pid, syscall.SIGKILL)
-			<-done
+			_ = <-done // SIGKILL exit errors are expected after forced cleanup.
 		}
 		httpLog.Info("process_stopped", slog.String("mcp", s.name))
 	} else if s.process == nil && !s.startedByUs {
