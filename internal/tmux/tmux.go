@@ -4118,7 +4118,20 @@ func (s *Session) GetStatus() (string, error) {
 	// Claude Code sets pane titles via OSC sequences: Braille spinner while working,
 	// ✳ markers when done. One character check replaces full CapturePane + content scan.
 	if paneInfo, ok := GetCachedPaneInfo(s.Name); ok {
-		titleState := AnalyzePaneTitle(paneInfo.Title, paneInfo.CurrentCommand)
+		// Codex also animates its title while its lifecycle label is Starting
+		// or Ready. That is not turn activity; use its pane busy/prompt rules.
+		// Prefer the session's known tool because Claude can run codex as a
+		// child command, and Codex can run a shell without changing providers.
+		s.mu.Lock()
+		tool := inferToolFromSessionFields(s.detectedTool, s.customToolName, s.Command)
+		s.mu.Unlock()
+		if tool == "" {
+			tool = detectToolFromCommand(paneInfo.CurrentCommand)
+		}
+		titleState := TitleStateUnknown
+		if tool != "codex" {
+			titleState = AnalyzePaneTitle(paneInfo.Title, paneInfo.CurrentCommand)
+		}
 		switch titleState {
 		case TitleStateWorking:
 			// Braille spinner in title = actively working. Short-circuit completely.

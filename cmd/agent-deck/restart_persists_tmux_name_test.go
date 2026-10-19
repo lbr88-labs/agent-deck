@@ -156,6 +156,10 @@ func newCLIRestartFixture(t *testing.T, profile string) (*session.Storage, *sess
 		t.Fatalf("write codex stub: %v", err)
 	}
 	t.Setenv("PATH", stubDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	codexHome := t.TempDir()
+	t.Setenv("CODEX_HOME", codexHome)
+	session.ClearUserConfigCache()
+	t.Cleanup(session.ClearUserConfigCache)
 
 	prev := statedb.GetGlobal()
 	statedb.SetGlobal(nil)
@@ -168,6 +172,9 @@ func newCLIRestartFixture(t *testing.T, profile string) (*session.Storage, *sess
 	t.Cleanup(func() { _ = storage.Close() })
 
 	inst := session.NewInstanceWithTool("cli-restart-target", t.TempDir(), "codex")
+	inst.Command = stub
+	inst.CodexSessionID = "019f2222-2222-4222-8222-333333333333"
+	writeCodexRolloutForCLI(t, codexHome, inst.CodexSessionID)
 	inst.Status = session.StatusRunning
 	inst.GroupPath = session.DefaultGroupPath
 	inst.SetTmuxSessionForTest(tmux.ReconnectSessionLazy(

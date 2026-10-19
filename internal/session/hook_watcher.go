@@ -142,6 +142,8 @@ type HookStatus struct {
 	CodexCompletedGeneration string
 	CodexStartedSessionID    string
 	CodexCompletedSessionID  string
+	CodexEmitterPID          int
+	CodexEmitterIdentity     string
 	HookGeneration           string
 	Sequence                 uint64
 	codexCompletionConsumed  bool
@@ -509,6 +511,8 @@ func (w *StatusFileWatcher) scanDirEntriesInto(out map[string]*HookStatus, dir s
 			CodexCompletedGeneration string `json:"codex_completed_generation"`
 			CodexStartedSessionID    string `json:"codex_started_session_id"`
 			CodexCompletedSessionID  string `json:"codex_completed_session_id"`
+			CodexEmitterPID          int    `json:"codex_emitter_pid"`
+			CodexEmitterIdentity     string `json:"codex_emitter_identity"`
 			HookGeneration           string `json:"hook_generation"`
 			Sequence                 uint64 `json:"sequence"`
 		}
@@ -531,6 +535,8 @@ func (w *StatusFileWatcher) scanDirEntriesInto(out map[string]*HookStatus, dir s
 			CodexCompletedGeneration: raw.CodexCompletedGeneration,
 			CodexStartedSessionID:    raw.CodexStartedSessionID,
 			CodexCompletedSessionID:  raw.CodexCompletedSessionID,
+			CodexEmitterPID:          raw.CodexEmitterPID,
+			CodexEmitterIdentity:     raw.CodexEmitterIdentity,
 			HookGeneration:           raw.HookGeneration,
 			Sequence:                 raw.Sequence,
 		}
@@ -678,6 +684,8 @@ func (w *StatusFileWatcher) processFile(filePath string) {
 		CodexCompletedGeneration string `json:"codex_completed_generation"`
 		CodexStartedSessionID    string `json:"codex_started_session_id"`
 		CodexCompletedSessionID  string `json:"codex_completed_session_id"`
+		CodexEmitterPID          int    `json:"codex_emitter_pid"`
+		CodexEmitterIdentity     string `json:"codex_emitter_identity"`
 		HookGeneration           string `json:"hook_generation"`
 		Sequence                 uint64 `json:"sequence"`
 	}
@@ -707,6 +715,8 @@ func (w *StatusFileWatcher) processFile(filePath string) {
 		CodexCompletedGeneration: status.CodexCompletedGeneration,
 		CodexStartedSessionID:    status.CodexStartedSessionID,
 		CodexCompletedSessionID:  status.CodexCompletedSessionID,
+		CodexEmitterPID:          status.CodexEmitterPID,
+		CodexEmitterIdentity:     status.CodexEmitterIdentity,
 		HookGeneration:           status.HookGeneration,
 		Sequence:                 status.Sequence,
 	}

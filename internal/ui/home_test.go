@@ -606,6 +606,64 @@ func TestHomeCodexImportSelectionCreatesPersistedStoppedSession(t *testing.T) {
 	}
 }
 
+func TestHomeCodexImportRejectsAnotherRowsConversation(t *testing.T) {
+	home := setXDGTestHome(t)
+	codexHome := filepath.Join(home, ".codex")
+	t.Setenv("CODEX_HOME", codexHome)
+	const id = "019f2222-2222-4222-8222-222222222222"
+	writeCodexRolloutForHomeImport(t, codexHome, id)
+	h := &Home{instances: []*session.Instance{{ID: "owner", Title: "original", Tool: "codex", CodexSessionID: id}}}
+	message := h.createSessionFromCodexImport(session.CodexIndexEntry{ID: id, ThreadName: "duplicate"}, false)().(sessionCreatedMsg)
+	if message.err == nil || message.instance != nil || !strings.Contains(message.err.Error(), "already imported") {
+		t.Fatalf("duplicate explicit import was not refused: %+v", message)
+	}
+}
+
+func TestHomeCodexImportRejectsDuplicateDuringConcurrentListAndTitleUpdates(t *testing.T) {
+	home := setXDGTestHome(t)
+	codexHome := filepath.Join(home, ".codex")
+	t.Setenv("CODEX_HOME", codexHome)
+	const id = "019f2222-2222-4222-8222-222222222222"
+	writeCodexRolloutForHomeImport(t, codexHome, id)
+	owner := &session.Instance{ID: "owner", Title: "original", Tool: "codex", CodexSessionID: id}
+	other := &session.Instance{ID: "other", Title: "unrelated", Tool: "codex"}
+	lists := [][]*session.Instance{{owner}, {other, owner}}
+	titles := []string{"original", "renamed"}
+	h := &Home{instances: lists[0]}
+	importSession := h.createSessionFromCodexImport(session.CodexIndexEntry{ID: id, ThreadName: "duplicate"}, false)
+
+	started := make(chan struct{})
+	stop, done := make(chan struct{}), make(chan struct{})
+	go func() {
+		defer close(done)
+		close(started)
+		for n := 0; ; n++ {
+			select {
+			case <-stop:
+				return
+			default:
+			}
+			h.instancesMu.Lock()
+			h.instances = lists[n%len(lists)]
+			h.instancesMu.Unlock()
+			owner.SetTitleThreadSafe(titles[n%len(titles)])
+		}
+	}()
+	defer func() {
+		close(stop)
+		<-done
+	}()
+	<-started
+
+	for range 32 {
+		message := importSession().(sessionCreatedMsg)
+		if message.err == nil || message.instance != nil ||
+			!strings.Contains(message.err.Error(), "already imported") || !strings.Contains(message.err.Error(), "(owner)") {
+			t.Fatalf("concurrent registry update bypassed duplicate ownership: %+v", message)
+		}
+	}
+}
+
 func TestHomeClaudeImportSelectionCreatesPersistedStoppedSession(t *testing.T) {
 	homeDir := setXDGTestHome(t)
 	claudeDir := filepath.Join(homeDir, ".claude")

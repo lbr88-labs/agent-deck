@@ -84,8 +84,8 @@ func TestBuildCodexCommandWithPromptCustomCommandFallsBackToTyping(t *testing.T)
 }
 
 func TestBuildCodexCommandWithPromptResumeFallsBackToTyping(t *testing.T) {
-	// buildCodexCommand drops a session id with no rollout on disk (#756), which is a
-	// fresh start; a resumable session needs its rollout file to exist.
+	// Resuming an exact binding must preserve it; prompt delivery then falls
+	// back to typing rather than treating a missing transcript as a fresh start.
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	t.Setenv("CODEX_HOME", filepath.Join(home, ".codex"))

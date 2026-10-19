@@ -12,6 +12,7 @@ import (
 	"testing"
 
 	"github.com/asheshgoplani/agent-deck/internal/session"
+	"github.com/asheshgoplani/agent-deck/internal/testutil"
 	"github.com/asheshgoplani/agent-deck/internal/tmux"
 )
 
@@ -191,7 +192,7 @@ func TestLocalActionBackendAcknowledgePersistsIdleAndClearsHook(t *testing.T) {
 
 func TestLocalActionBackendMarkUnreadPersistsAcknowledgementReset(t *testing.T) {
 	isolateHubActionConfig(t)
-	t.Setenv("TMUX_TMPDIR", t.TempDir())
+	t.Cleanup(testutil.IsolateTmuxSocket())
 	const profile = "hub-mark-unread"
 	const sessionID = "viewed-codex"
 
@@ -205,6 +206,7 @@ func TestLocalActionBackendMarkUnreadPersistsAcknowledgementReset(t *testing.T) 
 	}
 	tmuxSession := tmux.NewSession("missing-mark-unread-pane", inst.ProjectPath)
 	tmuxSession.SocketName = "hub-mark-unread-test"
+	inst.TmuxSocketName = tmuxSession.SocketName
 	inst.SetTmuxSessionForTest(tmuxSession)
 	if err := storage.Save([]*session.Instance{inst}); err != nil {
 		t.Fatalf("Save: %v", err)

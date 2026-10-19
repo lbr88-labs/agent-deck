@@ -334,7 +334,7 @@ func runSendKeysBounded(cmd *exec.Cmd) error {
 		// Best-effort reap so we don't leak a zombie, but bounded: a process
 		// wedged in uninterruptible sleep must not make us hang past the grace.
 		select {
-		case <-done:
+		case _ = <-done: // Preserve the timeout result after forced cleanup.
 		case <-time.After(sendKeysReapGrace):
 		}
 		return errSendKeysTimeout

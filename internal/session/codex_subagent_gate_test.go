@@ -109,12 +109,12 @@ func TestCodexHookRebind_RejectsSubagentThread(t *testing.T) {
 	seedCodexRolloutWithMeta(t, codexHome, childSID, "subagent", mainSID, true)
 
 	inst.CodexSessionID = mainSID
-	inst.UpdateHookStatus(&HookStatus{
+	inst.UpdateHookStatus(ownedCodexHook(t, inst, &HookStatus{
 		Status:    "running",
 		SessionID: childSID,
 		Event:     "agent-turn-complete",
 		UpdatedAt: time.Now(),
-	})
+	}))
 
 	if inst.CodexSessionID != mainSID {
 		t.Fatalf("subagent turn-complete hook must not usurp the binding: "+
@@ -128,12 +128,12 @@ func TestCodexHookRebind_ColdStartRejectsSubagentThread(t *testing.T) {
 	childSID := uniqueSID(t)
 	seedCodexRolloutWithMeta(t, codexHome, childSID, "subagent", uniqueSID(t), false)
 
-	inst.UpdateHookStatus(&HookStatus{
+	inst.UpdateHookStatus(ownedCodexHook(t, inst, &HookStatus{
 		Status:    "running",
 		SessionID: childSID,
 		Event:     "agent-turn-complete",
 		UpdatedAt: time.Now(),
-	})
+	}))
 
 	if inst.CodexSessionID != "" {
 		t.Fatalf("cold start must not bind a subagent thread (the probe finds "+
@@ -150,12 +150,12 @@ func TestCodexHookRebind_AllowsUserThread(t *testing.T) {
 	seedCodexRolloutWithMeta(t, codexHome, newSID, "user", "", false)
 
 	inst.CodexSessionID = oldSID
-	inst.UpdateHookStatus(&HookStatus{
+	inst.UpdateHookStatus(ownedCodexHook(t, inst, &HookStatus{
 		Status:    "running",
 		SessionID: newSID,
 		Event:     "agent-turn-complete",
 		UpdatedAt: time.Now(),
-	})
+	}))
 
 	if inst.CodexSessionID != newSID {
 		t.Fatalf("user-thread rebind (e.g. /new rotation) must still work: got %q, want %q",
@@ -163,7 +163,7 @@ func TestCodexHookRebind_AllowsUserThread(t *testing.T) {
 	}
 }
 
-func TestCodexHookRebind_AllowsUnflushedCandidate(t *testing.T) {
+func TestCodexHookRebind_DefersUnflushedCandidate(t *testing.T) {
 	inst, codexHome := newCodexGateInstance(t)
 
 	oldSID := uniqueSID(t)
@@ -171,16 +171,16 @@ func TestCodexHookRebind_AllowsUnflushedCandidate(t *testing.T) {
 	newSID := uniqueSID(t) // no rollout on disk yet
 
 	inst.CodexSessionID = oldSID
-	inst.UpdateHookStatus(&HookStatus{
+	inst.UpdateHookStatus(ownedCodexHook(t, inst, &HookStatus{
 		Status:    "running",
 		SessionID: newSID,
 		Event:     "agent-turn-complete",
 		UpdatedAt: time.Now(),
-	})
+	}))
 
-	if inst.CodexSessionID != newSID {
-		t.Fatalf("candidate without a flushed rollout must bind (fail-open, "+
-			"pre-gate behavior): got %q, want %q", inst.CodexSessionID, newSID)
+	if inst.CodexSessionID != oldSID {
+		t.Fatalf("unflushed metadata cannot prove a top-level conversation: "+
+			"got %q, want preserved %q", inst.CodexSessionID, oldSID)
 	}
 }
 
@@ -258,9 +258,8 @@ func TestShouldRejectCodexSubagentRebind(t *testing.T) {
 }
 
 // seedCodexRolloutCwd writes a realistic rollout-<ts>-<sid>.jsonl whose
-// session_meta head carries both cwd (for the disk scan's project match) and
-// thread_source (for the subagent gate). Distinct from seedCodexRolloutWithMeta,
-// which hard-codes cwd — the disk-scan gate needs the cwd to match ProjectPath.
+// session_meta carries cwd and legacy thread_source metadata. Even a matching
+// project and a user-facing thread type cannot prove ownership of a disk file.
 func seedCodexRolloutCwd(t *testing.T, codexHome, sid, threadSource, cwd string) {
 	t.Helper()
 	dir := filepath.Join(codexHome, "sessions", "2026", "07", "15")
@@ -282,7 +281,7 @@ func seedCodexRolloutCwd(t *testing.T, codexHome, sid, threadSource, cwd string)
 	}
 }
 
-func TestUpdateCodexSession_DiskScan_PrefersUserOverSubagent(t *testing.T) {
+func TestUpdateCodexSession_DiskFilesDoNotProveUserOwnership(t *testing.T) {
 	inst, codexHome := newCodexGateInstance(t)
 	if err := os.MkdirAll(inst.ProjectPath, 0o755); err != nil {
 		t.Fatalf("mkdir project: %v", err)
@@ -298,15 +297,14 @@ func TestUpdateCodexSession_DiskScan_PrefersUserOverSubagent(t *testing.T) {
 	inst.UpdateCodexSession(nil)
 
 	if inst.CodexSessionID == subSID {
-		t.Fatalf("disk scan adopted the subagent thread %q — codex refuses user "+
-			"turns on it", subSID)
+		t.Fatalf("unowned disk metadata adopted subagent thread %q", subSID)
 	}
-	if inst.CodexSessionID != userSID {
-		t.Fatalf("disk scan should bind the user thread %q, got %q", userSID, inst.CodexSessionID)
+	if inst.CodexSessionID != "" {
+		t.Fatalf("even a top-level same-cwd rollout does not prove pane ownership, got %q", inst.CodexSessionID)
 	}
 }
 
-func TestUpdateCodexSession_DiskScan_RejectsLoneSubagent(t *testing.T) {
+func TestUpdateCodexSession_UnownedSubagentRolloutIsNotOwnershipProof(t *testing.T) {
 	inst, codexHome := newCodexGateInstance(t)
 	if err := os.MkdirAll(inst.ProjectPath, 0o755); err != nil {
 		t.Fatalf("mkdir project: %v", err)
@@ -318,7 +316,6 @@ func TestUpdateCodexSession_DiskScan_RejectsLoneSubagent(t *testing.T) {
 	inst.UpdateCodexSession(nil)
 
 	if inst.CodexSessionID != "" {
-		t.Fatalf("disk scan must leave the session unbound when only a subagent "+
-			"rollout matches; got %q", inst.CodexSessionID)
+		t.Fatalf("unowned subagent metadata must leave the session unbound; got %q", inst.CodexSessionID)
 	}
 }

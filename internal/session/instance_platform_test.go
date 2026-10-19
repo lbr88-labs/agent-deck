@@ -92,8 +92,8 @@ func TestSyncSessionIDsFromTmux_AllTools(t *testing.T) {
 	if inst.OpenCodeSessionID != envVars["OPENCODE_SESSION_ID"] {
 		t.Errorf("OpenCodeSessionID = %q, want %q", inst.OpenCodeSessionID, envVars["OPENCODE_SESSION_ID"])
 	}
-	if inst.CodexSessionID != envVars["CODEX_SESSION_ID"] {
-		t.Errorf("CodexSessionID = %q, want %q", inst.CodexSessionID, envVars["CODEX_SESSION_ID"])
+	if inst.CodexSessionID != "" {
+		t.Errorf("tmux cache introduced a Codex identity: %q", inst.CodexSessionID)
 	}
 }
 

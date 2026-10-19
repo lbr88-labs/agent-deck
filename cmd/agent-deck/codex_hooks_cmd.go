@@ -201,10 +201,6 @@ func handleCodexNotify() {
 		return
 	}
 
-	if sessionID == "" {
-		sessionID = strings.TrimSpace(os.Getenv("CODEX_SESSION_ID"))
-	}
-
 	if session.CodexHookCandidateRejectedByBindingFloor(instanceID, sessionID, session.GetCodexHomeDir()) {
 		return
 	}
@@ -213,20 +209,7 @@ func handleCodexNotify() {
 		return
 	}
 
-	if rootID, isSubagent := session.CodexTopLevelSessionID(session.GetCodexHomeDir(), sessionID); isSubagent {
-		// Codex notifies for internal workers too. Keep their hidden thread IDs
-		// from replacing the owning interactive session binding.
-		if rootID != "" {
-			releaseHookLock, err := session.AcquireHookSessionLock(instanceID)
-			if err != nil {
-				return
-			}
-			if session.ReadHookSessionAnchor(instanceID) == "" &&
-				!session.CodexHookCandidateRejectedByBindingFloor(instanceID, rootID, session.GetCodexHomeDir()) {
-				session.WriteHookSessionAnchor(instanceID, rootID)
-			}
-			releaseHookLock()
-		}
+	if session.IsCodexSubagentSession(session.GetCodexHomeDir(), sessionID) {
 		return
 	}
 
@@ -281,9 +264,6 @@ func writeCodexHookStatus(instanceID, status, sessionID, event string, turnIDs .
 		_ = json.Unmarshal(data, &prior)
 	}
 	sessionID = strings.TrimSpace(sessionID)
-	if sessionID != "" {
-		session.WriteHookSessionAnchor(instanceID, sessionID)
-	}
 	evidenceSessionID := sessionID
 	if evidenceSessionID == "" {
 		evidenceSessionID = session.ReadHookSessionAnchor(instanceID)
@@ -320,6 +300,8 @@ func writeCodexHookStatus(instanceID, status, sessionID, event string, turnIDs .
 	}
 	prior.Status, prior.SessionID, prior.Event = status, sessionID, event
 	prior.Timestamp = time.Now().Unix()
+	prior.CodexEmitterPID = os.Getppid()
+	prior.CodexEmitterIdentity = session.CodexProcessIdentity(prior.CodexEmitterPID)
 	prior.DoneStatus, prior.DoneSummary, prior.TranscriptPath, prior.Cwd = "", "", "", ""
 	writeHookStatusFile(instanceID, prior, false)
 }

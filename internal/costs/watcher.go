@@ -106,8 +106,8 @@ func (w *CostEventWatcher) Start() {
 				timer.Stop()
 			}
 			timer = time.AfterFunc(100*time.Millisecond, processPending)
-		case <-w.watcher.Errors:
-			// continue
+		case _ = <-w.watcher.Errors:
+			// Cost tracking is best-effort; continue watching after filesystem errors.
 		}
 	}
 }

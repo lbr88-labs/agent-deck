@@ -226,18 +226,22 @@ func installFakeOpenCodeSessionListForCLI(t *testing.T, sessions []map[string]in
 func prepareOpenCodeImportCLITest(t *testing.T) {
 	t.Helper()
 
-	for _, dir := range []string{
-		"/var/tmp/agent-deck-go-cache",
-		"/var/tmp/agent-deck-go-mod",
-		"/var/tmp/agent-deck-go-tmp",
+	for _, fallback := range []struct {
+		key string
+		dir string
+	}{
+		{"GOCACHE", "/var/tmp/agent-deck-go-cache"},
+		{"GOMODCACHE", "/var/tmp/agent-deck-go-mod"},
+		{"GOTMPDIR", "/var/tmp/agent-deck-go-tmp"},
 	} {
-		if err := os.MkdirAll(dir, 0o755); err != nil {
-			t.Fatalf("mkdir %s: %v", dir, err)
+		if os.Getenv(fallback.key) != "" {
+			continue
 		}
+		if err := os.MkdirAll(fallback.dir, 0o755); err != nil {
+			t.Fatalf("mkdir %s: %v", fallback.dir, err)
+		}
+		t.Setenv(fallback.key, fallback.dir)
 	}
-	t.Setenv("GOCACHE", "/var/tmp/agent-deck-go-cache")
-	t.Setenv("GOMODCACHE", "/var/tmp/agent-deck-go-mod")
-	t.Setenv("GOTMPDIR", "/var/tmp/agent-deck-go-tmp")
 }
 
 func captureSessionImportStdout(t *testing.T, fn func()) string {

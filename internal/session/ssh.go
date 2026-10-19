@@ -416,7 +416,7 @@ func (r *SSHRunner) Attach(sessionID string) error {
 	// Block until detach or SSH exit.
 	select {
 	case <-detachCh:
-	case <-cmdDone:
+	case _ = <-cmdDone: // Either SSH exit outcome ends the attachment.
 	}
 
 	// Cleanup: close PTY and wait for output to drain.

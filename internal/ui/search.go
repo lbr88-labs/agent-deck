@@ -1,33 +1,26 @@
 package ui
 
 import (
+	"context"
 	"fmt"
+	"sort"
 	"strings"
+	"time"
+	"unicode/utf8"
 
 	"github.com/asheshgoplani/agent-deck/internal/session"
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/charmbracelet/x/ansi"
+	"github.com/sahilm/fuzzy"
 )
 
 var (
-	searchBoxStyle = lipgloss.NewStyle().
-			Border(lipgloss.RoundedBorder()).
-			BorderForeground(ColorAccent).
-			Padding(0, 1)
-
-	resultItemStyle = lipgloss.NewStyle().
-			Padding(0, 2)
-
-	selectedResultStyle = lipgloss.NewStyle().
-				Padding(0, 2).
-				Background(ColorAccent).
-				Foreground(ColorBg)
-
 	overlayStyle = lipgloss.NewStyle().
-			Border(lipgloss.RoundedBorder()).
-			BorderForeground(ColorAccent).
-			Padding(1, 2)
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(ColorAccent).
+		Padding(1, 2)
 )
 
 // SearchScope controls which known Agent Deck sessions appear in the search
@@ -52,14 +45,18 @@ const (
 // SessionSearchResult is a searchable, fleet-aware session identity. It keeps
 // stable IDs instead of retaining pointers into reloadable session snapshots.
 type SessionSearchResult struct {
-	Source      SessionSearchSource
-	SessionID   string
-	Title       string
-	ProjectPath string
-	GroupPath   string
-	Tool        string
-	Status      session.Status
-	Host        string
+	Source       SessionSearchSource
+	SessionID    string
+	Title        string
+	ProjectPath  string
+	GroupPath    string
+	Tool         string
+	Status       session.Status
+	Host         string
+	LastOpened   time.Time
+	LastActivity time.Time
+	Chat         session.ChatSearchBinding
+	Snippet      string
 
 	RemoteName string
 	HubNodeID  string
@@ -69,31 +66,45 @@ func localSessionSearchResult(inst *session.Instance, host string) *SessionSearc
 	if inst == nil {
 		return nil
 	}
+	activity, _ := inst.LastObservedActivity()
+	if persisted := inst.LastActivityAt(); persisted.After(activity) {
+		activity = persisted
+	}
 	return &SessionSearchResult{
-		Source:      SearchSourceLocal,
-		SessionID:   inst.ID,
-		Title:       inst.GetTitleThreadSafe(),
-		ProjectPath: inst.ProjectPath,
-		GroupPath:   inst.GroupPath,
-		Tool:        inst.GetToolThreadSafe(),
-		Status:      inst.GetStatusThreadSafe(),
-		Host:        host,
+		Source:       SearchSourceLocal,
+		SessionID:    inst.ID,
+		Title:        inst.GetTitleThreadSafe(),
+		ProjectPath:  inst.ProjectPath,
+		GroupPath:    inst.GroupPath,
+		Tool:         inst.GetToolThreadSafe(),
+		Status:       inst.GetStatusThreadSafe(),
+		Host:         host,
+		LastOpened:   inst.LastAccessedAt,
+		LastActivity: activity,
+		Chat:         session.NewChatSearchBinding(inst),
 	}
 }
 
 // Search represents the search overlay component
 type Search struct {
-	input       textinput.Model
-	results     []*SessionSearchResult
-	cursor      int
-	width       int
-	height      int
-	visible     bool
-	scope       SearchScope
-	allItems    []*SessionSearchResult
-	localItems  []*SessionSearchResult
-	fleetItems  []*SessionSearchResult
-	scopedGroup string // Non-empty => filter items to this exact GroupPath (v1.7.60)
+	input          textinput.Model
+	results        []*SessionSearchResult
+	cursor         int
+	width          int
+	height         int
+	visible        bool
+	scope          SearchScope
+	allItems       []*SessionSearchResult
+	localItems     []*SessionSearchResult
+	fleetItems     []*SessionSearchResult
+	scopedGroup    string // Non-empty => filter items to this exact GroupPath (v1.7.60)
+	chatEnabled    bool
+	chatGeneration uint64
+	chatContext    context.Context
+	chatCancel     context.CancelFunc
+	chatPending    bool
+	chatLoading    bool
+	chatReport     session.ChatSearchReport
 }
 
 // NewSearch creates a new search overlay
@@ -118,9 +129,27 @@ func NewSearch() *Search {
 // storage so background reloads do not leak out-of-group sessions into a
 // scoped in-group search session.
 func (s *Search) SetItems(items []*session.Instance) {
+	selected := s.Selected()
+	hosts := make(map[string]string, len(s.fleetItems))
+	defaultHost := ""
+	remoteCount := 0
+	for _, item := range s.fleetItems {
+		if item != nil && item.Source == SearchSourceLocal {
+			hosts[item.SessionID] = item.Host
+			if item.Host != "" {
+				defaultHost = item.Host
+			}
+		} else if item != nil {
+			remoteCount++
+		}
+	}
 	localItems := make([]*SessionSearchResult, 0, len(items))
 	for _, inst := range items {
 		if result := localSessionSearchResult(inst, ""); result != nil {
+			result.Host = hosts[result.SessionID]
+			if result.Host == "" {
+				result.Host = defaultHost
+			}
 			localItems = append(localItems, result)
 		}
 	}
@@ -134,10 +163,24 @@ func (s *Search) SetItems(items []*session.Instance) {
 		localItems = filtered
 	}
 	s.localItems = localItems
-	if s.scope == SearchScopeLocal {
-		s.allItems = s.localItems
-		s.updateResults()
+	// Refresh local identities even while the fleet scope is visible. A /new
+	// binding or deleted row must invalidate an in-flight chat scan; keep the
+	// remote snapshots and the user's selected stable identity in place.
+	fleetItems := make([]*SessionSearchResult, 0, len(localItems)+remoteCount)
+	fleetItems = append(fleetItems, localItems...)
+	for _, item := range s.fleetItems {
+		if item != nil && item.Source != SearchSourceLocal {
+			fleetItems = append(fleetItems, item)
+		}
 	}
+	s.fleetItems = fleetItems
+	if s.scope == SearchScopeGlobal {
+		s.allItems = s.fleetItems
+	} else {
+		s.allItems = s.localItems
+	}
+	s.updateResults()
+	s.restoreSelection(selected)
 }
 
 // SetFleetItems replaces the in-memory fleet snapshot. It also derives the
@@ -167,6 +210,7 @@ func (s *Search) SetScopedGroup(groupPath string) {
 func (s *Search) SetSize(width, height int) {
 	s.width = width
 	s.height = height
+	s.input.Width = max(1, s.contentWidth()-6)
 }
 
 // Show preserves the historical local-search behavior for callers such as
@@ -186,6 +230,7 @@ func (s *Search) ShowLocal() {
 }
 
 func (s *Search) show(scope SearchScope) {
+	s.chatEnabled = false
 	s.scope = scope
 	if scope == SearchScopeGlobal {
 		s.allItems = s.fleetItems
@@ -228,6 +273,18 @@ func (s *Search) Selected() *SessionSearchResult {
 	return s.results[s.cursor]
 }
 
+func (s *Search) restoreSelection(selected *SessionSearchResult) {
+	if selected == nil {
+		return
+	}
+	for i, item := range s.results {
+		if item.Source == selected.Source && item.SessionID == selected.SessionID && item.RemoteName == selected.RemoteName && item.HubNodeID == selected.HubNodeID {
+			s.cursor = i
+			return
+		}
+	}
+}
+
 // Update handles messages for the search overlay
 // Returns the updated Search and any command to execute
 func (s *Search) Update(msg tea.Msg) (*Search, tea.Cmd) {
@@ -236,6 +293,11 @@ func (s *Search) Update(msg tea.Msg) (*Search, tea.Cmd) {
 	}
 
 	switch msg := msg.(type) {
+	case searchChatDebounceMsg:
+		return s, s.runChatSearch(msg.generation)
+	case searchChatResultsMsg:
+		s.applyChatSearch(msg)
+		return s, nil
 	case tea.KeyMsg:
 		switch msg.String() {
 		case "esc":
@@ -261,6 +323,11 @@ func (s *Search) Update(msg tea.Msg) (*Search, tea.Cmd) {
 			}
 			return s, nil
 
+		case "ctrl+s":
+			s.chatEnabled = !s.chatEnabled
+			s.updateResults()
+			return s, s.takeChatSearchCmd()
+
 		case "tab":
 			// Alt+/ is intentionally group-local; ordinary fleet search toggles
 			// between the complete snapshot and this machine's rows.
@@ -275,14 +342,16 @@ func (s *Search) Update(msg tea.Msg) (*Search, tea.Cmd) {
 				s.allItems = s.fleetItems
 			}
 			s.updateResults()
-			return s, nil
+			return s, s.takeChatSearchCmd()
 
 		default:
-			// Update text input
+			before := s.input.Value()
 			var cmd tea.Cmd
 			s.input, cmd = s.input.Update(msg)
-			s.updateResults()
-			return s, cmd
+			if before != s.input.Value() {
+				s.updateResults()
+			}
+			return s, tea.Batch(cmd, s.takeChatSearchCmd())
 		}
 	}
 
@@ -291,13 +360,23 @@ func (s *Search) Update(msg tea.Msg) (*Search, tea.Cmd) {
 
 // updateResults filters the items based on the current input
 func (s *Search) updateResults() {
+	s.cancelChatSearch()
+	s.chatReport = session.ChatSearchReport{}
 	s.results = filterSessionSearchResults(s.allItems, s.input.Value())
 	s.cursor = 0
+	s.chatPending = s.visible && s.chatEnabled && strings.TrimSpace(s.input.Value()) != ""
 }
 
 func filterSessionSearchResults(items []*SessionSearchResult, query string) []*SessionSearchResult {
 	if strings.TrimSpace(query) == "" {
-		return append([]*SessionSearchResult(nil), items...)
+		results := make([]*SessionSearchResult, 0, len(items))
+		for _, item := range items {
+			if item != nil {
+				results = append(results, item)
+			}
+		}
+		sort.SliceStable(results, func(i, j int) bool { return results[i].LastOpened.After(results[j].LastOpened) })
+		return results
 	}
 
 	// Reuse the established local title/path/tool/status and fuzzy semantics by
@@ -327,101 +406,252 @@ func filterSessionSearchResults(items []*SessionSearchResult, query string) []*S
 			results = append(results, item)
 		}
 	}
+	sortSearchResults(results, query)
 	return results
 }
 
-// View renders the search overlay
+// View renders the search overlay, with row density determined by the actual
+// terminal height. No metadata or transcript text is allowed to wrap the box.
 func (s *Search) View() string {
 	if !s.visible {
 		return ""
 	}
-
-	// Header
-	headerText := "🔍 Global Search (all Agent Deck sessions)"
+	width := s.contentWidth()
+	header := "Global Search (all Agent Deck sessions)"
 	if s.scope == SearchScopeLocal {
-		headerText = "🔍 Local Search (this machine)"
+		header = "Local Search (this machine)"
 	}
-	header := lipgloss.NewStyle().
-		Foreground(ColorAccent).
-		Bold(true).
-		Render(headerText)
-
-	// Build search input box
-	searchBox := searchBoxStyle.Render(s.input.View())
-
-	// Build results list
-	var resultsStr strings.Builder
-	maxResults := 10
-	start := 0
-	if s.cursor >= maxResults {
-		start = s.cursor - maxResults + 1
+	if s.scopedGroup != "" {
+		header = "Group Search: " + s.scopedGroup
 	}
+	lines := []string{
+		lipgloss.NewStyle().Foreground(ColorAccent).Bold(true).Render(searchLine(header, width)),
+		// textinput sanitizes its value before rendering. Preserve its trusted
+		// cursor SGR here; searchLine strips styling from untrusted metadata.
+		ansi.Truncate(s.input.View(), width, "…"),
+		searchLine(s.chatStatus(), width),
+		searchLine("Formats: "+session.ChatSearchSupportedTools, width),
+	}
+	if unavailable := s.unavailableChatStatus(); unavailable != "" {
+		lines = append(lines, searchLine(unavailable, width))
+	}
+
+	// Reserve header, footer and border space; compact terminals show the
+	// selected row at reduced density rather than overflowing.
+	available := 24
+	if s.height > 0 {
+		available = max(0, s.height-len(lines)-4)
+	}
+	rowHeight := 5
+	if width >= 88 {
+		rowHeight = 4
+	}
+	if s.chatEnabled {
+		rowHeight++
+	}
+	maxResults := min(10, available/rowHeight)
+	if maxResults == 0 && available > 0 {
+		maxResults = 1
+	}
+	start := max(0, s.cursor-maxResults+1)
 	end := min(start+maxResults, len(s.results))
-	shown := s.results[start:end]
-
-	for offset, item := range shown {
-		resultIndex := start + offset
+	for index := start; index < end; index++ {
+		item := s.results[index]
 		label := item.Title + " (" + item.Tool + ")"
-		if s.scope == SearchScopeGlobal && strings.TrimSpace(item.Host) != "" {
-			label += "  · " + item.Host
+		if item.Host != "" && s.scope == SearchScopeGlobal {
+			label += " · " + item.Host
 		}
-		var line string
-		if resultIndex == s.cursor {
-			line = selectedResultStyle.Render("› " + label)
+		prefix := "  "
+		if index == s.cursor {
+			prefix = "› "
+		}
+		status := string(item.Status)
+		if status == "" {
+			status = "unknown"
+		}
+		suffix := searchLine(" ["+status+"]", width)
+		row := []string{
+			prefix + searchLine(label, max(0, width-lipgloss.Width(prefix+suffix))) + suffix,
+			"  Path: " + searchValue(item.ProjectPath),
+			"  Group: " + searchValue(item.GroupPath),
+		}
+		opened := "Opened: " + searchTimestamp(item.LastOpened)
+		activity := "Activity: " + searchTimestamp(item.LastActivity)
+		if width >= 88 {
+			row = append(row, "  "+opened+" · "+activity)
 		} else {
-			line = resultItemStyle.Render("  " + label)
+			row = append(row, "  "+opened, "  "+activity)
 		}
-		resultsStr.WriteString(line)
-		if offset < len(shown)-1 {
-			resultsStr.WriteString("\n")
+		if s.chatEnabled {
+			snippet := "  Chat: " + s.resultChatStatus(item)
+			if item.Snippet != "" {
+				snippet = "  Chat: " + searchSnippet(item.Snippet, s.input.Value(), max(1, width-8))
+			}
+			row = append(row, snippet)
 		}
+		for _, line := range row[:min(len(row), available)] {
+			line = searchLine(line, width)
+			if index == s.cursor {
+				line = lipgloss.NewStyle().Background(ColorAccent).Foreground(ColorBg).Render(line)
+			}
+			lines = append(lines, line)
+		}
+		available -= min(len(row), available)
 	}
-
-	// Show count
-	countStr := lipgloss.NewStyle().
-		Foreground(lipgloss.Color("241")).
-		Render("  " + formatCount(len(s.results)))
-
-	// Show filter hint when search is empty
-	hintStr := ""
-	if s.input.Value() == "" {
-		hintStr = lipgloss.NewStyle().
-			Foreground(ColorComment).
-			Italic(true).
-			Render("  Tip: waiting / running / idle to filter by status")
-	}
-
-	// Keyboard shortcuts hint
-	keys := "  [Enter] Open  [↑↓] Navigate  [Esc] Cancel"
+	lines = append(lines, searchLine(formatCount(len(s.results)), width))
+	keys := "[Enter] Open  [↑↓] Navigate  [Esc] Cancel"
 	if s.scopedGroup == "" {
 		nextScope := "Local"
 		if s.scope == SearchScopeLocal {
 			nextScope = "Global"
 		}
-		keys = "  [Enter] Open  [↑↓] Navigate  [Tab] " + nextScope + "  [Esc] Cancel"
+		keys = "[Enter] Open  [↑↓] Navigate  [Tab] " + nextScope + "  [Esc] Cancel"
 	}
-	keysHint := lipgloss.NewStyle().Foreground(ColorComment).Render(keys)
+	lines = append(lines, searchLine("[Ctrl+S] Search chats  "+keys, width))
 
-	// Combine everything
-	var content string
-	if hintStr != "" {
-		content = header + "\n\n" + searchBox + "\n" + hintStr + "\n\n" + resultsStr.String() + "\n" + countStr + "\n" + keysHint
-	} else {
-		content = header + "\n\n" + searchBox + "\n\n" + resultsStr.String() + "\n" + countStr + "\n" + keysHint
+	style := overlayStyle.Padding(0, 1).Width(width + 2)
+	// The smallest terminals cannot fit all chrome. Clip complete, already
+	// cell-truncated lines, preserving the header, input and current status.
+	if s.height > 0 {
+		lines = lines[:min(len(lines), max(0, s.height-2))]
 	}
+	if s.width > 0 && s.width < 6 {
+		style = lipgloss.NewStyle().Width(max(1, s.width))
+	}
+	overlay := style.Render(strings.Join(lines, "\n"))
+	return strings.TrimSuffix(centerInScreen(overlay, s.width, s.height), "\n")
+}
 
-	// Wrap in overlay box - responsive width
-	overlayWidth := 60
-	if s.width > 0 && s.width < overlayWidth+10 {
-		overlayWidth = s.width - 10
-		if overlayWidth < 30 {
-			overlayWidth = 30
+func (s *Search) contentWidth() int {
+	if s.width <= 0 {
+		return 94
+	}
+	return max(1, min(110, s.width-6))
+}
+
+func searchLine(value string, width int) string {
+	value = strings.Map(func(r rune) rune {
+		switch r {
+		case '\n', '\r', '\t':
+			return ' '
 		}
-	}
-	overlay := overlayStyle.Width(overlayWidth).Render(content)
+		if r < 32 || r == 127 {
+			return -1
+		}
+		return r
+	}, ansi.Strip(value))
+	return ansi.Truncate(value, width, "…")
+}
 
-	// Center in the screen
-	return centerInScreen(overlay, s.width, s.height)
+func searchValue(value string) string {
+	if strings.TrimSpace(value) == "" {
+		return "—"
+	}
+	return value
+}
+
+func searchTimestamp(value time.Time) string {
+	if value.IsZero() {
+		return "unknown"
+	}
+	return value.Local().Format("2006-01-02 15:04")
+}
+
+// Recenter the already-bounded excerpt when a narrower viewport would cut the
+// actual match off its right edge. Lowercasing preserves rune counts, not byte
+// offsets, so map the match back by rune index.
+func searchSnippet(snippet, query string, width int) string {
+	lowered := strings.ToLower(snippet)
+	query = strings.ToLower(strings.TrimSpace(query))
+	match := strings.Index(lowered, query)
+	if match <= 0 || query == "" {
+		return snippet
+	}
+	queryWidth := lipgloss.Width(query)
+	if lipgloss.Width(lowered[:match])+queryWidth <= width {
+		return snippet
+	}
+	runes := []rune(snippet)
+	start := utf8.RuneCountInString(lowered[:match])
+	budget := max(0, (width-queryWidth-1)/3)
+	used := 0
+	for start > 0 {
+		cells := lipgloss.Width(string(runes[start-1]))
+		if used+cells > budget {
+			break
+		}
+		start--
+		used += cells
+	}
+	if start == 0 {
+		return snippet
+	}
+	return "…" + string(runes[start:])
+}
+
+func sortSearchResults(results []*SessionSearchResult, query string) {
+	type ranked struct {
+		item  *SessionSearchResult
+		score int
+	}
+	ranks := make([]ranked, len(results))
+	for i, item := range results {
+		ranks[i] = ranked{item: item, score: searchRelevance(item, query)}
+	}
+	sort.SliceStable(ranks, func(i, j int) bool {
+		if ranks[i].score != ranks[j].score {
+			return ranks[i].score > ranks[j].score
+		}
+		return ranks[i].item.LastOpened.After(ranks[j].item.LastOpened)
+	})
+	for i, rank := range ranks {
+		results[i] = rank.item
+	}
+}
+
+// Membership still comes from session.FilterByQuery (including its exact
+// status filters and fuzzy fallback). Rank direct metadata matches ahead of
+// chat-only hits; only equal relevance is broken by last opened.
+func searchRelevance(item *SessionSearchResult, query string) int {
+	query = strings.ToLower(strings.TrimSpace(query))
+	if query == "" || searchStatusQuery(query) {
+		return 0
+	}
+	fields := []struct {
+		value string
+		bonus int
+	}{
+		{item.Title, 5000},
+		{item.Tool, 4000},
+		{item.ProjectPath, 3000},
+		{item.GroupPath, 2000},
+		{item.Host, 1000},
+	}
+	best := 0
+	for _, field := range fields {
+		value := strings.ToLower(strings.TrimSpace(field.value))
+		score := 0
+		if value == query {
+			score = 30000 + field.bonus
+		} else if strings.HasPrefix(value, query) {
+			score = 20000 + field.bonus
+		} else if strings.Contains(value, query) {
+			score = 10000 + field.bonus
+		} else if matches := fuzzy.Find(query, []string{value}); len(matches) > 0 {
+			score = field.bonus + matches[0].Score
+		}
+		best = max(best, score)
+	}
+	return best
+}
+
+func searchStatusQuery(query string) bool {
+	switch strings.ToLower(strings.TrimSpace(query)) {
+	case "waiting", "running", "idle", "error", "stopped":
+		return true
+	default:
+		return false
+	}
 }
 
 // formatCount formats the result count

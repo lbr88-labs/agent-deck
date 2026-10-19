@@ -25,8 +25,8 @@ import (
 // DSH_HOME layout, the ready banner, exit codes, the credential error) are
 // pinned in deepseek_test.go and internal/tmux/deepseek_test.go.
 
-// fakeDshPath returns the absolute path of the emulator, skipping the test when
-// it is missing or not executable.
+// fakeDshPath installs the emulator under the real launcher's name in a test-owned
+// directory, skipping the test when the source is missing.
 func fakeDshPath(t *testing.T) string {
 	t.Helper()
 	path, err := filepath.Abs(filepath.Join("testdata", "fake-dsh"))
@@ -40,7 +40,15 @@ func fakeDshPath(t *testing.T) string {
 	if info.Mode()&0o111 == 0 {
 		t.Fatalf("fake-dsh is not executable (%s); the checkout lost its mode bit", path)
 	}
-	return path
+	// A checkout path can contain another tool's name (for example, a codex
+	// worktree). The legacy command detector scans such paths for tool names;
+	// use an installed dsh path rather than make this fixture's identity depend
+	// on where the repository was cloned.
+	launcher := filepath.Join(t.TempDir(), "dsh")
+	if err := os.Symlink(path, launcher); err != nil {
+		t.Fatalf("install fake dsh: %v", err)
+	}
+	return launcher
 }
 
 // waitForPaneFull polls the pane's WHOLE buffer until want appears.
@@ -173,6 +181,9 @@ func TestDeepSeekLifecycle_LaunchSendRestart(t *testing.T) {
 	}
 
 	// --- phase 4: restart with context ---------------------------------------
+	if got := inst.GetToolThreadSafe(); got != "deepseek" {
+		t.Fatalf("status polling changed the DeepSeek tool identity to %q", got)
+	}
 	if !inst.CanRestart() {
 		t.Fatal("CanRestart() = false for a live deepseek session")
 	}
@@ -290,6 +301,9 @@ func TestDeepSeekLifecycle_WebReadyBanner(t *testing.T) {
 	}
 
 	// And restart brings it back on the same port against the same DSH_HOME.
+	if got := inst.GetToolThreadSafe(); got != "deepseek" {
+		t.Fatalf("status polling changed the DeepSeek tool identity to %q", got)
+	}
 	if err := inst.Restart(); err != nil {
 		t.Fatalf("Restart(): %v", err)
 	}

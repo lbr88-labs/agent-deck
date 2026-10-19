@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.13.14] - 2026-10-19
+
+### Added
+
+- Show path, group, status, last-opened and independently recorded activity timestamps in session search, with recency breaking relevance ties.
+- Add an explicit `Ctrl+S` saved-chat search toggle to session search, off by default, with asynchronous local-only scanning, matching excerpts, and unavailable/partial-result reporting.
+
+### Fixed
+
+- Prevent Codex start/restart from stealing another conversation through same-project transcript timestamps, cached tmux IDs, or unproven hook events. Identity changes require unambiguous owning-pane evidence; conflicting or unknown identity fails visibly before replacing the pane.
+- Preserve exact Codex resume IDs for archived and native-indexed conversations instead of silently starting fresh. Explicit fresh restart remains a separate operation; imports and explicit binding changes reject duplicate ownership.
+- Correct Codex activity markers when native terminal titles keep spinning at `Starting`, `Ready`, or `Working`. Classify the current working/composer/approval pane instead, and keep polling quiet non-idle sessions so completion and approval transitions can settle. Native titles and running agent processes are left unchanged.
+- Build with Go 1.26.9 and update `golang.org/x/net` and gRPC to the security-fixed versions required by the release vulnerability gate, keeping local and release toolchain pins consistent.
+- Retain the known-working keyboard and attach behavior from v1.13.9; this release excludes the rolled-back terminal changes from v1.13.10–v1.13.13.
+
 ## [1.13.6] - 2026-09-10
 
 ### Added

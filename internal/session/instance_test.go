@@ -1816,7 +1816,7 @@ func TestCodexHomeFromCommand_PreservesQuotedAssignmentSpaces(t *testing.T) {
 	}
 }
 
-func TestBuildCodexCommand_InlineCodexHomeDropsStaleID(t *testing.T) {
+func TestBuildCodexCommand_InlineCodexHomePreservesMissingID(t *testing.T) {
 	tmpDir := t.TempDir()
 	originalHome := os.Getenv("HOME")
 	os.Setenv("HOME", tmpDir)
@@ -1854,14 +1854,14 @@ func TestBuildCodexCommand_InlineCodexHomeDropsStaleID(t *testing.T) {
 	}
 
 	cmd := inst.buildCodexCommand("codex")
-	if strings.Contains(cmd, "resume "+id) {
-		t.Fatalf("resume should be dropped when rollout is absent from inline CODEX_HOME, got %q", cmd)
+	if !strings.Contains(cmd, "resume "+id) || inst.CodexSessionID != id {
+		t.Fatalf("command construction must preserve the exact binding, got id=%q command=%q", inst.CodexSessionID, cmd)
 	}
-	if inst.CodexSessionID != "" {
-		t.Fatalf("CodexSessionID should be cleared after stale-id drop, got %q", inst.CodexSessionID)
+	if got := ReadHookSessionAnchor(inst.ID); got != id {
+		t.Fatalf("missing rollout must not discard the binding anchor, got %q", got)
 	}
-	if got := ReadHookSessionAnchor(inst.ID); got != "" {
-		t.Fatalf(".sid anchor should be cleared after stale-id drop, got %q", got)
+	if err := inst.prepareCodexIdentity(true); err == nil {
+		t.Fatal("launch must visibly refuse an unverifiable binding in the selected CODEX_HOME")
 	}
 }
 
@@ -1988,12 +1988,8 @@ func writeFakeCodexRollout(t *testing.T, codexHome, sessionID string) string {
 	return path
 }
 
-// TestBuildCodexCommand_DropsResumeWhenRolloutMissing verifies that a stale
-// CodexSessionID with no on-disk rollout (the death-loop signature from
-// Issue #756) gets dropped: the emitted command starts a fresh codex run
-// instead of `codex resume <stale-uuid>`, and the in-memory + .sid state
-// is cleared so the next save persists the cleanup.
-func TestBuildCodexCommand_DropsResumeWhenRolloutMissing(t *testing.T) {
+// Missing rollout data must never turn an ordinary restart into a new chat.
+func TestBuildCodexCommand_PreservesBindingWhenRolloutMissing(t *testing.T) {
 	tmpDir := t.TempDir()
 	originalHome := os.Getenv("HOME")
 	os.Setenv("HOME", tmpDir)
@@ -2023,20 +2019,14 @@ func TestBuildCodexCommand_DropsResumeWhenRolloutMissing(t *testing.T) {
 	}
 
 	cmd := inst.buildCodexCommand(inst.Command)
-	if strings.Contains(cmd, "resume "+staleID) {
-		t.Fatalf("expected resume to be dropped for stale sid, got %q", cmd)
+	if !strings.Contains(cmd, "resume "+staleID) || inst.CodexSessionID != staleID {
+		t.Fatalf("missing rollout silently discarded the exact binding: id=%q command=%q", inst.CodexSessionID, cmd)
 	}
-	if strings.Contains(cmd, " resume ") {
-		t.Fatalf("expected no resume token at all, got %q", cmd)
+	if got := ReadHookSessionAnchor(inst.ID); got != staleID {
+		t.Fatalf("missing rollout discarded the anchor: %q", got)
 	}
-	if inst.CodexSessionID != "" {
-		t.Fatalf("CodexSessionID should be cleared after stale-sid drop, got %q", inst.CodexSessionID)
-	}
-	if inst.CodexDetectedAt.IsZero() {
-		t.Fatal("CodexDetectedAt should record the stale-binding clear floor")
-	}
-	if got := ReadHookSessionAnchor(inst.ID); got != "" {
-		t.Fatalf(".sid anchor should be cleared after stale-sid drop, got %q", got)
+	if err := inst.prepareCodexIdentity(true); err == nil {
+		t.Fatal("unverifiable conversation must refuse launch, not start fresh")
 	}
 }
 
@@ -3563,189 +3553,14 @@ func TestInstance_HookFastPath_CodexWaitingFreshness(t *testing.T) {
 	}
 }
 
-func TestInstance_UpdateCodexSession_ScanCooldown(t *testing.T) {
-	origCodexHome := os.Getenv("CODEX_HOME")
-	codexHome := t.TempDir()
-	if err := os.Setenv("CODEX_HOME", codexHome); err != nil {
-		t.Fatalf("set CODEX_HOME: %v", err)
-	}
-	defer func() {
-		if origCodexHome != "" {
-			_ = os.Setenv("CODEX_HOME", origCodexHome)
-		} else {
-			_ = os.Unsetenv("CODEX_HOME")
-		}
-	}()
-
-	projectPath := filepath.Join(codexHome, "project")
-	if err := os.MkdirAll(projectPath, 0755); err != nil {
-		t.Fatalf("create project dir: %v", err)
-	}
-
-	inst := NewInstanceWithTool("codex-cooldown", projectPath, "codex")
-
-	sessionID1 := "11111111-1111-4111-8111-111111111111"
-	sessionID2 := "22222222-2222-4222-8222-222222222222"
-
-	file1 := writeCodexSessionFile(t, codexHome, sessionID1, projectPath)
-	file1Time := time.Now().Add(-2 * time.Minute)
-	if err := os.Chtimes(file1, file1Time, file1Time); err != nil {
-		t.Fatalf("set file1 mtime: %v", err)
-	}
-
-	inst.UpdateCodexSession(nil)
-	if inst.CodexSessionID != sessionID1 {
-		t.Fatalf("first scan picked %q, want %q", inst.CodexSessionID, sessionID1)
-	}
-
-	file2 := writeCodexSessionFile(t, codexHome, sessionID2, projectPath)
-	file2Time := time.Now().Add(-1 * time.Minute)
-	if err := os.Chtimes(file2, file2Time, file2Time); err != nil {
-		t.Fatalf("set file2 mtime: %v", err)
-	}
-
-	// Immediate follow-up should skip expensive scan and keep existing ID.
-	inst.UpdateCodexSession(nil)
-	if inst.CodexSessionID != sessionID1 {
-		t.Fatalf("cooldown should keep %q, got %q", sessionID1, inst.CodexSessionID)
-	}
-
-	// After cooldown, a known session ID should still not trigger historical
-	// disk-scan rebinding. Rotation is handled by hook payloads or live process
-	// file probes, not by periodically walking all old Codex transcripts.
-	inst.lastCodexScanAt = time.Now().Add(-codexRotationScanInterval - time.Second)
-	inst.UpdateCodexSession(nil)
-	if inst.CodexSessionID != sessionID1 {
-		t.Fatalf("post-cooldown known ID should keep %q, got %q", sessionID1, inst.CodexSessionID)
-	}
-
-	// A genuinely unbound instance has no pending binding intent or durable
-	// creation-time floor. Bootstrap scan still works and picks the newest
-	// matching session. Do not model that state by directly blanking the first
-	// instance's ID: its initial discovery is intentionally journaled until the
-	// first whole-row save and must reject a delayed replacement.
-	bootstrapInst := NewInstanceWithTool("codex-bootstrap", projectPath, "codex")
-	bootstrapInst.UpdateCodexSession(nil)
-	if bootstrapInst.CodexSessionID != sessionID2 {
-		t.Fatalf("bootstrap scan picked %q, want %q", bootstrapInst.CodexSessionID, sessionID2)
-	}
-}
-
-func writeCodexSessionFile(t *testing.T, codexHome, sessionID, cwd string) string {
-	t.Helper()
-
-	sessionsDir := filepath.Join(codexHome, "sessions", "2026", "02", "18")
-	if err := os.MkdirAll(sessionsDir, 0755); err != nil {
-		t.Fatalf("create sessions dir: %v", err)
-	}
-
-	filePath := filepath.Join(sessionsDir, sessionID+".jsonl")
-	content := fmt.Sprintf("{\"cwd\":%q}\n", cwd)
-	if err := os.WriteFile(filePath, []byte(content), 0644); err != nil {
-		t.Fatalf("write session file: %v", err)
-	}
-	return filePath
-}
-
-// TestInstance_CodexSessionExclusion_SameProjectPath verifies that two
-// instances sharing the same project_path don't claim the same Codex session
-// file via the excludeIDs mechanism. Regression test for PR #423.
-func TestInstance_CodexSessionExclusion_SameProjectPath(t *testing.T) {
-	origCodexHome := os.Getenv("CODEX_HOME")
-	codexHome := t.TempDir()
-	if err := os.Setenv("CODEX_HOME", codexHome); err != nil {
-		t.Fatalf("set CODEX_HOME: %v", err)
-	}
-	defer func() {
-		if origCodexHome != "" {
-			_ = os.Setenv("CODEX_HOME", origCodexHome)
-		} else {
-			_ = os.Unsetenv("CODEX_HOME")
-		}
-	}()
-
-	projectPath := filepath.Join(codexHome, "project")
-	if err := os.MkdirAll(projectPath, 0755); err != nil {
-		t.Fatalf("create project dir: %v", err)
-	}
-
-	sessionA := "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
-	sessionB := "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"
-
-	fileA := writeCodexSessionFile(t, codexHome, sessionA, projectPath)
-	fileATime := time.Now().Add(-2 * time.Minute)
-	if err := os.Chtimes(fileA, fileATime, fileATime); err != nil {
-		t.Fatalf("set fileA mtime: %v", err)
-	}
-	fileB := writeCodexSessionFile(t, codexHome, sessionB, projectPath)
-	fileBTime := time.Now().Add(-1 * time.Minute)
-	if err := os.Chtimes(fileB, fileBTime, fileBTime); err != nil {
-		t.Fatalf("set fileB mtime: %v", err)
-	}
-
-	// Instance 1 picks up sessionB (most recent) with no exclusions.
-	inst1 := NewInstanceWithTool("codex-excl-1", projectPath, "codex")
-	inst1.UpdateCodexSession(nil)
-	if inst1.CodexSessionID != sessionB {
-		t.Fatalf("inst1 picked %q, want %q", inst1.CodexSessionID, sessionB)
-	}
-
-	// Instance 2 excludes inst1's session and gets sessionA instead.
-	inst2 := NewInstanceWithTool("codex-excl-2", projectPath, "codex")
-	exclude := map[string]bool{sessionB: true}
-	inst2.UpdateCodexSession(exclude)
-	if inst2.CodexSessionID != sessionA {
-		t.Fatalf("inst2 with exclusion picked %q, want %q", inst2.CodexSessionID, sessionA)
-	}
-
-	// Bug scenario from #423: without always collecting excludes, inst1's
-	// subsequent UpdateStatus would pass nil (it already has an ID), and the
-	// disk scan could return sessionA, stealing inst2's session.
-	// With the fix, inst1 always passes other instances' IDs in the exclude set.
-	inst1.lastCodexScanAt = time.Time{} // Reset cooldown to force rescan
-	excludeInst2 := map[string]bool{sessionA: true}
-	inst1.UpdateCodexSession(excludeInst2)
-	if inst1.CodexSessionID != sessionB {
-		t.Fatalf("inst1 should keep %q when inst2 session is excluded, got %q",
-			sessionB, inst1.CodexSessionID)
-	}
-
-	// Reverse: inst2 with inst1's session excluded keeps its own.
-	inst2.lastCodexScanAt = time.Time{}
-	excludeInst1 := map[string]bool{sessionB: true}
-	inst2.UpdateCodexSession(excludeInst1)
-	if inst2.CodexSessionID != sessionA {
-		t.Fatalf("inst2 should keep %q when inst1 session is excluded, got %q",
-			sessionA, inst2.CodexSessionID)
-	}
-}
-
-// TestInstance_CodexRestartSkipsDiskScan_WhenIDKnown verifies that Restart
-// skips the disk scan when the instance already has a known session ID,
-// preventing contamination from other instances sharing the same project path.
-// Regression test for PR #423, change 3.
-func TestInstance_CodexRestartSkipsDiskScan_WhenIDKnown(t *testing.T) {
-	inst := NewInstanceWithTool("codex-restart", "/tmp/test-project", "codex")
-	knownID := "cccccccc-cccc-4ccc-8ccc-cccccccccccc"
-	inst.CodexSessionID = knownID
-
-	// The Restart method's codex branch guards with:
-	//   if i.Tool == "codex" && i.CodexSessionID == ""
-	// With a non-empty CodexSessionID, the disk-scan branch is skipped entirely.
-	// We verify the ID is preserved (not overwritten by a stale scan result).
-	if inst.CodexSessionID != knownID {
-		t.Fatalf("session ID changed from %q to %q", knownID, inst.CodexSessionID)
-	}
-}
-
 func TestExtractCodexSessionIDFromLsofOutput(t *testing.T) {
 	lsofOutput := []byte(`codex 12345 user 45w REG 254,1 654264 5176218 /home/user/.codex/sessions/2026/02/28/rollout-2026-02-28T00-42-18-019c9ffa-c9d6-7be1-9e1c-527080e68951.jsonl
 `)
 
-	got := extractCodexSessionIDFromLsofOutput(lsofOutput)
+	got := selectCodexRolloutCandidate(extractWritableCodexRolloutsFromLsof(lsofOutput))
 	want := "019c9ffa-c9d6-7be1-9e1c-527080e68951"
-	if got != want {
-		t.Fatalf("extractCodexSessionIDFromLsofOutput() = %q, want %q", got, want)
+	if got.sessionID != want || got.ambiguous {
+		t.Fatalf("writable lsof rollout = %+v, want %q", got, want)
 	}
 }
 
@@ -3794,32 +3609,32 @@ func TestCodexLsofProbe_TimeoutBoundsHungLsof(t *testing.T) {
 	}
 }
 
-func TestExtractCodexSessionIDFromLsofOutput_DockerStyleLine(t *testing.T) {
+func TestExtractWritableCodexRolloutsFromLsof_CustomHome(t *testing.T) {
 	lsofOutput := []byte(`codex 44 root 36w REG 0,608 3392413 5176210 /root/.codex/sessions/2026/02/23/rollout-2026-02-23T18-37-01-019c8a12-e903-7670-bd12-709c6a4c5451.jsonl
 `)
 
-	got := extractCodexSessionIDFromLsofOutput(lsofOutput)
+	got := selectCodexRolloutCandidate(extractWritableCodexRolloutsFromLsof(lsofOutput))
 	want := "019c8a12-e903-7670-bd12-709c6a4c5451"
-	if got != want {
-		t.Fatalf("extractCodexSessionIDFromLsofOutput() docker line = %q, want %q", got, want)
+	if got.sessionID != want || got.ambiguous {
+		t.Fatalf("writable lsof rollout in custom home = %+v, want %q", got, want)
 	}
 }
 
 func TestExtractCodexSessionIDFromPath_DeletedSuffix(t *testing.T) {
 	path := "/home/user/.codex/sessions/2026/02/28/rollout-2026-02-28T00-42-18-019c9ffa-c9d6-7be1-9e1c-527080e68951.jsonl (deleted)"
-	got := extractCodexSessionIDFromPath(path)
+	candidate, ok := codexRolloutCandidateFromPath(path)
 	want := "019c9ffa-c9d6-7be1-9e1c-527080e68951"
-	if got != want {
-		t.Fatalf("extractCodexSessionIDFromPath() = %q, want %q", got, want)
+	if !ok || candidate.ID != want {
+		t.Fatalf("deleted rollout candidate = %+v ok=%v, want %q", candidate, ok, want)
 	}
 }
 
 func TestExtractCodexSessionIDFromPath_CustomCodexHome(t *testing.T) {
 	path := "/tmp/codex-work/sessions/2026/02/28/rollout-2026-02-28T00-42-18-019c9ffa-c9d6-7be1-9e1c-527080e68951.jsonl"
-	got := extractCodexSessionIDFromPath(path)
+	candidate, ok := codexRolloutCandidateFromPath(path)
 	want := "019c9ffa-c9d6-7be1-9e1c-527080e68951"
-	if got != want {
-		t.Fatalf("extractCodexSessionIDFromPath() custom home = %q, want %q", got, want)
+	if !ok || candidate.ID != want {
+		t.Fatalf("custom-home rollout candidate = %+v ok=%v, want %q", candidate, ok, want)
 	}
 }
 
@@ -3850,15 +3665,15 @@ func TestCodexProbeMissingWarning(t *testing.T) {
 	if got := codexProbeMissingWarning(""); got != "" {
 		t.Fatalf("codexProbeMissingWarning(\"\") = %q, want empty", got)
 	}
-	want := "Codex session detection fallback: readlink is not available"
-	if got := codexProbeMissingWarning("readlink"); got != want {
-		t.Fatalf("codexProbeMissingWarning(\"readlink\") = %q, want %q", got, want)
+	want := "Codex pane identity probe unavailable: lsof is not available; retaining the exact recorded binding"
+	if got := codexProbeMissingWarning("lsof"); got != want {
+		t.Fatalf("codexProbeMissingWarning(\"lsof\") = %q, want %q", got, want)
 	}
 }
 
 func TestInstance_ConsumeCodexRestartWarning(t *testing.T) {
 	inst := NewInstanceWithTool("codex-warning", "/tmp/test", "codex")
-	inst.pendingCodexRestartWarning = "Codex session detection fallback: lsof is not available"
+	inst.pendingCodexRestartWarning = codexProbeMissingWarning("lsof")
 
 	if got := inst.ConsumeCodexRestartWarning(); got == "" {
 		t.Fatalf("ConsumeCodexRestartWarning() returned empty warning")
@@ -3870,7 +3685,7 @@ func TestInstance_ConsumeCodexRestartWarning(t *testing.T) {
 
 func TestInstance_ConsumeCodexRestartWarning_Concurrent(t *testing.T) {
 	inst := NewInstanceWithTool("codex-warning-concurrent", "/tmp/test", "codex")
-	inst.pendingCodexRestartWarning = "Codex session detection fallback: readlink is not available"
+	inst.pendingCodexRestartWarning = codexProbeMissingWarning("lsof")
 
 	const workers = 16
 	var wg sync.WaitGroup
@@ -3981,7 +3796,7 @@ func TestInstance_UpdateHookStatus_UsesAnchorWhenHookSessionIDMissing_Claude(t *
 	}
 }
 
-func TestInstance_UpdateHookStatus_UsesAnchorWhenHookSessionIDMissing_Codex(t *testing.T) {
+func TestInstance_UpdateHookStatus_CodexAnchorIsConfirmOnly(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 
 	inst := NewInstanceWithTool("hook-anchor-codex", "/tmp/test", "codex")
@@ -3995,8 +3810,8 @@ func TestInstance_UpdateHookStatus_UsesAnchorWhenHookSessionIDMissing_Codex(t *t
 	}
 	inst.UpdateHookStatus(hookStatus)
 
-	if inst.CodexSessionID != "anchor-codex-1" {
-		t.Fatalf("CodexSessionID = %q, want anchor-codex-1", inst.CodexSessionID)
+	if inst.CodexSessionID != "" {
+		t.Fatalf("unverified anchor introduced a Codex identity: %q", inst.CodexSessionID)
 	}
 }
 

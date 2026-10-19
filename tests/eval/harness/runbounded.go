@@ -39,13 +39,13 @@ func RunBounded(cmd *exec.Cmd, timeout time.Duration) []byte {
 	go func() { done <- cmd.Wait() }()
 
 	select {
-	case <-done:
-		// Exited on its own before the deadline.
+	case _ = <-done:
+		// This helper returns output only; the exit status is intentionally ignored.
 	case <-time.After(timeout):
 		// SIGKILL the whole process group (negative pid), then reap so the
 		// copy goroutine finishes and buf is safe to read.
 		_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
-		<-done
+		_ = <-done // SIGKILL exit errors are expected after forced cleanup.
 	}
 	return buf.Bytes()
 }

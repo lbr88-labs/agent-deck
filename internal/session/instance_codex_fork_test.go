@@ -98,7 +98,7 @@ func TestCreateForkedCodexInstance_RejectsParentBindingDuringStartup(t *testing.
 		t.Fatalf("CreateForkedCodexInstanceWithOptions: %v", err)
 	}
 
-	if changed := forked.acceptCodexSessionID(parentID, false); changed {
+	if changed := forked.acceptCodexSessionID(parentID, false, codexBindingProcess); changed {
 		t.Fatal("fork startup accepted the parent's Codex session ID")
 	}
 	if forked.CodexSessionID != "" {
@@ -149,18 +149,15 @@ func TestCodexBootstrapExcludesPersistedBindings(t *testing.T) {
 
 	created := NewInstanceWithTool("new", projectPath, "codex")
 	created.CodexStartedAt = now.Add(-time.Minute).UnixMilli()
-	if changed := created.acceptCodexSessionID(oldID, false); changed {
+	if changed := created.acceptCodexSessionID(oldID, false, codexBindingProcess); changed {
 		t.Fatal("central binding gate accepted a Codex thread already owned by another Agent Deck row")
 	}
 	if created.CodexSessionID != "" {
 		t.Fatalf("CodexSessionID = %q after owned candidate, want empty", created.CodexSessionID)
 	}
-	excluded := created.collectOtherCodexSessionIDs()
-	if !excluded[oldID] {
-		t.Fatalf("persisted Codex binding %q was not excluded: %#v", oldID, excluded)
-	}
-	if got := created.queryCodexSession(excluded, true); got != newID {
-		t.Fatalf("bootstrap candidate = %q, want unowned new thread %q", got, newID)
+	created.UpdateCodexSession(nil)
+	if created.CodexSessionID != "" {
+		t.Fatalf("bootstrap claimed an unproven same-cwd thread: %q", created.CodexSessionID)
 	}
 }
 

@@ -201,7 +201,7 @@ func TestHandleCodexNotify_IgnoresGuardianSubagent(t *testing.T) {
 	}
 }
 
-func TestHandleCodexNotify_GuardianBootstrapUsesSharedLock(t *testing.T) {
+func TestHandleCodexNotify_GuardianCannotPublishRootAnchor(t *testing.T) {
 	tmpHome := t.TempDir()
 	codexHome := filepath.Join(tmpHome, ".codex")
 	t.Setenv("HOME", tmpHome)
@@ -247,20 +247,17 @@ func TestHandleCodexNotify_GuardianBootstrapUsesSharedLock(t *testing.T) {
 	}()
 	select {
 	case <-done:
+	case <-time.After(2 * time.Second):
 		release()
-		t.Fatal("guardian notify did not wait for shared hook lock")
-	case <-time.After(100 * time.Millisecond):
+		t.Fatal("ignored guardian attempted to acquire the binding-consumption lock")
 	}
-
-	// Model the runtime completing a promotion while it owns the shared lock.
-	// The guardian must recheck after acquiring the lock and preserve this ID.
+	if got := session.ReadHookSessionAnchor("inst-guardian-lock"); got != "" {
+		release()
+		t.Fatalf("guardian inferred an interactive conversation from ancestry: %q", got)
+	}
 	session.WriteHookSessionAnchor("inst-guardian-lock", promotedID)
 	release()
-	select {
-	case <-done:
-	case <-time.After(2 * time.Second):
-		t.Fatal("guardian notify remained blocked after shared lock release")
-	}
+	handleCodexNotify()
 	if got := session.ReadHookSessionAnchor("inst-guardian-lock"); got != promotedID {
 		t.Fatalf("guardian replaced promoted anchor: got %q, want %q", got, promotedID)
 	}
@@ -374,7 +371,7 @@ func TestHandleCodexNotify_RejectsCandidateBelowEmptyBindingFloor(t *testing.T) 
 	}
 }
 
-func TestHandleCodexNotify_EmptyTailEventKeepsJSONEmptyAndPersistsAnchor(t *testing.T) {
+func TestHandleCodexNotify_EmptyTailEventDoesNotPublishAnchor(t *testing.T) {
 	tmpHome := t.TempDir()
 	t.Setenv("HOME", tmpHome)
 	t.Setenv("AGENTDECK_INSTANCE_ID", "inst-sticky")
@@ -383,11 +380,11 @@ func TestHandleCodexNotify_EmptyTailEventKeepsJSONEmptyAndPersistsAnchor(t *test
 	origArgs := os.Args
 	defer func() { os.Args = origArgs }()
 
-	// Seed sticky mapping with a thread_id-bearing event.
+	// A payload ID is not published as a binding before pane-owner validation.
 	os.Args = []string{"agent-deck", "codex-notify", `{"event":"turn/started","thread_id":"thr-sticky","turn_id":"turn-main"}`}
 	handleCodexNotify()
 
-	// Tail event has no session_id/thread_id; should backfill from sticky store.
+	// An identity-less tail must stay identity-less, not borrow a cached ID.
 	os.Args = []string{"agent-deck", "codex-notify", `{"event":"turn/completed"}`}
 	handleCodexNotify()
 
@@ -403,8 +400,8 @@ func TestHandleCodexNotify_EmptyTailEventKeepsJSONEmptyAndPersistsAnchor(t *test
 	if hook.SessionID != "" {
 		t.Fatalf("hook session_id = %q, want empty for compatibility", hook.SessionID)
 	}
-	if got := session.ReadHookSessionAnchor("inst-sticky"); got != "thr-sticky" {
-		t.Fatalf("session anchor = %q, want thr-sticky", got)
+	if got := session.ReadHookSessionAnchor("inst-sticky"); got != "" {
+		t.Fatalf("notify published an unverified binding anchor: %q", got)
 	}
 	if hook.CodexStartedGeneration == "" || hook.CodexCompletedGeneration != "" {
 		t.Fatalf("identity-less completion must fail closed: %#v", hook)
@@ -775,5 +772,29 @@ func TestCodexSharedStatusWriteNeverMutatesAnchor(t *testing.T) {
 	}
 	if got := session.ReadHookSessionAnchor(id); got != "thread-current" {
 		t.Fatalf("shared writer mutated Codex anchor: %q", got)
+	}
+}
+
+func TestHandleCodexNotify_DoesNotBorrowCachedEnvironmentIdentity(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("AGENTDECK_INSTANCE_ID", "inst-env-cache")
+	t.Setenv("CODEX_SESSION_ID", "11111111-2222-4333-8444-555555555555")
+	previous := os.Args
+	t.Cleanup(func() { os.Args = previous })
+	os.Args = []string{"agent-deck", "codex-notify", `{"event":"turn/started"}`}
+	handleCodexNotify()
+	data, err := os.ReadFile(filepath.Join(getHooksDir(), "inst-env-cache.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var status hookStatusFile
+	if err := json.Unmarshal(data, &status); err != nil {
+		t.Fatal(err)
+	}
+	if status.SessionID != "" || session.ReadHookSessionAnchor("inst-env-cache") != "" {
+		t.Fatalf("cached environment became a hook identity: %+v", status)
+	}
+	if status.CodexEmitterPID != os.Getppid() || status.CodexEmitterIdentity != session.CodexProcessIdentity(os.Getppid()) {
+		t.Fatalf("hook did not record its actual emitter lifetime: %+v", status)
 	}
 }

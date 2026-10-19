@@ -51,8 +51,9 @@ For remote group headers, `Enter`/`Tab` toggles collapse and `h`/Left collapses 
 | Key | Action |
 |-----|--------|
 | `/` | Local search (fuzzy) |
-| `G` | Global search (all Claude conversations) |
-| `Tab` | Switch between local/global search |
+| `G` | Same fleet metadata search as `/` |
+| `Tab` | Switch local/global scope |
+| `Ctrl+S` | Toggle chat search (off on each open) |
 | `0` | Clear filter (show all) |
 | `!` | Filter: running only (toggle) |
 | `@` | Filter: waiting only (toggle) |
@@ -200,23 +201,25 @@ git context, and optional operator message.
 
 ## Search
 
-### Local Search (`/`)
+### Fleet Search (`/` and `G`)
 
-- Fuzzy search session titles and groups
-- Max 10 results
-- `↑/↓` or `Ctrl+K/J` navigate
-- `Enter` select | `Tab` switch to global | `Esc` close
+`/` and `G` open the same fleet metadata search (title, path, group, tool, status).
 
-### Global Search (`G`)
+- `Tab` switches between local and global scope
+- Results show path, group, and status; last-opened and activity are shown separately and display as unknown when not recorded
+- Ordering: relevance first, ties broken by most recently opened
+- `↑/↓` or `Ctrl+K/J` navigate | `Enter` select/jump | `Esc` close
 
-- Full content search across `~/.claude/projects/`
-- Regex + fuzzy matching
-- Recency ranking
-- Split view: results + preview
-- `[/]` scroll preview
-- `Enter` create/jump to session
+### Chat Search (`Ctrl+S`)
 
-**Config:**
+- Off every time search opens; press `Ctrl+S` to enable
+- Runs asynchronously on each opening; searches local conversations bound to sessions only
+- Shows snippets; no remote search and no persistent index
+- Supported: OMP, Codex, Claude, Gemini, OpenCode (SQLite), Pi, Kiro CLI (JSONL), Copilot
+- Unavailable or partial sources are reported as such in the results
+- Plain text matching only; regex is not supported
+
+**Config (legacy/web only; does not affect TUI search):**
 ```toml
 [global_search]
 enabled = true

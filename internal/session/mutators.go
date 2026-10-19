@@ -412,6 +412,18 @@ func SetField(inst *Instance, field, value string, extraArgsTokens []string) (ol
 			releaseHookLock()
 			inst.mu.Unlock()
 		}()
+		if normalized != "" {
+			owner, err := inst.codexSessionOwner(normalized)
+			if err != nil {
+				return oldValue, nil, &MutationError{Field: field, Msg: err.Error()}
+			}
+			if owner != "" {
+				return oldValue, nil, &MutationError{
+					Field: field,
+					Msg:   fmt.Sprintf("Codex conversation is already bound to instance %s; explicitly clear that binding before assigning it here", owner),
+				}
+			}
+		}
 		inst.CodexSessionID = normalized
 		inst.CodexDetectedAt = time.Now()
 		// Entering this field case is explicit user intent even when a stale

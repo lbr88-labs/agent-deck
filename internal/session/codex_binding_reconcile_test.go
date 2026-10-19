@@ -160,7 +160,7 @@ func TestAcceptCodexSessionIDRepairsStaleAnchorWhenUnchanged(t *testing.T) {
 	inst.CodexSessionID = forkID
 	WriteHookSessionAnchor(inst.ID, guardianID)
 
-	if changed := inst.acceptCodexSessionID(forkID, false); changed {
+	if changed := inst.acceptCodexSessionID(forkID, false, codexBindingProcess); changed {
 		t.Fatal("unchanged top-level binding reported a rebind")
 	}
 	if got := ReadHookSessionAnchor(inst.ID); got != forkID {
@@ -178,7 +178,7 @@ func TestUnchangedCompletedPromotionDoesNotAdvanceBindingRevision(t *testing.T) 
 	}
 
 	for range 3 {
-		if changed := inst.acceptCodexSessionID(forkID, false); changed {
+		if changed := inst.acceptCodexSessionID(forkID, false, codexBindingProcess); changed {
 			t.Fatal("unchanged promoted target reported a rebind")
 		}
 	}
@@ -270,12 +270,12 @@ func TestBuildCodexCommandReusesCompletedMigrationTargetWhenDBStillStale(t *test
 func TestUpdateHookStatusDoesNotUndoPeerPromotion(t *testing.T) {
 	_, _, db, inst, rootID, _, forkID := setupCodexPromotionTest(t)
 
-	inst.UpdateHookStatus(&HookStatus{
+	inst.UpdateHookStatus(ownedCodexHook(t, inst, &HookStatus{
 		Status:    "waiting",
 		SessionID: rootID,
 		Event:     "turn/completed",
 		UpdatedAt: time.Now(),
-	})
+	}))
 	if inst.CodexSessionID != forkID {
 		t.Fatalf("stale hook replaced promoted fork: got %q want %q", inst.CodexSessionID, forkID)
 	}
@@ -303,9 +303,9 @@ func TestDelayedOldRootHookCannotUndoCompletedPromotion(t *testing.T) {
 	if err := os.WriteFile(hookPath, []byte(`{"status":"waiting","session_id":"`+rootID+`"}`), 0o600); err != nil {
 		t.Fatalf("write delayed root hook: %v", err)
 	}
-	inst.UpdateHookStatus(&HookStatus{
+	inst.UpdateHookStatus(ownedCodexHook(t, inst, &HookStatus{
 		Status: "waiting", SessionID: rootID, Event: "turn/completed", UpdatedAt: time.Now(),
-	})
+	}))
 
 	if inst.CodexSessionID != forkID || readCodexSessionIDFromDB(t, db, inst.ID) != forkID {
 		t.Fatalf("delayed root hook regressed promotion: memory=%q db=%q",
@@ -331,9 +331,9 @@ func TestNewerTopLevelRotationSupersedesCompletedPromotion(t *testing.T) {
 	const newerID = "44444444-dddd-4ddd-8ddd-444444444444"
 	writeCodexRolloutWithSource(t, codexHome, newerID, cwd, "cli")
 
-	inst.UpdateHookStatus(&HookStatus{
+	inst.UpdateHookStatus(ownedCodexHook(t, inst, &HookStatus{
 		Status: "running", SessionID: newerID, Event: "turn/started", UpdatedAt: time.Now(),
-	})
+	}))
 	if inst.CodexSessionID != newerID || readCodexSessionIDFromDB(t, db, inst.ID) != newerID {
 		t.Fatalf("newer top-level rotation rejected: memory=%q db=%q",
 			inst.CodexSessionID, readCodexSessionIDFromDB(t, db, inst.ID))
@@ -444,9 +444,9 @@ func TestCommittedCodexClearRejectsDelayedOldHook(t *testing.T) {
 	if err := (&Storage{db: db}).SaveWithGroups([]*Instance{inst}, nil); err != nil {
 		t.Fatalf("save clear: %v", err)
 	}
-	inst.UpdateHookStatus(&HookStatus{
+	inst.UpdateHookStatus(ownedCodexHook(t, inst, &HookStatus{
 		Status: "waiting", SessionID: forkID, Event: "turn/completed", UpdatedAt: time.Now(),
-	})
+	}))
 
 	if inst.CodexSessionID != "" || readCodexSessionIDFromDB(t, db, inst.ID) != "" {
 		t.Fatalf("delayed hook resurrected clear: memory=%q db=%q",

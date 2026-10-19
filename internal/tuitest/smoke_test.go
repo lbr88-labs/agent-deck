@@ -20,7 +20,7 @@ func skipIfNoTmuxServer(t *testing.T) {
 	}
 }
 
-// buildBinary builds the agent-deck binary into a temp directory with GOTOOLCHAIN=go1.25.13.
+// buildBinary builds the agent-deck binary into a temp directory with GOTOOLCHAIN=go1.26.9.
 // Returns the path to the built binary.
 func buildBinary(t *testing.T) string {
 	t.Helper()
@@ -29,7 +29,7 @@ func buildBinary(t *testing.T) string {
 
 	cmd := exec.Command("go", "build", "-o", binPath, "./cmd/agent-deck")
 	cmd.Dir = repoRoot(t)
-	cmd.Env = append(os.Environ(), "GOTOOLCHAIN=go1.25.13")
+	cmd.Env = append(os.Environ(), "GOTOOLCHAIN=go1.26.9")
 
 	out, err := cmd.CombinedOutput()
 	if err != nil {
@@ -281,10 +281,9 @@ func TestSmoke_BuildVersion(t *testing.T) {
 
 	versionInfo := string(out)
 
-	// Verify built with go1.25.x (the pinned toolchain, bumped from 1.24 in #1054
-	// to close 17 Go stdlib CVEs and unblock dependabot bumps requiring Go 1.25+).
-	if !strings.Contains(versionInfo, "go1.25") {
-		t.Errorf("binary not built with go1.25.x toolchain:\n%s", versionInfo)
+	// Verify the binary uses the security-patched toolchain pinned in go.mod.
+	if !strings.Contains(versionInfo, "go1.26.9") {
+		t.Errorf("binary not built with go1.26.9 toolchain:\n%s", versionInfo)
 	}
 
 	// Warn (don't fail) if vcs.modified=true since tests run in a working tree

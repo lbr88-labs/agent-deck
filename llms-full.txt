@@ -17,7 +17,7 @@ This file contains complete documentation for AI/LLM consumption.
 **Your AI agent command center**
 
 [![GitHub Stars](https://img.shields.io/github/stars/asheshgoplani/agent-deck?style=for-the-badge&logo=github&color=yellow&labelColor=1a1b26)](https://github.com/asheshgoplani/agent-deck/stargazers)
-[![Go Version](https://img.shields.io/badge/Go-1.25.13-00ADD8?style=for-the-badge&logo=go&labelColor=1a1b26)](https://go.dev)
+[![Go Version](https://img.shields.io/badge/Go-1.26.9-00ADD8?style=for-the-badge&logo=go&labelColor=1a1b26)](https://go.dev)
 [![License](https://img.shields.io/badge/License-MIT-9ece6a?style=for-the-badge&labelColor=1a1b26)](LICENSE)
 [![Platform](https://img.shields.io/badge/Platform-macOS%20%7C%20Linux%20%7C%20WSL-7aa2f7?style=for-the-badge&labelColor=1a1b26)](https://github.com/asheshgoplani/agent-deck)
 [![Latest Release](https://img.shields.io/github/v/release/asheshgoplani/agent-deck?style=for-the-badge&color=e0af68&labelColor=1a1b26)](https://github.com/asheshgoplani/agent-deck/releases)
@@ -100,7 +100,9 @@ Running many sessions? Socket pooling shares MCP processes across all sessions v
 
 ### Search
 
-Press `/` to fuzzy-search across all sessions. Filter by status with `!` (running), `@` (waiting), `#` (idle), `$` (error). Press `G` for global search across all Claude conversations.
+Press `/` or `G` to search the fleet by metadata (title, path, group, tool, status). `Tab` switches local/global scope. Results show path, group, and status, with last-opened and activity shown separately (unknown when unrecorded); ranked by relevance, ties by most recently opened. Filter by status with `!` (running), `@` (waiting), `#` (idle), `$` (error).
+
+Press `Ctrl+S` for chat search. It is off each time search opens, runs asynchronously, and searches only local conversations bound to sessions, showing snippets (no remote search, no index). Supported: OMP, Codex, Claude, Gemini, OpenCode (SQLite), Pi, Kiro CLI (JSONL), Copilot; unavailable or partial sources are reported as such. Plain-text matching only.
 
 ### Status Detection
 
@@ -222,7 +224,7 @@ agent-deck mcp attach my-proj exa # Attach MCP to session
 | `s` | Skills Manager (Claude) |
 | `M` | Move session to group |
 | `S` | Settings |
-| `/` / `G` | Search / Global search |
+| `/` / `G` | Fleet search |
 | `r` | Restart session |
 | `d` | Delete |
 | `?` | Full help |
@@ -251,7 +253,7 @@ Agent Deck checks for updates automatically. Run `agent-deck update` to install,
 <details>
 <summary><b>How is this different from just using tmux?</b></summary>
 
-Agent Deck adds AI-specific intelligence on top of tmux: smart status detection (knows when Claude is thinking vs. waiting), session forking with context inheritance, MCP management, global search across conversations, and organized groups. Think of it as tmux plus AI awareness.
+Agent Deck adds AI-specific intelligence on top of tmux: smart status detection (knows when Claude is thinking vs. waiting), session forking with context inheritance, MCP management, fleet search, and organized groups. Think of it as tmux plus AI awareness.
 
 </details>
 
@@ -494,8 +496,9 @@ agent-deck remove "Codex Review" && agent-deck remove "Gemini Arch"
 ### Search & Filter
 | Key | Action |
 |-----|--------|
-| `/` | Local search |
-| `G` | Global search (all Claude conversations) |
+| `/` | Fleet metadata search (title, path, group, tool, status) |
+| `G` | Same fleet search as `/`; `Tab` switches local/global |
+| `Ctrl+S` | Chat search (off on each open; local bound conversations only) |
 | `!@#$` | Filter by status (running/waiting/idle/error) |
 
 ### Global
@@ -1055,7 +1058,7 @@ notify_in_cli = true          # Show in CLI commands
 
 ## [global_search] Section
 
-Search across all Claude conversations.
+Legacy/web only: configures the older Claude-conversation index. The TUI `/` and `G` search does not use it.
 
 ```toml
 [global_search]
@@ -1068,7 +1071,7 @@ index_rate_limit = 20       # Files/second for indexing
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
-| `enabled` | bool | `true` | Enable `G` key global search. |
+| `enabled` | bool | `true` | Enable legacy global search index (not used by TUI `/` / `G`). |
 | `tier` | string | `"auto"` | Strategy: `instant` (fast, more RAM), `balanced` (LRU cache). |
 | `memory_limit_mb` | int | `100` | Max memory for balanced tier. |
 | `recent_days` | int | `90` | Only search recent conversations. |

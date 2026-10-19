@@ -41,7 +41,6 @@ var (
 	sessionLog                  = logging.ForComponent(logging.CompSession)
 	mcpLog                      = logging.ForComponent(logging.CompMCP)
 	codexSessionIDPathPatternRE = regexp.MustCompile(`/sessions/\S*/rollout-\S*-([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\.jsonl`)
-	uuidPatternRE               = regexp.MustCompile(`[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}`)
 	geminiPromptRE              = regexp.MustCompile(`^(>|>>>|\$|❯|➜|gemini>|✦)\s*$`)
 	shellPromptRE               = regexp.MustCompile(`^[\s]*(>|>>>|\$|❯|➜|#|%)\s*$`)
 	openCodeSessionHTTPClient   = &http.Client{
@@ -119,7 +118,6 @@ const (
 	// timestamp on every received line, so 30s of silence means the stream
 	// (and likely the process) is gone — fall back to tmux polling.
 	opencodeSSEFreshnessWindow = 30 * time.Second
-	codexProbeMissingSentinel  = "__AGENT_DECK_MISSING_TOOL__"
 	// codexLsofProbeTimeout hard-caps a single lsof invocation so a slow or
 	// hung child can never stall the shared status pass. lsof is also run with
 	// -n -P (no host/port name resolution) to avoid reverse-DNS PTR lookups on
@@ -308,8 +306,7 @@ type Instance struct {
 	// binding its new Agent Deck row to the parent rollout it temporarily opens.
 	// It is deliberately transient: once the child exists, normal detection
 	// binds and persists the child's distinct session ID.
-	CodexForkSourceSessionID string    `json:"-"`
-	lastCodexScanAt          time.Time // Rate-limits expensive ~/.codex/sessions scans
+	CodexForkSourceSessionID string `json:"-"`
 	// Usage-limit detection (#1802), all guarded by i.mu.
 	// lastUsageLimitScanAt throttles the transcript read (records scan START).
 	// usageLimitedCached memoises the verdict for that window, and
@@ -686,6 +683,7 @@ type Instance struct {
 	// It lets the transactional persistence merge distinguish user intent from
 	// a stale peer snapshot carrying the source, old root, or an empty ID.
 	codexSessionBindingOverrideIntent bool
+	codexFreshStart                   bool // One-shot opt-in set only by RestartFresh.
 
 	// SkipMCPRegenerate skips .mcp.json regeneration on next Restart()
 	// Set by MCP dialog Apply() to avoid race condition where Apply writes
@@ -960,6 +958,15 @@ func (inst *Instance) GetToolThreadSafe() string {
 	t := inst.Tool
 	inst.mu.RUnlock()
 	return t
+}
+
+// GetCodexSessionIDThreadSafe returns the conversation binding with read-lock
+// protection against background status polling and pane-owned hook updates.
+func (inst *Instance) GetCodexSessionIDThreadSafe() string {
+	inst.mu.RLock()
+	id := inst.CodexSessionID
+	inst.mu.RUnlock()
+	return id
 }
 
 // GetTitleThreadSafe returns the session title with read-lock protection.
@@ -2226,6 +2233,10 @@ func (i *Instance) accountCodexHomeDir() string {
 // #1922 failure — the account was recorded and reported, but the process ran
 // against ~/.codex.
 func (i *Instance) codexHomeToExport() string {
+	if i.IsSandboxed() {
+		// Pin the known mount even when an existing container has stale env.
+		return codexSandboxContainerHome
+	}
 	if accountHome := strings.TrimSpace(i.accountCodexHomeDir()); accountHome != "" {
 		return accountHome
 	}
@@ -2237,6 +2248,7 @@ func (i *Instance) codexHomeToExport() string {
 
 // codexHomeForCommand returns the CODEX_HOME the launched process will actually
 // read and write under, for an already-resolved codex command line.
+// For a sandbox the result is the host view of its fixed container mount.
 //
 // This is the read-side mirror of codexHomeToExport and must stay in step with
 // it: whatever that exports, this resolves to. codexHomeToExport returns "" when
@@ -2249,6 +2261,12 @@ func (i *Instance) codexHomeToExport() string {
 // it under the ACCOUNT home, so the gate always missed, dropped the session id,
 // and every restart silently opened a fresh conversation.
 func (i *Instance) codexHomeForCommand(command string) string {
+	if i.IsSandboxed() {
+		if homeDir, err := os.UserHomeDir(); err == nil && homeDir != "" {
+			return docker.SandboxDir(homeDir, ".codex")
+		}
+		return ""
+	}
 	// A CODEX_HOME= embedded in the command is the user typing it by hand for
 	// this session, so it stays the most explicit signal of all — and the shell
 	// agrees, since it is emitted after any exported CODEX_HOME.
@@ -2264,11 +2282,6 @@ func (i *Instance) codexHomeForCommand(command string) string {
 func (i *Instance) getCodexHomeDir() string {
 	if i == nil {
 		return getCodexHomeDir()
-	}
-	if i.IsSandboxed() {
-		if homeDir, err := os.UserHomeDir(); err == nil && homeDir != "" {
-			return docker.SandboxDir(homeDir, ".codex")
-		}
 	}
 	return i.codexHomeForCommand(i.resolveCodexCommand(i.Command))
 }
@@ -2353,6 +2366,16 @@ func (i *Instance) buildCodexCommand(baseCommand string) string {
 		i.ID, i.Title, i.Tool, shellescape.Quote(sessionProfileEnvValue()))
 	envPrefix += agentdeckEnvPrefix
 
+	if codexHome := i.codexHomeToExport(); codexHome != "" {
+		if !i.IsSandboxed() {
+			if err := os.MkdirAll(codexHome, 0o755); err != nil {
+				sessionLog.Warn("codex_home_mkdir_failed",
+					slog.String("path", codexHome),
+					slog.String("error", err.Error()))
+			}
+		}
+		envPrefix += "CODEX_HOME=" + shellescape.Quote(codexHome) + " "
+	}
 	// Passthrough: if the tool is literally "codex" and user gave a custom command
 	// (not the bare "codex" name), return as-is without flag injection.
 	// Codex-compatible tools (e.g., "my-codex" with CompatibleWith="codex") always
@@ -2362,14 +2385,6 @@ func (i *Instance) buildCodexCommand(baseCommand string) string {
 		if i.CodexSessionID == "" || !IsSupportedCodexLaunchCommand(trimmed) {
 			return envPrefix + trimmed
 		}
-	}
-	if codexHome := i.codexHomeToExport(); codexHome != "" {
-		if err := os.MkdirAll(codexHome, 0o755); err != nil {
-			sessionLog.Warn("codex_home_mkdir_failed",
-				slog.String("path", codexHome),
-				slog.String("error", err.Error()))
-		}
-		envPrefix += "CODEX_HOME=" + codexHome + " "
 	}
 
 	yoloFlag := i.resolveCodexYoloFlag()
@@ -2397,51 +2412,6 @@ func (i *Instance) buildCodexCommand(baseCommand string) string {
 				slog.String("subagent_id", subagentID))
 			return envPrefix + fmt.Sprintf("%s%s%s fork %s",
 				command, yoloFlag, modelFlag, shellescape.Quote(subagentID))
-		}
-	}
-
-	// Issue #756: Gate `codex resume <sid>` on rollout-file existence.
-	// If Codex died before flushing its rollout JSONL (tmux crash, kill -9
-	// in the SessionStart→first-flush window), the captured session_id is
-	// permanently unresumable. Without this check the bridge appends
-	// `resume <stale-uuid>` on every restart and Codex exits immediately,
-	// flipping the session back to error in an infinite loop. Drop the
-	// stale ID, clear the .sid sidecar so the next hook tick rebinds
-	// cleanly, and spawn fresh.
-	if i.CodexSessionID != "" && !codexRolloutExistsInHome(i.CodexSessionID, codexHome) {
-		sessionLog.Warn("codex_resume_stale_sid_dropped",
-			slog.String("instance_id", i.ID),
-			slog.String("title", i.Title),
-			slog.String("sid", i.CodexSessionID),
-			slog.String("codex_home", codexHome))
-		i.CodexSessionID = ""
-		i.CodexDetectedAt = time.Now()
-		i.codexSessionBindingOverrideIntent = false // automatic CAS clear, never a user override
-		writeCodexBindingFloorState(i.ID, "", i.CodexDetectedAt, i.CodexBindingRevision)
-		i.clearCodexSubagentMigration()
-		i.hookStatus = ""
-		i.hookEvent = ""
-		i.hookSessionID = ""
-		i.hookLastUpdate = time.Time{}
-
-		release, lockErr := AcquireHookSessionLock(i.ID)
-		if lockErr != nil {
-			sessionLog.Warn("codex_stale_binding_clear_lock_failed",
-				slog.String("instance_id", i.ID),
-				slog.String("error", lockErr.Error()))
-		} else {
-			i.removePersistedHookStatusFile()
-			ClearHookSessionAnchor(i.ID)
-			if i.tmuxSession != nil && i.tmuxSession.Exists() {
-				_ = i.tmuxSession.SetEnvironment("CODEX_SESSION_ID", "")
-			}
-			if !i.persistCodexSessionBinding("codex_stale_binding_clear_persist_failed") {
-				// A newer binding may have won the CAS. Re-read it while still under
-				// the shared lock; this automatic cleanup must never override user
-				// intent on a later whole-row save.
-				i.adoptPersistedCodexPromotionLocked(true)
-			}
-			release()
 		}
 	}
 
@@ -2589,14 +2559,10 @@ func (i *Instance) isFreshCodexMigrationTarget(sessionID string) bool {
 	if path == "" || codexRolloutThreadKind(path) != codexThreadTopLevel {
 		return false
 	}
-	info, err := os.Stat(path)
-	if err != nil {
-		return false
-	}
-	// Filesystems commonly expose one-second mtime granularity. The explicit
-	// source/root exclusions above carry the identity guarantee; this small
-	// grace only prevents an unrelated historical top-level FD from winning.
-	return !info.ModTime().Before(i.codexSubagentMigrationStartedAt.Add(-2 * time.Second))
+	createdAt := codexRolloutCreatedAt(i.getCodexHomeDir(), sessionID)
+	// The launch boundary is checked against immutable creation metadata, not
+	// mtime, which another live conversation can advance independently.
+	return !createdAt.IsZero() && !createdAt.Before(i.codexSubagentMigrationStartedAt.Add(-2*time.Second))
 }
 
 func (i *Instance) markCodexSubagentMigrationCompleted(targetID string) (codexSubagentMigrationState, bool) {
@@ -3032,11 +2998,8 @@ func (i *Instance) buildCopilotCommand(baseCommand string) string {
 	return envPrefix + GetToolCommand("copilot")
 }
 
-// codexRolloutExistsInHome reports whether Codex has flushed a rollout JSONL
-// for the given session ID under codexHome/sessions. Used by buildCodexCommand
-// to gate `codex resume <sid>` on a real on-disk rollout file (Issue #756).
-//
-// Codex layout: codexHome/sessions/YYYY/MM/DD/rollout-<ts>-<uuid>.jsonl
+// codexRolloutExistsInHome checks for a real rollout, including archived
+// conversations. Ownership discovery must never use filesystem recency.
 func codexRolloutExistsInHome(sessionID, codexHome string) bool {
 	return codexRolloutPathInHome(sessionID, codexHome) != ""
 }
@@ -3458,46 +3421,30 @@ func (i *Instance) DetectCodexSession() {
 	i.detectCodexSessionAsync()
 }
 
-// detectCodexSessionAsync detects the Codex session ID after startup
-// Codex stores sessions in ~/.codex/sessions/YYYY/MM/DD/*.jsonl
-// Session ID is a UUID that can be extracted from the filename
-// Since Codex has no "session list" command, we scan the filesystem
+// detectCodexSessionAsync learns only the identity proven by this pane's
+// process tree. Other chats in the same directory are never candidates.
 func (i *Instance) detectCodexSessionAsync() {
-	// Brief wait for Codex to initialize
-	time.Sleep(1 * time.Second)
-
-	// Try up to 3 times with short delays
-	delays := []time.Duration{0, 1 * time.Second, 2 * time.Second}
-
-	for attempt, delay := range delays {
-		if delay > 0 {
-			time.Sleep(delay)
-		}
-
-		sessionID, _ := i.queryCodexSessionFromProcessFiles()
-		if sessionID == "" {
-			sessionID = i.queryCodexSession(i.collectOtherCodexSessionIDs(), true)
-		}
-		if sessionID != "" && i.CodexSessionID != "" &&
-			IsCodexSubagentSession(i.getCodexHomeDir(), i.CodexSessionID) &&
-			!i.isFreshCodexMigrationTarget(sessionID) {
-			sessionID = ""
-		}
-		if sessionID != "" {
-			i.acceptCodexSessionID(sessionID, true)
-
-			sessionLog.Debug(
-				"codex_session_detected",
-				slog.String("session_id", sessionID),
-				slog.Int("attempt", attempt+1),
-			)
+	delays := []time.Duration{time.Second, time.Second, 2 * time.Second}
+	for _, delay := range delays {
+		time.Sleep(delay)
+		i.mu.Lock()
+		if i.CodexSessionID != "" && !IsCodexSubagentSession(i.getCodexHomeDir(), i.CodexSessionID) {
+			i.mu.Unlock()
 			return
 		}
-
-		sessionLog.Debug("codex_session_not_found", slog.Int("attempt", attempt+1), slog.Int("total", len(delays)))
+		probe := i.queryCodexSessionFromProcessFiles()
+		if probe.sessionID != "" && !probe.ambiguous {
+			i.acceptCodexSessionID(probe.sessionID, true, codexBindingProcess)
+		}
+		detected := i.CodexSessionID != "" && !IsCodexSubagentSession(i.getCodexHomeDir(), i.CodexSessionID)
+		i.mu.Unlock()
+		if detected {
+			return
+		}
 	}
-
-	sessionLog.Warn("codex_detection_failed", slog.Int("attempts", len(delays)))
+	sessionLog.Warn("codex_detection_unverified",
+		slog.String("instance_id", i.ID),
+		slog.String("reason", "no_pane_owned_conversation_identity"))
 }
 
 func getCodexHomeDir() string {
@@ -3537,308 +3484,23 @@ func isCodexHomeExplicit() bool {
 	return strings.TrimSpace(cfg.Codex.ConfigDir) != ""
 }
 
-// runWithTimeout runs op in a goroutine and waits up to timeout for it to
-// complete. Returns true if op finished, false if it timed out. The
-// abandoned goroutine continues running until op returns naturally; its
-// effects on shared state after timeout are not consulted by callers, which
-// must check the return value before reading any variables op may have
-// written.
-//
-// Used to backstop FS operations under ~/.codex/sessions which can hang
-// indefinitely on a stuck FS layer (kernel D-state during readdir on the
-// WSL 9p path was observed on 2026-04-28; one thread held a dentry that
-// the FS layer never released, blocking every agent-deck CLI command that
-// transitively walked the codex sessions tree).
-func runWithTimeout(timeout time.Duration, op func()) bool {
-	done := make(chan struct{})
-	go func() {
-		defer close(done)
-		op()
-	}()
-	select {
-	case <-done:
-		return true
-	case <-time.After(timeout):
-		return false
-	}
-}
-
-// codexWalkDirTimeout caps the recursive walk over $CODEX_HOME/sessions/ in
-// queryCodexSession. Healthy walks of a year's sessions complete in roughly
-// one second; the bound is generous so a slow disk does not false-negative
-// while still preventing indefinite hangs.
-const codexWalkDirTimeout = 5 * time.Second
-
-// queryCodexSession scans Codex sessions and returns the best candidate.
-// Selection strategy:
-//  1. Prefer sessions whose JSONL metadata matches this instance's project path.
-//  2. Optionally allow unscoped fallback (no cwd metadata) for initial bootstrap.
-func (i *Instance) queryCodexSession(excludeIDs map[string]bool, allowUnscoped bool) string {
-	sessionsDir := filepath.Join(i.getCodexHomeDir(), "sessions")
-	if _, err := os.Stat(sessionsDir); os.IsNotExist(err) {
-		return ""
-	}
-
-	uuidPattern := uuidPatternRE
-
-	var bestScopedID string
-	var bestScopedTime time.Time
-	var bestUnscopedID string
-	var bestUnscopedTime time.Time
-
-	normalizedProjectPath := normalizePath(i.ProjectPath)
-
-	var walkErr error
-	if !runWithTimeout(codexWalkDirTimeout, func() {
-		walkErr = filepath.WalkDir(sessionsDir, func(path string, d os.DirEntry, err error) error {
-			if err != nil {
-				return nil // Skip errors
-			}
-
-			if d.IsDir() || !strings.HasSuffix(d.Name(), ".jsonl") {
-				return nil
-			}
-
-			sessionID := uuidPattern.FindString(d.Name())
-			if sessionID == "" {
-				return nil
-			}
-			if excludeIDs != nil && excludeIDs[sessionID] {
-				return nil
-			}
-			// Codex writes nested worker and approval-review guardian rollouts
-			// beside the owning interactive thread. They share the same cwd and
-			// are often newer, so considering them here binds Agent Deck to a
-			// thread Codex Desktop intentionally hides.
-			if codexRolloutThreadKind(path) == codexThreadSubagent {
-				return nil
-			}
-
-			// Subagent-thread gate (incident 2026-07-15): never let the
-			// bootstrap disk scan adopt a subagent rollout as the session's
-			// main thread — codex refuses user turns on it. Skipping it here
-			// (rather than after selection) lets the walk fall through to the
-			// best user-sourced match instead of returning nothing when the
-			// most-recent match happens to be a subagent. See
-			// codex_subagent_gate.go.
-			if i.shouldRejectCodexSubagentRebind(sessionID) {
-				return nil
-			}
-
-			info, err := d.Info()
-			if err != nil {
-				return nil
-			}
-
-			// Only consider sessions created after we started this instance.
-			if i.CodexStartedAt > 0 {
-				startTime := time.UnixMilli(i.CodexStartedAt)
-				if info.ModTime().Before(startTime) {
-					return nil
-				}
-			}
-
-			matchesProject, hasProjectMetadata := codexSessionMatchesProject(path, normalizedProjectPath)
-			if matchesProject {
-				if bestScopedID == "" || info.ModTime().After(bestScopedTime) {
-					bestScopedID = sessionID
-					bestScopedTime = info.ModTime()
-				}
-				return nil
-			}
-
-			// Use unscoped records only when bootstrapping and metadata is unavailable.
-			if allowUnscoped && !hasProjectMetadata {
-				if bestUnscopedID == "" || info.ModTime().After(bestUnscopedTime) {
-					bestUnscopedID = sessionID
-					bestUnscopedTime = info.ModTime()
-				}
-			}
-
-			return nil
-		})
-	}) {
-		// Walk did not complete in time. The most likely cause is a stuck FS
-		// layer (e.g., WSL kernel D-state). Return without consulting the
-		// best* variables since they may be partially populated; the caller
-		// retries with backoff so a transient stall self-heals.
-		sessionLog.Warn("codex_walkdir_timeout",
-			slog.String("instance_id", i.ID),
-			slog.String("sessions_dir", sessionsDir),
-			slog.Duration("timeout", codexWalkDirTimeout))
-		return ""
-	}
-	if walkErr != nil {
-		sessionLog.Debug("codex_scan_error", slog.String("error", walkErr.Error()))
-	}
-
-	if bestScopedID != "" {
-		return bestScopedID
-	}
-	if allowUnscoped {
-		return bestUnscopedID
-	}
-	return ""
-}
-
-// codexSessionMatchesProject checks whether a Codex session file belongs to the
-// current project by inspecting JSONL metadata fields (cwd/workdir/path).
-// Returns:
-//   - match=true if project path matches
-//   - known=true if any project metadata field was found
-func codexSessionMatchesProject(sessionFilePath, normalizedProjectPath string) (match bool, known bool) {
-	if normalizedProjectPath == "" {
-		return false, false
-	}
-
-	file, err := os.Open(sessionFilePath)
-	if err != nil {
-		return false, false
-	}
-	defer file.Close()
-
-	const maxLines = 256
-
-	scanner := bufio.NewScanner(file)
-	buf := make([]byte, 0, 64*1024)
-	scanner.Buffer(buf, 1024*1024)
-
-	lineCount := 0
-	foundMetadata := false
-
-	for scanner.Scan() {
-		lineCount++
-		cwd := extractCodexCWDFromJSONLine(scanner.Bytes())
-		if cwd != "" {
-			foundMetadata = true
-			if normalizePath(cwd) == normalizedProjectPath {
-				return true, true
-			}
-		}
-		if lineCount >= maxLines {
-			break
-		}
-	}
-
-	return false, foundMetadata
-}
-
-// extractCodexCWDFromJSONLine extracts cwd-like project fields from one JSONL record.
-func extractCodexCWDFromJSONLine(line []byte) string {
-	var raw map[string]json.RawMessage
-	if err := json.Unmarshal(line, &raw); err != nil {
-		return ""
-	}
-
-	keys := []string{"cwd", "workdir", "working_dir", "directory", "path"}
-	for _, key := range keys {
-		if val := decodeJSONStringField(raw, key); val != "" {
-			return val
-		}
-	}
-
-	if payloadRaw, ok := raw["payload"]; ok && len(payloadRaw) > 0 {
-		var payloadObj map[string]json.RawMessage
-		if err := json.Unmarshal(payloadRaw, &payloadObj); err == nil {
-			for _, key := range keys {
-				if val := decodeJSONStringField(payloadObj, key); val != "" {
-					return val
-				}
-			}
-		}
-	}
-	if contextRaw, ok := raw["context"]; ok && len(contextRaw) > 0 {
-		var contextObj map[string]json.RawMessage
-		if err := json.Unmarshal(contextRaw, &contextObj); err == nil {
-			for _, key := range keys {
-				if val := decodeJSONStringField(contextObj, key); val != "" {
-					return val
-				}
-			}
-		}
-	}
-
-	return ""
-}
-
-func decodeJSONStringField(raw map[string]json.RawMessage, key string) string {
-	value, ok := raw[key]
-	if !ok || len(value) == 0 {
-		return ""
-	}
-	var s string
-	if err := json.Unmarshal(value, &s); err != nil {
-		return ""
-	}
-	return strings.TrimSpace(s)
-}
-
-// collectOtherCodexSessionIDs returns every Codex thread already owned by a
-// different Agent Deck row. Live tmux environments are useful fast evidence,
-// but they are not durable: sessions created by older builds and panes whose
-// environment sync has not run yet may have no CODEX_SESSION_ID. Include the
-// SQLite bindings as the authoritative fallback so a fresh same-cwd Codex
-// process cannot temporarily adopt and rename another row's native thread.
-func (i *Instance) collectOtherCodexSessionIDs() map[string]bool {
-	exclude := make(map[string]bool)
-
-	tmuxSessions, err := tmux.ListAgentDeckSessions()
-	myTmuxName := ""
-	if i.tmuxSession != nil {
-		myTmuxName = i.tmuxSession.Name
-	}
-
-	if err == nil {
-		for _, sessName := range tmuxSessions {
-			if sessName == myTmuxName {
-				continue
-			}
-			other := &tmux.Session{Name: sessName}
-			if id, envErr := other.GetEnvironment("CODEX_SESSION_ID"); envErr == nil && id != "" {
-				exclude[strings.ToLower(strings.TrimSpace(id))] = true
-			}
-		}
-	}
-
-	if db := i.metadataStateDB(); db != nil {
-		rows, loadErr := db.LoadInstances()
-		if loadErr != nil {
-			sessionLog.Debug("codex_owned_binding_load_failed", slog.String("error", loadErr.Error()))
-		} else {
-			for _, row := range rows {
-				if row == nil || row.ID == i.ID {
-					continue
-				}
-				id, _, _ := statedb.ReadCodexSessionBindingFromToolData(row.ToolData)
-				id = strings.ToLower(strings.TrimSpace(id))
-				if id != "" {
-					exclude[id] = true
-				}
-			}
-		}
-	}
-
-	return exclude
-}
-
 // codexSessionOwner returns the Agent Deck row that already owns sessionID.
 // Discovery evidence can be transient or ambiguous during Codex startup, but
 // the persisted one-row-to-one-thread binding is authoritative. Keeping this
 // check separate from filesystem scanning also protects process-FD and hook
 // discovery paths from cross-binding two rows to the same native thread.
-func (i *Instance) codexSessionOwner(sessionID string) string {
+func (i *Instance) codexSessionOwner(sessionID string) (string, error) {
 	sessionID = strings.ToLower(strings.TrimSpace(sessionID))
 	if sessionID == "" {
-		return ""
+		return "", nil
 	}
 	db := i.metadataStateDB()
 	if db == nil {
-		return ""
+		return "", nil
 	}
 	rows, err := db.LoadInstances()
 	if err != nil {
-		sessionLog.Debug("codex_owned_binding_load_failed", slog.String("error", err.Error()))
-		return ""
+		return "", fmt.Errorf("read Codex ownership registry: %w", err)
 	}
 	for _, row := range rows {
 		if row == nil || row.ID == i.ID {
@@ -3846,26 +3508,10 @@ func (i *Instance) codexSessionOwner(sessionID string) string {
 		}
 		id, _, _ := statedb.ReadCodexSessionBindingFromToolData(row.ToolData)
 		if strings.EqualFold(strings.TrimSpace(id), sessionID) {
-			return row.ID
+			return row.ID, nil
 		}
 	}
-	return ""
-}
-
-// shouldScanCodexSession returns whether we should run an expensive filesystem
-// scan for Codex session rotation right now.
-func (i *Instance) shouldScanCodexSession(allowUnscoped bool) bool {
-	interval := codexRotationScanInterval
-	if allowUnscoped {
-		interval = codexBootstrapScanInterval
-	}
-
-	if !i.lastCodexScanAt.IsZero() && time.Since(i.lastCodexScanAt) < interval {
-		return false
-	}
-
-	i.lastCodexScanAt = time.Now()
-	return true
+	return "", nil
 }
 
 // shouldRunCodexProcessProbe returns whether we should run Codex process/file
@@ -4031,17 +3677,20 @@ func collectProcessTreePIDsViaPgrep(rootPID int) []int {
 }
 
 func isLikelyCodexProcessPID(pid int) bool {
-	// #nosec G204 -- "ps" is a fixed binary; only arg is strconv.Itoa(int).
-	argsOut, err := exec.Command("ps", "-p", strconv.Itoa(pid), "-o", "args=").Output()
-	if err != nil {
-		return false
-	}
-	return strings.Contains(strings.ToLower(strings.TrimSpace(string(argsOut))), "codex")
+	return isInteractiveCodexArgs(codexProcessArguments(pid))
 }
 
 type codexRolloutCandidate struct {
 	ID   string
 	Path string
+}
+
+// Empty evidence and conflicting live evidence have different authority:
+// hooks may supplement an absent FD, but must never override conflicting FDs.
+type codexProcessProbe struct {
+	sessionID         string
+	ambiguous         bool
+	missingDependency string
 }
 
 func codexRolloutCandidateFromPath(path string) (codexRolloutCandidate, bool) {
@@ -4058,18 +3707,8 @@ func codexRolloutCandidateFromPath(path string) (codexRolloutCandidate, bool) {
 
 func codexRolloutCandidateFromLsofLine(line string) (codexRolloutCandidate, bool) {
 	line = strings.TrimSpace(line)
-	// `lsof -Fn` emits machine-readable name records prefixed with n. Docker
-	// and /proc probes emit the absolute path directly.
-	if strings.HasPrefix(line, "n/") {
-		return codexRolloutCandidateFromPath(line[1:])
-	}
-	if strings.HasPrefix(line, "/") {
-		return codexRolloutCandidateFromPath(line)
-	}
-
-	// Compatibility with ordinary tabular lsof output used by older builds
-	// and tests. The NAME column is the first absolute path in these records;
-	// taking it intact preserves whitespace inside CODEX_HOME.
+	// The NAME column starts at the first absolute path; retain whitespace
+	// inside CODEX_HOME rather than splitting the whole record into columns.
 	pathStart := strings.IndexByte(line, '/')
 	if pathStart < 0 {
 		return codexRolloutCandidate{}, false
@@ -4077,86 +3716,51 @@ func codexRolloutCandidateFromLsofLine(line string) (codexRolloutCandidate, bool
 	return codexRolloutCandidateFromPath(line[pathStart:])
 }
 
-func extractCodexSessionIDFromPath(path string) string {
-	candidate, ok := codexRolloutCandidateFromPath(path)
-	if !ok {
-		return ""
-	}
-	return candidate.ID
-}
-
-func selectCodexRolloutCandidate(candidates []codexRolloutCandidate) string {
-	var unknownIDs []string
-	topLevelID := ""
-	var topLevelMtime time.Time
+func selectCodexRolloutCandidate(candidates []codexRolloutCandidate) codexProcessProbe {
+	sessionID := ""
 	seen := make(map[string]bool, len(candidates))
 	for _, candidate := range candidates {
 		if candidate.ID == "" || seen[candidate.ID] {
 			continue
 		}
 		seen[candidate.ID] = true
-		meta := readCodexRolloutThreadMetadata(candidate.Path)
-		switch meta.kind {
-		case codexThreadSubagent:
+		if readCodexRolloutThreadMetadata(candidate.Path).kind == codexThreadSubagent {
 			continue
-		case codexThreadTopLevel:
-			mtime := time.Time{}
-			if info, err := os.Stat(candidate.Path); err == nil {
-				mtime = info.ModTime()
-			}
-			if topLevelID == "" || mtime.After(topLevelMtime) {
-				topLevelID = candidate.ID
-				topLevelMtime = mtime
-			}
-		default:
-			unknownIDs = append(unknownIDs, candidate.ID)
 		}
+		// A pane can hold several top-level histories while forking or switching.
+		// File mtime cannot prove which one is the interactive conversation.
+		if sessionID != "" {
+			return codexProcessProbe{ambiguous: true}
+		}
+		sessionID = candidate.ID
 	}
-	if topLevelID != "" {
-		return topLevelID
-	}
-	// Preserve compatibility with old Codex rollouts that lack source metadata
-	// only when ownership is unambiguous. Picking the first of multiple unknown
-	// FDs recreates the guardian race this selector exists to prevent.
-	if len(unknownIDs) == 1 {
-		return unknownIDs[0]
-	}
-	return ""
+	return codexProcessProbe{sessionID: sessionID}
 }
 
-func extractCodexRolloutCandidatesFromOutput(output []byte) []codexRolloutCandidate {
+func extractWritableCodexRolloutsFromLsof(output []byte) []codexRolloutCandidate {
 	var candidates []codexRolloutCandidate
-	scanner := bufio.NewScanner(bytes.NewReader(output))
-	for scanner.Scan() {
-		if candidate, ok := codexRolloutCandidateFromLsofLine(scanner.Text()); ok {
+	for line := range strings.Lines(string(output)) {
+		column, descriptor := 0, ""
+		for field := range strings.FieldsSeq(line) {
+			if column == 3 {
+				descriptor = field
+				break
+			}
+			column++
+		}
+		if len(descriptor) < 2 || (descriptor[len(descriptor)-1] != 'w' && descriptor[len(descriptor)-1] != 'u') {
+			continue
+		}
+		if candidate, ok := codexRolloutCandidateFromLsofLine(line); ok {
 			candidates = append(candidates, candidate)
 		}
 	}
 	return candidates
 }
 
-func rebaseCodexRolloutCandidates(candidates []codexRolloutCandidate, codexHome string) []codexRolloutCandidate {
-	codexHome = strings.TrimSpace(codexHome)
-	if codexHome == "" {
-		return candidates
-	}
-	rebased := make([]codexRolloutCandidate, 0, len(candidates))
-	for _, candidate := range candidates {
-		marker := strings.LastIndex(candidate.Path, "/sessions/")
-		if marker >= 0 {
-			candidate.Path = filepath.Join(codexHome, filepath.FromSlash(strings.TrimPrefix(candidate.Path[marker:], "/")))
-		}
-		rebased = append(rebased, candidate)
-	}
-	return rebased
-}
-
-func extractCodexSessionIDFromLsofOutput(output []byte) string {
-	return selectCodexRolloutCandidate(extractCodexRolloutCandidatesFromOutput(output))
-}
-
 func extractCodexRolloutCandidatesFromProcFD(pid int) []codexRolloutCandidate {
-	fdDir := filepath.Join("/proc", strconv.Itoa(pid), "fd")
+	procDir := filepath.Join("/proc", strconv.Itoa(pid))
+	fdDir := filepath.Join(procDir, "fd")
 	entries, err := os.ReadDir(fdDir)
 	if err != nil {
 		return nil
@@ -4169,69 +3773,29 @@ func extractCodexRolloutCandidatesFromProcFD(pid int) []codexRolloutCandidate {
 		if err != nil {
 			continue
 		}
-		if candidate, ok := codexRolloutCandidateFromPath(target); ok {
+		if candidate, ok := codexRolloutCandidateFromPath(target); ok && codexProcFDWritable(filepath.Join(procDir, "fdinfo", entry.Name())) {
 			candidates = append(candidates, candidate)
 		}
 	}
 	return candidates
 }
 
-func (i *Instance) queryCodexSessionFromHostProcFD() string {
+func (i *Instance) queryCodexSessionFromHostProcFD() codexProcessProbe {
+	var candidates []codexRolloutCandidate
 	for _, pid := range i.collectTmuxPaneProcessTreePIDs() {
-		if !isLikelyCodexProcessPID(pid) {
-			continue
-		}
-		candidates := extractCodexRolloutCandidatesFromProcFD(pid)
-		if sessionID := selectCodexRolloutCandidate(candidates); sessionID != "" {
-			return sessionID
+		if isLikelyCodexProcessPID(pid) {
+			candidates = append(candidates, extractCodexRolloutCandidatesFromProcFD(pid)...)
 		}
 	}
-	return ""
+	return selectCodexRolloutCandidate(candidates)
 }
 
-func (i *Instance) queryCodexSessionFromDockerProcFD() (string, string) {
-	if strings.TrimSpace(i.SandboxContainer) == "" {
-		return "", ""
-	}
-
-	script := fmt.Sprintf(
-		`command -v readlink >/dev/null 2>&1 || {
-	echo %q
-	exit 0
-}
-for f in /proc/[0-9]*/fd/*; do
-	t=$(readlink "$f" 2>/dev/null || true)
-	case "$t" in
-		*/sessions/*rollout-*.jsonl*)
-			printf '%%s\n' "$t"
-			;;
-	esac
-done`,
-		codexProbeMissingSentinel,
-	)
-	// #nosec G204 -- "docker exec" with internal SandboxContainer name and a
-	// hardcoded shell probe script (codexProbeMissingSentinel is a compile-time
-	// constant); no external input flows here.
-	out, err := exec.Command("docker", "exec", i.SandboxContainer, "sh", "-lc", script).Output()
-	if err != nil {
-		return "", ""
-	}
-	if bytes.Contains(out, []byte(codexProbeMissingSentinel)) {
-		return "", "readlink"
-	}
-	candidates := extractCodexRolloutCandidatesFromOutput(out)
-	candidates = rebaseCodexRolloutCandidates(candidates, i.getCodexHomeDir())
-	if sessionID := selectCodexRolloutCandidate(candidates); sessionID != "" {
-		return sessionID, ""
-	}
-	return "", ""
-}
-
-func (i *Instance) queryCodexSessionFromHostLsof() (string, string) {
+func (i *Instance) queryCodexSessionFromHostLsof() codexProcessProbe {
 	if _, err := exec.LookPath("lsof"); err != nil {
-		return "", "lsof"
+		return codexProcessProbe{missingDependency: "lsof"}
 	}
 
+	var candidates []codexRolloutCandidate
 	for _, pid := range i.collectTmuxPaneProcessTreePIDs() {
 		if !isLikelyCodexProcessPID(pid) {
 			continue
@@ -4247,36 +3811,30 @@ func (i *Instance) queryCodexSessionFromHostLsof() (string, string) {
 		if err != nil {
 			var execErr *exec.Error
 			if errors.As(err, &execErr) && execErr.Err == exec.ErrNotFound {
-				return "", "lsof"
+				return codexProcessProbe{missingDependency: "lsof"}
 			}
 			sessionLog.Debug("codex_lsof_probe_failed", slog.Int("pid", pid), slog.Any("error", err))
 			continue
 		}
 
-		candidates := extractCodexRolloutCandidatesFromOutput(out)
-		if sessionID := selectCodexRolloutCandidate(candidates); sessionID != "" {
-			return sessionID, ""
-		}
+		candidates = append(candidates, extractWritableCodexRolloutsFromLsof(out)...)
 	}
 
-	return "", ""
+	return selectCodexRolloutCandidate(candidates)
 }
 
-// queryCodexSessionFromProcessFiles inspects live Codex processes and returns
-// the active session UUID inferred from open rollout JSONL files.
-// The second return value is the missing dependency name (if any).
-func (i *Instance) queryCodexSessionFromProcessFiles() (string, string) {
-	// Sandboxed sessions run Codex inside Docker; probe container /proc.
+// queryCodexSessionFromProcessFiles inspects pane-owned Codex processes while
+// preserving the difference between missing and conflicting identity evidence.
+func (i *Instance) queryCodexSessionFromProcessFiles() codexProcessProbe {
+	// Container-wide open files do not identify this pane's Docker exec.
+	// Without an exec/PID ownership mapping, sandbox discovery fails closed.
 	if i.IsSandboxed() {
-		return i.queryCodexSessionFromDockerProcFD()
+		return codexProcessProbe{}
 	}
 
 	// Linux/WSL: pure in-process /proc scanning (no lsof dependency).
 	if runtime.GOOS == "linux" {
-		if sessionID := i.queryCodexSessionFromHostProcFD(); sessionID != "" {
-			return sessionID, ""
-		}
-		return "", ""
+		return i.queryCodexSessionFromHostProcFD()
 	}
 
 	// Non-Linux (e.g. macOS): fallback to lsof compatibility path.
@@ -4297,170 +3855,40 @@ func codexProbeMissingWarning(missingDep string) string {
 	if missingDep == "" {
 		return ""
 	}
-	return fmt.Sprintf("Codex session detection fallback: %s is not available", missingDep)
+	return fmt.Sprintf("Codex pane identity probe unavailable: %s is not available; retaining the exact recorded binding", missingDep)
 }
 
-// UpdateCodexSession updates the Codex session ID.
-// Primary source: tmux environment.
-// Fallback: project-aware filesystem scan.
+// UpdateCodexSession refreshes the binding from pane-owned live evidence.
+// Exclusions are conflict protection, never positive ownership evidence.
 func (i *Instance) UpdateCodexSession(excludeIDs map[string]bool) {
 	i.updateCodexSession(excludeIDs, false)
 }
 
-// updateCodexSession refreshes Codex session ID from env/process-files/disk.
-// Returns missing dependency name when probe prerequisites are unavailable.
 func (i *Instance) updateCodexSession(excludeIDs map[string]bool, forceProbe bool) string {
 	if !IsCodexCompatible(i.Tool) {
 		return ""
 	}
-	// Treat a persisted peer promotion as a barrier for this poll. Continuing
-	// into env/proc ingestion could immediately read the stale child ID that the
-	// promotion just replaced and write it back.
 	if i.adoptPersistedCodexPromotion(true) {
 		return ""
 	}
-
-	envSessionID := ""
-
-	// 1. Try to read from tmux environment first (authoritative if set)
+	// CODEX_SESSION_ID is a cache written by Agent Deck, not Codex's native
+	// active-thread API. It may confirm an existing binding but cannot mint one.
 	if i.tmuxSession != nil {
 		if sessionID, err := i.tmuxSession.GetEnvironment("CODEX_SESSION_ID"); err == nil && sessionID != "" {
-			if i.codexBindingFloorRejects(sessionID) {
-				i.healRejectedCodexCandidate(sessionID, "tmux_env_candidate_predates_binding_floor")
-				if i.tmuxSession.Exists() {
-					_ = i.tmuxSession.SetEnvironment("CODEX_SESSION_ID", i.codexTmuxSessionID())
-				}
-			} else {
-				rawSessionID := sessionID
-				rejectedSubagent := false
-				if i.CodexSessionID != "" && sessionID != i.CodexSessionID &&
-					IsCodexSubagentSession(i.getCodexHomeDir(), i.CodexSessionID) &&
-					!i.isFreshCodexMigrationTarget(sessionID) {
-					// Preserve an already-resumed hidden transcript until the explicit
-					// fork migration starts; a different env value can be its stale root.
-					sessionID = i.CodexSessionID
-				}
-				// Avoid a filesystem lookup on the steady-state polling path. A
-				// changed binding is classified; immutable known metadata is cached.
-				if sessionID != i.CodexSessionID {
-					if _, isSubagent := CodexTopLevelSessionID(i.getCodexHomeDir(), sessionID); isSubagent {
-						rejectedSubagent = true
-						sessionLog.Warn("codex_env_subagent_sid_rejected",
-							slog.String("instance_id", i.ID),
-							slog.String("subagent_id", rawSessionID))
-						sessionID = i.CodexSessionID
-						if i.tmuxSession.Exists() {
-							_ = i.tmuxSession.SetEnvironment("CODEX_SESSION_ID", i.codexTmuxSessionID())
-						}
-					}
-				}
-				if sessionID != "" {
-					envSessionID = sessionID
-					if !rejectedSubagent {
-						i.acceptCodexSessionID(sessionID, false)
-					}
-					if rawSessionID != sessionID && i.tmuxSession.Exists() {
-						_ = i.tmuxSession.SetEnvironment("CODEX_SESSION_ID", i.codexTmuxSessionID())
-					}
-				}
+			i.acceptCodexSessionID(sessionID, false, codexBindingTmux)
+			if !strings.EqualFold(sessionID, i.codexTmuxSessionID()) && i.tmuxSession.Exists() {
+				_ = i.tmuxSession.SetEnvironment("CODEX_SESSION_ID", i.codexTmuxSessionID())
 			}
 		}
 	}
-
-	// 2. Prefer live-process file detection (Linux /proc, macOS lsof fallback).
-	missingProbeDep := ""
 	if i.shouldRunCodexProcessProbe(forceProbe) {
-		if sessionID, missingDep := i.queryCodexSessionFromProcessFiles(); sessionID != "" {
-			if i.CodexSessionID != "" && IsCodexSubagentSession(i.getCodexHomeDir(), i.CodexSessionID) &&
-				!i.isFreshCodexMigrationTarget(sessionID) {
-				// The current process was already resumed from a poisoned child by
-				// an older build. A simultaneously-open top-level rollout can be
-				// its stale original root; preserve the child until restart turns
-				// it into a visible fork.
-				return missingProbeDep
-			}
-			// Subagent-thread gate (incident 2026-07-15): a codex TUI holds the
-			// rollouts of the subagents it spawned open alongside its main
-			// thread, so the FD probe can surface a subagent id. Binding it here
-			// is the same poisoning the hook gate prevents, reached by the other
-			// rotation path — and once bound, a restart resumes a thread codex
-			// refuses user turns on. Reject it and keep the current binding; the
-			// probe will pick the main thread on a later cycle. See
-			// codex_subagent_gate.go.
-			if i.shouldRejectCodexSubagentRebind(sessionID) {
-				_ = WriteSessionIDLifecycleEvent(SessionIDLifecycleEvent{
-					InstanceID: i.ID, Tool: i.Tool, Action: "reject",
-					Source: "process_probe", OldID: i.CodexSessionID, Candidate: sessionID,
-					Reason: "candidate_is_subagent_thread",
-				})
-				sessionLog.Debug("codex_session_probe_rejected_subagent",
-					slog.String("old_id", i.CodexSessionID),
-					slog.String("candidate", sessionID))
-			} else {
-				changed := sessionID != i.CodexSessionID
-				if changed {
-					sessionLog.Debug(
-						"codex_session_update_from_probe",
-						slog.String("old_id", i.CodexSessionID),
-						slog.String("new_id", sessionID),
-					)
-				}
-				i.acceptCodexSessionID(sessionID, false)
-				if i.tmuxSession != nil && i.tmuxSession.Exists() && (changed || envSessionID == "") {
-					_ = i.tmuxSession.SetEnvironment("CODEX_SESSION_ID", i.codexTmuxSessionID())
-				}
-				return ""
-			}
-		} else if missingDep != "" {
-			missingProbeDep = missingDep
+		probe := i.queryCodexSessionFromProcessFiles()
+		if probe.sessionID != "" && !probe.ambiguous && !excludeIDs[probe.sessionID] {
+			i.acceptCodexSessionID(probe.sessionID, true, codexBindingProcess)
 		}
+		return probe.missingDependency
 	}
-
-	// 3. Use disk scan only as a bootstrap fallback. Once a session ID is
-	// known, rotation must come from authoritative live evidence above (tmux
-	// env, hook payload, or the Codex process' open rollout file). Polling the
-	// full historical $CODEX_HOME/sessions tree for every active Codex session
-	// burns CPU on large histories and has no stronger ownership signal than the
-	// current binding.
-	if i.CodexSessionID != "" {
-		return missingProbeDep
-	}
-
-	// Only allow unscoped fallback when we don't have a known session ID yet.
-	allowUnscoped := envSessionID == "" && i.CodexSessionID == "" && i.CodexStartedAt > 0
-	if !i.shouldScanCodexSession(allowUnscoped) {
-		return missingProbeDep
-	}
-
-	// When we already have a session ID and the process probe didn't find a
-	// running process, add our current ID to the exclude set so the disk scan
-	// won't reassign it to another instance that shares the same project path.
-	// The disk scan should only discover *new* sessions (e.g. after /new rotation),
-	// not re-discover the same ID we already own.
-	if i.CodexSessionID != "" && excludeIDs != nil {
-		excludeIDs[i.CodexSessionID] = true
-	}
-
-	if sessionID := i.queryCodexSession(excludeIDs, allowUnscoped); sessionID != "" {
-		// queryCodexSession already filters subagent rollouts out of candidacy
-		// (incident 2026-07-15), so sessionID here is always a user thread.
-		changed := sessionID != i.CodexSessionID
-		if sessionID != i.CodexSessionID {
-			sessionLog.Debug(
-				"codex_session_update",
-				slog.String("old_id", i.CodexSessionID),
-				slog.String("new_id", sessionID),
-			)
-		}
-		i.acceptCodexSessionID(sessionID, false)
-
-		// Sync back to tmux environment for future restarts
-		// Skip redundant writes when env already matches: each write is a tmux subprocess.
-		if i.tmuxSession != nil && i.tmuxSession.Exists() && (changed || envSessionID == "") {
-			_ = i.tmuxSession.SetEnvironment("CODEX_SESSION_ID", i.codexTmuxSessionID())
-		}
-	}
-	return missingProbeDep
+	return ""
 }
 
 // buildGenericCommand builds commands for custom tools defined in [tools.*]
@@ -5279,6 +4707,9 @@ func (i *Instance) Start() error {
 		if i.Tool == "omp" {
 			return i.ompDeduplicatedLaunch(false)
 		}
+		if IsCodexCompatible(i.Tool) {
+			return i.prepareCodexIdentity(false)
+		}
 		return nil
 	}
 	if i.Tool != "omp" {
@@ -5294,6 +4725,9 @@ func (i *Instance) Start() error {
 	// leaves a durable record.
 	i.recordSpawnAttempt()
 	if err := i.prepareOmpIdentity(); err != nil {
+		return err
+	}
+	if err := i.prepareCodexIdentity(false); err != nil {
 		return err
 	}
 
@@ -5384,10 +4818,7 @@ func (i *Instance) Start() error {
 	case IsCodexCompatible(i.Tool):
 		if i.IsForkAwaitingStart {
 			command = i.consumeForkStartCommand()
-			// Stamp the start time so the session-id disk scan is lower-bounded and
-			// can't rebind this fork to an older same-project rollout (e.g. the
-			// parent it just forked from). The normal path stamps after
-			// buildCodexCommand, which this fork branch skips.
+			// Record the launch boundary for the explicit native fork.
 			i.CodexStartedAt = time.Now().UnixMilli()
 			sessionLog.Info("resume: none reason=fork_awaiting_start",
 				slog.String("instance_id", i.ID),
@@ -5579,6 +5010,7 @@ func (i *Instance) Start() error {
 	// Record start time for grace period (prevents error flash during tmux startup)
 	i.lastStartTime = time.Now()
 	i.markStarted() // persisted stamp (issue #30 — cross-process freshness guard)
+	i.codexFreshStart = false
 
 	// New sessions start as STARTING - shows they're initializing
 	// After 5s grace period, status will be properly detected from tmux
@@ -5594,7 +5026,7 @@ func (i *Instance) Start() error {
 
 	// Start async session ID detection for Codex
 	// This runs in background and captures the session ID once Codex creates it
-	if IsCodexCompatible(i.Tool) {
+	if IsCodexCompatible(i.Tool) && (i.CodexSessionID == "" || IsCodexSubagentSession(i.getCodexHomeDir(), i.CodexSessionID)) {
 		go i.detectCodexSessionAsync()
 	}
 
@@ -5625,6 +5057,9 @@ func (i *Instance) StartWithMessage(message string) error {
 	if spawnedSince(i.ID, beforeLock) {
 		if i.Tool == "omp" {
 			return i.ompDeduplicatedLaunch(message != "")
+		}
+		if IsCodexCompatible(i.Tool) {
+			return i.prepareCodexIdentity(false)
 		}
 		return nil
 	}
@@ -5658,6 +5093,9 @@ func (i *Instance) StartWithMessage(message string) error {
 	// spawn_attempt trace (same as Start()).
 	i.recordSpawnAttempt()
 	if err := i.prepareOmpIdentity(); err != nil {
+		return err
+	}
+	if err := i.prepareCodexIdentity(false); err != nil {
 		return err
 	}
 
@@ -5731,10 +5169,7 @@ func (i *Instance) StartWithMessage(message string) error {
 	case IsCodexCompatible(i.Tool):
 		if i.IsForkAwaitingStart {
 			command = i.consumeForkStartCommand()
-			// Stamp the start time so the session-id disk scan is lower-bounded and
-			// can't rebind this fork to an older same-project rollout (e.g. the
-			// parent it just forked from). The normal path stamps after
-			// buildCodexCommand, which this fork branch skips.
+			// Record the launch boundary for the explicit native fork.
 			i.CodexStartedAt = time.Now().UnixMilli()
 			sessionLog.Info("resume: none reason=fork_awaiting_start",
 				slog.String("instance_id", i.ID),
@@ -5896,6 +5331,7 @@ func (i *Instance) StartWithMessage(message string) error {
 	// Record start time for grace period (prevents error flash during tmux startup)
 	i.lastStartTime = time.Now()
 	i.markStarted() // persisted stamp (issue #30 — cross-process freshness guard)
+	i.codexFreshStart = false
 
 	// New sessions start as STARTING
 	i.Status = StatusStarting
@@ -5904,7 +5340,7 @@ func (i *Instance) StartWithMessage(message string) error {
 	if i.Tool == "opencode" {
 		go i.detectOpenCodeSessionAsync()
 	}
-	if IsCodexCompatible(i.Tool) {
+	if IsCodexCompatible(i.Tool) && (i.CodexSessionID == "" || IsCodexSubagentSession(i.getCodexHomeDir(), i.CodexSessionID)) {
 		go i.detectCodexSessionAsync()
 	}
 
@@ -6422,16 +5858,22 @@ func (i *Instance) UpdateStatus() error {
 	coldLoadedHookStatus := false
 	if i.hookStatus == "" && (IsClaudeCompatible(i.Tool) || IsCodexCompatible(i.Tool) || i.Tool == "gemini" || i.Tool == "hermes" || i.Tool == "cursor") {
 		if hs := readHookStatusFile(i.ID); hs != nil {
-			coldLoadedHookStatus = true
-			i.hookStatus = hs.Status
-			i.hookEvent = hs.Event
-			i.hookLastUpdate = hs.UpdatedAt
-			i.hookSessionID = hs.SessionID
-			// A disk-read hook sample is activity evidence too.
-			i.noteAgentActivityLocked(hs.UpdatedAt)
-			i.setCodexGenerationEvidence(hs)
-			if i.tmuxSession != nil && (hs.Status == "running" || hs.Status == "waiting") {
-				i.tmuxSession.ResetAcknowledged()
+			if IsCodexCompatible(i.Tool) && hs.SessionID != "" && !i.codexHookOwnsCandidate(hs) {
+				i.healRejectedCodexCandidate(hs.SessionID, "cold_hook_has_no_pane_ownership_proof")
+				if IsCodexSubagentSession(i.getCodexHomeDir(), hs.SessionID) {
+					i.removePersistedHookStatusFile()
+				}
+			} else {
+				coldLoadedHookStatus = true
+				i.hookStatus = hs.Status
+				i.hookEvent = hs.Event
+				i.hookLastUpdate = hs.UpdatedAt
+				i.hookSessionID = hs.SessionID
+				i.noteAgentActivityLocked(hs.UpdatedAt)
+				i.setCodexGenerationEvidence(hs)
+				if i.tmuxSession != nil && (hs.Status == "running" || hs.Status == "waiting") {
+					i.tmuxSession.ResetAcknowledged()
+				}
 			}
 		}
 	}
@@ -6446,7 +5888,7 @@ func (i *Instance) UpdateStatus() error {
 		i.hookLastUpdate = time.Time{}
 	}
 	if IsCodexCompatible(i.Tool) && i.hookSessionID != "" {
-		if rootID, isSubagent := CodexTopLevelSessionID(i.getCodexHomeDir(), i.hookSessionID); isSubagent {
+		if _, isSubagent := CodexTopLevelSessionID(i.getCodexHomeDir(), i.hookSessionID); isSubagent {
 			candidate := i.hookSessionID
 			_ = WriteSessionIDLifecycleEvent(SessionIDLifecycleEvent{
 				InstanceID: i.ID, Tool: i.Tool, Action: "reject",
@@ -6459,8 +5901,6 @@ func (i *Instance) UpdateStatus() error {
 				ClearHookSessionAnchor(i.ID)
 			} else if ReadHookSessionAnchor(i.ID) != "" {
 				// Preserve a newer root established after this child started.
-			} else if rootID != "" {
-				WriteHookSessionAnchor(i.ID, rootID)
 			} else {
 				ClearHookSessionAnchor(i.ID)
 			}
@@ -6602,7 +6042,9 @@ func (i *Instance) UpdateStatus() error {
 				}
 			case IsCodexCompatible(i.Tool):
 				if i.hookSessionID != i.CodexSessionID {
-					i.acceptCodexSessionID(i.hookSessionID, false)
+					if hs := readHookStatusFile(i.ID); hs != nil && hs.SessionID == i.hookSessionID && i.codexHookOwnsCandidate(hs) {
+						i.acceptCodexSessionID(i.hookSessionID, false, codexBindingHook)
+					}
 				}
 			case i.Tool == "gemini":
 				if i.hookSessionID != i.GeminiSessionID {
@@ -6854,12 +6296,7 @@ func (i *Instance) UpdateStatus() error {
 
 			// Update Codex session tracking (non-blocking, best-effort)
 			if IsCodexCompatible(i.Tool) {
-				// Always collect other instances' session IDs to prevent the
-				// disk scan from assigning a session that belongs to another
-				// instance. Without this, instances that share the same
-				// project_path can all claim the same Codex session file.
-				exclude := i.collectOtherCodexSessionIDs()
-				i.UpdateCodexSession(exclude)
+				i.UpdateCodexSession(nil)
 			}
 
 			// Update OpenCode session tracking (non-blocking, best-effort).
@@ -6988,6 +6425,13 @@ func (i *Instance) UpdateHookStatus(status *HookStatus) {
 			return
 		}
 	}
+	if IsCodexCompatible(i.Tool) && status.SessionID != "" && !i.codexHookOwnsCandidate(status) {
+		i.healRejectedCodexCandidate(status.SessionID, "hook_has_no_pane_ownership_proof")
+		if IsCodexSubagentSession(i.getCodexHomeDir(), status.SessionID) {
+			i.removePersistedHookStatusFile()
+		}
+		return
+	}
 	if candidate := strings.ToLower(strings.TrimSpace(status.SessionID)); IsCodexCompatible(i.Tool) && candidate != "" &&
 		(i.codexBindingFloorRejects(candidate) || i.completedCodexMigrationRejects(candidate) ||
 			CodexTopLevelSessionPredates(i.getCodexHomeDir(), candidate, i.CodexSessionID)) {
@@ -7049,12 +6493,17 @@ func (i *Instance) UpdateHookStatus(status *HookStatus) {
 		return
 	}
 
-	// Resolve session ID from hook payload first, then sidecar anchor.
+	// A Codex anchor is a cache, never evidence of a new conversation.
 	sessionID := strings.TrimSpace(status.SessionID)
 	hookSource := "hook_payload"
 	if sessionID == "" {
-		sessionID = ReadHookSessionAnchor(i.ID)
-		hookSource = "hook_anchor"
+		if IsCodexCompatible(i.Tool) {
+			sessionID = i.CodexSessionID
+			hookSource = "existing_binding"
+		} else {
+			sessionID = ReadHookSessionAnchor(i.ID)
+			hookSource = "hook_anchor"
+		}
 	}
 	if sessionID == "" {
 		return
@@ -7149,7 +6598,7 @@ func (i *Instance) UpdateHookStatus(status *HookStatus) {
 		}
 		i.bindClaudeSessionFromHook(sessionID, hookSource, status.Event, "rebind")
 	case IsCodexCompatible(i.Tool):
-		if rootID, isSubagent := CodexTopLevelSessionID(i.getCodexHomeDir(), sessionID); isSubagent {
+		if _, isSubagent := CodexTopLevelSessionID(i.getCodexHomeDir(), sessionID); isSubagent {
 			// Codex notify runs for in-process workers and approval-review
 			// guardians too. Those children inherit AGENTDECK_INSTANCE_ID, so
 			// their hook event lands in the parent's status file. Never let that
@@ -7168,8 +6617,6 @@ func (i *Instance) UpdateHookStatus(status *HookStatus) {
 				ClearHookSessionAnchor(i.ID)
 			case ReadHookSessionAnchor(i.ID) != "":
 				// Preserve a newer root established after this child started.
-			case rootID != "":
-				WriteHookSessionAnchor(i.ID, rootID)
 			default:
 				ClearHookSessionAnchor(i.ID)
 			}
@@ -7213,6 +6660,9 @@ func (i *Instance) UpdateHookStatus(status *HookStatus) {
 			return
 		}
 		i.bindCodexSessionFromHook(sessionID, status.Event)
+		if i.CodexSessionID != sessionID {
+			i.hookStatus, i.hookEvent, i.hookLastUpdate = prevHookStatus, prevHookEvent, prevHookLastUpdate
+		}
 	case i.Tool == "gemini":
 		if sessionID == i.GeminiSessionID {
 			return
@@ -7239,7 +6689,7 @@ func (i *Instance) bindCodexSessionFromHook(sessionID, hookEvent string) {
 		slog.String("new_id", sessionID),
 		slog.String("event", hookEvent),
 	)
-	changed := i.acceptCodexSessionID(sessionID, true)
+	changed := i.acceptCodexSessionID(sessionID, true, codexBindingHook)
 	i.hookSessionID = i.CodexSessionID
 	if changed {
 		codexTitle, titleErr := CodexSessionNameIn(i.getCodexHomeDir(), i.CodexSessionID)
@@ -7320,7 +6770,7 @@ func (i *Instance) persistCodexSessionPromotion(state codexSubagentMigrationStat
 	return true
 }
 
-func (i *Instance) acceptCodexSessionID(sessionID string, syncTmuxEnv bool) bool {
+func (i *Instance) acceptCodexSessionID(sessionID string, syncTmuxEnv bool, source codexBindingSource) bool {
 	sessionID = strings.ToLower(strings.TrimSpace(sessionID))
 	if sessionID == "" {
 		return false
@@ -7343,8 +6793,24 @@ func (i *Instance) acceptCodexSessionID(sessionID string, syncTmuxEnv bool) bool
 
 	overridePending := i.codexSessionBindingOverrideIntent
 	currentID := strings.ToLower(strings.TrimSpace(i.CodexSessionID))
+	if currentID != sessionID && !source.provesOwnership() {
+		_ = WriteSessionIDLifecycleEvent(SessionIDLifecycleEvent{
+			InstanceID: i.ID, Tool: i.Tool, Action: "reject", Source: string(source),
+			OldID: currentID, Candidate: sessionID, Reason: "candidate_has_no_pane_ownership_proof",
+		})
+		return false
+	}
+	if currentID != sessionID && !codexVerifiedTopLevelSession(i.getCodexHomeDir(), sessionID) {
+		i.healRejectedCodexCandidateLocked(sessionID, "candidate_has_no_verified_top_level_metadata")
+		return false
+	}
 	if !overridePending && currentID != sessionID {
-		if ownerID := i.codexSessionOwner(sessionID); ownerID != "" {
+		ownerID, err := i.codexSessionOwner(sessionID)
+		if err != nil {
+			sessionLog.Warn("codex_owned_binding_unverifiable", slog.String("instance_id", i.ID), slog.Any("error", err))
+			return false
+		}
+		if ownerID != "" {
 			sessionLog.Warn("codex_owned_binding_rejected",
 				slog.String("instance_id", logging.SanitizeValue(i.ID)),
 				slog.String("candidate", logging.SanitizeValue(sessionID)),
@@ -7362,6 +6828,18 @@ func (i *Instance) acceptCodexSessionID(sessionID string, syncTmuxEnv bool) bool
 	previousID := strings.ToLower(strings.TrimSpace(i.CodexSessionID))
 	previousDetectedAt := i.CodexDetectedAt
 	previousRevision := i.CodexBindingRevision
+	defer func() {
+		if previousID != i.CodexSessionID && i.CodexSessionID == sessionID {
+			action := "rebind"
+			if previousID == "" {
+				action = "bind"
+			}
+			_ = WriteSessionIDLifecycleEvent(SessionIDLifecycleEvent{
+				InstanceID: i.ID, Tool: i.Tool, Action: action, Source: string(source),
+				OldID: previousID, NewID: sessionID, Reason: "pane_owned_conversation_identity",
+			})
+		}
+	}()
 	if i.codexBindingFloorRejects(sessionID) {
 		i.healRejectedCodexCandidateLocked(sessionID, "candidate_predates_explicit_binding_floor")
 		return false
@@ -7412,7 +6890,7 @@ func (i *Instance) acceptCodexSessionID(sessionID string, syncTmuxEnv bool) bool
 		writeCodexBindingFloorState(i.ID, sessionID, i.CodexDetectedAt, i.CodexBindingRevision)
 	}
 	// Process-FD discovery is authoritative but does not emit a hook write of
-	// its own. Keep the fallback anchor aligned even on an unchanged binding so
+	// its own. Keep the binding-cache anchor aligned even on an unchanged ID so
 	// a stale guardian anchor from the pre-fork restart is repaired.
 	if IsCodexTopLevelSession(i.getCodexHomeDir(), sessionID) && ReadHookSessionAnchor(i.ID) != sessionID {
 		WriteHookSessionAnchor(i.ID, sessionID)
@@ -8204,6 +7682,12 @@ func (i *Instance) clearSessionBindingForFreshStart() {
 	}
 
 	if IsCodexCompatible(i.Tool) {
+		if _, command := codexExactResumeCommand(i.resolveCodexCommand(i.Command)); command != "" {
+			i.Command = command
+		}
+		i.codexFreshStart = true
+		i.IsForkAwaitingStart = false
+		i.ForkStartCommand = ""
 		i.CodexSessionID = ""
 		// Empty is a durable binding tombstone, not "unknown". Its timestamp is
 		// the immutable creation-time floor for accepting the fresh replacement.
@@ -8211,7 +7695,6 @@ func (i *Instance) clearSessionBindingForFreshStart() {
 		i.codexSessionBindingOverrideIntent = true
 		writeCodexBindingFloorState(i.ID, "", i.CodexDetectedAt, i.CodexBindingRevision)
 		i.CodexStartedAt = 0
-		i.lastCodexScanAt = time.Time{}
 		i.clearCodexSubagentMigration()
 		ClearHookSessionAnchor(i.ID)
 		i.removePersistedHookStatusFile()
@@ -8352,26 +7835,12 @@ func (i *Instance) SyncSessionIDsFromTmux() {
 		i.OpenCodeSessionID = id
 	}
 
-	if id, err := i.tmuxSession.GetEnvironment("CODEX_SESSION_ID"); err == nil && id != "" {
-		if _, isSubagent := CodexTopLevelSessionID(i.getCodexHomeDir(), id); isSubagent {
-			if i.codexBindingFloorRejects(id) {
-				i.healRejectedCodexCandidate(id, "stop_sync_subagent_predates_binding_floor")
+	if IsCodexCompatible(i.Tool) {
+		if id, err := i.tmuxSession.GetEnvironment("CODEX_SESSION_ID"); err == nil && id != "" {
+			i.acceptCodexSessionID(id, false, codexBindingTmux)
+			if !strings.EqualFold(id, i.codexTmuxSessionID()) {
 				_ = i.tmuxSession.SetEnvironment("CODEX_SESSION_ID", i.codexTmuxSessionID())
-			} else {
-				if i.CodexSessionID == "" {
-					i.healRejectedCodexCandidate(id, "stop_sync_rejected_new_subagent_owner")
-					_ = i.tmuxSession.SetEnvironment("CODEX_SESSION_ID", "")
-				} else if i.CodexSessionID != id {
-					// A stop/save sync must not overwrite a repaired top-level DB
-					// binding with stale tmux state from an older Agent Deck process.
-					_ = i.tmuxSession.SetEnvironment("CODEX_SESSION_ID", i.codexTmuxSessionID())
-				}
 			}
-		} else if i.CodexSessionID != "" && IsCodexSubagentSession(i.getCodexHomeDir(), i.CodexSessionID) &&
-			!i.isFreshCodexMigrationTarget(id) {
-			_ = i.tmuxSession.SetEnvironment("CODEX_SESSION_ID", i.codexTmuxSessionID())
-		} else {
-			i.acceptCodexSessionID(id, false)
 		}
 	}
 
@@ -9471,6 +8940,16 @@ func (i *Instance) KillAndWait() error {
 }
 
 func (i *Instance) killInternal(sync bool) error {
+	if IsCodexCompatible(i.Tool) {
+		// Capture proven live identity before teardown removes the only safe
+		// discovery source. Never replace it with a same-directory disk guess.
+		i.mu.Lock()
+		i.updateCodexSession(nil, true)
+		if status := readHookStatusFile(i.ID); status != nil && i.codexHookOwnsCandidate(status) {
+			i.acceptCodexSessionID(status.SessionID, true, codexBindingHook)
+		}
+		i.mu.Unlock()
+	}
 	// #1580/#1775: supersede any in-flight fast-death watcher BEFORE the tmux
 	// kill (not after). watchForFastDeath only writes a SpawnFailureRecord /
 	// lifecycle event on an iteration whose gen check passes; bumping here
@@ -9636,12 +9115,18 @@ func (i *Instance) restart(env map[string]string) error {
 		if i.Tool == "omp" {
 			return i.ompDeduplicatedLaunch(false)
 		}
+		if IsCodexCompatible(i.Tool) {
+			return i.prepareCodexIdentity(true)
+		}
 		return nil
 	}
 	if i.Tool != "omp" {
 		defer recordInstanceSpawn(i.ID)
 	}
 	if err := i.prepareOmpIdentity(); err != nil {
+		return err
+	}
+	if err := i.prepareCodexIdentity(true); err != nil {
 		return err
 	}
 
@@ -9919,46 +9404,9 @@ func (i *Instance) restart(env map[string]string) error {
 		return nil
 	}
 
-	// For Codex: try to update session ID, but only if we don't already have one.
-	// When we already have a known session ID (from the database), trust it —
-	// the disk scan can return a wrong ID when multiple instances share the same
-	// project_path. The process probe is authoritative but only works when the
-	// process is running, which it isn't during a restart.
-	if IsCodexCompatible(i.Tool) && i.CodexSessionID == "" {
-		i.mu.Lock()
-		i.pendingCodexRestartWarning = ""
-		i.mu.Unlock()
-		if missingDep := i.updateCodexSession(i.collectOtherCodexSessionIDs(), true); missingDep != "" {
-			i.mu.Lock()
-			i.pendingCodexRestartWarning = codexProbeMissingWarning(missingDep)
-			i.mu.Unlock()
-			sessionLog.Warn("codex_probe_dep_missing_for_restart", slog.String("dependency", missingDep))
-		}
-	}
-
-	// If Codex session AND tmux session exists, use respawn-pane
+	// Identity preflight has either recovered pane-owned evidence or refused
+	// before the old process can be replaced.
 	if IsCodexCompatible(i.Tool) && i.tmuxSession != nil && i.tmuxSession.Exists() {
-		// Try to get session ID from tmux environment if not already set
-		if i.CodexSessionID == "" {
-			if envID, err := i.tmuxSession.GetEnvironment("CODEX_SESSION_ID"); err == nil && envID != "" {
-				if i.codexBindingFloorRejects(envID) {
-					i.healRejectedCodexCandidate(envID, "restart_env_candidate_predates_binding_floor")
-					_ = i.tmuxSession.SetEnvironment("CODEX_SESSION_ID", i.codexTmuxSessionID())
-				} else if _, isSubagent := CodexTopLevelSessionID(i.getCodexHomeDir(), envID); isSubagent {
-					i.healRejectedCodexCandidate(envID, "restart_rejected_new_subagent_owner")
-					_ = i.tmuxSession.SetEnvironment("CODEX_SESSION_ID", "")
-					sessionLog.Warn("restart_codex_subagent_id_rejected",
-						slog.String("session_id", envID))
-				} else {
-					i.acceptCodexSessionID(envID, false)
-					sessionLog.Info("restart_codex_recovered_id", slog.String("session_id", envID))
-				}
-			}
-		}
-
-		if i.CodexSessionID == "" {
-			i.CodexStartedAt = time.Now().UnixMilli()
-		}
 		prepInput := i.buildCodexCommand(i.Command)
 		resumeCmd, containerName, err := i.prepareCommand(prepInput)
 		if err != nil {
@@ -10330,6 +9778,18 @@ func (i *Instance) restart(env map[string]string) error {
 // This recreates the tmux session and clears the stored tool session binding first,
 // so the next start gets a brand-new tool session ID.
 func (i *Instance) RestartFresh() error {
+	if IsCodexCompatible(i.Tool) {
+		if err := i.validateCodexSandboxHome(i.resolveCodexCommand(i.Command)); err != nil {
+			return i.refuseCodexLaunch(err.Error())
+		}
+	}
+	if i.Tool == "codex" {
+		command := i.resolveCodexCommand(i.Command)
+		resumeID, _ := codexExactResumeCommand(command)
+		if !IsSupportedCodexLaunchCommand(command) && resumeID == "" {
+			return i.refuseCodexLaunch("the custom command cannot be verified to create a fresh conversation; use a bare Codex command. The existing process and binding are preserved")
+		}
+	}
 	if i.Tool == "omp" {
 		opts := i.resolvedOmpOptions()
 		if !opts.NoSession && ompCommandUsesNonTUI(i.Command) {
@@ -10697,8 +10157,8 @@ func (i *Instance) CanRestart() bool {
 		return true
 	}
 
-	// Codex sessions without ID can still restart (will start fresh)
-	// This allows restart even before session ID is detected
+	// Keep the restart action available so an unknown identity reports its
+	// actionable refusal. Only explicit RestartFresh may discard a binding.
 	if IsCodexCompatible(i.Tool) {
 		return true
 	}
@@ -10772,7 +10232,7 @@ func (i *Instance) CanRestartFresh() bool {
 		return i.OpenCodeSessionID != ""
 	}
 	if IsCodexCompatible(i.Tool) {
-		return i.CodexSessionID != ""
+		return true
 	}
 	if i.Tool == "kiro" {
 		return i.KiroSessionID != ""
@@ -11344,10 +10804,12 @@ func (i *Instance) buildCodexForkCommandForTarget(target *Instance, baseCommand 
 	reasoningFlag := target.resolveCodexReasoningEffortFlag()
 	command := target.resolveCodexCommand(baseCommand)
 	if codexHome := target.codexHomeToExport(); codexHome != "" {
-		if err := os.MkdirAll(codexHome, 0o755); err != nil {
-			sessionLog.Warn("codex_home_mkdir_failed",
-				slog.String("path", codexHome),
-				slog.String("error", err.Error()))
+		if !target.IsSandboxed() {
+			if err := os.MkdirAll(codexHome, 0o755); err != nil {
+				sessionLog.Warn("codex_home_mkdir_failed",
+					slog.String("path", codexHome),
+					slog.String("error", err.Error()))
+			}
 		}
 		envPrefix += "CODEX_HOME=" + shellescape.Quote(codexHome) + " "
 	}

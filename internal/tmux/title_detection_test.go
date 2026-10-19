@@ -110,6 +110,162 @@ func TestAnalyzePaneTitle(t *testing.T) {
 	}
 }
 
+// These footer shapes were captured from live Codex panes: a completed turn
+// with a reconnect notice, and active work seven lines above the bottom.
+const codexReadyStatusPane = `• Reconnected. No input was resent. Review uncertain submissions before retrying; recovered queues remain paused.
+
+
+› Ask Codex to do anything
+
+  GPT-6.1-Sol high · ~/project · Task · Main [default]
+  ← for agents · ? for shortcuts                            ⚠ 1 warning · f2 to view
+`
+
+const codexWorkingStatusPane = `• Working (17m 59s • esc to interrupt) · 1 background terminal running · /ps to view · /stop to close
+  └ Tip: Paste an image with Ctrl+V to attach it to your next message.
+
+
+› Ask Codex to do anything
+
+  GPT-6-Astra xhigh · ~/project · Task · Main [default]
+  ← for agents · ? for shortcuts                            ⚠ 1 warning · f2 to view
+`
+
+// Same native approval fixture as internal/send/codex_approval_test.go.
+const codexApprovalStatusPane = `• Running curl https://example.com
+
+  Would you like to run the following command?
+
+  $ curl https://example.com
+
+› 1. Yes, proceed (y)
+  2. Yes, and don't ask again for commands that start with ` + "`curl`" + ` (p)
+  3. No, and tell Codex what to do differently (esc)
+`
+
+// Exercise GetStatus itself using the same caches populated by tmux polling.
+// No test pane is launched, attached, or sent input.
+func titleStatusSample(t *testing.T, sess *Session, title, command, content string) string {
+	t.Helper()
+	sessionCacheMu.Lock()
+	sessionCacheData = map[string]int64{sess.Name: 1}
+	sessionCacheTime = time.Now()
+	sessionCacheMu.Unlock()
+	t.Cleanup(func() {
+		sessionCacheMu.Lock()
+		sessionCacheData = nil
+		sessionCacheTime = time.Time{}
+		sessionCacheMu.Unlock()
+	})
+	SeedPaneInfoCacheForTest(t, map[string]PaneInfo{
+		sess.Name: {Title: title, CurrentCommand: command},
+	})
+	sess.cacheMu.Lock()
+	sess.cacheContent = content
+	sess.cacheTime = time.Now()
+	sess.cacheMu.Unlock()
+	status, err := sess.GetStatus()
+	if err != nil {
+		t.Fatal(err)
+	}
+	return status
+}
+
+func TestGetStatusCodexSpinnerTitleDoesNotOverrideReadyOrApproval(t *testing.T) {
+	for _, label := range []string{"Starting", "Ready", "Working"} {
+		for _, tc := range []struct {
+			name, command, paneCommand, previous, content, want string
+		}{
+			{"unseen completion", "codex", "codex", "active", codexReadyStatusPane, "waiting"},
+			{"acknowledged completion", "codex", "codex", "idle", codexReadyStatusPane, "idle"},
+			{"approval", "codex", "codex", "active", codexApprovalStatusPane, "waiting"},
+			{"child shell", "codex", "bash", "idle", codexReadyStatusPane, "idle"},
+		} {
+			t.Run(label+"/"+tc.name, func(t *testing.T) {
+				sess := ReconnectSessionLazy("title-status-codex", "test", "/tmp", tc.command, tc.previous)
+				sess.SocketName = DefaultSocketName()
+				title := "⠏ project | " + label + " | Task"
+				if got := titleStatusSample(t, sess, title, tc.paneCommand, tc.content); got != tc.want {
+					t.Fatalf("GetStatus() = %q, want %q from pane, not native title %q", got, tc.want, title)
+				}
+				if info, _ := GetCachedPaneInfo(sess.Name); info.Title != title {
+					t.Fatal("status classification must not rewrite the native pane title")
+				}
+			})
+		}
+	}
+}
+
+func TestGetStatusCodexSpinnerTitleAllowsWorkingToWaitingTransition(t *testing.T) {
+	for _, completion := range []struct{ name, content string }{
+		{"completed turn", codexReadyStatusPane},
+		{"approval", codexApprovalStatusPane},
+	} {
+		t.Run(completion.name, func(t *testing.T) {
+			sess := ReconnectSessionLazy("title-status-transition", "test", "/tmp", "codex", "idle")
+			sess.SocketName = DefaultSocketName()
+			const title = "⠏ project | Starting | Task"
+			if got := titleStatusSample(t, sess, title, "codex", codexReadyStatusPane); got != "idle" {
+				t.Fatalf("initial ready pane = %q, want idle", got)
+			}
+			if got := titleStatusSample(t, sess, title, "codex", codexWorkingStatusPane); got != "active" {
+				t.Fatalf("native busy line above composer = %q, want active", got)
+			}
+			// Advance only the existing busy grace/cooldown clocks. Keep the
+			// real activity and prompt-confirmation state for the transition.
+			sess.mu.Lock()
+			sess.stateTracker.spinnerTracker.lastBusyTime = time.Now().Add(-time.Minute)
+			sess.stateTracker.lastChangeTime = time.Now().Add(-time.Minute)
+			sess.mu.Unlock()
+			for sample, want := range []string{"active", "active", "waiting"} {
+				if got := titleStatusSample(t, sess, title, "codex", completion.content); got != want {
+					t.Fatalf("completion sample %d = %q, want %q", sample+1, got, want)
+				}
+			}
+			sess.Acknowledge()
+			if got := titleStatusSample(t, sess, title, "codex", completion.content); got != "idle" {
+				t.Fatalf("acknowledged completion = %q, want idle", got)
+			}
+		})
+	}
+}
+
+func TestGetStatusCodexHistoricalBusyLineDoesNotOverrideCurrentPrompt(t *testing.T) {
+	for _, history := range []struct{ name, content string }{
+		{"completed busy line", "• Working (17m 59s • esc to interrupt)\n\n• Finished the requested work.\n\n"},
+		{"quoted busy line", "  The status used to say: • Working (17m 59s • esc to interrupt)\n\n"},
+		{"fenced busy line", "```\n• Working (17m 59s • esc to interrupt)\n```\n\n"},
+		{"complete busy pane", codexWorkingStatusPane + "\n"},
+		{"fenced complete busy pane", "```\n" + codexWorkingStatusPane + "```\n\n"},
+	} {
+		for _, current := range []struct{ name, content, previous, want string }{
+			{"ready", codexReadyStatusPane, "idle", "idle"},
+			{"approval", codexApprovalStatusPane, "active", "waiting"},
+		} {
+			t.Run(history.name+"/"+current.name, func(t *testing.T) {
+				sess := ReconnectSessionLazy("title-status-history", "test", "/tmp", "codex", current.previous)
+				sess.SocketName = DefaultSocketName()
+				content := history.content + current.content
+				if got := titleStatusSample(t, sess, "⠏ project | Working | Task", "codex", content); got != current.want {
+					t.Fatalf("historical busy pane made current prompt %q, want %q", got, current.want)
+				}
+			})
+		}
+	}
+}
+
+func TestGetStatusClaudeSpinnerTitleKeepsFastPathDuringChildCommands(t *testing.T) {
+	for _, command := range []string{"claude", "bash", "codex"} {
+		t.Run(command, func(t *testing.T) {
+			sess := ReconnectSessionLazy("title-status-claude", "test", "/tmp", "claude", "idle")
+			sess.SocketName = DefaultSocketName()
+			if got := titleStatusSample(t, sess, "⠋ Running tools", command, "❯ \n"); got != "active" {
+				t.Fatalf("Claude title with foreground %q = %q, want active", command, got)
+			}
+		})
+	}
+}
+
 func TestRefreshPaneInfoCache(t *testing.T) {
 	skipIfNoTmuxServer(t)
 
