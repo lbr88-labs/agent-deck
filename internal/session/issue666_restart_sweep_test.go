@@ -107,7 +107,7 @@ func TestIssue666_SweepDuplicateToolSessions_OpenCode(t *testing.T) {
 	}
 }
 
-func TestIssue666_SweepDuplicateToolSessions_Codex(t *testing.T) {
+func TestIssue666_SweepDuplicateToolSessions_CodexUsesOnlyInstanceOwnership(t *testing.T) {
 	calls, restore := withSpyKiller(t)
 	defer restore()
 
@@ -117,8 +117,11 @@ func TestIssue666_SweepDuplicateToolSessions_Codex(t *testing.T) {
 
 	inst.sweepDuplicateToolSessions()
 
-	if findSweepCall(*calls, "CODEX_SESSION_ID") == nil {
-		t.Fatalf("expected CODEX_SESSION_ID sweep, got calls: %+v", *calls)
+	if findSweepCall(*calls, "CODEX_SESSION_ID") != nil {
+		t.Fatalf("cached Codex identity authorized killing another instance: %+v", *calls)
+	}
+	if call := findSweepCall(*calls, "AGENTDECK_INSTANCE_ID"); call == nil || call.envValue != inst.ID {
+		t.Fatalf("same-instance duplicate protection was lost: %+v", *calls)
 	}
 }
 

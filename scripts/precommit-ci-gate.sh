@@ -17,7 +17,7 @@ set -euo pipefail
 ROOT="$(git rev-parse --show-toplevel)"
 cd "$ROOT"
 
-export GOTOOLCHAIN="${GOTOOLCHAIN:-go1.25.13}"
+export GOTOOLCHAIN="${GOTOOLCHAIN:-go1.26.9}"
 export PERF_BUDGET_MULTIPLIER="${PERF_BUDGET_MULTIPLIER:-2.0}"
 
 # Keep local CI scratch out of /tmp and out of the repository. Full race/web
@@ -99,7 +99,7 @@ if [ "$go_changed" = true ]; then
   ensure_go_tool golangci-lint github.com/golangci/golangci-lint/v2/cmd/golangci-lint@latest
   run golangci-lint run --timeout=5m
 
-  # Match CI's Go-1.25-compatible scanner, regardless of an older binary on PATH.
+  # Match CI's pinned scanner, regardless of an older binary on PATH.
   # Go caches its build; a cold cache compiles it without replacing global tools.
   run go run golang.org/x/vuln/cmd/govulncheck@v1.7.0 ./...
 

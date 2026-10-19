@@ -97,12 +97,12 @@ func TestSetFieldTitleCodexPostCommitReturnsSyncError(t *testing.T) {
 	}
 }
 
-func TestSetFieldTitleCodexResolvesMissingSessionIDBeforeSync(t *testing.T) {
+func TestSetFieldTitleCodexDoesNotClaimUnownedSameCWDConversation(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("CODEX_HOME", home)
 	project := t.TempDir()
 	id := "99999999-9999-9999-9999-999999999999"
-	writeCodexRolloutBody(t, home, id, `{"type":"session_meta","payload":{"id":"`+id+`","cwd":"`+project+`"}}`+"\n")
+	writeCodexRolloutBody(t, home, id, `{"type":"session_meta","payload":{"id":"`+id+`","cwd":"`+project+`","source":"cli"}}`+"\n")
 	writeCodexStateThread(t, home, id, "codex old title", "preview", project, time.Now().UnixMilli())
 
 	inst := NewInstanceWithTool("agent deck old title", project, "codex")
@@ -116,18 +116,18 @@ func TestSetFieldTitleCodexResolvesMissingSessionIDBeforeSync(t *testing.T) {
 	if postCommit == nil {
 		t.Fatal("Codex rename with a missing cached ID must still return a sync action")
 	}
-	if err := postCommit(); err != nil {
-		t.Fatalf("postCommit: %v", err)
+	if err := postCommit(); err == nil || !strings.Contains(err.Error(), "active session ID is not available") {
+		t.Fatalf("postCommit must visibly refuse an unowned same-cwd identity: %v", err)
 	}
-	if inst.CodexSessionID != id {
-		t.Fatalf("CodexSessionID = %q, want detected %q", inst.CodexSessionID, id)
+	if inst.CodexSessionID != "" {
+		t.Fatalf("rename stole an unowned conversation: %q", inst.CodexSessionID)
 	}
 	got, err := CodexSessionNameIn(home, id)
 	if err != nil {
 		t.Fatalf("CodexSessionNameIn: %v", err)
 	}
-	if got != "agent deck new title" {
-		t.Fatalf("Codex title = %q, want Agent Deck rename", got)
+	if got != "codex old title" {
+		t.Fatalf("unowned Codex conversation was renamed: %q", got)
 	}
 }
 

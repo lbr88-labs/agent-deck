@@ -86,7 +86,7 @@ func handleSessionImportCodex(profile string, args []string) {
 
 	inst := session.NewInstanceWithGroupAndTool(resolvedTitle, projectPath, resolvedGroup, "codex")
 	inst.Command = resolvedCommand
-	inst.CodexSessionID = entry.ID
+	inst.CodexSessionID = strings.ToLower(strings.TrimSpace(entry.ID))
 	inst.CodexDetectedAt = entry.UpdatedAt
 	inst.Status = session.StatusStopped
 
@@ -94,6 +94,12 @@ func handleSessionImportCodex(profile string, args []string) {
 	if err != nil {
 		out.Error(err.Error(), ErrCodeNotFound)
 		os.Exit(1)
+	}
+	for _, existing := range instances {
+		if strings.EqualFold(strings.TrimSpace(existing.CodexSessionID), inst.CodexSessionID) {
+			out.Error(fmt.Sprintf("Codex session %s is already imported by Agent Deck session %s (%s)", inst.CodexSessionID, existing.Title, existing.ID), ErrCodeInvalidOperation)
+			os.Exit(1)
+		}
 	}
 	instances = append(instances, inst)
 	if err := saveSessionData(storage, instances, groups); err != nil {

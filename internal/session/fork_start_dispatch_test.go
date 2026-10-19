@@ -204,11 +204,9 @@ func requireCodexForkStartGuard(t *testing.T, funcName string) {
 // TestCodexForkStartStampsStartedAt guards a PR #1299 review finding (CodeRabbit):
 // the Codex fork-awaiting-start branch `break`s before the normal
 // `i.CodexStartedAt = time.Now()` stamp, so a forked Codex child starts with no
-// start-time bound. If live-process detection misses, the fallback disk scan can
-// rebind the child to an older same-project rollout — including the parent it
-// just forked from — propagating the wrong codex_session_id. The fork-first-start
-// branch must therefore stamp CodexStartedAt itself, in both Start() and
-// StartWithMessage().
+// start-time bound. The launch boundary is also used to validate a pane-proven
+// fork against immutable rollout creation metadata. The fork-first-start branch
+// must therefore stamp CodexStartedAt itself, in both Start() and StartWithMessage().
 func TestCodexForkStartStampsStartedAt(t *testing.T) {
 	requireCodexForkAwaitingStartStampsStartedAt(t, "Start")
 	requireCodexForkAwaitingStartStampsStartedAt(t, "StartWithMessage")
@@ -240,6 +238,6 @@ func requireCodexForkAwaitingStartStampsStartedAt(t *testing.T, funcName string)
 		awaitingBlock = awaitingBlock[:breakIdx]
 	}
 	if !strings.Contains(awaitingBlock, "i.CodexStartedAt = ") {
-		t.Fatalf("%s Codex fork-awaiting-start branch MUST stamp i.CodexStartedAt (else the disk-scan fallback can rebind the fork to the parent's older rollout)", funcName)
+		t.Fatalf("%s Codex fork-awaiting-start branch MUST stamp i.CodexStartedAt for migration provenance", funcName)
 	}
 }

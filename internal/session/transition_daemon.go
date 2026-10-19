@@ -816,6 +816,8 @@ func readHookStatusFile(instanceID string) *HookStatus {
 		CodexCompletedGeneration string `json:"codex_completed_generation"`
 		CodexStartedSessionID    string `json:"codex_started_session_id"`
 		CodexCompletedSessionID  string `json:"codex_completed_session_id"`
+		CodexEmitterPID          int    `json:"codex_emitter_pid"`
+		CodexEmitterIdentity     string `json:"codex_emitter_identity"`
 		HookGeneration           string `json:"hook_generation"`
 		Sequence                 uint64 `json:"sequence"`
 	}
@@ -845,6 +847,8 @@ func readHookStatusFile(instanceID string) *HookStatus {
 		CodexCompletedGeneration: raw.CodexCompletedGeneration,
 		CodexStartedSessionID:    raw.CodexStartedSessionID,
 		CodexCompletedSessionID:  raw.CodexCompletedSessionID,
+		CodexEmitterPID:          raw.CodexEmitterPID,
+		CodexEmitterIdentity:     raw.CodexEmitterIdentity,
 		HookGeneration:           raw.HookGeneration,
 		Sequence:                 raw.Sequence,
 	}

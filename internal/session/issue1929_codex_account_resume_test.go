@@ -113,9 +113,8 @@ func TestIssue1929_NoAccountResumeGateUnchanged(t *testing.T) {
 	}
 }
 
-// A genuinely stale binding (no rollout anywhere) must still be dropped — the
-// #756 gate's whole purpose. Guards against "fix" by disabling the gate.
-func TestIssue1929_StaleBindingStillDropped(t *testing.T) {
+// A missing conversation must be retained for repair, never silently discarded.
+func TestIssue1929_StaleBindingRetainedAndLaunchRefused(t *testing.T) {
 	codexAccountHome(t)
 	sid := "a1111111-2222-4333-8444-555555555554"
 
@@ -126,11 +125,11 @@ func TestIssue1929_StaleBindingStillDropped(t *testing.T) {
 		CodexDetectedAt: time.Now(),
 	}
 	cmd := inst.buildCodexCommand("codex")
-	if inst.CodexSessionID != "" {
-		t.Errorf("stale binding survived the resume gate: %q", inst.CodexSessionID)
+	if inst.CodexSessionID != sid || !strings.Contains(cmd, "resume "+sid) {
+		t.Errorf("command construction discarded the exact binding: id=%q command=%q", inst.CodexSessionID, cmd)
 	}
-	if strings.Contains(cmd, "resume ") {
-		t.Errorf("launch command resumes an unresumable session.\ngot: %s", cmd)
+	if err := inst.prepareCodexIdentity(true); err == nil {
+		t.Fatal("unverifiable account conversation must refuse launch")
 	}
 }
 

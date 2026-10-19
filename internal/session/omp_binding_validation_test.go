@@ -44,9 +44,40 @@ func runOmpBindingSelection(t *testing.T, dir string, env ...string) (string, er
 		shellescape.Quote(dir), ompBindingSelectionShell(),
 	)
 	command := exec.Command("bash", "-c", script)
-	command.Env = append(os.Environ(), env...)
+	// A test fixture must not inherit the provider launch hosting the test run.
+	command.Env = append(os.Environ(),
+		"AGENTDECK_OMP_LAUNCH_ID=",
+		"AGENTDECK_OMP_SOURCE_BINDING=",
+		"AGENTDECK_OMP_SOURCE_ERROR=",
+	)
+	command.Env = append(command.Env, env...)
 	output, err := command.CombinedOutput()
 	return string(output), err
+}
+
+func TestOmpBindingSelectionFixtureIsolatesInheritedLaunchEnvironment(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "agent-deck", "entry-a")
+	file := filepath.Join(dir, "active.jsonl")
+	writeOmpValidationTranscript(t, file, "session-a")
+	writeOmpValidationBinding(t, dir, file, "session-a", "saved", "legacy")
+	t.Setenv("AGENTDECK_OMP_LAUNCH_ID", "foreign-generation")
+	t.Setenv("AGENTDECK_OMP_SOURCE_BINDING", "/foreign/.agent-deck-source-binding.foreign-generation")
+	t.Setenv("AGENTDECK_OMP_SOURCE_ERROR", "foreign launch failure")
+
+	if output, err := runOmpBindingSelection(t, dir); err != nil || output != file+"\n1\n" {
+		t.Fatalf("fixture inherited an unrelated provider launch: %v\n%s", err, output)
+	}
+	if output, err := runOmpBindingSelection(t, dir,
+		"AGENTDECK_OMP_LAUNCH_ID=foreign-generation",
+		"AGENTDECK_OMP_SOURCE_BINDING=/foreign/.agent-deck-source-binding.foreign-generation",
+	); err == nil || !strings.Contains(output, "Invalid OMP source-binding path") {
+		t.Fatalf("explicit invalid source binding no longer fails closed: %v\n%s", err, output)
+	}
+	if output, err := runOmpBindingSelection(t, dir,
+		"AGENTDECK_OMP_SOURCE_ERROR=explicit launch failure",
+	); err == nil || !strings.Contains(output, "explicit launch failure") {
+		t.Fatalf("explicit source failure no longer fails closed: %v\n%s", err, output)
+	}
 }
 
 func TestOmpBindingManifestMustBeBoundedExactAndRegular(t *testing.T) {

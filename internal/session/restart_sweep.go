@@ -57,10 +57,11 @@ func (i *Instance) sweepDuplicateToolSessions() {
 		killDuplicateSessionsFn("GEMINI_SESSION_ID", i.GeminiSessionID, keepName)
 	case i.Tool == "opencode" && i.OpenCodeSessionID != "":
 		killDuplicateSessionsFn("OPENCODE_SESSION_ID", i.OpenCodeSessionID, keepName)
-	case i.Tool == "codex" && i.CodexSessionID != "":
-		killDuplicateSessionsFn("CODEX_SESSION_ID", i.CodexSessionID, keepName)
 	}
 
+	// CODEX_SESSION_ID is a cache, not authority over another managed pane.
+	// Never kill another instance merely because that cache duplicates ours.
+	// The instance-ID sweep still removes this instance's stale processes.
 	if i.ID != "" {
 		killDuplicateSessionsFn("AGENTDECK_INSTANCE_ID", i.ID, keepName)
 	}

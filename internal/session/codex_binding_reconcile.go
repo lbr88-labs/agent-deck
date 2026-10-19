@@ -2,7 +2,6 @@ package session
 
 import (
 	"log/slog"
-	"os"
 	"strings"
 	"time"
 )
@@ -115,7 +114,7 @@ func (i *Instance) adoptPersistedCodexPromotionLocked(syncTmuxEnv bool) bool {
 	if i.CodexBindingRevision > persistedRevision && i.CodexBindingRevision > 0 {
 		return false
 	}
-	if persistedID != "" && !IsCodexTopLevelSession(i.getCodexHomeDir(), persistedID) {
+	if persistedID != "" && IsCodexSubagentSession(i.getCodexHomeDir(), persistedID) {
 		return false
 	}
 
@@ -142,6 +141,11 @@ func (i *Instance) adoptPersistedCodexPromotionLocked(syncTmuxEnv bool) bool {
 		}
 	}
 
+	if persistedID != "" {
+		if owner, err := i.codexSessionOwner(persistedID); err != nil || owner != "" {
+			return false
+		}
+	}
 	i.CodexSessionID = persistedID
 	if detectedAt.IsZero() && persistedID != "" {
 		detectedAt = time.Now()
@@ -257,9 +261,11 @@ func (i *Instance) adoptCompletedCodexMigrationTargetLocked(syncTmuxEnv bool) bo
 	if !IsCodexTopLevelSession(codexHome, state.TargetID) {
 		return false
 	}
-	rolloutPath := codexRolloutPathInHome(state.TargetID, codexHome)
-	info, err := os.Stat(rolloutPath)
-	if err != nil || info.ModTime().Before(state.Started.Add(-2*time.Second)) {
+	createdAt := codexRolloutCreatedAt(codexHome, state.TargetID)
+	if createdAt.IsZero() || createdAt.Before(state.Started.Add(-2*time.Second)) {
+		return false
+	}
+	if owner, err := i.codexSessionOwner(state.TargetID); err != nil || owner != "" {
 		return false
 	}
 

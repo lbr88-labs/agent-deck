@@ -74,6 +74,11 @@ func DefaultRawPatterns(toolName string) *RawPatterns {
 	case "codex":
 		return &RawPatterns{
 			BusyPatterns: []string{
+				// Native activity sits above the composer and optional tip, not
+				// in the last three footer lines. Require the final input/menu
+				// marker: a captured historical busy+composer pair must not
+				// override a newer ready composer or approval selection.
+				`re:(?m)^[ \t]*• [^\r\n(]+\([0-9][^\r\n]*[•·][ \t]*(?:esc|ctrl\+c) to interrupt\)[^\r\n]*\r?\n(?:[ \t]*└[^\r\n]*\r?\n)?[ \t\r\n]*›(?:[ \t][^\r\n]*)?(?:\r?\n[ \t]*(?:[^ \t\r\n›][^\r\n]*)?)*\z`,
 				"ctrl+c to interrupt",
 				"esc to interrupt",
 				"press esc to interrupt",

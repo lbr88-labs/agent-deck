@@ -507,6 +507,7 @@ func CodexTopLevelSessionID(codexHome, sessionID string) (string, bool) {
 }
 
 type codexRolloutThreadMetadata struct {
+	id        string
 	kind      codexThreadKind
 	rootID    string
 	createdAt time.Time
@@ -515,8 +516,8 @@ type codexRolloutThreadMetadata struct {
 // codexRolloutThreadKind reads only the session_meta record near the start of
 // a rollout. Current Codex represents top-level sources as strings such as
 // "cli"/"exec", while internal workers and approval reviewers use an object
-// with a "subagent" key. Unknown/missing metadata stays permissive for older
-// Codex versions rather than making otherwise valid sessions unresumable.
+// with a "subagent" key. Missing source metadata stays unknown: exact recorded
+// IDs remain resumable, but unknown metadata cannot establish new ownership.
 func codexRolloutThreadKind(path string) codexThreadKind {
 	return readCodexRolloutThreadMetadata(path).kind
 }
@@ -536,8 +537,11 @@ func readCodexRolloutThreadMetadata(path string) codexRolloutThreadMetadata {
 		Timestamp string `json:"timestamp"`
 		Type      string `json:"type"`
 		Payload   struct {
-			SessionID string          `json:"session_id"`
-			Source    json.RawMessage `json:"source"`
+			ID             string          `json:"id"`
+			SessionID      string          `json:"session_id"`
+			Source         json.RawMessage `json:"source"`
+			ThreadSource   string          `json:"thread_source"`
+			ParentThreadID string          `json:"parent_thread_id"`
 		} `json:"payload"`
 	}
 
@@ -553,9 +557,22 @@ func readCodexRolloutThreadMetadata(path string) codexRolloutThreadMetadata {
 			continue
 		}
 		meta := codexRolloutThreadMetadata{
+			id:        strings.ToLower(strings.TrimSpace(rec.Payload.ID)),
 			kind:      codexSourceThreadKind(rec.Payload.Source),
 			rootID:    rec.Payload.SessionID,
 			createdAt: parseCodexRolloutTimestamp(rec.Timestamp),
+		}
+		if meta.kind == codexThreadUnknown && strings.TrimSpace(rec.Payload.ThreadSource) != "" {
+			meta.kind = codexThreadTopLevel
+			if strings.EqualFold(strings.TrimSpace(rec.Payload.ThreadSource), "subagent") {
+				meta.kind = codexThreadSubagent
+			}
+		}
+		if meta.rootID == "" {
+			meta.rootID = rec.Payload.ParentThreadID
+		}
+		if meta.id == "" && meta.kind == codexThreadTopLevel {
+			meta.id = strings.ToLower(strings.TrimSpace(rec.Payload.SessionID))
 		}
 		if meta.kind != codexThreadUnknown {
 			codexRolloutThreadMetadataCache.Store(path, meta)
@@ -633,6 +650,12 @@ func codexRolloutPathInHome(sessionID, codexHome string) string {
 	pattern := filepath.Join(codexHome, "sessions", "*", "*", "*",
 		"rollout-*-"+sessionID+".jsonl")
 	matches, err := filepath.Glob(pattern)
+	if err != nil {
+		return ""
+	}
+	if len(matches) == 0 {
+		matches, err = filepath.Glob(filepath.Join(codexHome, "archived_sessions", "rollout-*-"+sessionID+".jsonl"))
+	}
 	if err != nil || len(matches) == 0 {
 		return ""
 	}

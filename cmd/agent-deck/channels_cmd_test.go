@@ -84,7 +84,8 @@ func filteredCLIEnvForHome(home string) []string {
 	var env []string
 	for _, kv := range os.Environ() {
 		switch {
-		case strings.HasPrefix(kv, "TMUX"),
+		case strings.HasPrefix(kv, "TMUX="),
+			strings.HasPrefix(kv, "TMUX_PANE="),
 			strings.HasPrefix(kv, "AGENTDECK_"),
 			strings.HasPrefix(kv, "HOME="),
 			strings.HasPrefix(kv, "XDG_CONFIG_HOME="),
@@ -111,22 +112,25 @@ func filteredCLIEnvForHome(home string) []string {
 func cliBuildCacheEnv(t *testing.T) []string {
 	t.Helper()
 	root := filepath.Join("/var/tmp", "agent-deck-cli-build-cache")
-	if err := os.MkdirAll(root, 0o755); err != nil {
-		t.Fatalf("mkdir build cache root: %v", err)
-	}
-	gocache := filepath.Join(root, "gocache")
-	gomodcache := filepath.Join(root, "gomodcache")
-	gopath := filepath.Join(root, "gopath")
-	for _, dir := range []string{gocache, gomodcache, gopath} {
-		if err := os.MkdirAll(dir, 0o755); err != nil {
-			t.Fatalf("mkdir build cache dir %s: %v", dir, err)
+	var env []string
+	for _, cache := range []struct {
+		key string
+		dir string
+	}{
+		{"GOCACHE", "gocache"},
+		{"GOMODCACHE", "gomodcache"},
+		{"GOPATH", "gopath"},
+	} {
+		dir := os.Getenv(cache.key)
+		if dir == "" {
+			dir = filepath.Join(root, cache.dir)
+			if err := os.MkdirAll(dir, 0o755); err != nil {
+				t.Fatalf("mkdir build cache dir %s: %v", dir, err)
+			}
 		}
+		env = append(env, cache.key+"="+dir)
 	}
-	return []string{
-		"GOCACHE=" + gocache,
-		"GOMODCACHE=" + gomodcache,
-		"GOPATH=" + gopath,
-	}
+	return env
 }
 
 // readSessionsJSON reads the persisted sessions for the test profile.

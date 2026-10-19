@@ -328,7 +328,7 @@ func writeCodexRolloutForCLI(t *testing.T, home, sessionID string) {
 		t.Fatalf("mkdir codex rollout dir: %v", err)
 	}
 	path := filepath.Join(dir, "rollout-2026-06-30T10-00-00-"+sessionID+".jsonl")
-	if err := os.WriteFile(path, []byte("{}\n"), 0o644); err != nil {
+	if err := os.WriteFile(path, []byte(`{"type":"session_meta","payload":{"id":"`+sessionID+`","source":"cli"}}`+"\n"), 0o644); err != nil {
 		t.Fatalf("write codex rollout: %v", err)
 	}
 }
@@ -368,4 +368,28 @@ func mustExtractHandleSessionImportCodex(t *testing.T) string {
 		t.Fatalf("could not extract handleSessionImportCodex body")
 	}
 	return body
+}
+
+func TestHandleSessionImportCodexRejectsAlreadyOwnedConversation(t *testing.T) {
+	const id = "019f2222-2222-4222-8222-222222222222"
+	if os.Getenv("AGENT_DECK_IMPORT_CODEX_HELPER") == "already-owned" {
+		profile := os.Getenv("AGENT_DECK_IMPORT_CODEX_PROFILE")
+		handleSessionImportCodex(profile, []string{id, "--quiet"})
+		handleSessionImportCodex(profile, []string{id, "--quiet"})
+		return
+	}
+	profile := codexImportTestProfile(t)
+	home := t.TempDir()
+	writeCodexIndexForCLI(t, home, id, "original", time.Now().UTC().Format(time.RFC3339Nano))
+	writeCodexRolloutForCLI(t, home, id)
+	cmd := exec.Command(os.Args[0], "-test.run=^TestHandleSessionImportCodexRejectsAlreadyOwnedConversation$")
+	cmd.Env = append(os.Environ(),
+		"AGENT_DECK_IMPORT_CODEX_HELPER=already-owned",
+		"AGENT_DECK_IMPORT_CODEX_PROFILE="+profile,
+		"CODEX_HOME="+home,
+	)
+	output, err := cmd.CombinedOutput()
+	if err == nil || !strings.Contains(string(output), "already imported") {
+		t.Fatalf("duplicate explicit import was not refused: err=%v output=%s", err, output)
+	}
 }

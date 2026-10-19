@@ -9,7 +9,7 @@
 
 [![GitHub Stars](https://img.shields.io/github/stars/asheshgoplani/agent-deck?style=for-the-badge&logo=github&color=yellow&labelColor=1a1b26)](https://github.com/asheshgoplani/agent-deck/stargazers)
 [![Downloads](https://img.shields.io/github/downloads/asheshgoplani/agent-deck/total?style=for-the-badge&logo=github&color=bb9af7&labelColor=1a1b26)](https://github.com/asheshgoplani/agent-deck/releases)
-[![Go Version](https://img.shields.io/badge/Go-1.25.13-00ADD8?style=for-the-badge&logo=go&labelColor=1a1b26)](https://go.dev)
+[![Go Version](https://img.shields.io/badge/Go-1.26.9-00ADD8?style=for-the-badge&logo=go&labelColor=1a1b26)](https://go.dev)
 [![License](https://img.shields.io/badge/License-MIT-9ece6a?style=for-the-badge&labelColor=1a1b26)](LICENSE)
 [![Platform](https://img.shields.io/badge/Platform-macOS%20%7C%20Linux%20%7C%20WSL-7aa2f7?style=for-the-badge&labelColor=1a1b26)](https://github.com/asheshgoplani/agent-deck)
 [![Latest Release](https://img.shields.io/github/v/release/asheshgoplani/agent-deck?style=for-the-badge&color=e0af68&labelColor=1a1b26)](https://github.com/asheshgoplani/agent-deck/releases)
@@ -264,6 +264,20 @@ status filter under **View**. The Legacy preset also provides `/` and `G` for
 fleet search, `Alt+/` for the current group, and `!`, `@`, `#`, `$` for status
 filters.
 
+Results include project path, group, status, last-opened time, and separately
+recorded activity time. Unknown timestamps stay unknown. Matches are ranked by
+relevance, with last-opened time breaking ties. `Tab` switches fleet/local scope.
+
+Press `Ctrl+S` in search to toggle **Search chats** (off each time search opens).
+This asynchronously searches saved conversations bound to local sessions and
+shows a matching excerpt; it does not fetch remote conversations or build a
+full-memory transcript index. Supported saved formats are OMP, Codex,
+Claude-compatible tools, Gemini, OpenCode SQLite, Pi, Kiro CLI JSONL, and Copilot.
+Missing, ambiguous, unsupported, remote, and container bindings are reported as
+unavailable. OpenCode legacy JSON, other Kiro stores, and other tool formats are
+not searched. Oversized or malformed records and scan limits are reported as
+partial results.
+
 ### Keyboard navigation (legacy shortcut preset)
 
 Arrow keys are always available. The additional bindings below are available
@@ -275,7 +289,7 @@ memorizing keys.
 |---|---|---|
 | **Global (flat list)** | `j` / `k` or `↓` / `↑` | Move cursor down / up through every item |
 | Global | `gg` | Jump to top of list |
-| Global | `G` | Open global search across all Claude conversations |
+| Global | `G` | Open fleet session search (same as `/`) |
 | Global | `1`–`9` | Jump to Nth root group header |
 | Global | `/` | Open fuzzy search across all sessions |
 | **Group (current group only)** | `Alt+j` / `Alt+k` | Next / previous session in current group (skips group boundaries) |
@@ -499,6 +513,22 @@ branch_prefix       = "fork/" # auto branch name = <branch_prefix><sanitized-tit
 ### Import Saved Sessions
 
 Bring conversations that were started outside Agent Deck into the registry with `agent-deck session import-codex`, `import-claude`, `import-opencode`, or `import-kiro`. Imports create stopped Agent Deck sessions that resume through each tool's native resume path; add `--start` to launch immediately. In the TUI, press `i`, choose the saved-session source, search/select the session, and import it.
+
+#### Codex conversation identity
+
+Start and restart preserve the entry's exact saved Codex conversation. Agent Deck
+never assigns a conversation because it is the newest transcript in the same
+project directory. Automatic identity changes require evidence from the owning
+pane; conflicting or unverifiable identity produces an error before replacing
+the running pane. Archived and native-indexed conversations remain resumable.
+
+If automatic ownership cannot be established, import the exact saved conversation
+or explicitly set it with `agent-deck session set <entry> codex-session-id <uuid>`.
+An ID already owned by another entry is rejected. Container-wide process scans
+are not ownership evidence, so sandbox sessions require an exact saved binding.
+Use `agent-deck session restart-fresh <entry>` only when a new conversation is
+intended; ordinary restart never silently falls back to a fresh chat.
+
 
 ### Handover Between Tools
 

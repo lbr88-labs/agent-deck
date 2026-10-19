@@ -57,12 +57,12 @@ func TestUpdateHookStatusCodexRejectsGuardianSubagentID(t *testing.T) {
 	inst.hookEvent = "turn/started"
 	inst.hookLastUpdate = time.Now().Add(-time.Second)
 
-	inst.UpdateHookStatus(&HookStatus{
+	inst.UpdateHookStatus(ownedCodexHook(t, inst, &HookStatus{
 		Status:    "waiting",
 		SessionID: guardianID,
 		Event:     "turn/completed",
 		UpdatedAt: time.Now(),
-	})
+	}))
 
 	if inst.CodexSessionID != mainID {
 		t.Fatalf("guardian hook replaced top-level Codex ID: got %q, want %q", inst.CodexSessionID, mainID)
@@ -86,8 +86,8 @@ func TestSelectCodexRolloutCandidatePrefersTopLevelThread(t *testing.T) {
 		{ID: guardianID, Path: guardianPath},
 		{ID: mainID, Path: mainPath},
 	})
-	if got != mainID {
-		t.Fatalf("selected rollout = %q, want top-level %q", got, mainID)
+	if got.sessionID != mainID || got.ambiguous {
+		t.Fatalf("selected rollout = %+v, want top-level %q", got, mainID)
 	}
 }
 
@@ -100,8 +100,8 @@ func TestSelectCodexRolloutCandidateRejectsOnlySubagent(t *testing.T) {
 		"subagent": map[string]any{"other": "guardian"},
 	})
 
-	if got := selectCodexRolloutCandidate([]codexRolloutCandidate{{ID: guardianID, Path: guardianPath}}); got != "" {
-		t.Fatalf("selected internal-only rollout %q", got)
+	if got := selectCodexRolloutCandidate([]codexRolloutCandidate{{ID: guardianID, Path: guardianPath}}); got.sessionID != "" || got.ambiguous {
+		t.Fatalf("selected internal-only rollout %+v", got)
 	}
 }
 
@@ -115,36 +115,25 @@ func TestSelectCodexRolloutCandidateHandlesWhitespaceInHome(t *testing.T) {
 		"subagent": map[string]any{"other": "guardian"},
 	})
 
-	output := []byte(guardianPath + "\n" + mainPath + "\n")
-	if got := selectCodexRolloutCandidate(extractCodexRolloutCandidatesFromOutput(output)); got != mainID {
-		t.Fatalf("selected rollout = %q, want whitespace-path top-level %q", got, mainID)
+	output := []byte("codex 123 user 10w REG 1,2 100 3 " + guardianPath + "\n" +
+		"codex 123 user 11w REG 1,2 100 4 " + mainPath + "\n")
+	if got := selectCodexRolloutCandidate(extractWritableCodexRolloutsFromLsof(output)); got.sessionID != mainID || got.ambiguous {
+		t.Fatalf("selected rollout = %+v, want whitespace-path top-level %q", got, mainID)
 	}
 }
 
-func TestSandboxCodexCandidatesRebaseToHostMount(t *testing.T) {
-	home := t.TempDir()
-	t.Setenv("HOME", home)
-	cwd := t.TempDir()
-	const mainID = "eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee"
-	const guardianID = "ffffffff-ffff-ffff-ffff-ffffffffffff"
-	inst := NewInstanceWithTool("sandbox", cwd, "codex")
+func TestSandboxCodexProcessFilesDoNotProvePaneOwnership(t *testing.T) {
+	inst, codexHome := newCodexGateInstance(t)
 	inst.Sandbox = NewSandboxConfig("")
-	hostCodexHome := filepath.Join(home, ".codex", "sandbox")
-	mainPath := writeCodexRolloutWithSource(t, hostCodexHome, mainID, cwd, "cli")
-	guardianPath := writeCodexRolloutWithSourceAndRoot(t, hostCodexHome, guardianID, mainID, cwd, map[string]any{
-		"subagent": map[string]any{"other": "guardian"},
-	})
-
-	containerOutput := []byte(strings.Replace(guardianPath, hostCodexHome, "/root/.codex", 1) + "\n" +
-		strings.Replace(mainPath, hostCodexHome, "/root/.codex", 1) + "\n")
-	candidates := extractCodexRolloutCandidatesFromOutput(containerOutput)
-	candidates = rebaseCodexRolloutCandidates(candidates, inst.getCodexHomeDir())
-	if got := selectCodexRolloutCandidate(candidates); got != mainID {
-		t.Fatalf("selected sandbox rollout = %q, want top-level %q", got, mainID)
+	inst.SandboxContainer = "unrelated-container-process"
+	id := uniqueSID(t)
+	writeCodexRolloutWithSource(t, codexHome, id, inst.ProjectPath, "cli")
+	if got := inst.queryCodexSessionFromProcessFiles(); got.sessionID != "" || got.ambiguous {
+		t.Fatalf("container-wide files claimed a pane identity: %+v", got)
 	}
 }
 
-func TestQueryCodexSessionSkipsNewerSubagentRollout(t *testing.T) {
+func TestCodexProcessCandidateSkipsNewerSubagentRollout(t *testing.T) {
 	codexHome := t.TempDir()
 	t.Setenv("CODEX_HOME", codexHome)
 	cwd := t.TempDir()
@@ -162,9 +151,8 @@ func TestQueryCodexSessionSkipsNewerSubagentRollout(t *testing.T) {
 		t.Fatalf("chtimes worker rollout: %v", err)
 	}
 
-	inst := NewInstanceWithTool("main", cwd, "codex")
-	if got := inst.queryCodexSession(nil, false); got != mainID {
-		t.Fatalf("queryCodexSession() = %q, want top-level %q", got, mainID)
+	if got := selectCodexRolloutCandidate([]codexRolloutCandidate{{ID: mainID, Path: mainPath}, {ID: workerID, Path: workerPath}}); got.sessionID != mainID || got.ambiguous {
+		t.Fatalf("pane process candidate = %+v, want top-level %q", got, mainID)
 	}
 }
 
@@ -315,10 +303,17 @@ func TestCodexSubagentMigrationAcceptsOnlyFreshFork(t *testing.T) {
 		{ID: guardianID, Path: guardianPath},
 		{ID: freshForkID, Path: freshForkPath},
 	})
-	if got != freshForkID {
-		t.Fatalf("process probe selected %q, want fresh fork %q", got, freshForkID)
+	if got.sessionID != "" || !got.ambiguous {
+		t.Fatalf("competing top-level process files must remain ambiguous, got %+v", got)
 	}
-	reloaded.acceptCodexSessionID(freshForkID, false)
+	got = selectCodexRolloutCandidate([]codexRolloutCandidate{
+		{ID: guardianID, Path: guardianPath},
+		{ID: freshForkID, Path: freshForkPath},
+	})
+	if got.sessionID != freshForkID || got.ambiguous {
+		t.Fatalf("process probe selected %+v, want fresh fork %q", got, freshForkID)
+	}
+	reloaded.acceptCodexSessionID(freshForkID, false, codexBindingProcess)
 	completed, ok := readCodexSubagentMigrationState(inst.ID)
 	if !ok || completed.TargetID != freshForkID || completed.Completed.IsZero() {
 		t.Fatalf("completed migration provenance was not retained: %+v ok=%v", completed, ok)

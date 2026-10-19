@@ -6659,7 +6659,7 @@ func (h *Home) backgroundStatusUpdate() {
 	}
 
 	// Update status for all instances in parallel (I/O bound: tmux subprocess calls)
-	// With PipeManager, skip sessions idle for >5s (no %output events = no status change)
+	// With PipeManager, skip stable idle sessions with no output for >5s.
 	statusStart := time.Now()
 	var statusChanged atomic.Bool
 	var slowMu sync.Mutex
@@ -6687,9 +6687,10 @@ func (h *Home) backgroundStatusUpdate() {
 			continue
 		}
 
-		// Skip idle sessions when PipeManager knows they haven't produced output.
-		// Only skip if pipe is alive (otherwise we need UpdateStatus for Error detection).
-		if pm != nil {
+		// Output silence does not mean a running/waiting transition has settled:
+		// busy grace and prompt/acknowledgment confirmations still need polling.
+		// Only skip idle sessions with a live pipe (dead pipes need Error detection).
+		if pm != nil && inst.GetStatusThreadSafe() == session.StatusIdle {
 			if ts := inst.GetTmuxSession(); ts != nil && pm.IsConnected(ts.Name) {
 				lastOut := pm.LastOutputTime(ts.Name)
 				if !lastOut.IsZero() && time.Since(lastOut) > 5*time.Second {
@@ -7389,6 +7390,11 @@ func (h *Home) processStatusUpdate(req statusUpdateRequest) {
 func (h *Home) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	defer h.recordFocusedSession()
 	model, cmd := h.updateInner(msg)
+	if h.search != nil {
+		if searchCmd := h.search.takeChatSearchCmd(); searchCmd != nil {
+			cmd = tea.Batch(cmd, searchCmd)
+		}
+	}
 	if !h.fullRepaint {
 		return model, cmd
 	}
@@ -9909,6 +9915,14 @@ func (h *Home) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 			cmds = append(cmds, tea.ClearScreen)
 		}
 		return h, tea.Batch(cmds...)
+
+	case searchChatDebounceMsg, searchChatResultsMsg:
+		if h.search != nil {
+			var cmd tea.Cmd
+			h.search, cmd = h.search.Update(msg)
+			return h, cmd
+		}
+		return h, nil
 
 	case globalSearchDebounceMsg, globalSearchResultsMsg:
 		// Route async global search messages to the global search component
@@ -19757,12 +19771,24 @@ func (h *Home) handleCodexImportDialogKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 func (h *Home) createSessionFromCodexImport(entry session.CodexIndexEntry, startAfterImport bool) tea.Cmd {
 	return func() tea.Msg {
-		if strings.TrimSpace(entry.ID) == "" {
+		sessionID := strings.TrimSpace(entry.ID)
+		if sessionID == "" {
 			return sessionCreatedMsg{err: session.ErrCodexSessionNotFound}
 		}
 		if !session.CodexRolloutExists(defaultCodexImportHome(), entry.ID) {
 			return sessionCreatedMsg{err: fmt.Errorf("%w: %s", session.ErrCodexRolloutMissing, entry.ID)}
 		}
+		if session.IsCodexSubagentSession(defaultCodexImportHome(), entry.ID) {
+			return sessionCreatedMsg{err: fmt.Errorf("cannot import Codex internal subagent thread %s; fork it into a top-level thread first", entry.ID)}
+		}
+		h.instancesMu.RLock()
+		for _, existing := range h.instances {
+			if strings.EqualFold(strings.TrimSpace(existing.GetCodexSessionIDThreadSafe()), sessionID) {
+				h.instancesMu.RUnlock()
+				return sessionCreatedMsg{err: fmt.Errorf("Codex session %q is already imported by Agent Deck session %q (%s)", entry.ID, existing.GetTitleThreadSafe(), existing.ID)}
+			}
+		}
+		h.instancesMu.RUnlock()
 		title := strings.TrimSpace(entry.ThreadName)
 		if title == "" {
 			title = shortCodexID(entry.ID)
@@ -19776,7 +19802,7 @@ func (h *Home) createSessionFromCodexImport(entry session.CodexIndexEntry, start
 		}
 		inst := session.NewInstanceWithGroupAndTool(title, projectPath, importGroupPathForProject(projectPath), "codex")
 		inst.Command = "codex"
-		inst.CodexSessionID = strings.ToLower(strings.TrimSpace(entry.ID))
+		inst.CodexSessionID = strings.ToLower(sessionID)
 		inst.CodexDetectedAt = entry.UpdatedAt
 		inst.Status = session.StatusStopped
 		if startAfterImport {

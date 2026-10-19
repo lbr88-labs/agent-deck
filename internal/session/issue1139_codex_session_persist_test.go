@@ -64,6 +64,7 @@ func readCodexSessionIDFromDB(t *testing.T, db *statedb.StateDB, id string) stri
 func TestRebindPersistsCodexSessionIDToDB(t *testing.T) {
 	tmpHome := t.TempDir()
 	t.Setenv("HOME", tmpHome)
+	t.Setenv("CODEX_HOME", filepath.Join(tmpHome, ".codex"))
 	ClearUserConfigCache()
 	t.Cleanup(ClearUserConfigCache)
 
@@ -77,6 +78,7 @@ func TestRebindPersistsCodexSessionIDToDB(t *testing.T) {
 
 	oldID := "5ea244ce-0000-0000-0000-000000000a01"
 	newID := "2266314c-0000-0000-0000-000000000a02"
+	writeCodexRolloutWithSource(t, filepath.Join(tmpHome, ".codex"), newID, projectPath, "cli")
 
 	now := time.Now()
 	seedRow := &statedb.InstanceRow{
@@ -99,12 +101,12 @@ func TestRebindPersistsCodexSessionIDToDB(t *testing.T) {
 		t.Fatalf("pre-condition: DB codex_session_id = %q, want %q", got, oldID)
 	}
 
-	inst.UpdateHookStatus(&HookStatus{
+	inst.UpdateHookStatus(ownedCodexHook(t, inst, &HookStatus{
 		Status:    "running",
 		SessionID: newID,
 		Event:     "UserPromptSubmit",
 		UpdatedAt: time.Now(),
-	})
+	}))
 
 	// Post-condition (in-memory) — the existing behavior pre-fix.
 	if inst.CodexSessionID != newID {
@@ -128,6 +130,7 @@ func TestRebindPersistsCodexSessionIDToDB(t *testing.T) {
 func TestBindPersistsCodexSessionIDToDB(t *testing.T) {
 	tmpHome := t.TempDir()
 	t.Setenv("HOME", tmpHome)
+	t.Setenv("CODEX_HOME", filepath.Join(tmpHome, ".codex"))
 	ClearUserConfigCache()
 	t.Cleanup(ClearUserConfigCache)
 
@@ -140,6 +143,7 @@ func TestBindPersistsCodexSessionIDToDB(t *testing.T) {
 	inst := NewInstanceWithTool("hook-codex-bind-persist", projectPath, "codex")
 
 	newID := "7a3b9c10-0000-0000-0000-000000000a03"
+	writeCodexRolloutWithSource(t, filepath.Join(tmpHome, ".codex"), newID, projectPath, "cli")
 
 	seedRow := &statedb.InstanceRow{
 		ID:          inst.ID,
@@ -156,12 +160,12 @@ func TestBindPersistsCodexSessionIDToDB(t *testing.T) {
 		t.Fatalf("SaveInstance seed: %v", err)
 	}
 
-	inst.UpdateHookStatus(&HookStatus{
+	inst.UpdateHookStatus(ownedCodexHook(t, inst, &HookStatus{
 		Status:    "running",
 		SessionID: newID,
 		Event:     "SessionStart",
 		UpdatedAt: time.Now(),
-	})
+	}))
 
 	if inst.CodexSessionID != newID {
 		t.Fatalf("in-memory CodexSessionID = %q, want %q", inst.CodexSessionID, newID)
@@ -180,6 +184,7 @@ func TestBindPersistsCodexSessionIDToDB(t *testing.T) {
 func TestCodexRebindNoOpWhenStateDBUnset(t *testing.T) {
 	tmpHome := t.TempDir()
 	t.Setenv("HOME", tmpHome)
+	t.Setenv("CODEX_HOME", filepath.Join(tmpHome, ".codex"))
 	ClearUserConfigCache()
 	t.Cleanup(ClearUserConfigCache)
 
@@ -194,12 +199,13 @@ func TestCodexRebindNoOpWhenStateDBUnset(t *testing.T) {
 	inst := NewInstanceWithTool("hook-codex-rebind-nodb", projectPath, "codex")
 
 	newID := "9f5e1d80-0000-0000-0000-000000000a04"
-	inst.UpdateHookStatus(&HookStatus{
+	writeCodexRolloutWithSource(t, filepath.Join(tmpHome, ".codex"), newID, projectPath, "cli")
+	inst.UpdateHookStatus(ownedCodexHook(t, inst, &HookStatus{
 		Status:    "running",
 		SessionID: newID,
 		Event:     "SessionStart",
 		UpdatedAt: time.Now(),
-	})
+	}))
 
 	if inst.CodexSessionID != newID {
 		t.Fatalf("in-memory CodexSessionID = %q, want %q (rebind path must work "+
@@ -216,6 +222,7 @@ func TestCodexRebindNoOpWhenStateDBUnset(t *testing.T) {
 func TestCodexRebindPreservesUnrelatedToolDataKeys(t *testing.T) {
 	tmpHome := t.TempDir()
 	t.Setenv("HOME", tmpHome)
+	t.Setenv("CODEX_HOME", filepath.Join(tmpHome, ".codex"))
 	ClearUserConfigCache()
 	t.Cleanup(ClearUserConfigCache)
 
@@ -229,6 +236,7 @@ func TestCodexRebindPreservesUnrelatedToolDataKeys(t *testing.T) {
 
 	oldID := "5ea244ce-0000-0000-0000-000000000a05"
 	newID := "2266314c-0000-0000-0000-000000000a06"
+	writeCodexRolloutWithSource(t, filepath.Join(tmpHome, ".codex"), newID, projectPath, "cli")
 
 	seedJSON := `{
 		"codex_session_id": "` + oldID + `",
@@ -255,12 +263,12 @@ func TestCodexRebindPreservesUnrelatedToolDataKeys(t *testing.T) {
 	}
 
 	inst.CodexSessionID = oldID
-	inst.UpdateHookStatus(&HookStatus{
+	inst.UpdateHookStatus(ownedCodexHook(t, inst, &HookStatus{
 		Status:    "running",
 		SessionID: newID,
 		Event:     "UserPromptSubmit",
 		UpdatedAt: time.Now(),
-	})
+	}))
 
 	rows, err := db.LoadInstances()
 	if err != nil {

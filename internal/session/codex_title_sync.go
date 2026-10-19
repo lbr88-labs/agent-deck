@@ -134,7 +134,7 @@ func (i *Instance) refreshCodexMetadataLocked() {
 	i.lastCodexTitleSync = now
 
 	if i.CodexSessionID == "" && i.tmuxSession != nil && i.tmuxSession.Exists() {
-		i.updateCodexSession(i.collectOtherCodexSessionIDs(), true)
+		i.updateCodexSession(nil, true)
 	}
 	if i.CodexSessionID == "" {
 		return
@@ -153,10 +153,8 @@ func (i *Instance) refreshCodexMetadataLocked() {
 	}
 }
 
-// EnsureCodexSessionIDForRename resolves a late/missing Codex binding from the
-// live tmux process or the normal scoped disk fallback. Explicit Agent Deck
-// renames call this after persistence so they can still reach Codex when the
-// launch process exited before its asynchronous ID detector completed.
+// EnsureCodexSessionIDForRename resolves a late/missing Codex binding only from
+// pane-owned live evidence. A rename never claims a same-cwd disk conversation.
 func (i *Instance) EnsureCodexSessionIDForRename() string {
 	if i == nil || !IsCodexCompatible(i.Tool) {
 		return ""
@@ -164,7 +162,7 @@ func (i *Instance) EnsureCodexSessionIDForRename() string {
 	i.mu.Lock()
 	defer i.mu.Unlock()
 	if i.CodexSessionID == "" {
-		i.updateCodexSession(i.collectOtherCodexSessionIDs(), true)
+		i.updateCodexSession(nil, true)
 	}
 	if IsCodexSubagentSession(i.getCodexHomeDir(), i.CodexSessionID) {
 		return ""

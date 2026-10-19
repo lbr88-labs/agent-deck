@@ -2,6 +2,7 @@ package session
 
 import (
 	"bufio"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -407,6 +408,13 @@ func readOmpBindingRecord(path string) (*ompActiveBinding, error) {
 }
 
 func readOmpActiveBindingSelection(dir string) (*ompActiveBinding, string, bool, error) {
+	return readOmpActiveBindingSelectionContext(context.Background(), dir)
+}
+
+func readOmpActiveBindingSelectionContext(ctx context.Context, dir string) (*ompActiveBinding, string, bool, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, "", false, err
+	}
 	path, generation, tracked, err := ompCurrentBindingPath(dir)
 	if err != nil {
 		return nil, "", false, err
@@ -423,7 +431,7 @@ func readOmpActiveBindingSelection(dir string) (*ompActiveBinding, string, bool,
 		if tracked && binding.Generation != generation {
 			return nil, "", false, fmt.Errorf("OMP binding did not acknowledge current launch generation %s in %s; identity tracking is unavailable and history is preserved", generation, dir)
 		}
-		if err := validateOmpActiveBinding(dir, binding); err != nil {
+		if err := validateOmpActiveBindingContext(ctx, dir, binding); err != nil {
 			return nil, "", false, err
 		}
 	}
@@ -443,12 +451,19 @@ func readOmpActiveBinding(dir string) (*ompActiveBinding, error) {
 }
 
 func validateOmpActiveBinding(dir string, binding *ompActiveBinding) error {
+	return validateOmpActiveBindingContext(context.Background(), dir, binding)
+}
+
+func validateOmpActiveBindingContext(ctx context.Context, dir string, binding *ompActiveBinding) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	if err := validateOmpBindingLocation(dir, binding.File); err != nil {
 		return err
 	}
 	info, err := os.Lstat(binding.File)
 	if os.IsNotExist(err) && binding.State == "pending" {
-		return validateOmpSiblingClaims(dir, binding) // Never resurrect prior history.
+		return validateOmpSiblingClaimsContext(ctx, dir, binding) // Never resurrect prior history.
 	}
 	if err != nil {
 		return fmt.Errorf("OMP active conversation is unavailable at %s: %w", binding.File, err)
@@ -463,7 +478,7 @@ func validateOmpActiveBinding(dir string, binding *ompActiveBinding) error {
 	if id != binding.SessionID {
 		return fmt.Errorf("OMP conversation ID mismatch at %s: expected %s, found %s", binding.File, binding.SessionID, id)
 	}
-	return validateOmpSiblingClaims(dir, binding)
+	return validateOmpSiblingClaimsContext(ctx, dir, binding)
 }
 
 type ompPathCategory int
@@ -538,53 +553,71 @@ func validateOmpBindingLocation(dir, file string) error {
 	return nil
 }
 
-func validateOmpSiblingClaims(dir string, binding *ompActiveBinding) error {
+func validateOmpSiblingClaimsContext(ctx context.Context, dir string, binding *ompActiveBinding) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	managedRoot := filepath.Dir(dir)
-	entries, err := os.ReadDir(managedRoot)
+	rows, err := os.Open(managedRoot)
 	if err != nil {
 		return fmt.Errorf("inspect OMP ownership rows: %w", err)
 	}
+	defer rows.Close()
 	canonical, err := canonicalOmpCandidate(binding.File)
 	if err != nil {
 		return err
 	}
-	for _, entry := range entries {
-		if !entry.IsDir() || filepath.Join(managedRoot, entry.Name()) == filepath.Clean(dir) {
-			continue
+	for {
+		if err := ctx.Err(); err != nil {
+			return err
 		}
-		siblingDir := filepath.Join(managedRoot, entry.Name())
-		siblingPath, siblingGeneration, siblingTracked, pathErr := ompCurrentBindingPath(siblingDir)
-		if pathErr != nil {
-			return fmt.Errorf("invalid OMP ownership state in %s: %w", siblingDir, pathErr)
-		}
-		sibling, readErr := readOmpBindingRecord(siblingPath)
-		if readErr != nil {
-			return fmt.Errorf("invalid OMP ownership binding in %s: %w", siblingDir, readErr)
-		}
-		sourceSnapshot := false
-		if sibling == nil && siblingTracked {
-			siblingPath = filepath.Join(siblingDir, ".agent-deck-source-binding."+siblingGeneration)
-			sibling, readErr = readOmpBindingRecord(siblingPath)
-			if readErr != nil {
-				return fmt.Errorf("invalid OMP source ownership binding in %s: %w", siblingDir, readErr)
+		entries, readErr := rows.ReadDir(64)
+		for _, entry := range entries {
+			if err := ctx.Err(); err != nil {
+				return err
 			}
-			sourceSnapshot = sibling != nil
+			if !entry.IsDir() || filepath.Join(managedRoot, entry.Name()) == filepath.Clean(dir) {
+				continue
+			}
+			siblingDir := filepath.Join(managedRoot, entry.Name())
+			siblingPath, siblingGeneration, siblingTracked, pathErr := ompCurrentBindingPath(siblingDir)
+			if pathErr != nil {
+				return fmt.Errorf("invalid OMP ownership state in %s: %w", siblingDir, pathErr)
+			}
+			sibling, err := readOmpBindingRecord(siblingPath)
+			if err != nil {
+				return fmt.Errorf("invalid OMP ownership binding in %s: %w", siblingDir, err)
+			}
+			sourceSnapshot := false
+			if sibling == nil && siblingTracked {
+				siblingPath = filepath.Join(siblingDir, ".agent-deck-source-binding."+siblingGeneration)
+				sibling, err = readOmpBindingRecord(siblingPath)
+				if err != nil {
+					return fmt.Errorf("invalid OMP source ownership binding in %s: %w", siblingDir, err)
+				}
+				sourceSnapshot = sibling != nil
+			}
+			if sibling == nil {
+				continue
+			}
+			if siblingTracked && !sourceSnapshot && sibling.Generation != siblingGeneration {
+				return fmt.Errorf("invalid OMP ownership binding in %s: generation %s did not acknowledge current generation %s", siblingDir, sibling.Generation, siblingGeneration)
+			}
+			siblingCanonical, err := canonicalOmpCandidate(sibling.File)
+			if err != nil {
+				return fmt.Errorf("invalid OMP ownership path in %s: %w", siblingDir, err)
+			}
+			if sibling.SessionID == binding.SessionID || siblingCanonical == canonical {
+				return fmt.Errorf("OMP conversation %s at %s is claimed by another Agent Deck entry %s; history is preserved", binding.SessionID, binding.File, siblingDir)
+			}
 		}
-		if sibling == nil {
-			continue
-		}
-		if siblingTracked && !sourceSnapshot && sibling.Generation != siblingGeneration {
-			return fmt.Errorf("invalid OMP ownership binding in %s: generation %s did not acknowledge current generation %s", siblingDir, sibling.Generation, siblingGeneration)
-		}
-		siblingCanonical, canonicalErr := canonicalOmpCandidate(sibling.File)
-		if canonicalErr != nil {
-			return fmt.Errorf("invalid OMP ownership path in %s: %w", siblingDir, canonicalErr)
-		}
-		if sibling.SessionID == binding.SessionID || siblingCanonical == canonical {
-			return fmt.Errorf("OMP conversation %s at %s is claimed by another Agent Deck entry %s; history is preserved", binding.SessionID, binding.File, siblingDir)
+		if readErr != nil {
+			if readErr == io.EOF {
+				return nil
+			}
+			return fmt.Errorf("inspect OMP ownership rows: %w", readErr)
 		}
 	}
-	return nil
 }
 
 // OMP can prepend a title entry before the session header. Never load an entire

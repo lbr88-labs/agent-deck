@@ -476,13 +476,13 @@ func TestReconcileTitleFromCodexNoopWhenTitleLocked(t *testing.T) {
 }
 
 func TestCodexSessionBindSyncsAgentDeckTitleToIndex(t *testing.T) {
-	home := t.TempDir()
-	t.Setenv("CODEX_HOME", home)
-
-	inst := NewInstanceWithTool("github import", t.TempDir(), "codex")
-	id := "66666666-6666-6666-6666-666666666666"
-
-	inst.bindCodexSessionFromHook(id, "thread/started")
+	inst, home := newCodexGateInstance(t)
+	inst.Title = "github import"
+	id := uniqueSID(t)
+	writeCodexRolloutWithSource(t, home, id, inst.ProjectPath, "cli")
+	inst.UpdateHookStatus(ownedCodexHook(t, inst, &HookStatus{
+		Status: "running", SessionID: id, Event: "thread/started", UpdatedAt: time.Now(),
+	}))
 
 	entries, err := ListCodexIndex(home)
 	if err != nil {
