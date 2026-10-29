@@ -298,14 +298,15 @@ type Instance struct {
 	lastOpenCodeScanAt time.Time // Rate-limits OpenCode session-discovery scans
 
 	// Codex CLI integration
-	CodexSessionID       string    `json:"codex_session_id,omitempty"`
-	CodexDetectedAt      time.Time `json:"codex_detected_at,omitempty"`
-	CodexBindingRevision int64     `json:"-"` // SQLite-side generation used to order concurrent binding writers
-	CodexStartedAt       int64     `json:"-"` // Unix millis when we started Codex (for session matching, not persisted)
+	CodexSessionID        string    `json:"codex_session_id,omitempty"`
+	CodexDetectedAt       time.Time `json:"codex_detected_at,omitempty"`
+	CodexBindingRevision  int64     `json:"-"`                                 // SQLite-side generation used to order concurrent binding writers
+	CodexBindingConfirmed bool      `json:"codex_binding_confirmed,omitempty"` // Positive ownership, never implied by the CAS generation
+	CodexStartedAt        int64     `json:"-"`                                 // Unix millis when we started Codex (for session matching, not persisted)
 	// CodexForkSourceSessionID prevents the `codex fork` bootstrap process from
 	// binding its new Agent Deck row to the parent rollout it temporarily opens.
-	// It is deliberately transient: once the child exists, normal detection
-	// binds and persists the child's distinct session ID.
+	// The fresh-launch sidecar carries this exclusion across launcher exit;
+	// normal binding persistence takes over once the distinct child is known.
 	CodexForkSourceSessionID string `json:"-"`
 	// Usage-limit detection (#1802), all guarded by i.mu.
 	// lastUsageLimitScanAt throttles the transcript read (records scan START).
@@ -2356,6 +2357,13 @@ func (i *Instance) buildCodexCommand(baseCommand string) string {
 	}
 
 	envPrefix := i.buildEnvSourceCommand()
+	resolvedCommand := i.resolveCodexCommand(baseCommand)
+	command, workDir := i.codexCommandWithNativeIsolation(resolvedCommand)
+	if workDir != "" {
+		// Setup and login shells may change cwd. Pin it after setup, before
+		// inline hook variables, so both env and trailing args reach Codex.
+		envPrefix += "cd " + shellescape.Quote(workDir) + " && "
+	}
 
 	// AGENTDECK_* env injection is required for the hook subprocesses spawned
 	// by tools in the codex family to find this session's state, so it is
@@ -2376,25 +2384,29 @@ func (i *Instance) buildCodexCommand(baseCommand string) string {
 		}
 		envPrefix += "CODEX_HOME=" + shellescape.Quote(codexHome) + " "
 	}
-	// Passthrough: if the tool is literally "codex" and user gave a custom command
-	// (not the bare "codex" name), return as-is without flag injection.
-	// Codex-compatible tools (e.g., "my-codex" with CompatibleWith="codex") always
-	// get the full treatment regardless of their command name.
+	// Explicit commands retain their option passthrough. A recognized native
+	// executable or exact resume may still opt out of the shared daemon when
+	// that executable advertises support; opaque commands remain untouched.
+	// Codex-compatible tools retain their existing managed option treatment.
 	trimmed := strings.TrimSpace(baseCommand)
 	if i.Tool == "codex" && trimmed != "codex" && trimmed != "" {
 		if i.CodexSessionID == "" || !IsSupportedCodexLaunchCommand(trimmed) {
-			return envPrefix + trimmed
+			return envPrefix + command
 		}
 	}
 
 	yoloFlag := i.resolveCodexYoloFlag()
 	modelFlag := i.resolveCodexModelFlag()
 	reasoningFlag := i.resolveCodexReasoningEffortFlag()
-	command := i.resolveCodexCommand(baseCommand)
+	if resumeID, _ := codexExactResumeCommand(resolvedCommand); resumeID != "" {
+		// A configured exact resume already carries its selector. Do not append
+		// another resume or reinterpret the command's user-selected options.
+		return envPrefix + command
+	}
 	// Must be the home this launch exports, not the process-wide one: the gates
 	// below decide whether a rollout exists, and looking in the wrong home
 	// destroys a live binding (#1929).
-	codexHome := i.codexHomeForCommand(command)
+	codexHome := i.codexHomeForCommand(resolvedCommand)
 
 	// Never resume an internal worker/guardian as the interactive session.
 	// Migrate a hidden rollout through Codex's native fork command.
@@ -3506,7 +3518,7 @@ func (i *Instance) codexSessionOwner(sessionID string) (string, error) {
 		if row == nil || row.ID == i.ID {
 			continue
 		}
-		id, _, _ := statedb.ReadCodexSessionBindingFromToolData(row.ToolData)
+		id, _, _, _ := statedb.ReadCodexSessionBindingFromToolData(row.ToolData)
 		if strings.EqualFold(strings.TrimSpace(id), sessionID) {
 			return row.ID, nil
 		}
@@ -4730,6 +4742,7 @@ func (i *Instance) Start() error {
 	if err := i.prepareCodexIdentity(false); err != nil {
 		return err
 	}
+	freshCodexLaunch := i.prepareCodexFreshLaunch()
 
 	// Prepare scratch CLAUDE_CONFIG_DIR for non-conductor claude workers
 	// (issue #59, v1.7.68). Runs before command-building so the
@@ -5010,6 +5023,9 @@ func (i *Instance) Start() error {
 	// Record start time for grace period (prevents error flash during tmux startup)
 	i.lastStartTime = time.Now()
 	i.markStarted() // persisted stamp (issue #30 — cross-process freshness guard)
+	if err := i.recordCodexFreshLaunch(freshCodexLaunch); err != nil {
+		return err
+	}
 	i.codexFreshStart = false
 
 	// New sessions start as STARTING - shows they're initializing
@@ -5098,6 +5114,7 @@ func (i *Instance) StartWithMessage(message string) error {
 	if err := i.prepareCodexIdentity(false); err != nil {
 		return err
 	}
+	freshCodexLaunch := i.prepareCodexFreshLaunch()
 
 	// Prepare scratch CLAUDE_CONFIG_DIR for non-conductor claude workers
 	// (issue #59, v1.7.68). Same call as in Start() — both spawn paths
@@ -5331,6 +5348,9 @@ func (i *Instance) StartWithMessage(message string) error {
 	// Record start time for grace period (prevents error flash during tmux startup)
 	i.lastStartTime = time.Now()
 	i.markStarted() // persisted stamp (issue #30 — cross-process freshness guard)
+	if err := i.recordCodexFreshLaunch(freshCodexLaunch); err != nil {
+		return err
+	}
 	i.codexFreshStart = false
 
 	// New sessions start as STARTING
@@ -6735,7 +6755,7 @@ func (i *Instance) persistCodexSessionBinding(logEvent string) bool {
 	if db == nil {
 		return false
 	}
-	revision, matched, err := db.WriteCodexSessionBinding(i.ID, i.CodexSessionID, i.CodexDetectedAt, i.CodexBindingRevision)
+	revision, matched, err := db.WriteCodexSessionBinding(i.ID, i.CodexSessionID, i.CodexDetectedAt, i.CodexBindingRevision, i.CodexBindingConfirmed)
 	if err != nil || !matched {
 		sessionLog.Warn(logEvent,
 			slog.String("instance_id", i.ID),
@@ -6756,7 +6776,7 @@ func (i *Instance) persistCodexSessionPromotion(state codexSubagentMigrationStat
 	revision, matched, err := db.WriteCodexSessionPromotion(
 		i.ID, i.CodexSessionID, i.CodexDetectedAt,
 		state.SourceID, state.OldRoot, state.Started, state.Completed,
-		i.CodexBindingRevision,
+		i.CodexBindingRevision, i.CodexBindingConfirmed,
 	)
 	if err != nil || !matched {
 		sessionLog.Warn(logEvent,
@@ -6791,6 +6811,19 @@ func (i *Instance) acceptCodexSessionID(sessionID string, syncTmuxEnv bool, sour
 	}
 	defer releaseHookLock()
 
+	// A current process may itself have been launched from a poisoned legacy
+	// resume. Only explicit confirmation can authorize that nonempty root.
+	if i.adoptPersistedCodexPromotionLocked(true) && i.CodexSessionID != sessionID {
+		i.healRejectedCodexCandidateLocked(sessionID, "candidate_conflicts_with_persisted_promotion")
+		return false
+	}
+	if i.CodexSessionID != "" && !i.CodexBindingConfirmed {
+		return false
+	}
+	if i.CodexSessionID == "" && !i.codexFreshLaunchAllowsCandidate(sessionID) {
+		return false
+	}
+
 	overridePending := i.codexSessionBindingOverrideIntent
 	currentID := strings.ToLower(strings.TrimSpace(i.CodexSessionID))
 	if currentID != sessionID && !source.provesOwnership() {
@@ -6818,16 +6851,10 @@ func (i *Instance) acceptCodexSessionID(sessionID string, syncTmuxEnv bool, sour
 			return false
 		}
 	}
-	// Defense in depth for callers that did not pass through the normal
-	// update/hook barriers. If another process already persisted a promoted
-	// top-level fork, adopt it first and refuse a different stale candidate.
-	if i.adoptPersistedCodexPromotionLocked(true) && i.CodexSessionID != sessionID {
-		i.healRejectedCodexCandidateLocked(sessionID, "candidate_conflicts_with_persisted_promotion")
-		return false
-	}
 	previousID := strings.ToLower(strings.TrimSpace(i.CodexSessionID))
 	previousDetectedAt := i.CodexDetectedAt
 	previousRevision := i.CodexBindingRevision
+	previousConfirmed := i.CodexBindingConfirmed
 	defer func() {
 		if previousID != i.CodexSessionID && i.CodexSessionID == sessionID {
 			action := "rebind"
@@ -6883,6 +6910,7 @@ func (i *Instance) acceptCodexSessionID(sessionID string, syncTmuxEnv bool, sour
 
 	changed := previousID != sessionID
 	i.CodexSessionID = sessionID
+	i.CodexBindingConfirmed = true
 	if changed || i.CodexDetectedAt.IsZero() {
 		i.CodexDetectedAt = time.Now()
 	}
@@ -6914,6 +6942,7 @@ func (i *Instance) acceptCodexSessionID(sessionID string, syncTmuxEnv bool, sour
 		}
 		if persisted {
 			i.codexSessionBindingOverrideIntent = false
+			clearCodexFreshLaunchState(i.ID)
 			ensureCodexBindingFloorState(i.ID, i.CodexSessionID, i.CodexDetectedAt, i.CodexBindingRevision)
 			switch {
 			case isPromotion:
@@ -6938,7 +6967,7 @@ func (i *Instance) acceptCodexSessionID(sessionID string, syncTmuxEnv bool, sour
 				return changed
 			}
 			if db != nil {
-				persistedID, _, persistedRevision, readErr := db.ReadCodexSessionBinding(i.ID)
+				persistedID, _, persistedRevision, _, readErr := db.ReadCodexSessionBinding(i.ID)
 				if readErr == nil {
 					exists, existsErr := db.InstanceExists(i.ID)
 					if existsErr == nil && !exists {
@@ -6954,6 +6983,7 @@ func (i *Instance) acceptCodexSessionID(sessionID string, syncTmuxEnv bool, sour
 			i.CodexSessionID = previousID
 			i.CodexDetectedAt = previousDetectedAt
 			i.CodexBindingRevision = previousRevision
+			i.CodexBindingConfirmed = previousConfirmed
 			i.codexSessionBindingOverrideIntent = false
 			if previousDetectedAt.IsZero() {
 				clearCodexBindingFloorState(i.ID)
@@ -6980,8 +7010,8 @@ func (i *Instance) acceptCodexSessionID(sessionID string, syncTmuxEnv bool, sour
 		// every ordinary status refresh.
 		promotionNeeded := true
 		if db := i.metadataStateDB(); db != nil {
-			persistedID, detectedAt, revision, err := db.ReadCodexSessionBinding(i.ID)
-			if err == nil && strings.EqualFold(strings.TrimSpace(persistedID), sessionID) && revision > 0 {
+			persistedID, detectedAt, revision, confirmed, err := db.ReadCodexSessionBinding(i.ID)
+			if err == nil && strings.EqualFold(strings.TrimSpace(persistedID), sessionID) && revision > 0 && confirmed {
 				promotionNeeded = false
 				i.CodexBindingRevision = revision
 				if !detectedAt.IsZero() {
@@ -7689,6 +7719,9 @@ func (i *Instance) clearSessionBindingForFreshStart() {
 		i.IsForkAwaitingStart = false
 		i.ForkStartCommand = ""
 		i.CodexSessionID = ""
+		i.CodexBindingConfirmed = false
+		i.CodexForkSourceSessionID = ""
+		clearCodexFreshLaunchState(i.ID)
 		// Empty is a durable binding tombstone, not "unknown". Its timestamp is
 		// the immutable creation-time floor for accepting the fresh replacement.
 		i.CodexDetectedAt = time.Now()
@@ -9129,6 +9162,7 @@ func (i *Instance) restart(env map[string]string) error {
 	if err := i.prepareCodexIdentity(true); err != nil {
 		return err
 	}
+	freshCodexLaunch := i.prepareCodexFreshLaunch()
 
 	// #1775: supersede the fast-death watcher from the PREVIOUS spawn here, at
 	// the single entry point, rather than deeper down. restart() has several
@@ -9431,6 +9465,9 @@ func (i *Instance) restart(env map[string]string) error {
 			return fmt.Errorf("failed to restart Codex session: %w", err)
 		}
 		i.markCodexSubagentMigrationStarted()
+		if err := i.recordCodexFreshLaunch(freshCodexLaunch); err != nil {
+			return err
+		}
 
 		// If no session ID, start async detection
 		if i.CodexSessionID == "" {
@@ -9704,6 +9741,9 @@ func (i *Instance) restart(env map[string]string) error {
 		recordInstanceSpawn(i.ID)
 	}
 	i.markCodexSubagentMigrationStarted()
+	if err := i.recordCodexFreshLaunch(freshCodexLaunch); err != nil {
+		return err
+	}
 	if command != "" && !i.expectsFastExit() {
 		gen, wake := i.newSpawnGenWatch()
 		go i.watchForFastDeath(command, gen, wake, i.tmuxSession, i.ID, i.Tool, sessionLog, GetSessionIDLifecycleLogPath(), spawnFailureDir())
@@ -9782,6 +9822,9 @@ func (i *Instance) RestartFresh() error {
 		if err := i.validateCodexSandboxHome(i.resolveCodexCommand(i.Command)); err != nil {
 			return i.refuseCodexLaunch(err.Error())
 		}
+		if err := i.validateCodexFreshWrapper(); err != nil {
+			return i.refuseCodexLaunch(err.Error())
+		}
 	}
 	if i.Tool == "codex" {
 		command := i.resolveCodexCommand(i.Command)
@@ -9809,7 +9852,7 @@ func (i *Instance) RestartFresh() error {
 		}
 		clearAt := time.Now()
 		if db := i.metadataStateDB(); db != nil {
-			revision, matched, persistErr := db.WriteCodexSessionBindingOverride(i.ID, "", clearAt)
+			revision, matched, persistErr := db.WriteCodexSessionBindingOverride(i.ID, "", clearAt, false)
 			if persistErr != nil {
 				release()
 				i.mu.Unlock()
@@ -10778,7 +10821,7 @@ func (i *Instance) CreateForkedOmpInstanceWithOptions(
 // is a newer codex CLI subcommand; if the installed binary predates it the
 // launched command fails into a recoverable error state.
 func (i *Instance) CanForkCodex() bool {
-	if !IsCodexCompatible(i.Tool) || i.CodexSessionID == "" {
+	if !IsCodexCompatible(i.Tool) || i.CodexSessionID == "" || !i.CodexBindingConfirmed {
 		return false
 	}
 	sessionID, err := normalizeToolSessionID(FieldCodexSessionID, i.CodexSessionID)
@@ -10794,6 +10837,14 @@ func (i *Instance) buildCodexForkCommandForTarget(target *Instance, baseCommand 
 		return "", fmt.Errorf("cannot fork: no resumable Codex session")
 	}
 	envPrefix := target.buildEnvSourceCommand()
+	command := target.resolveCodexCommand(baseCommand)
+	if _, freshCommand := codexExactResumeCommand(command); freshCommand != "" {
+		command = freshCommand
+	}
+	command, workDir := target.codexCommandWithNativeIsolation(command)
+	if workDir != "" {
+		envPrefix += "cd " + shellescape.Quote(workDir) + " && "
+	}
 	// Shell-quote the injected env values: target.Title is user-editable and could
 	// contain shell metacharacters (e.g. $(...) or backticks), and custom Codex-tool
 	// identities are config-defined — keep the generated fork command injection-safe.
@@ -10802,7 +10853,6 @@ func (i *Instance) buildCodexForkCommandForTarget(target *Instance, baseCommand 
 	yoloFlag := target.resolveCodexYoloFlag()
 	modelFlag := target.resolveCodexModelFlag()
 	reasoningFlag := target.resolveCodexReasoningEffortFlag()
-	command := target.resolveCodexCommand(baseCommand)
 	if codexHome := target.codexHomeToExport(); codexHome != "" {
 		if !target.IsSandboxed() {
 			if err := os.MkdirAll(codexHome, 0o755); err != nil {
@@ -10846,6 +10896,11 @@ func (i *Instance) CreateForkedCodexInstanceWithOptions(
 	baseCommand := strings.TrimSpace(i.Command)
 	if baseCommand == "" {
 		baseCommand = "codex"
+	}
+	if _, freshCommand := codexExactResumeCommand(i.resolveCodexCommand(baseCommand)); freshCommand != "" {
+		// Persist the executable, not the parent's explicit resume selector:
+		// the fork must later resume its own current native conversation.
+		baseCommand = freshCommand
 	}
 	forked.Command = baseCommand
 	if parentOpts := i.GetCodexOptions(); parentOpts != nil && parentOpts.ReasoningEffort != "" {

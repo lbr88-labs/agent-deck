@@ -109,6 +109,7 @@ func TestCodexHookRebind_RejectsSubagentThread(t *testing.T) {
 	seedCodexRolloutWithMeta(t, codexHome, childSID, "subagent", mainSID, true)
 
 	inst.CodexSessionID = mainSID
+	inst.CodexBindingConfirmed = true
 	inst.UpdateHookStatus(ownedCodexHook(t, inst, &HookStatus{
 		Status:    "running",
 		SessionID: childSID,
@@ -150,6 +151,7 @@ func TestCodexHookRebind_AllowsUserThread(t *testing.T) {
 	seedCodexRolloutWithMeta(t, codexHome, newSID, "user", "", false)
 
 	inst.CodexSessionID = oldSID
+	inst.CodexBindingConfirmed = true
 	inst.UpdateHookStatus(ownedCodexHook(t, inst, &HookStatus{
 		Status:    "running",
 		SessionID: newSID,
@@ -171,6 +173,7 @@ func TestCodexHookRebind_DefersUnflushedCandidate(t *testing.T) {
 	newSID := uniqueSID(t) // no rollout on disk yet
 
 	inst.CodexSessionID = oldSID
+	inst.CodexBindingConfirmed = true
 	inst.UpdateHookStatus(ownedCodexHook(t, inst, &HookStatus{
 		Status:    "running",
 		SessionID: newSID,
@@ -193,6 +196,7 @@ func TestBuildCodexCommand_ForksFinalizedSubagentBinding(t *testing.T) {
 	seedCodexRolloutWithMeta(t, codexHome, childSID, "subagent", mainSID, true)
 
 	inst.CodexSessionID = childSID
+	inst.CodexBindingConfirmed = true
 	cmd := inst.buildCodexCommand("codex")
 
 	if !strings.Contains(cmd, "fork "+childSID) {
@@ -211,6 +215,7 @@ func TestBuildCodexCommand_ForksUnfinalizedSubagentBinding(t *testing.T) {
 	seedCodexRolloutWithMeta(t, codexHome, childSID, "subagent", mainSID, false)
 
 	inst.CodexSessionID = childSID
+	inst.CodexBindingConfirmed = true
 	cmd := inst.buildCodexCommand("codex")
 
 	if !strings.Contains(cmd, "fork "+childSID) {
@@ -227,6 +232,7 @@ func TestBuildCodexCommand_ResumesUserThreadBinding(t *testing.T) {
 	seedCodexRolloutWithMeta(t, codexHome, mainSID, "user", "", false)
 
 	inst.CodexSessionID = mainSID
+	inst.CodexBindingConfirmed = true
 	cmd := inst.buildCodexCommand("codex")
 
 	if !strings.Contains(cmd, "resume "+mainSID) {

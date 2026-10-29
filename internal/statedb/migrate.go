@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"strings"
 	"time"
 )
 
@@ -45,8 +46,9 @@ type jsonInstanceData struct {
 	OpenCodeSessionID  string    `json:"opencode_session_id,omitempty"`
 	OpenCodeDetectedAt time.Time `json:"opencode_detected_at,omitempty"`
 
-	CodexSessionID  string    `json:"codex_session_id,omitempty"`
-	CodexDetectedAt time.Time `json:"codex_detected_at,omitempty"`
+	CodexSessionID        string    `json:"codex_session_id,omitempty"`
+	CodexDetectedAt       time.Time `json:"codex_detected_at,omitempty"`
+	CodexBindingConfirmed bool      `json:"codex_binding_confirmed,omitempty"`
 
 	KiroSessionID  string    `json:"kiro_session_id,omitempty"`
 	KiroDetectedAt time.Time `json:"kiro_detected_at,omitempty"`
@@ -86,6 +88,7 @@ type toolDataBlob struct {
 	OpenCodeDetectedAt        int64           `json:"opencode_detected_at,omitempty"`
 	CodexSessionID            string          `json:"codex_session_id,omitempty"`
 	CodexDetectedAt           int64           `json:"codex_detected_at,omitempty"`
+	CodexBindingConfirmed     bool            `json:"codex_binding_confirmed,omitempty"`
 	KiroSessionID             string          `json:"kiro_session_id,omitempty"`
 	KiroDetectedAt            int64           `json:"kiro_detected_at,omitempty"`
 	LatestPrompt              string          `json:"latest_prompt,omitempty"`
@@ -141,6 +144,7 @@ func MigrateFromJSON(jsonPath string, db *StateDB) (int, int, error) {
 			GeminiModel:               inst.GeminiModel,
 			OpenCodeSessionID:         inst.OpenCodeSessionID,
 			CodexSessionID:            inst.CodexSessionID,
+			CodexBindingConfirmed:     inst.CodexBindingConfirmed && strings.TrimSpace(inst.CodexSessionID) != "",
 			KiroSessionID:             inst.KiroSessionID,
 			LatestPrompt:              inst.LatestPrompt,
 			Notes:                     inst.Notes,

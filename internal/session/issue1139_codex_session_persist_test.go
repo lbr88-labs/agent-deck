@@ -90,13 +90,14 @@ func TestRebindPersistsCodexSessionIDToDB(t *testing.T) {
 		Tool:        "codex",
 		Status:      "idle",
 		CreatedAt:   now,
-		ToolData:    json.RawMessage(`{"codex_session_id":"` + oldID + `"}`),
+		ToolData:    json.RawMessage(`{"codex_session_id":"` + oldID + `","codex_binding_confirmed":true}`),
 	}
 	if err := db.SaveInstance(seedRow); err != nil {
 		t.Fatalf("SaveInstance seed: %v", err)
 	}
 
 	inst.CodexSessionID = oldID
+	inst.CodexBindingConfirmed = true
 	if got := readCodexSessionIDFromDB(t, db, inst.ID); got != oldID {
 		t.Fatalf("pre-condition: DB codex_session_id = %q, want %q", got, oldID)
 	}
@@ -121,6 +122,9 @@ func TestRebindPersistsCodexSessionIDToDB(t *testing.T) {
 			"bindCodexSessionFromHook mutated in-memory state but did not "+
 			"persist to tool_data — DB-direct consumers will see the stale UUID "+
 			"until something else triggers a save.", got, newID)
+	}
+	if id, _, _, confirmed, err := db.ReadCodexSessionBinding(inst.ID); err != nil || id != newID || !confirmed {
+		t.Fatalf("rebound conversation confirmation was not persisted: id=%q confirmed=%v err=%v", id, confirmed, err)
 	}
 }
 
@@ -174,6 +178,9 @@ func TestBindPersistsCodexSessionIDToDB(t *testing.T) {
 		t.Fatalf("post-bind DB codex_session_id = %q, want %q — cold-start bind "+
 			"did not persist to tool_data", got, newID)
 	}
+	if id, _, _, confirmed, err := db.ReadCodexSessionBinding(inst.ID); err != nil || id != newID || !confirmed {
+		t.Fatalf("fresh conversation confirmation was not persisted: id=%q confirmed=%v err=%v", id, confirmed, err)
+	}
 }
 
 // TestCodexRebindNoOpWhenStateDBUnset confirms the persistence call is
@@ -214,8 +221,8 @@ func TestCodexRebindNoOpWhenStateDBUnset(t *testing.T) {
 }
 
 // TestCodexRebindPreservesUnrelatedToolDataKeys pins the json_set
-// semantics of WriteCodexSessionBinding: only $.codex_session_id and
-// $.codex_detected_at may be rewritten — every other key in tool_data
+// semantics of WriteCodexSessionBinding: only the Codex binding ID, detected-at,
+// revision and confirmation fields may be rewritten — unrelated tool_data
 // must survive untouched. Prevents a future "let's just do
 // tool_data = ?" simplification from silently dropping unrelated state
 // on every Codex rebind.
@@ -241,6 +248,7 @@ func TestCodexRebindPreservesUnrelatedToolDataKeys(t *testing.T) {
 	seedJSON := `{
 		"codex_session_id": "` + oldID + `",
 		"codex_detected_at": 1700000000,
+		"codex_binding_confirmed": true,
 		"latest_prompt": "what does this code do?",
 		"notes": "user prefers terse responses",
 		"loaded_mcp_names": ["github", "linear"],
@@ -263,6 +271,7 @@ func TestCodexRebindPreservesUnrelatedToolDataKeys(t *testing.T) {
 	}
 
 	inst.CodexSessionID = oldID
+	inst.CodexBindingConfirmed = true
 	inst.UpdateHookStatus(ownedCodexHook(t, inst, &HookStatus{
 		Status:    "running",
 		SessionID: newID,
@@ -296,6 +305,9 @@ func TestCodexRebindPreservesUnrelatedToolDataKeys(t *testing.T) {
 		t.Errorf("codex_detected_at missing — rebind should have written it")
 	} else if f, _ := v.(float64); int64(f) == 1700000000 {
 		t.Errorf("codex_detected_at = %v, want a fresh timestamp", v)
+	}
+	if confirmed, _ := blob["codex_binding_confirmed"].(bool); !confirmed {
+		t.Error("codex_binding_confirmed was lost during rebind")
 	}
 
 	preserved := map[string]any{

@@ -1486,7 +1486,7 @@ func TestBuildCodexCommand_CustomWrapperPreservesToolIdentity(t *testing.T) {
 	// Plant a rollout file under HOME/.codex so the resume branch is exercised.
 	writeFakeCodexRollout(t, filepath.Join(tmpDir, ".codex"), inst.CodexSessionID)
 	cmd = inst.buildCodexCommand(inst.Command)
-	if !strings.Contains(cmd, "codex-wrapper resume 019d1af6-c425-7791-8fd1-38c0fc43062c") {
+	if !strings.Contains(cmd, "codex-wrapper ") || !strings.HasSuffix(cmd, " resume 019d1af6-c425-7791-8fd1-38c0fc43062c") {
 		t.Fatalf("buildCodexCommand should resume through the custom wrapper, got %q", cmd)
 	}
 }
@@ -1508,10 +1508,10 @@ func TestBuildCodexCommand_UsesConfiguredCommandForBuiltinCodex(t *testing.T) {
 
 	inst := NewInstanceWithTool("configured", "/tmp/configured", "codex")
 	cmd := inst.buildCodexCommand("codex")
-	if !strings.Contains(cmd, "codex-v2 --yolo") {
+	if !strings.Contains(cmd, "codex-v2 ") || !strings.Contains(cmd, " --yolo") {
 		t.Fatalf("configured Codex command should be used with yolo flag, got %q", cmd)
 	}
-	if strings.Contains(cmd, " codex --yolo") {
+	if strings.Contains(cmd, " codex ") {
 		t.Fatalf("default codex command should not be used when [codex].command is set, got %q", cmd)
 	}
 }
@@ -1700,7 +1700,7 @@ func TestBuildCodexCommand_ConfiguredCommandResume(t *testing.T) {
 	writeFakeCodexRollout(t, filepath.Join(tmpDir, ".codex"), id)
 
 	cmd := inst.buildCodexCommand("codex")
-	if !strings.Contains(cmd, "codex-v2 resume "+id) {
+	if !strings.Contains(cmd, "codex-v2 ") || !strings.HasSuffix(cmd, " resume "+id) {
 		t.Fatalf("configured Codex command should be used for resume, got %q", cmd)
 	}
 }
@@ -1759,7 +1759,7 @@ func TestBuildCodexCommand_InlineCodexHomeForRolloutCheck(t *testing.T) {
 	writeFakeCodexRollout(t, codexHome, id)
 
 	cmd := inst.buildCodexCommand("codex")
-	if !strings.Contains(cmd, "CODEX_HOME="+codexHome+" codex resume "+id) {
+	if !strings.Contains(cmd, "CODEX_HOME="+codexHome+" codex ") || !strings.HasSuffix(cmd, " resume "+id) {
 		t.Fatalf("inline CODEX_HOME command should resume from configured home, got %q", cmd)
 	}
 }
@@ -1793,7 +1793,7 @@ func TestBuildCodexCommand_QuotedInlineCodexHomeWithSpaces(t *testing.T) {
 	writeFakeCodexRollout(t, codexHome, id)
 
 	cmd := inst.buildCodexCommand("codex")
-	if !strings.Contains(cmd, `CODEX_HOME="`+codexHome+`" codex resume `+id) {
+	if !strings.Contains(cmd, `CODEX_HOME="`+codexHome+`" codex `) || !strings.HasSuffix(cmd, " resume "+id) {
 		t.Fatalf("quoted inline CODEX_HOME command should resume from configured home, got %q", cmd)
 	}
 	if inst.CodexSessionID != id {
