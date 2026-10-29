@@ -9,7 +9,7 @@
 
 [![GitHub Stars](https://img.shields.io/github/stars/asheshgoplani/agent-deck?style=for-the-badge&logo=github&color=yellow&labelColor=1a1b26)](https://github.com/asheshgoplani/agent-deck/stargazers)
 [![Downloads](https://img.shields.io/github/downloads/asheshgoplani/agent-deck/total?style=for-the-badge&logo=github&color=bb9af7&labelColor=1a1b26)](https://github.com/asheshgoplani/agent-deck/releases)
-[![Go Version](https://img.shields.io/badge/Go-1.26.9-00ADD8?style=for-the-badge&logo=go&labelColor=1a1b26)](https://go.dev)
+[![Go Version](https://img.shields.io/badge/Go-1.26.10-00ADD8?style=for-the-badge&logo=go&labelColor=1a1b26)](https://go.dev)
 [![License](https://img.shields.io/badge/License-MIT-9ece6a?style=for-the-badge&labelColor=1a1b26)](LICENSE)
 [![Platform](https://img.shields.io/badge/Platform-macOS%20%7C%20Linux%20%7C%20WSL-7aa2f7?style=for-the-badge&labelColor=1a1b26)](https://github.com/asheshgoplani/agent-deck)
 [![Latest Release](https://img.shields.io/github/v/release/asheshgoplani/agent-deck?style=for-the-badge&color=e0af68&labelColor=1a1b26)](https://github.com/asheshgoplani/agent-deck/releases)
@@ -522,12 +522,40 @@ project directory. Automatic identity changes require evidence from the owning
 pane; conflicting or unverifiable identity produces an error before replacing
 the running pane. Archived and native-indexed conversations remain resumable.
 
-If automatic ownership cannot be established, import the exact saved conversation
-or explicitly set it with `agent-deck session set <entry> codex-session-id <uuid>`.
-An ID already owned by another entry is rejected. Container-wide process scans
-are not ownership evidence, so sandbox sessions require an exact saved binding.
+Older Codex bindings require a **one-time explicit confirmation**, including
+bindings that already have a nonzero database revision. Revisions order
+concurrent saves; they do not prove which conversation belongs to an entry.
+Until confirmed, start/restart refuses before replacing the existing pane and
+preserves the recorded UUID and native history. A currently running same-ID
+process or hook cannot confirm a legacy binding: it may itself have been
+launched from the wrong recorded UUID.
+
+Verify the intended conversation in native Codex history, then run
+`agent-deck session set <entry> codex-session-id <verified-uuid>`.
+Repeating the existing UUID confirms it too, but only do so after verifying it.
+The UUID must be available in that entry's Codex home and not belong to another
+entry. CLI/TUI native imports also explicitly confirm the selected conversation;
+fresh launches can capture their own verified pane identity automatically,
+even after the launching CLI exits or the TUI reloads. This authority is tied
+to the launched Codex process and binding generation; an explicit clear,
+replacement process, or surviving exit-to-shell fallback cannot reuse it.
+Fresh starts refuse wrappers that replace the native invocation or add a resume
+selector; `{command}` with literal fresh options or a prompt remains supported.
+If the Codex process cannot be verified during launch registration, Agent Deck
+reports an error and preserves the pane. After startup finishes, verify and
+explicitly confirm its exact conversation rather than restarting an unknown one.
+When the selected native executable can be identified and advertises
+`--no-daemon`, managed launches use it to keep conversation evidence in the
+owning process instead of a shared daemon. Capability checks do not source shell
+startup files: use an explicit executable path when those files select the client.
+Older clients, unverifiable commands, and existing user callbacks/configuration
+are left unchanged.
+Container-wide process scans are not ownership evidence, so sandbox sessions
+require an explicitly confirmed saved binding.
+
 Use `agent-deck session restart-fresh <entry>` only when a new conversation is
-intended; ordinary restart never silently falls back to a fresh chat.
+intended; it clears the old binding and its confirmation. Ordinary restart
+never silently falls back to a fresh chat.
 
 
 ### Handover Between Tools

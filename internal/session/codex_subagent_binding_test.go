@@ -53,6 +53,7 @@ func TestUpdateHookStatusCodexRejectsGuardianSubagentID(t *testing.T) {
 
 	inst := NewInstanceWithTool("main", cwd, "codex")
 	inst.CodexSessionID = mainID
+	inst.CodexBindingConfirmed = true
 	inst.hookStatus = "running"
 	inst.hookEvent = "turn/started"
 	inst.hookLastUpdate = time.Now().Add(-time.Second)
@@ -200,6 +201,7 @@ func TestBuildCodexCommandNeverResumesSubagentThread(t *testing.T) {
 
 	inst := NewInstanceWithTool("main", cwd, "codex")
 	inst.CodexSessionID = guardianID
+	inst.CodexBindingConfirmed = true
 	command := inst.buildCodexCommand("codex")
 
 	if strings.Contains(command, "resume "+guardianID) {
@@ -226,6 +228,7 @@ func TestBuildCodexCommandForksFullSubagentTranscriptInsteadOfOldRoot(t *testing
 
 	inst := NewInstanceWithTool("main", cwd, "codex")
 	inst.CodexSessionID = guardianID
+	inst.CodexBindingConfirmed = true
 	command := inst.buildCodexCommand("codex")
 
 	if !strings.Contains(command, "fork "+guardianID) {
@@ -258,6 +261,7 @@ func TestCodexSubagentMigrationAcceptsOnlyFreshFork(t *testing.T) {
 
 	inst := NewInstanceWithTool("main", cwd, "codex")
 	inst.CodexSessionID = guardianID
+	inst.CodexBindingConfirmed = true
 	_ = inst.buildCodexCommand("codex")
 	if inst.isFreshCodexMigrationTarget(oldRootID) {
 		t.Fatal("old root accepted before migration launch")
@@ -283,6 +287,7 @@ func TestCodexSubagentMigrationAcceptsOnlyFreshFork(t *testing.T) {
 	reloaded := NewInstanceWithTool("main", cwd, "codex")
 	reloaded.ID = inst.ID
 	reloaded.CodexSessionID = guardianID
+	reloaded.CodexBindingConfirmed = true
 	if !reloaded.isFreshCodexMigrationTarget(freshForkID) {
 		t.Fatal("fresh fork was not recognized after cross-process reload")
 	}
@@ -291,6 +296,7 @@ func TestCodexSubagentMigrationAcceptsOnlyFreshFork(t *testing.T) {
 	}
 	fallback := NewInstanceWithTool("main", cwd, "codex")
 	fallback.CodexSessionID = guardianID
+	fallback.CodexBindingConfirmed = true
 	fallback.LastStartedAt = inst.codexSubagentMigrationStartedAt
 	if !fallback.isFreshCodexMigrationTarget(freshForkID) {
 		t.Fatal("LastStartedAt fallback did not recover migration boundary")

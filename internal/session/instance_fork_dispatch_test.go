@@ -51,6 +51,7 @@ func TestCreateForkedInstanceForTool_CodexCompatibleUsesCodexFork(t *testing.T) 
 
 	parent := NewInstanceWithTool("cx parent", "/tmp/original", "codex")
 	parent.CodexSessionID = sid
+	parent.CodexBindingConfirmed = true
 	parent.CodexDetectedAt = time.Now()
 
 	forked, cmd, err := parent.CreateForkedInstanceForTool("cx fork", "", nil)
@@ -82,6 +83,7 @@ func TestCreateForkedInstanceForTool_LocksForkTitleAcrossProviders(t *testing.T)
 
 	codexParent := NewInstanceWithTool("codex parent", t.TempDir(), "codex")
 	codexParent.CodexSessionID = "22222222-2222-4222-8222-222222222222"
+	codexParent.CodexBindingConfirmed = true
 	codexParent.CodexDetectedAt = time.Now()
 	seedCodexRollout(t, GetCodexHomeDir(), codexParent.CodexSessionID)
 
@@ -140,6 +142,7 @@ func TestUpdateStatus_SyncsGeneratedForkTitleWithoutAcceptingParentName(t *testi
 	seedCodexRollout(t, GetCodexHomeDir(), parentID)
 	parent := NewInstanceWithTool(parentName, t.TempDir(), "codex")
 	parent.CodexSessionID = parentID
+	parent.CodexBindingConfirmed = true
 	parent.CodexDetectedAt = time.Now()
 
 	forked, _, err := parent.CreateForkedInstanceForTool(forkTitle, "forks", nil)
@@ -147,6 +150,7 @@ func TestUpdateStatus_SyncsGeneratedForkTitleWithoutAcceptingParentName(t *testi
 		t.Fatalf("CreateForkedInstanceForTool: %v", err)
 	}
 	forked.CodexSessionID = childID
+	forked.CodexBindingConfirmed = true
 	writeCodexStateThread(t, GetCodexHomeDir(), childID, parentName, "inherited fork preview", forked.ProjectPath, time.Now().UnixMilli())
 	addCodexStateThreadNameColumn(t, GetCodexHomeDir(), childID, "")
 	if err := AppendCodexSessionIndexName(GetCodexHomeDir(), childID, parentName, time.Now()); err != nil {

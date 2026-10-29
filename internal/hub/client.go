@@ -1791,7 +1791,7 @@ func canForkFromRow(row *statedb.InstanceRow) bool {
 	claudeSessionID, claudeDetectedAt,
 		_, _, _, _,
 		openCodeSessionID, openCodeDetectedAt,
-		codexSessionID, codexDetectedAt,
+		_, _,
 		_, _, _, _,
 		sandboxJSON, _,
 		sshHost, _,
@@ -1804,10 +1804,10 @@ func canForkFromRow(row *statedb.InstanceRow) bool {
 		ClaudeDetectedAt:   claudeDetectedAt,
 		OpenCodeSessionID:  openCodeSessionID,
 		OpenCodeDetectedAt: openCodeDetectedAt,
-		CodexSessionID:     codexSessionID,
-		CodexDetectedAt:    codexDetectedAt,
 		SSHHost:            sshHost,
 	}
+	proxy.CodexSessionID, proxy.CodexDetectedAt, proxy.CodexBindingRevision, proxy.CodexBindingConfirmed =
+		statedb.ReadCodexSessionBindingFromToolData(row.ToolData)
 	if len(sandboxJSON) > 0 {
 		_ = json.Unmarshal(sandboxJSON, &proxy.Sandbox)
 	}

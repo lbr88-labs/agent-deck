@@ -44,6 +44,7 @@ func TestIssue1929_AccountRolloutSurvivesTheResumeGate(t *testing.T) {
 		CodexSessionID:  sid,
 		CodexDetectedAt: detectedAt,
 	}
+	inst.CodexBindingConfirmed = true
 
 	cmd := inst.buildCodexCommand("codex")
 
@@ -75,6 +76,7 @@ func TestIssue1929_SubagentGateSeesTheAccountHome(t *testing.T) {
 		Account:        "work",
 		CodexSessionID: sid,
 	}
+	inst.CodexBindingConfirmed = true
 
 	cmd := inst.buildCodexCommand("codex")
 	if !strings.Contains(cmd, "fork "+sid) {
@@ -104,6 +106,7 @@ func TestIssue1929_NoAccountResumeGateUnchanged(t *testing.T) {
 		ID: "i1929c", Title: "t", Tool: "codex", Command: "codex",
 		CodexSessionID: sid,
 	}
+	inst.CodexBindingConfirmed = true
 	cmd := inst.buildCodexCommand("codex")
 	if inst.CodexSessionID != sid {
 		t.Fatalf("resume gate cleared a valid binding in the global codex home")
@@ -124,6 +127,7 @@ func TestIssue1929_StaleBindingRetainedAndLaunchRefused(t *testing.T) {
 		CodexSessionID:  sid,
 		CodexDetectedAt: time.Now(),
 	}
+	inst.CodexBindingConfirmed = true
 	cmd := inst.buildCodexCommand("codex")
 	if inst.CodexSessionID != sid || !strings.Contains(cmd, "resume "+sid) {
 		t.Errorf("command construction discarded the exact binding: id=%q command=%q", inst.CodexSessionID, cmd)
@@ -147,6 +151,7 @@ func TestIssue1929_ForkCarriesTheAccount(t *testing.T) {
 		Account:        "work",
 		CodexSessionID: sid,
 	}
+	parent.CodexBindingConfirmed = true
 
 	forked, cmd, err := parent.CreateForkedCodexInstanceWithOptions("fork", "", nil)
 	if err != nil {

@@ -581,7 +581,8 @@ func TestHomeCodexImportSelectionCreatesPersistedStoppedSession(t *testing.T) {
 		Path:       projectPath,
 		UpdatedAt:  time.Date(2026, 6, 30, 10, 0, 0, 0, time.UTC),
 	}
-	writeCodexRolloutForHomeImport(t, codexHome, entry.ID)
+	writeCodexRolloutForHomeImportBody(t, codexHome, entry.ID,
+		`{"type":"session_meta","payload":{"id":"`+entry.ID+`","cwd":"`+projectPath+`","source":"cli"}}`+"\n")
 	h.codexImportDialog.Show([]session.CodexIndexEntry{entry})
 	h.handleCodexImportDialogKey(tea.KeyMsg{Type: tea.KeySpace})
 
@@ -589,7 +590,14 @@ func TestHomeCodexImportSelectionCreatesPersistedStoppedSession(t *testing.T) {
 	if cmd == nil {
 		t.Fatal("selecting a Codex import should create a session command")
 	}
-	model, _ := h.updateInner(cmd())
+	message := cmd().(sessionCreatedMsg)
+	if message.err != nil || message.instance == nil {
+		t.Fatalf("Codex import failed: %+v", message)
+	}
+	if message.instance.CodexSessionID != entry.ID || !message.instance.CodexBindingConfirmed {
+		t.Fatalf("TUI import did not confirm its selected conversation before save: %#v", message.instance)
+	}
+	model, _ := h.updateInner(message)
 	h = model.(*Home)
 
 	instances, _, err := h.storage.LoadWithGroups()
@@ -603,6 +611,27 @@ func TestHomeCodexImportSelectionCreatesPersistedStoppedSession(t *testing.T) {
 	if got.Tool != "codex" || got.CodexSessionID != entry.ID || got.Title != entry.ThreadName ||
 		got.ProjectPath != projectPath || got.GroupPath != "domutech" || got.Status != session.StatusStopped {
 		t.Fatalf("bad persisted Codex import: %#v", got)
+	}
+	if !got.CodexBindingConfirmed {
+		t.Fatal("explicit TUI import did not round-trip its confirmed binding")
+	}
+}
+
+func TestHomeCodexImportRejectsMismatchedNativeConversation(t *testing.T) {
+	home := setXDGTestHome(t)
+	codexHome := filepath.Join(home, ".codex")
+	t.Setenv("CODEX_HOME", codexHome)
+	const selectedID = "019f2222-2222-4222-8222-444444444444"
+	const otherID = "019f2222-2222-4222-8222-555555555555"
+	writeCodexRolloutForHomeImportBody(t, codexHome, selectedID,
+		`{"type":"session_meta","payload":{"id":"`+otherID+`","source":"cli"}}`+"\n")
+
+	h := &Home{}
+	message := h.createSessionFromCodexImport(session.CodexIndexEntry{
+		ID: selectedID, ThreadName: "mismatched native conversation", Path: t.TempDir(),
+	}, false)().(sessionCreatedMsg)
+	if message.err == nil || message.instance != nil {
+		t.Fatalf("import confirmed an ID that disagreed with native rollout evidence: %+v", message)
 	}
 }
 

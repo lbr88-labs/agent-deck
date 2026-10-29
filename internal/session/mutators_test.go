@@ -50,6 +50,7 @@ func TestSetFieldTitleCodexReturnsPostCommitIndexSync(t *testing.T) {
 	t.Setenv("CODEX_HOME", home)
 	inst := NewInstanceWithTool("old", t.TempDir(), "codex")
 	inst.CodexSessionID = "66666666-6666-6666-6666-666666666666"
+	inst.CodexBindingConfirmed = true
 
 	old, postCommit, err := SetField(inst, FieldTitle, "new title", nil)
 	if err != nil {
@@ -79,6 +80,7 @@ func TestSetFieldTitleCodexPostCommitReturnsSyncError(t *testing.T) {
 
 	inst := NewInstanceWithTool("old", t.TempDir(), "codex")
 	inst.CodexSessionID = "66666666-6666-6666-6666-666666666666"
+	inst.CodexBindingConfirmed = true
 
 	_, postCommit, err := SetField(inst, FieldTitle, "new title", nil)
 	if err != nil {
@@ -548,15 +550,20 @@ func TestSetField_OpenCodeSessionID_RejectsShellMeta(t *testing.T) {
 }
 
 func TestSetField_CodexSessionID_StampsDetectedAt(t *testing.T) {
-	inst := NewInstanceWithTool("cx", "/tmp/p", "codex")
-	if _, _, err := SetField(inst, FieldCodexSessionID, "11111111-2222-3333-4444-555555555555", nil); err != nil {
+	inst, codexHome := newCodexGateInstance(t)
+	id := uniqueSID(t)
+	writeCodexRolloutWithSource(t, codexHome, id, inst.ProjectPath, "cli")
+	if _, _, err := SetField(inst, FieldCodexSessionID, id, nil); err != nil {
 		t.Fatalf("SetField: %v", err)
 	}
-	if inst.CodexSessionID != "11111111-2222-3333-4444-555555555555" {
+	if inst.CodexSessionID != id {
 		t.Fatalf("CodexSessionID = %q", inst.CodexSessionID)
 	}
 	if inst.CodexDetectedAt.IsZero() {
 		t.Fatal("CodexDetectedAt must be stamped")
+	}
+	if !inst.CodexBindingConfirmed {
+		t.Fatal("explicitly selecting a verified native conversation must confirm the binding")
 	}
 }
 
@@ -584,11 +591,15 @@ func TestSetField_ToolSessionID_ClearStillAllowed(t *testing.T) {
 
 	cx := NewInstanceWithTool("cx", "/tmp/p", "codex")
 	cx.CodexSessionID = "11111111-2222-3333-4444-555555555555"
+	cx.CodexBindingConfirmed = true
 	if _, _, err := SetField(cx, FieldCodexSessionID, "  ", nil); err != nil {
 		t.Fatalf("SetField clear codex-session-id: %v", err)
 	}
 	if cx.CodexSessionID != "" {
 		t.Fatalf("CodexSessionID should clear, got %q", cx.CodexSessionID)
+	}
+	if cx.CodexBindingConfirmed {
+		t.Fatal("clearing codex-session-id must revoke its confirmation")
 	}
 }
 

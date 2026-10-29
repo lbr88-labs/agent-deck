@@ -410,9 +410,8 @@ func TestBuildCodexCommand_ImportedBareCustomCodexCommandResumesSession(t *testi
 
 	got := inst.buildCodexCommand(inst.Command)
 
-	want := command + " resume " + sid
-	if !strings.Contains(got, want) {
-		t.Fatalf("imported Codex command must resume stored session; want %q in %q", want, got)
+	if !strings.Contains(got, command+" ") || !strings.HasSuffix(got, " resume "+sid) {
+		t.Fatalf("imported Codex command must resume stored session %q through %q, got %q", sid, command, got)
 	}
 }
 
