@@ -174,6 +174,7 @@ func newCLIRestartFixture(t *testing.T, profile string) (*session.Storage, *sess
 	inst := session.NewInstanceWithTool("cli-restart-target", t.TempDir(), "codex")
 	inst.Command = stub
 	inst.CodexSessionID = "019f2222-2222-4222-8222-333333333333"
+	inst.CodexBindingConfirmed = true
 	writeCodexRolloutForCLI(t, codexHome, inst.CodexSessionID)
 	inst.Status = session.StatusRunning
 	inst.GroupPath = session.DefaultGroupPath

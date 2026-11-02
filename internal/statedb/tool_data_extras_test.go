@@ -157,6 +157,26 @@ func TestToolDataKnownKeys_IncludesCoreFields(t *testing.T) {
 	}
 }
 
+func TestMergeToolDataExtrasDoesNotTransferCodexConfirmation(t *testing.T) {
+	old := json.RawMessage(`{"codex_session_id":"aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa","codex_binding_confirmed":true,"external":true}`)
+	for _, incoming := range []string{
+		`{"codex_session_id":"bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"}`,
+		`{"codex_session_id":""}`,
+	} {
+		merged := MergeToolDataExtras(old, json.RawMessage(incoming))
+		var values map[string]any
+		if err := json.Unmarshal(merged, &values); err != nil {
+			t.Fatal(err)
+		}
+		if _, exists := values["codex_binding_confirmed"]; exists {
+			t.Fatalf("confirmation leaked to a different binding: %s", merged)
+		}
+		if values["external"] != true {
+			t.Fatalf("unrelated managed-extra behavior changed: %s", merged)
+		}
+	}
+}
+
 // TestSaveInstance_PreservesClearOnCompactExtra is the regression test for
 // the bug surfaced 2026-04-29: a manually-written tool_data extra
 // (clear_on_compact) was being silently dropped on every SaveInstance

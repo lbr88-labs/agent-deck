@@ -35,6 +35,9 @@ func TestHandleSessionImportCodexCreatesStoppedSession(t *testing.T) {
 	if got.Tool != "codex" || got.CodexSessionID != id || got.Title != "imported" || got.Status != session.StatusStopped {
 		t.Fatalf("bad imported instance: %#v", got)
 	}
+	if !got.CodexBindingConfirmed {
+		t.Fatal("explicit CLI import did not persist its confirmed binding")
+	}
 	if got.ProjectPath != projectPath {
 		t.Fatalf("project path = %q, want %q", got.ProjectPath, projectPath)
 	}
@@ -75,6 +78,9 @@ func TestHandleSessionImportCodexDefaultsTitleAndOutputsJSON(t *testing.T) {
 	if got.Title != "existing codex" || got.Command != "codex-nightly" {
 		t.Fatalf("bad imported instance defaults: %#v", got)
 	}
+	if got.CodexSessionID != id || !got.CodexBindingConfirmed {
+		t.Fatalf("named CLI import did not round-trip its confirmed selection: id=%q confirmed=%v", got.CodexSessionID, got.CodexBindingConfirmed)
+	}
 }
 
 func TestHandleSessionImportCodexUsesCommandCodexHome(t *testing.T) {
@@ -97,6 +103,9 @@ func TestHandleSessionImportCodexUsesCommandCodexHome(t *testing.T) {
 	}
 	if instances[0].Command != command || instances[0].CodexSessionID != id {
 		t.Fatalf("bad imported command-home instance: %#v", instances[0])
+	}
+	if !instances[0].CodexBindingConfirmed {
+		t.Fatal("command-home CLI import did not persist its confirmed binding")
 	}
 }
 
@@ -134,6 +143,9 @@ func TestHandleSessionImportCodexDefaultUsesConfiguredCodexCommandHome(t *testin
 	}
 	if got := instances[0].CodexSessionID; got != id {
 		t.Fatalf("CodexSessionID = %q, want %q", got, id)
+	}
+	if !instances[0].CodexBindingConfirmed {
+		t.Fatal("configured-home CLI import did not persist its confirmed binding")
 	}
 }
 

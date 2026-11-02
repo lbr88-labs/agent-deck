@@ -9,9 +9,12 @@ import (
 	"os/exec"
 	"path/filepath"
 	"sort"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/asheshgoplani/agent-deck/internal/session"
+	"github.com/asheshgoplani/agent-deck/internal/statedb"
 	"github.com/asheshgoplani/agent-deck/internal/testutil"
 	"github.com/asheshgoplani/agent-deck/internal/tmux"
 )
@@ -234,6 +237,155 @@ func TestLocalActionBackendMarkUnreadPersistsAcknowledgementReset(t *testing.T) 
 	}
 	if statuses[sessionID].Acknowledged {
 		t.Fatal("MarkUnread left SQLite acknowledged=true; shared sync will immediately undo it")
+	}
+}
+
+func TestLocalActionBackendUndoDeleteResumesConfirmedCodexConversation(t *testing.T) {
+	isolateHubActionConfig(t)
+	t.Setenv("XDG_CACHE_HOME", filepath.Join(os.Getenv("HOME"), ".cache"))
+	codexHome := filepath.Join(os.Getenv("HOME"), ".codex")
+	t.Setenv("CODEX_HOME", codexHome)
+	const profile = "hub-codex-undo-proof"
+	t.Setenv("AGENTDECK_PROFILE", profile)
+	t.Cleanup(func() { hubDeleteUndoStacks.Delete(profile) })
+	previousDB := statedb.GetGlobal()
+	statedb.SetGlobal(nil)
+	t.Cleanup(func() { statedb.SetGlobal(previousDB) })
+	previousPipeManager := tmux.GetPipeManager()
+	tmux.SetPipeManager(nil)
+	t.Cleanup(func() { tmux.SetPipeManager(previousPipeManager) })
+
+	configPath, err := session.GetConfigPath()
+	if err != nil {
+		t.Fatalf("GetConfigPath: %v", err)
+	}
+	if err := os.MkdirAll(filepath.Dir(configPath), 0o700); err != nil {
+		t.Fatalf("mkdir config: %v", err)
+	}
+	writeFile(t, configPath, "theme = \"dark\"\n[tmux]\nlaunch_in_user_scope = false\nlaunch_as = \"direct\"\n")
+	session.ClearUserConfigCache()
+
+	projectPath := t.TempDir()
+	const nativeID = "019f0000-0000-7000-8000-000000000101"
+	writeHubCodexRollout(t, codexHome, nativeID, projectPath)
+	binDir := t.TempDir()
+	launchPath := filepath.Join(binDir, "launch.args")
+	statePath := filepath.Join(binDir, "pane.state")
+	writeFile(t, statePath, "live\n")
+	t.Setenv("HUB_TEST_TMUX_LAUNCH", launchPath)
+	t.Setenv("HUB_TEST_TMUX_STATE", statePath)
+	t.Setenv("HUB_TEST_WORKDIR", projectPath)
+	// Only the terminal process boundary is replaced. Delete, Restart, native
+	// resume selection and SQLite reinsertion all run their real implementations.
+	const fakeTmux = `#!/bin/sh
+while [ "$#" -gt 0 ]; do
+	case "$1" in
+		-L|-S|-f) shift 2 ;;
+		-u) shift ;;
+		*) break ;;
+	esac
+done
+case "$1" in
+	has-session) test -s "$HUB_TEST_TMUX_STATE" ;;
+	new-session)
+		printf '%s\000' "$@" > "$HUB_TEST_TMUX_LAUNCH"
+		printf 'live\n' > "$HUB_TEST_TMUX_STATE"
+		;;
+	kill-session) : > "$HUB_TEST_TMUX_STATE" ;;
+	display-message)
+		case "$*" in
+			*pane_current_path*) printf 'AD_CWD_V1|3.5a|%s\n' "$HUB_TEST_WORKDIR" ;;
+			*) exit 1 ;;
+		esac
+		;;
+	set-option|set-window-option|set-environment|bind-key|select-pane|capture-pane) exit 0 ;;
+	*) exit 1 ;;
+esac
+`
+	if err := os.WriteFile(filepath.Join(binDir, "tmux"), []byte(fakeTmux), 0o700); err != nil {
+		t.Fatalf("write fake tmux: %v", err)
+	}
+	// No provider, systemd launcher or real tmux executable is reachable.
+	t.Setenv("PATH", binDir)
+	t.Cleanup(testutil.IsolateTmuxSocket())
+
+	inst := &session.Instance{
+		ID:                    "confirmed-codex",
+		Title:                 "confirmed native conversation",
+		ProjectPath:           projectPath,
+		GroupPath:             session.DefaultGroupPath,
+		Tool:                  "codex",
+		Command:               "codex",
+		Status:                session.StatusWaiting,
+		CreatedAt:             time.Now(),
+		CodexSessionID:        nativeID,
+		CodexDetectedAt:       time.Unix(1700000000, 0),
+		CodexBindingRevision:  7,
+		CodexBindingConfirmed: true,
+		TmuxSocketName:        "hub-codex-undo-test",
+	}
+	pane := tmux.NewSession(inst.Title, projectPath)
+	pane.SocketName = inst.TmuxSocketName
+	inst.SetTmuxSessionForTest(pane)
+	storage, err := session.NewStorageWithProfile(profile)
+	if err != nil {
+		t.Fatalf("NewStorageWithProfile: %v", err)
+	}
+	defer storage.Close()
+	if err := storage.Save([]*session.Instance{inst}); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+
+	backend := LocalActionBackend{Profile: profile}
+	if err := backend.Delete(context.Background(), inst.ID); err != nil {
+		t.Fatalf("Delete: %v", err)
+	}
+	rows, err := storage.GetDB().LoadInstances()
+	if err != nil || len(rows) != 0 {
+		t.Fatalf("deleted rows = %+v, err = %v; undo must restart without a persisted binding", rows, err)
+	}
+	// Retain only for cleanup: this is the object whose real Restart starts
+	// the fast-death watcher, so Kill must cancel it before the fake PATH resets.
+	stack := hubUndoStackForProfile(profile)
+	stack.mu.Lock()
+	var restored *session.Instance
+	if len(stack.entries) > 0 {
+		restored = stack.entries[len(stack.entries)-1].instance
+	}
+	stack.mu.Unlock()
+	if restored == nil {
+		t.Fatal("Delete did not leave an undo entry")
+	}
+	t.Cleanup(func() { _ = restored.Kill() })
+
+	restoredID, err := backend.UndoDelete(context.Background())
+	if err != nil {
+		t.Fatalf("UndoDelete: %v", err)
+	}
+	if restoredID != inst.ID {
+		t.Fatalf("restored ID = %q, want %q", restoredID, inst.ID)
+	}
+	launch, err := os.ReadFile(launchPath)
+	if err != nil {
+		t.Fatalf("read restored launch: %v", err)
+	}
+	if !strings.Contains(string(launch), " resume "+nativeID) {
+		t.Fatalf("undo did not launch an exact native resume: %q", launch)
+	}
+	rows, err = storage.GetDB().LoadInstances()
+	if err != nil || len(rows) != 1 {
+		t.Fatalf("restored rows = %+v, err = %v; want one restored session", rows, err)
+	}
+	if rows[0].ID != inst.ID || rows[0].Status != string(session.StatusWaiting) || rows[0].TmuxSession == "" {
+		t.Fatalf("restored session is not published as running in its replacement pane: %+v", rows[0])
+	}
+	// The restored generation must still reject an old writer, while allowing
+	// the current generation to update the same conversation through normal CAS.
+	if _, matched, err := storage.GetDB().WriteCodexSessionBinding(inst.ID, "", time.Now(), 0, false); err != nil || matched {
+		t.Fatalf("stale binding write after undo: matched=%v err=%v, want rejection", matched, err)
+	}
+	if revision, matched, err := storage.GetDB().WriteCodexSessionBinding(inst.ID, nativeID, time.Now(), 7, true); err != nil || !matched || revision != 8 {
+		t.Fatalf("current binding write after undo: revision=%d matched=%v err=%v, want revision 8", revision, matched, err)
 	}
 }
 
@@ -1346,6 +1498,30 @@ func isolateHubActionConfig(t *testing.T) {
 	t.Setenv("XDG_DATA_HOME", filepath.Join(home, ".local", "share"))
 	session.ClearUserConfigCache()
 	t.Cleanup(session.ClearUserConfigCache)
+}
+
+func writeHubCodexRollout(t *testing.T, codexHome, nativeID, projectPath string) {
+	t.Helper()
+	dir := filepath.Join(codexHome, "sessions", "2026", "10", "29")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatalf("mkdir Codex sessions: %v", err)
+	}
+	record, err := json.Marshal(map[string]any{
+		"timestamp": "2026-10-29T12:00:00Z",
+		"type":      "session_meta",
+		"payload": map[string]any{
+			"id":         nativeID,
+			"session_id": nativeID,
+			"cwd":        projectPath,
+			"source":     "cli",
+		},
+	})
+	if err != nil {
+		t.Fatalf("marshal Codex rollout: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "rollout-2026-10-29T12-00-00-"+nativeID+".jsonl"), append(record, '\n'), 0o600); err != nil {
+		t.Fatalf("write Codex rollout: %v", err)
+	}
 }
 
 func newHubActionGitRepo(t *testing.T) string {

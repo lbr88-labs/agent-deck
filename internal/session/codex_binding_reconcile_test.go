@@ -16,8 +16,9 @@ import (
 func seedPersistedCodexBinding(t *testing.T, db *statedb.StateDB, inst *Instance, sessionID string) {
 	t.Helper()
 	toolData, err := json.Marshal(map[string]any{
-		"codex_session_id":  sessionID,
-		"codex_detected_at": time.Now().Unix(),
+		"codex_session_id":        sessionID,
+		"codex_detected_at":       time.Now().Unix(),
+		"codex_binding_confirmed": inst.CodexBindingConfirmed,
 	})
 	if err != nil {
 		t.Fatalf("marshal tool data: %v", err)
@@ -62,6 +63,7 @@ func setupCodexPromotionTest(t *testing.T) (codexHome, cwd string, db *statedb.S
 	inst = NewInstanceWithTool("stale-peer", cwd, "codex")
 	inst.Command = "codex"
 	inst.CodexSessionID = guardianID
+	inst.CodexBindingConfirmed = true
 	seedPersistedCodexBinding(t, db, inst, forkID)
 	WriteHookSessionAnchor(inst.ID, guardianID)
 	return codexHome, cwd, db, inst, rootID, guardianID, forkID
@@ -79,10 +81,7 @@ func persistCompletedPromotionForTest(t *testing.T, db *statedb.StateDB, inst *I
 	if err := writeCodexSubagentMigrationState(inst.ID, state); err != nil {
 		t.Fatalf("write completed migration: %v", err)
 	}
-	_, matched, err := db.WriteCodexSessionPromotion(
-		inst.ID, targetID, completed, sourceID, oldRootID, started, completed,
-		0,
-	)
+	_, matched, err := db.WriteCodexSessionPromotion(inst.ID, targetID, completed, sourceID, oldRootID, started, completed, 0, targetID != "")
 	if err != nil || !matched {
 		t.Fatalf("persist completed promotion: matched=%v err=%v", matched, err)
 	}
@@ -172,7 +171,7 @@ func TestUnchangedCompletedPromotionDoesNotAdvanceBindingRevision(t *testing.T) 
 	_, _, db, inst, rootID, guardianID, forkID := setupCodexPromotionTest(t)
 	persistCompletedPromotionForTest(t, db, inst, guardianID, rootID, forkID)
 	inst.CodexSessionID = forkID
-	_, _, beforeRevision, err := db.ReadCodexSessionBinding(inst.ID)
+	_, _, beforeRevision, _, err := db.ReadCodexSessionBinding(inst.ID)
 	if err != nil {
 		t.Fatalf("read revision before unchanged accept: %v", err)
 	}
@@ -182,7 +181,7 @@ func TestUnchangedCompletedPromotionDoesNotAdvanceBindingRevision(t *testing.T) 
 			t.Fatal("unchanged promoted target reported a rebind")
 		}
 	}
-	_, _, afterRevision, err := db.ReadCodexSessionBinding(inst.ID)
+	_, _, afterRevision, _, err := db.ReadCodexSessionBinding(inst.ID)
 	if err != nil {
 		t.Fatalf("read revision after unchanged accept: %v", err)
 	}
@@ -432,7 +431,7 @@ func TestCommittedCodexClearRejectsDelayedOldHook(t *testing.T) {
 	_, _, db, inst, rootID, guardianID, forkID := setupCodexPromotionTest(t)
 	persistCompletedPromotionForTest(t, db, inst, guardianID, rootID, forkID)
 	inst.CodexSessionID = forkID
-	_, _, revision, err := db.ReadCodexSessionBinding(inst.ID)
+	_, _, revision, _, err := db.ReadCodexSessionBinding(inst.ID)
 	if err != nil {
 		t.Fatalf("read promoted binding: %v", err)
 	}
@@ -461,7 +460,7 @@ func TestExplicitCodexOverrideRejectsDelayedPreviouslyNewerHook(t *testing.T) {
 	_, _, db, inst, rootID, guardianID, forkID := setupCodexPromotionTest(t)
 	persistCompletedPromotionForTest(t, db, inst, guardianID, rootID, forkID)
 	inst.CodexSessionID = forkID
-	_, _, revision, err := db.ReadCodexSessionBinding(inst.ID)
+	_, _, revision, _, err := db.ReadCodexSessionBinding(inst.ID)
 	if err != nil {
 		t.Fatalf("read promoted binding: %v", err)
 	}
@@ -490,18 +489,17 @@ func TestPostSaveSyncUsesNewerTargetedBinding(t *testing.T) {
 	codexHome, cwd, db, inst, _, _, forkID := setupCodexPromotionTest(t)
 	inst.CodexSessionID = forkID
 	seedPersistedCodexBinding(t, db, inst, forkID)
-	_, _, staleRevision, err := db.ReadCodexSessionBinding(inst.ID)
+	_, _, staleRevision, _, err := db.ReadCodexSessionBinding(inst.ID)
 	if err != nil {
 		t.Fatalf("read stale binding: %v", err)
 	}
 	inst.CodexBindingRevision = staleRevision
-	staleToolData := statedb.WriteCodexBindingRevisionToToolData(json.RawMessage(
-		`{"codex_session_id":"`+forkID+`","codex_detected_at":1}`), staleRevision)
+	staleToolData := statedb.WriteCodexSessionBindingToToolData(nil, forkID, time.Unix(1, 0), staleRevision, true)
 
 	const newerID = "99999999-eeee-4eee-8eee-999999999999"
 	time.Sleep(time.Millisecond)
 	writeCodexRolloutWithSource(t, codexHome, newerID, cwd, "cli")
-	newRevision, matched, err := db.WriteCodexSessionBinding(inst.ID, newerID, time.Now(), staleRevision)
+	newRevision, matched, err := db.WriteCodexSessionBinding(inst.ID, newerID, time.Now(), staleRevision, newerID != "")
 	if err != nil || !matched {
 		t.Fatalf("write newer targeted binding: revision=%d matched=%v err=%v", newRevision, matched, err)
 	}
@@ -523,8 +521,7 @@ func TestPostSaveSyncClearsOverrideIntentForNonCodexTool(t *testing.T) {
 	t.Setenv("XDG_DATA_HOME", filepath.Join(home, ".local", "share"))
 	inst := NewInstanceWithTool("non-codex-binding", t.TempDir(), "claude")
 	inst.codexSessionBindingOverrideIntent = true
-	toolData := statedb.WriteCodexBindingRevisionToToolData(json.RawMessage(
-		`{"codex_session_id":"aaaaaaaa-1111-4111-8111-aaaaaaaaaaaa","codex_detected_at":1}`), 7)
+	toolData := statedb.WriteCodexSessionBindingToToolData(nil, "aaaaaaaa-1111-4111-8111-aaaaaaaaaaaa", time.Unix(1, 0), 7, false)
 
 	inst.syncCommittedCodexBinding(nil, toolData, captureCodexBindingSaveSnapshot(inst))
 	if inst.codexSessionBindingOverrideIntent {
@@ -543,7 +540,7 @@ func TestPostSaveSyncPreservesNewerUncommittedExplicitEdit(t *testing.T) {
 	inst.codexSessionBindingOverrideIntent = false
 	snapshot := captureCodexBindingSaveSnapshot(inst)
 	committedToolData := statedb.WriteCodexSessionBindingToToolData(
-		json.RawMessage(`{}`), snapshot.sessionID, snapshot.detectedAt, snapshot.revision)
+		json.RawMessage(`{}`), snapshot.sessionID, snapshot.detectedAt, snapshot.revision, snapshot.confirmed)
 
 	time.Sleep(time.Millisecond)
 	if _, _, err := SetField(inst, FieldCodexSessionID, forkID, nil); err != nil {

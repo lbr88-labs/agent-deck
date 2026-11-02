@@ -1,6 +1,7 @@
 package session
 
 import (
+	"encoding/json"
 	"path/filepath"
 	"testing"
 	"time"
@@ -22,6 +23,269 @@ func newTestStorage(t *testing.T) *Storage {
 	}
 	t.Cleanup(func() { db.Close() })
 	return &Storage{db: db, dbPath: dbPath, profile: "_test"}
+}
+
+func TestStorageCodexBindingConfirmationRoundTrip(t *testing.T) {
+	const sessionID = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("CODEX_HOME", t.TempDir())
+	for _, tc := range []struct {
+		name      string
+		id        string
+		revision  int64
+		confirmed bool
+		wantProof bool
+	}{
+		{"confirmed-zero", sessionID, 0, true, true},
+		{"confirmed-one", sessionID, 1, true, true},
+		{"unconfirmed-zero", sessionID, 0, false, false},
+		{"unconfirmed-one", sessionID, 1, false, false},
+		{"empty", "", 1, true, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s := newTestStorage(t)
+			inst := &Instance{
+				ID: "proof-roundtrip", Title: "test", ProjectPath: t.TempDir(),
+				GroupPath: DefaultGroupPath, Tool: "codex", Command: "codex",
+				Status: StatusIdle, CreatedAt: time.Now(), stateDB: s.db,
+				CodexSessionID: tc.id, CodexDetectedAt: time.Unix(100, 0),
+				CodexBindingRevision: tc.revision, CodexBindingConfirmed: tc.confirmed,
+			}
+			if err := s.SaveWithGroups([]*Instance{inst}, nil); err != nil {
+				t.Fatalf("SaveWithGroups: %v", err)
+			}
+			if inst.CodexBindingConfirmed != tc.wantProof {
+				t.Fatalf("post-commit confirmation=%v, want %v", inst.CodexBindingConfirmed, tc.wantProof)
+			}
+			lite, _, err := s.LoadLite()
+			if err != nil || len(lite) != 1 {
+				t.Fatalf("LoadLite: count=%d err=%v", len(lite), err)
+			}
+			if lite[0].CodexSessionID != tc.id || lite[0].CodexBindingRevision != tc.revision || lite[0].CodexBindingConfirmed != tc.wantProof {
+				t.Fatalf("lite tuple = (%q, %d, %v), want (%q, %d, %v)", lite[0].CodexSessionID, lite[0].CodexBindingRevision, lite[0].CodexBindingConfirmed, tc.id, tc.revision, tc.wantProof)
+			}
+			serialized, err := json.Marshal(lite[0])
+			if err != nil {
+				t.Fatal(err)
+			}
+			var values map[string]any
+			if err := json.Unmarshal(serialized, &values); err != nil {
+				t.Fatal(err)
+			}
+			if marker, _ := values["codex_binding_confirmed"].(bool); marker != tc.wantProof {
+				t.Fatalf("InstanceData JSON lost confirmation: %s", serialized)
+			}
+			loaded, err := s.Load()
+			if err != nil || len(loaded) != 1 {
+				t.Fatalf("Load: count=%d err=%v", len(loaded), err)
+			}
+			if loaded[0].CodexSessionID != tc.id || loaded[0].CodexBindingRevision != tc.revision || loaded[0].CodexBindingConfirmed != tc.wantProof {
+				t.Fatalf("loaded tuple = (%q, %d, %v), want (%q, %d, %v)", loaded[0].CodexSessionID, loaded[0].CodexBindingRevision, loaded[0].CodexBindingConfirmed, tc.id, tc.revision, tc.wantProof)
+			}
+		})
+	}
+}
+
+func TestStorageCodexLegacyBindingRemainsUnconfirmed(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("CODEX_HOME", t.TempDir())
+	for _, raw := range []string{
+		`{"codex_session_id":"aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa","codex_detected_at":100}`,
+		`{"codex_session_id":"aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa","codex_detected_at":100,"codex_binding_revision":1}`,
+	} {
+		s := newTestStorage(t)
+		row := &statedb.InstanceRow{
+			ID: "legacy-proof", Title: "test", ProjectPath: t.TempDir(), GroupPath: DefaultGroupPath,
+			Tool: "codex", Command: "codex", Status: "idle", CreatedAt: time.Now(), ToolData: json.RawMessage(raw),
+		}
+		if err := s.db.SaveInstance(row); err != nil {
+			t.Fatal(err)
+		}
+		lite, _, err := s.LoadLite()
+		if err != nil || len(lite) != 1 {
+			t.Fatalf("LoadLite: count=%d err=%v", len(lite), err)
+		}
+		if lite[0].CodexBindingConfirmed {
+			t.Fatalf("LoadLite inferred proof from history: %s", raw)
+		}
+		loaded, err := s.Load()
+		if err != nil || len(loaded) != 1 {
+			t.Fatalf("Load: count=%d err=%v", len(loaded), err)
+		}
+		if loaded[0].CodexBindingConfirmed {
+			t.Fatalf("Load inferred proof from history: %s", raw)
+		}
+		if err := s.SaveWithGroups(loaded, nil); err != nil {
+			t.Fatal(err)
+		}
+		_, _, _, confirmed, err := s.db.ReadCodexSessionBinding(row.ID)
+		if err != nil || confirmed {
+			t.Fatalf("save inferred proof: confirmed=%v err=%v", confirmed, err)
+		}
+	}
+}
+
+func TestStorageCodexPostCommitSyncReadsCurrentConfirmation(t *testing.T) {
+	const sessionID = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("CODEX_HOME", t.TempDir())
+	for _, confirmed := range []bool{false, true} {
+		s := newTestStorage(t)
+		inst := &Instance{
+			ID: "proof-sync", Title: "test", ProjectPath: t.TempDir(),
+			GroupPath: DefaultGroupPath, Tool: "codex", Command: "codex",
+			Status: StatusIdle, CreatedAt: time.Now(), stateDB: s.db,
+			CodexSessionID: sessionID, CodexDetectedAt: time.Unix(100, 0),
+			CodexBindingRevision: 1, CodexBindingConfirmed: !confirmed,
+		}
+		row, err := instanceToRow(inst)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := s.db.SaveInstance(row); err != nil {
+			t.Fatal(err)
+		}
+		snapshot := captureCodexBindingSaveSnapshot(inst)
+		if revision, matched, err := s.db.WriteCodexSessionBindingOverride(inst.ID, sessionID, time.Unix(200, 0), confirmed); err != nil || !matched || revision != 2 {
+			t.Fatalf("peer update: revision=%d matched=%v err=%v", revision, matched, err)
+		}
+		inst.syncCommittedCodexBinding(s.db, row.ToolData, snapshot)
+		if inst.CodexSessionID != sessionID || inst.CodexBindingRevision != 2 || inst.CodexBindingConfirmed != confirmed || !inst.CodexDetectedAt.Equal(time.Unix(200, 0)) {
+			t.Fatalf("post-commit sync used stale proof: id=%q revision=%d confirmed=%v at=%v", inst.CodexSessionID, inst.CodexBindingRevision, inst.CodexBindingConfirmed, inst.CodexDetectedAt)
+		}
+	}
+}
+
+func TestStorageCodexNewInstanceUsesOwningDBForTargetedBindingAndClear(t *testing.T) {
+	const sessionID = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, ".config"))
+	t.Setenv("XDG_DATA_HOME", filepath.Join(home, ".local", "share"))
+	t.Setenv("CODEX_HOME", filepath.Join(home, ".codex"))
+	ClearUserConfigCache()
+	t.Cleanup(ClearUserConfigCache)
+	previousGlobal := statedb.GetGlobal()
+	statedb.SetGlobal(nil)
+	t.Cleanup(func() { statedb.SetGlobal(previousGlobal) })
+
+	for _, save := range []struct {
+		name string
+		run  func(*Storage, *Instance) error
+	}{
+		{"SaveWithGroups", func(s *Storage, inst *Instance) error { return s.SaveWithGroups([]*Instance{inst}, nil) }},
+		{"InsertSessionAndVerify", func(s *Storage, inst *Instance) error { return s.InsertSessionAndVerify(inst, nil) }},
+	} {
+		t.Run(save.name, func(t *testing.T) {
+			s := newTestStorage(t)
+			inst := &Instance{
+				ID: "owning-db-" + save.name, Title: "fresh", ProjectPath: t.TempDir(),
+				GroupPath: DefaultGroupPath, Tool: "codex", Command: "codex",
+				Status: StatusStopped, CreatedAt: time.Now(),
+			}
+			if inst.stateDB != nil || statedb.GetGlobal() != nil {
+				t.Fatal("test requires a fresh instance without any database attachment")
+			}
+			// An explicit clear makes the initial save advance the generation;
+			// the following targeted writes must use that committed revision.
+			if _, _, err := SetField(inst, FieldCodexSessionID, "", nil); err != nil {
+				t.Fatalf("initial explicit clear: %v", err)
+			}
+			if err := save.run(s, inst); err != nil {
+				t.Fatalf("save: %v", err)
+			}
+			writeCodexRolloutWithSource(t, filepath.Join(home, ".codex"), sessionID, inst.ProjectPath, "cli")
+			if _, _, err := SetField(inst, FieldCodexSessionID, sessionID, nil); err != nil {
+				t.Fatalf("confirm native conversation: %v", err)
+			}
+			if !inst.persistCodexSessionBinding("") {
+				t.Fatal("targeted explicit binding did not commit")
+			}
+			id, _, revision, confirmed, err := s.db.ReadCodexSessionBinding(inst.ID)
+			if err != nil || id != sessionID || revision != 2 || !confirmed || inst.CodexBindingRevision != revision {
+				t.Fatalf("targeted binding missed owning DB: id=%q revision=%d confirmed=%v memory_revision=%d err=%v", id, revision, confirmed, inst.CodexBindingRevision, err)
+			}
+			if _, _, err := SetField(inst, FieldCodexSessionID, "", nil); err != nil {
+				t.Fatalf("explicit clear: %v", err)
+			}
+			if !inst.persistCodexSessionBinding("") {
+				t.Fatal("targeted explicit clear did not commit")
+			}
+			id, _, revision, confirmed, err = s.db.ReadCodexSessionBinding(inst.ID)
+			if err != nil || id != "" || revision != 3 || confirmed || inst.CodexBindingRevision != revision {
+				t.Fatalf("targeted clear missed owning DB: id=%q revision=%d confirmed=%v memory_revision=%d err=%v", id, revision, confirmed, inst.CodexBindingRevision, err)
+			}
+		})
+	}
+}
+
+func TestStorageCodexTemporarySavePreservesLiveOwnerForTargetedWrites(t *testing.T) {
+	const sessionID = "cccccccc-cccc-4ccc-8ccc-cccccccccccc"
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, ".config"))
+	t.Setenv("XDG_DATA_HOME", filepath.Join(home, ".local", "share"))
+	t.Setenv("CODEX_HOME", filepath.Join(home, ".codex"))
+	ClearUserConfigCache()
+	t.Cleanup(ClearUserConfigCache)
+	previousGlobal := statedb.GetGlobal()
+	statedb.SetGlobal(nil)
+	t.Cleanup(func() { statedb.SetGlobal(previousGlobal) })
+
+	owner := newTestStorage(t)
+	created := &Instance{
+		ID: "temporary-save-owner", Title: "long-lived", ProjectPath: t.TempDir(),
+		GroupPath: DefaultGroupPath, Tool: "codex", Command: "codex",
+		Status: StatusStopped, CreatedAt: time.Now(),
+	}
+	if _, _, err := SetField(created, FieldCodexSessionID, "", nil); err != nil {
+		t.Fatalf("initial explicit clear: %v", err)
+	}
+	if err := owner.SaveWithGroups([]*Instance{created}, nil); err != nil {
+		t.Fatalf("initial save: %v", err)
+	}
+	loaded, err := owner.Load()
+	if err != nil || len(loaded) != 1 {
+		t.Fatalf("load long-lived instance: count=%d err=%v", len(loaded), err)
+	}
+	inst := loaded[0]
+
+	temporaryDB, err := statedb.Open(owner.dbPath)
+	if err != nil {
+		t.Fatalf("open temporary connection: %v", err)
+	}
+	temporary := &Storage{db: temporaryDB, dbPath: owner.dbPath, profile: owner.profile}
+	t.Cleanup(func() { _ = temporary.Close() })
+	inst.Title = "saved by temporary web request"
+	if err := temporary.SaveWithGroups([]*Instance{inst}, nil); err != nil {
+		t.Fatalf("temporary save of shared instance: %v", err)
+	}
+	if err := temporary.Close(); err != nil {
+		t.Fatalf("close temporary storage: %v", err)
+	}
+
+	writeCodexRolloutWithSource(t, filepath.Join(home, ".codex"), sessionID, inst.ProjectPath, "cli")
+	if _, _, err := SetField(inst, FieldCodexSessionID, sessionID, nil); err != nil {
+		t.Fatalf("validate binding after temporary storage closed: %v", err)
+	}
+	if !inst.persistCodexSessionBinding("") {
+		t.Fatal("targeted binding used the closed temporary connection")
+	}
+	id, _, revision, confirmed, err := owner.db.ReadCodexSessionBinding(inst.ID)
+	if err != nil || id != sessionID || revision != 2 || !confirmed || inst.CodexBindingRevision != revision {
+		t.Fatalf("binding after temporary close: id=%q revision=%d confirmed=%v memory_revision=%d err=%v", id, revision, confirmed, inst.CodexBindingRevision, err)
+	}
+
+	if _, _, err := SetField(inst, FieldCodexSessionID, "", nil); err != nil {
+		t.Fatalf("explicit clear after temporary storage closed: %v", err)
+	}
+	if !inst.persistCodexSessionBinding("") {
+		t.Fatal("targeted clear used the closed temporary connection")
+	}
+	id, _, revision, confirmed, err = owner.db.ReadCodexSessionBinding(inst.ID)
+	if err != nil || id != "" || revision != 3 || confirmed || inst.CodexBindingRevision != revision {
+		t.Fatalf("clear after temporary close: id=%q revision=%d confirmed=%v memory_revision=%d err=%v", id, revision, confirmed, inst.CodexBindingRevision, err)
+	}
 }
 
 // TestStorageUpdatedAtTimestamp verifies that SaveWithGroups sets the UpdatedAt timestamp

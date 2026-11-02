@@ -100,6 +100,7 @@ func TestBuildCodexCommandWithPromptResumeFallsBackToTyping(t *testing.T) {
 	}
 	i := codexInstance("codex", "codex")
 	i.CodexSessionID = sid
+	i.CodexBindingConfirmed = true
 	cmd, embedded := i.buildCodexCommandWithPrompt("codex", "do the thing")
 	if embedded {
 		t.Fatalf("resume path must not get a positional prompt; got %q", cmd)

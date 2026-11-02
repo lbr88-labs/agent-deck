@@ -2,6 +2,7 @@ package session
 
 import (
 	"database/sql"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -10,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/asheshgoplani/agent-deck/internal/statedb"
 	"github.com/asheshgoplani/agent-deck/internal/tmux"
 )
 
@@ -17,14 +19,28 @@ func ownedCodexHook(t *testing.T, inst *Instance, status *HookStatus) *HookStatu
 	t.Helper()
 	skipIfNoTmuxBinary(t)
 	if !inst.tmuxSession.Exists() {
+		if inst.CodexSessionID == "" {
+			if db := inst.metadataStateDB(); db != nil {
+				id, at, revision, _, err := db.ReadCodexSessionBinding(inst.ID)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if id == "" {
+					inst.CodexDetectedAt, inst.CodexBindingRevision = at, revision
+				}
+			}
+		}
 		binary := filepath.Join(t.TempDir(), "codex")
-		if err := os.WriteFile(binary, []byte("#!/bin/sh\nwhile :; do sleep 1; done\n"), 0o700); err != nil {
+		if err := os.WriteFile(binary, []byte("#!/bin/sh\nif [ \"$1\" = \"--help\" ]; then exit 0; fi\nwhile :; do sleep 1; done\n"), 0o700); err != nil {
 			t.Fatal(err)
 		}
 		// Run the emitter directly, not through a first-run login-shell wizard.
 		inst.tmuxSession.RunCommandAsInitialProcess = true
 		if err := inst.tmuxSession.Start("exec " + shellQuote(binary)); err != nil {
 			t.Fatalf("start hook-emitter pane: %v", err)
+		}
+		if err := inst.recordCodexFreshLaunch(inst.prepareCodexFreshLaunch()); err != nil {
+			t.Fatalf("register fresh fixture process: %v", err)
 		}
 		t.Cleanup(func() { _ = inst.tmuxSession.Kill() })
 	}
@@ -88,6 +104,7 @@ func TestCodexPaneHookCanSwitchNativeConversation(t *testing.T) {
 	originalID := uniqueSID(t)
 	writeCodexRolloutWithSource(t, codexHome, originalID, inst.ProjectPath, "cli")
 	inst.CodexSessionID = originalID
+	inst.CodexBindingConfirmed = true
 	seedPersistedCodexBinding(t, db, inst, originalID)
 	// Native switches need both a pane-owned emitter and positive top-level
 	// metadata. An unflushed hook must defer, not replace the recorded binding.
@@ -101,8 +118,8 @@ func TestCodexPaneHookCanSwitchNativeConversation(t *testing.T) {
 	}
 	writeCodexRolloutWithSource(t, codexHome, newID, inst.ProjectPath, "cli")
 	inst.UpdateHookStatus(status)
-	if inst.CodexSessionID != newID || readCodexSessionIDFromDB(t, db, inst.ID) != newID {
-		t.Fatalf("pane-proven native switch was not persisted: memory=%q db=%q", inst.CodexSessionID, readCodexSessionIDFromDB(t, db, inst.ID))
+	if inst.CodexSessionID != newID || readCodexSessionIDFromDB(t, db, inst.ID) != newID || !inst.CodexBindingConfirmed {
+		t.Fatalf("pane-proven native switch was not persisted and confirmed: memory=%q db=%q confirmed=%v", inst.CodexSessionID, readCodexSessionIDFromDB(t, db, inst.ID), inst.CodexBindingConfirmed)
 	}
 }
 
@@ -116,6 +133,7 @@ func TestCodexCachedEnvironmentCannotIntroduceAnUnownedThread(t *testing.T) {
 			writeCodexRolloutWithSource(t, codexHome, foreignID, inst.ProjectPath, "cli")
 			if bound {
 				inst.CodexSessionID = originalID
+				inst.CodexBindingConfirmed = true
 			}
 			wantID := inst.CodexSessionID
 			seedPersistedCodexBinding(t, db, inst, wantID)
@@ -148,7 +166,7 @@ func TestCodexStartAndRestartKeepExactBinding(t *testing.T) {
 	}
 	logPath := filepath.Join(t.TempDir(), "codex-args")
 	binary := filepath.Join(t.TempDir(), "codex")
-	script := "#!/bin/sh\nprintf '%s\\n' \"$*\" >> " + shellQuote(logPath) + "\nwhile :; do sleep 1; done\n"
+	script := "#!/bin/sh\nif [ \"$1\" = \"--help\" ]; then exit 0; fi\nprintf '%s\\n' \"$*\" >> " + shellQuote(logPath) + "\nwhile :; do sleep 1; done\n"
 	if err := os.WriteFile(binary, []byte(script), 0o700); err != nil {
 		t.Fatal(err)
 	}
@@ -157,7 +175,7 @@ func TestCodexStartAndRestartKeepExactBinding(t *testing.T) {
 	inst.Command, inst.CodexSessionID = "codex", originalID
 	seedPersistedCodexBinding(t, db, inst, originalID)
 	detectedAt := time.Now().Add(-time.Hour)
-	revision, matched, err := db.WriteCodexSessionBindingOverride(inst.ID, originalID, detectedAt)
+	revision, matched, err := db.WriteCodexSessionBindingOverride(inst.ID, originalID, detectedAt, originalID != "")
 	if err != nil || !matched {
 		t.Fatalf("seed binding revision: matched=%v err=%v", matched, err)
 	}
@@ -188,7 +206,7 @@ func TestCodexStartAndRestartKeepExactBinding(t *testing.T) {
 	if strings.Count(args, "resume "+originalID) != 2 || strings.Contains(args, foreignID) {
 		t.Fatalf("start/restart did not execute the exact original resume twice: %q", args)
 	}
-	gotID, _, gotRevision, err := db.ReadCodexSessionBinding(inst.ID)
+	gotID, _, gotRevision, _, err := db.ReadCodexSessionBinding(inst.ID)
 	if err != nil || gotID != originalID || gotRevision != revision {
 		t.Fatalf("resume changed persisted binding: id=%q revision=%d want=%d err=%v", gotID, gotRevision, revision, err)
 	}
@@ -267,8 +285,9 @@ func TestCodexArchivedAndHubOnlyBindingPassesLaunchPreflight(t *testing.T) {
 					}
 				}
 			}
-			inst.CodexSessionID = id
-			inst.CodexDetectedAt = time.Now().Add(-time.Hour)
+			if _, _, err := SetField(inst, FieldCodexSessionID, id, nil); err != nil {
+				t.Fatalf("confirm %s-only native conversation: %v", source, err)
+			}
 			if err := inst.prepareCodexIdentity(true); err != nil {
 				t.Fatalf("%s-only exact binding cannot restart: %v", source, err)
 			}
@@ -342,6 +361,7 @@ func TestCodexUnverifiableRolloutCannotAuthorizeResume(t *testing.T) {
 				t.Fatal(err)
 			}
 			inst.CodexSessionID = id
+			inst.CodexBindingConfirmed = true
 			if err := inst.prepareCodexIdentity(true); err == nil {
 				t.Fatal("unverifiable rollout silently authorized a resume")
 			}
@@ -403,7 +423,7 @@ func TestCodexRestartFreshLaunchesAnExplicitNewConversation(t *testing.T) {
 	seedPersistedCodexBinding(t, db, inst, originalID)
 	logPath := filepath.Join(t.TempDir(), "fresh-args")
 	binary := filepath.Join(t.TempDir(), "codex")
-	if err := os.WriteFile(binary, []byte("#!/bin/sh\nprintf '%s\\n' \"$*\" > "+shellQuote(logPath)+"\nwhile :; do sleep 1; done\n"), 0o700); err != nil {
+	if err := os.WriteFile(binary, []byte("#!/bin/sh\nif [ \"$1\" = \"--help\" ]; then exit 0; fi\nprintf '%s\\n' \"$*\" > "+shellQuote(logPath)+"\nwhile :; do sleep 1; done\n"), 0o700); err != nil {
 		t.Fatal(err)
 	}
 	restore := resetUserConfigCache(t, &UserConfig{Codex: CodexSettings{Command: binary}})
@@ -471,7 +491,7 @@ func TestCodexReconciliationDoesNotClaimAnotherRowsConversation(t *testing.T) {
 					t.Fatal("completed sidecar adopted another row's conversation")
 				}
 			} else {
-				if _, matched, err := db.WriteCodexSessionBindingOverride(inst.ID, targetID, time.Now()); err != nil || !matched {
+				if _, matched, err := db.WriteCodexSessionBindingOverride(inst.ID, targetID, time.Now(), targetID != ""); err != nil || !matched {
 					t.Fatalf("seed conflicting persisted binding: matched=%v err=%v", matched, err)
 				}
 				if inst.adoptPersistedCodexPromotion(false) {
@@ -492,6 +512,7 @@ func TestCodexBoundLaunchCannotFallThroughToOpaqueFreshCommand(t *testing.T) {
 			id := uniqueSID(t)
 			writeCodexRolloutWithSource(t, home, id, inst.ProjectPath, "cli")
 			inst.Command, inst.CodexSessionID = command, id
+			inst.CodexBindingConfirmed = true
 			if err := inst.prepareCodexIdentity(true); err == nil {
 				t.Fatalf("bound launch authorized unverifiable passthrough: %q", command)
 			}
@@ -509,6 +530,9 @@ func TestCodexExactExplicitResumeCommandKeepsItsBinding(t *testing.T) {
 	writeCodexRolloutWithSource(t, home, id, inst.ProjectPath, "cli")
 	inst.CodexSessionID = id
 	inst.Command = "CODEX_HOME=" + shellQuote(home) + " codex resume " + id
+	if _, _, err := SetField(inst, FieldCodexSessionID, id, nil); err != nil {
+		t.Fatalf("confirm exact resume identity: %v", err)
+	}
 	if err := inst.prepareCodexIdentity(true); err != nil {
 		t.Fatalf("explicit exact resume command was refused: %v", err)
 	}
@@ -566,6 +590,7 @@ func TestCodexConfiguredCommandCannotOverrideRecordedBinding(t *testing.T) {
 			originalID, foreignID := uniqueSID(t), uniqueSID(t)
 			writeCodexRolloutWithSource(t, home, originalID, inst.ProjectPath, "cli")
 			inst.CodexSessionID = originalID
+			inst.CodexBindingConfirmed = true
 			inst.Command = "codex"
 			config := cloneDefaultUserConfig()
 			config.Codex.Command = "codex resume " + foreignID
@@ -616,6 +641,7 @@ func TestCodexFreshStartRemovesAnExactResumeCommand(t *testing.T) {
 			}
 			inst.codexFreshStart = false
 			inst.CodexSessionID = nextID
+			inst.CodexBindingConfirmed = true // Model the proven capture after the fresh launch.
 			writeCodexRolloutWithSource(t, home, nextID, inst.ProjectPath, "cli")
 			if err := inst.prepareCodexIdentity(true); err != nil {
 				t.Fatalf("the new conversation could not be resumed after a fresh start: %v", err)
@@ -677,5 +703,253 @@ func TestCodexSessionIDThreadSafeDuringBindingUpdates(t *testing.T) {
 		if got := inst.GetCodexSessionIDThreadSafe(); got != ids[0] && got != ids[1] {
 			t.Fatalf("read an invalid conversation binding during an update: %q", got)
 		}
+	}
+}
+
+func TestCodexFreshOwnedHookRequiresVerifiedNativeEvidence(t *testing.T) {
+	for _, evidence := range []string{"verified", "missing_metadata", "mismatched_metadata", "no_fresh_launch"} {
+		t.Run(evidence, func(t *testing.T) {
+			inst, home := newCodexGateInstance(t)
+			db := withTempGlobalStateDB(t)
+			seedPersistedCodexBinding(t, db, inst, "")
+			id := uniqueSID(t)
+			switch evidence {
+			case "verified", "no_fresh_launch":
+				writeCodexRolloutWithSource(t, home, id, inst.ProjectPath, "cli")
+			case "mismatched_metadata":
+				writeCodexRolloutBody(t, home, id, `{"type":"session_meta","payload":{"id":"11111111-2222-4333-8444-555555555555","source":"cli"}}`+"\n")
+			}
+			status := ownedCodexHook(t, inst, &HookStatus{
+				Status: "running", SessionID: id, Event: "thread/started", UpdatedAt: time.Now(),
+			})
+			if evidence == "no_fresh_launch" {
+				// A live process without a recorded fresh launch is not ownership
+				// authority: it may have resumed an old, incorrectly selected UUID.
+				clearCodexFreshLaunchState(inst.ID)
+			}
+			inst.UpdateHookStatus(status)
+			gotID, _, _, confirmed, err := db.ReadCodexSessionBinding(inst.ID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if evidence == "verified" {
+				if gotID != id || inst.CodexSessionID != id || !confirmed || !inst.CodexBindingConfirmed {
+					t.Fatalf("fresh owned identity was not confirmed atomically: memory=%q/%v db=%q/%v", inst.CodexSessionID, inst.CodexBindingConfirmed, gotID, confirmed)
+				}
+			} else if gotID != "" || inst.CodexSessionID != "" || confirmed || inst.CodexBindingConfirmed {
+				t.Fatalf("unverified fresh identity was confirmed: memory=%q/%v db=%q/%v", inst.CodexSessionID, inst.CodexBindingConfirmed, gotID, confirmed)
+			}
+		})
+	}
+}
+
+func TestCodexFreshLaunchCaptureSurvivesStorageReload(t *testing.T) {
+	for _, launch := range []string{"start", "start_after_load", "add_attach", "start_with_message", "restart_fresh", "fork"} {
+		t.Run(launch, func(t *testing.T) {
+			skipIfNoTmuxBinary(t)
+			inst, home := newCodexGateInstance(t)
+			db := withTempGlobalStateDB(t)
+			statedb.SetGlobal(nil) // One-shot CLI constructors have no global DB.
+			storage := &Storage{db: db}
+			binary := filepath.Join(t.TempDir(), "codex")
+			if err := os.WriteFile(binary, []byte("#!/bin/sh\nif [ \"$1\" = \"--help\" ]; then exit 0; fi\nprintf 'codex>\\n'\nwhile IFS= read -r line; do printf 'codex>\\n'; done\n"), 0o700); err != nil {
+				t.Fatal(err)
+			}
+			inst.Command = shellQuote(binary)
+			var sourceID string
+			if launch == "fork" || launch == "restart_fresh" {
+				sourceID = uniqueSID(t)
+				writeCodexRolloutWithSource(t, home, sourceID, inst.ProjectPath, "cli")
+				if _, _, err := SetField(inst, FieldCodexSessionID, sourceID, nil); err != nil {
+					t.Fatal(err)
+				}
+				if launch == "fork" {
+					child, _, err := inst.CreateForkedCodexInstanceWithOptions("capture-child", "", nil)
+					if err != nil {
+						t.Fatal(err)
+					}
+					inst = child
+				}
+			}
+			// CLI launch/add save newly constructed instances before spawning.
+			if launch == "add_attach" {
+				if err := storage.SaveWithGroups([]*Instance{inst}, nil); err != nil {
+					t.Fatal(err)
+				}
+			} else if err := storage.InsertSessionAndVerify(inst, nil); err != nil {
+				t.Fatal(err)
+			}
+			if launch == "start_after_load" {
+				instances, err := storage.Load()
+				if err != nil || len(instances) != 1 {
+					t.Fatalf("load stopped CLI entry: instances=%d err=%v", len(instances), err)
+				}
+				inst = instances[0]
+			}
+			var err error
+			switch launch {
+			case "start_with_message":
+				// The absolute fixture command deliberately uses post-start prompt
+				// delivery. Present a real ready prompt and bound fixture failure
+				// without changing production's cold-start readiness budget.
+				pane := inst.tmuxSession
+				deadline := time.AfterFunc(10*time.Second, func() { _ = pane.Kill() })
+				err = inst.StartWithMessage("initial prompt")
+				deadline.Stop()
+			case "restart_fresh":
+				err = inst.RestartFresh()
+			default:
+				err = inst.Start()
+			}
+			if err != nil {
+				t.Fatalf("launch fresh conversation: %v", err)
+			}
+			t.Cleanup(func() { _ = inst.tmuxSession.Kill() })
+			if err := storage.SaveWithGroups([]*Instance{inst}, nil); err != nil {
+				t.Fatal(err)
+			}
+			instances, err := storage.Load()
+			if err != nil || len(instances) != 1 {
+				t.Fatalf("reload launcher result: instances=%d err=%v", len(instances), err)
+			}
+			reloaded := instances[0]
+			launchRevision := reloaded.CodexBindingRevision
+			// No native ID existed before the launcher saved and returned. Only
+			// the reloaded daemon/TUI receives this later pane-owned event.
+			id := uniqueSID(t)
+			writeCodexReviewRolloutAt(t, home, id, inst.ProjectPath, time.Now())
+			status := ownedCodexHook(t, reloaded, &HookStatus{
+				Status: "running", SessionID: id, Event: "thread/started", UpdatedAt: time.Now(),
+			})
+			if launch == "fork" {
+				status.SessionID = sourceID
+				reloaded.UpdateHookStatus(status)
+				if reloaded.CodexSessionID != "" {
+					t.Fatal("reloaded fork captured its bootstrap source instead of a new child")
+				}
+				status.SessionID = id
+			}
+			reloaded.UpdateHookStatus(status)
+			gotID, _, revision, confirmed, err := db.ReadCodexSessionBinding(inst.ID)
+			if err != nil || gotID != id || !confirmed || !reloaded.CodexBindingConfirmed ||
+				reloaded.CodexSessionID != id || revision <= launchRevision {
+				t.Fatalf("reloaded owner failed durable fresh capture: memory=%q/%v db=%q/%d/%v err=%v",
+					reloaded.CodexSessionID, reloaded.CodexBindingConfirmed, gotID, revision, confirmed, err)
+			}
+		})
+	}
+}
+
+func TestCodexFreshLaunchAuthorityCannotSurviveClearOrProcessReplacement(t *testing.T) {
+	for _, revoked := range []string{"explicit_clear", "new_process_lifetime", "same_pid_wrong_lifetime"} {
+		t.Run(revoked, func(t *testing.T) {
+			skipIfNoTmuxBinary(t)
+			inst, home := newCodexGateInstance(t)
+			db := withTempGlobalStateDB(t)
+			statedb.SetGlobal(nil)
+			storage := &Storage{db: db}
+			binary := filepath.Join(t.TempDir(), "codex")
+			if err := os.WriteFile(binary, []byte("#!/bin/sh\nif [ \"$1\" = \"--help\" ]; then exit 0; fi\nwhile :; do sleep 1; done\n"), 0o700); err != nil {
+				t.Fatal(err)
+			}
+			inst.Command = shellQuote(binary)
+			if err := storage.InsertSessionAndVerify(inst, nil); err != nil {
+				t.Fatal(err)
+			}
+			if err := inst.Start(); err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { _ = inst.tmuxSession.Kill() })
+			if err := storage.SaveWithGroups([]*Instance{inst}, nil); err != nil {
+				t.Fatal(err)
+			}
+			instances, err := storage.Load()
+			if err != nil || len(instances) != 1 {
+				t.Fatalf("reload fresh launch: instances=%d err=%v", len(instances), err)
+			}
+			reloaded := instances[0]
+			if revoked == "explicit_clear" {
+				staleLaunch := inst.prepareCodexFreshLaunch()
+				if _, _, err := SetField(reloaded, FieldCodexSessionID, "", nil); err != nil {
+					t.Fatal(err)
+				}
+				if err := storage.SaveWithGroups([]*Instance{reloaded}, nil); err != nil {
+					t.Fatal(err)
+				}
+				// An old launcher finishing after the clear cannot republish its
+				// permission into the new authoritative binding generation.
+				inst.recordCodexFreshLaunch(staleLaunch)
+				// Saving the launcher's stale snapshot must not resurrect permission.
+				if err := storage.SaveWithGroups([]*Instance{inst}, nil); err != nil {
+					t.Fatal(err)
+				}
+			} else if revoked == "new_process_lifetime" {
+				if err := reloaded.tmuxSession.RespawnPane("exec " + shellQuote(binary)); err != nil {
+					t.Fatal(err)
+				}
+			} else {
+				path := codexFreshLaunchStatePath(inst.ID)
+				data, err := os.ReadFile(path)
+				if err != nil {
+					t.Fatal(err)
+				}
+				var state codexFreshLaunchState
+				if err := json.Unmarshal(data, &state); err != nil {
+					t.Fatal(err)
+				}
+				// Keep the actual PID and valid hook emitter, but model a sidecar
+				// from an earlier lifetime of that same operating-system PID.
+				state.PaneIdentity += "-previous-lifetime"
+				data, err = json.Marshal(state)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(path, data, 0o600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			id := uniqueSID(t)
+			writeCodexReviewRolloutAt(t, home, id, inst.ProjectPath, time.Now())
+			reloaded.UpdateHookStatus(ownedCodexHook(t, reloaded, &HookStatus{
+				Status: "running", SessionID: id, Event: "thread/started", UpdatedAt: time.Now(),
+			}))
+			gotID, _, _, confirmed, err := db.ReadCodexSessionBinding(inst.ID)
+			if err != nil || gotID != "" || confirmed || reloaded.CodexSessionID != "" {
+				t.Fatalf("revoked launch confirmed a conversation: memory=%q db=%q/%v err=%v",
+					reloaded.CodexSessionID, gotID, confirmed, err)
+			}
+		})
+	}
+}
+
+func TestCodexUnconfirmedRootCannotPromoteThroughLiveSwitchOrMigration(t *testing.T) {
+	inst, home := newCodexGateInstance(t)
+	rootID := seedLegacyCodexBinding(t, inst, 1)
+	writeCodexRolloutWithSource(t, home, rootID, inst.ProjectPath, "cli")
+	targetID := uniqueSID(t)
+	writeCodexRolloutWithSource(t, home, targetID, inst.ProjectPath, "cli")
+	status := ownedCodexHook(t, inst, &HookStatus{
+		Status: "running", SessionID: targetID, Event: "thread/started", UpdatedAt: time.Now(),
+	})
+	inst.UpdateHookStatus(status)
+	if inst.acceptCodexSessionID(targetID, false, codexBindingProcess) {
+		t.Fatal("a live native switch laundered an unconfirmed historical root")
+	}
+	now := time.Now()
+	if err := writeCodexSubagentMigrationState(inst.ID, codexSubagentMigrationState{
+		SourceID: rootID, OldRoot: rootID, TargetID: targetID,
+		Started: now.Add(-time.Second), Completed: now,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if inst.adoptCompletedCodexMigrationTarget(false) {
+		t.Fatal("a completed migration sidecar laundered an unconfirmed root")
+	}
+	if inst.CanForkCodex() {
+		t.Fatal("an unconfirmed root authorized a fresh fork")
+	}
+	gotID, _, revision, confirmed, err := inst.stateDB.ReadCodexSessionBinding(inst.ID)
+	if err != nil || gotID != rootID || inst.CodexSessionID != rootID || revision != 1 || confirmed || inst.CodexBindingConfirmed {
+		t.Fatalf("unconfirmed root changed: memory=%q/%v db=%q/%v/%d err=%v", inst.CodexSessionID, inst.CodexBindingConfirmed, gotID, confirmed, revision, err)
 	}
 }

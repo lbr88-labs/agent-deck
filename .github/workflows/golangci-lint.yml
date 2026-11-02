@@ -20,8 +20,8 @@ jobs:
         with:
           persist-credentials: false
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
-        with: { go-version: '1.26.9' }
-      # The linter binary must be built with Go >=1.26.9 to analyze this
+        with: { go-version: '1.26.10' }
+      # The linter binary must be built with Go >=1.26.10 to analyze this
       # go.mod; older compiler builds reject the pinned toolchain.
       # .golangci.yml uses the v2 schema.
       # Strict mode (#1055): non-zero exit on findings. Baseline triaged in

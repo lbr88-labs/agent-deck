@@ -86,8 +86,10 @@ func handleSessionImportCodex(profile string, args []string) {
 
 	inst := session.NewInstanceWithGroupAndTool(resolvedTitle, projectPath, resolvedGroup, "codex")
 	inst.Command = resolvedCommand
-	inst.CodexSessionID = strings.ToLower(strings.TrimSpace(entry.ID))
-	inst.CodexDetectedAt = entry.UpdatedAt
+	if _, _, err := session.SetField(inst, session.FieldCodexSessionID, entry.ID, nil); err != nil {
+		out.Error(fmt.Sprintf("cannot confirm imported Codex conversation: %v", err), ErrCodeInvalidOperation)
+		os.Exit(1)
+	}
 	inst.Status = session.StatusStopped
 
 	storage, instances, groups, err := loadSessionData(profile)

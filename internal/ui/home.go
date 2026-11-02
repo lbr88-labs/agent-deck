@@ -19802,8 +19802,9 @@ func (h *Home) createSessionFromCodexImport(entry session.CodexIndexEntry, start
 		}
 		inst := session.NewInstanceWithGroupAndTool(title, projectPath, importGroupPathForProject(projectPath), "codex")
 		inst.Command = "codex"
-		inst.CodexSessionID = strings.ToLower(sessionID)
-		inst.CodexDetectedAt = entry.UpdatedAt
+		if _, _, err := session.SetField(inst, session.FieldCodexSessionID, sessionID, nil); err != nil {
+			return sessionCreatedMsg{err: fmt.Errorf("cannot confirm imported Codex conversation: %w", err)}
+		}
 		inst.Status = session.StatusStopped
 		if startAfterImport {
 			if err := startImportedSession(inst); err != nil {

@@ -395,10 +395,16 @@ func SetField(inst *Instance, field, value string, extraArgsTokens []string) (ol
 					Msg:   "internal Codex subagent/guardian IDs cannot own an Agent Deck session",
 				}
 			}
-			if CodexSessionRolloutExists(codexHome, normalized) && !IsCodexTopLevelSession(codexHome, normalized) {
+			if CodexSessionRolloutExists(codexHome, normalized) && !codexVerifiedTopLevelSession(codexHome, normalized) {
 				return oldValue, nil, &MutationError{
 					Field: field,
 					Msg:   "Codex session rollout is not a verified top-level thread",
+				}
+			}
+			if !codexResumableInHome(normalized, codexHome) {
+				return oldValue, nil, &MutationError{
+					Field: field,
+					Msg:   "Codex conversation cannot be verified in this Codex home",
 				}
 			}
 		}
@@ -425,6 +431,8 @@ func SetField(inst *Instance, field, value string, extraArgsTokens []string) (ol
 			}
 		}
 		inst.CodexSessionID = normalized
+		inst.CodexBindingConfirmed = normalized != ""
+		clearCodexFreshLaunchState(inst.ID)
 		inst.CodexDetectedAt = time.Now()
 		// Entering this field case is explicit user intent even when a stale
 		// process happens to hold the same local value or the user repeats the

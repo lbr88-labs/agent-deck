@@ -1205,6 +1205,8 @@ func cloneSessionForHubUndo(inst *session.Instance) *session.Instance {
 		OpenCodeStartedAt:         inst.OpenCodeStartedAt,
 		CodexSessionID:            inst.CodexSessionID,
 		CodexDetectedAt:           inst.CodexDetectedAt,
+		CodexBindingRevision:      inst.CodexBindingRevision,
+		CodexBindingConfirmed:     inst.CodexBindingConfirmed,
 		CodexStartedAt:            inst.CodexStartedAt,
 		KiroSessionID:             inst.KiroSessionID,
 		KiroDetectedAt:            inst.KiroDetectedAt,

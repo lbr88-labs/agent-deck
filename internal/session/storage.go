@@ -119,9 +119,10 @@ type InstanceData struct {
 	OpenCodeDetectedAt time.Time `json:"opencode_detected_at,omitempty"`
 
 	// Codex session (persisted for resume after app restart)
-	CodexSessionID       string    `json:"codex_session_id,omitempty"`
-	CodexDetectedAt      time.Time `json:"codex_detected_at,omitempty"`
-	CodexBindingRevision int64     `json:"-"`
+	CodexSessionID        string    `json:"codex_session_id,omitempty"`
+	CodexDetectedAt       time.Time `json:"codex_detected_at,omitempty"`
+	CodexBindingRevision  int64     `json:"-"`
+	CodexBindingConfirmed bool      `json:"codex_binding_confirmed,omitempty"`
 
 	// Kiro session (persisted for resume after app restart)
 	KiroSessionID  string    `json:"kiro_session_id,omitempty"`
@@ -389,6 +390,7 @@ func (s *Storage) SaveWithGroups(instances []*Instance, groupTree *GroupTree) er
 			snapshot.sessionID,
 			snapshot.detectedAt,
 			snapshot.revision,
+			snapshot.confirmed,
 		)
 		row.CodexBindingOverrideIntent = snapshot.overrideIntent
 		rows = append(rows, row)
@@ -443,6 +445,7 @@ type codexBindingSaveSnapshot struct {
 	sessionID      string
 	detectedAt     time.Time
 	revision       int64
+	confirmed      bool
 	overrideIntent bool
 }
 
@@ -458,6 +461,7 @@ func captureCodexBindingSaveSnapshot(i *Instance) codexBindingSaveSnapshot {
 		sessionID:      strings.ToLower(strings.TrimSpace(i.CodexSessionID)),
 		detectedAt:     i.CodexDetectedAt,
 		revision:       i.CodexBindingRevision,
+		confirmed:      i.CodexBindingConfirmed,
 		overrideIntent: i.codexSessionBindingOverrideIntent,
 	}
 }
@@ -466,6 +470,7 @@ func (s codexBindingSaveSnapshot) matches(i *Instance) bool {
 	return strings.EqualFold(strings.TrimSpace(i.CodexSessionID), s.sessionID) &&
 		i.CodexDetectedAt.Equal(s.detectedAt) &&
 		i.CodexBindingRevision == s.revision &&
+		i.CodexBindingConfirmed == s.confirmed &&
 		i.codexSessionBindingOverrideIntent == s.overrideIntent
 }
 
@@ -479,10 +484,16 @@ func (i *Instance) syncCommittedCodexBinding(
 	}
 	i.mu.Lock()
 	defer i.mu.Unlock()
+	if i.stateDB == nil && db != nil && IsCodexCompatible(i.Tool) {
+		// Attach genuinely new CLI instances after their first successful save.
+		// Existing shared instances retain their long-lived owner: a temporary
+		// web-request Storage may save them and then close its own connection.
+		i.stateDB = db
+	}
 	if !snapshot.matches(i) {
 		return
 	}
-	sessionID, detectedAt, revision := statedb.ReadCodexSessionBindingFromToolData(toolData)
+	sessionID, detectedAt, revision, confirmed := statedb.ReadCodexSessionBindingFromToolData(toolData)
 	if !IsCodexCompatible(i.Tool) {
 		// A Codex ID can be edited before switching tools. Preserve its committed
 		// tuple and consume explicit intent, but avoid one lockfile + SQLite point
@@ -490,6 +501,7 @@ func (i *Instance) syncCommittedCodexBinding(
 		i.CodexSessionID = sessionID
 		i.CodexDetectedAt = detectedAt
 		i.CodexBindingRevision = revision
+		i.CodexBindingConfirmed = confirmed
 		i.codexSessionBindingOverrideIntent = false
 		return
 	}
@@ -513,20 +525,22 @@ func (i *Instance) syncCommittedCodexBinding(
 		return
 	}
 	if db != nil {
-		persistedID, persistedAt, persistedRevision, err := db.ReadCodexSessionBinding(i.ID)
+		persistedID, persistedAt, persistedRevision, persistedConfirmed, err := db.ReadCodexSessionBinding(i.ID)
 		if err != nil {
 			storageLog.Warn("codex_post_save_binding_read_failed",
 				slog.String("instance_id", i.ID),
 				slog.String("error", err.Error()))
 		} else {
-			sessionID, detectedAt, revision = persistedID, persistedAt, persistedRevision
+			sessionID, detectedAt, revision, confirmed = persistedID, persistedAt, persistedRevision, persistedConfirmed
 		}
 	}
 
 	previousID := strings.ToLower(strings.TrimSpace(i.CodexSessionID))
+	previousConfirmed := i.CodexBindingConfirmed
 	i.CodexSessionID = sessionID
 	i.CodexDetectedAt = detectedAt
 	i.CodexBindingRevision = revision
+	i.CodexBindingConfirmed = confirmed
 	i.codexSessionBindingOverrideIntent = false
 
 	if lockErr != nil {
@@ -535,19 +549,23 @@ func (i *Instance) syncCommittedCodexBinding(
 	if !detectedAt.IsZero() {
 		ensureCodexBindingFloorState(i.ID, sessionID, detectedAt, revision)
 	}
-	if previousID != sessionID {
+	if previousID != sessionID || previousConfirmed != confirmed {
 		i.hookStatus = ""
 		i.hookEvent = ""
 		i.hookLastUpdate = time.Time{}
 		i.hookSessionID = sessionID
 	}
-	if sessionID == "" {
+	if !confirmed {
 		ClearHookSessionAnchor(i.ID)
 	} else if IsCodexTopLevelSession(i.getCodexHomeDir(), sessionID) {
 		WriteHookSessionAnchor(i.ID, sessionID)
 	}
-	if previousID != sessionID && i.tmuxSession != nil && i.tmuxSession.Exists() {
-		_ = i.tmuxSession.SetEnvironment("CODEX_SESSION_ID", sessionID)
+	if (previousID != sessionID || previousConfirmed != confirmed) && i.tmuxSession != nil && i.tmuxSession.Exists() {
+		envSessionID := sessionID
+		if !confirmed {
+			envSessionID = ""
+		}
+		_ = i.tmuxSession.SetEnvironment("CODEX_SESSION_ID", envSessionID)
 	}
 }
 
@@ -784,13 +802,27 @@ func (s *Storage) InsertSessionAndVerify(newInstance *Instance, groupTree *Group
 	if newInstance == nil {
 		return fmt.Errorf("nil instance")
 	}
+	isCodex := IsCodexCompatible(newInstance.Tool)
+	var snapshot codexBindingSaveSnapshot
+	if isCodex {
+		newInstance.mu.Lock()
+		snapshot = captureCodexBindingSaveSnapshot(newInstance)
+		newInstance.mu.Unlock()
+	}
 	row, err := instanceToRow(newInstance)
 	if err != nil {
 		return err
 	}
+	if isCodex {
+		row.ToolData = statedb.WriteCodexSessionBindingToToolData(row.ToolData, snapshot.sessionID, snapshot.detectedAt, snapshot.revision, snapshot.confirmed)
+		row.CodexBindingOverrideIntent = snapshot.overrideIntent
+	}
 
 	if err := s.saveSingleInstance(row); err != nil {
 		return err
+	}
+	if isCodex {
+		newInstance.syncCommittedCodexBinding(s.db, row.ToolData, snapshot)
 	}
 	// Consume one-shot clear intent after the first successful write, so
 	// verify-retries do not re-emit the explicit empty generic_session_id
@@ -823,12 +855,24 @@ func (s *Storage) InsertSessionAndVerify(newInstance *Instance, groupTree *Group
 		// rewriter but eventually wins because every retry shrinks the
 		// window. Rebuild row each retry so we never replay a stale
 		// intentional-clear snapshot after a concurrent re-bind.
+		if isCodex {
+			newInstance.mu.Lock()
+			snapshot = captureCodexBindingSaveSnapshot(newInstance)
+			newInstance.mu.Unlock()
+		}
 		row, err = instanceToRow(newInstance)
 		if err != nil {
 			return err
 		}
+		if isCodex {
+			row.ToolData = statedb.WriteCodexSessionBindingToToolData(row.ToolData, snapshot.sessionID, snapshot.detectedAt, snapshot.revision, snapshot.confirmed)
+			row.CodexBindingOverrideIntent = snapshot.overrideIntent
+		}
 		if err := s.saveSingleInstance(row); err != nil {
 			return err
+		}
+		if isCodex {
+			newInstance.syncCommittedCodexBinding(s.db, row.ToolData, snapshot)
 		}
 	}
 
@@ -1150,7 +1194,7 @@ func instanceToRow(inst *Instance) (*statedb.InstanceRow, error) {
 	// the positional MarshalToolData signature so legacy binaries that don't
 	// know the key preserve it via MergeToolDataExtras.
 	toolData = statedb.WriteKiroSessionBindingToToolData(toolData, inst.KiroSessionID, inst.KiroDetectedAt)
-	toolData = statedb.WriteCodexBindingRevisionToToolData(toolData, inst.CodexBindingRevision)
+	toolData = statedb.WriteCodexSessionBindingToToolData(toolData, inst.CodexSessionID, inst.CodexDetectedAt, inst.CodexBindingRevision, inst.CodexBindingConfirmed)
 	toolData = WriteIdleTimeoutSecsToToolData(toolData, inst.IdleTimeoutSecs)
 	// #1821: subcommand_passthrough lives in the same extras zone — see
 	// Instance.SubcommandPassthrough's doc for why losing it on reload must
@@ -1300,7 +1344,7 @@ func (s *Storage) LoadLite() ([]*InstanceData, []*GroupData, error) {
 			geminiSID, geminiAt,
 			geminiYolo, geminiModel,
 			opencodeSID, opencodeAt,
-			codexSID, codexAt,
+			_, _,
 			latestPrompt, notes, loadedMCPs,
 			toolOpts,
 			sandboxJSON, sandboxContainer,
@@ -1314,7 +1358,7 @@ func (s *Storage) LoadLite() ([]*InstanceData, []*GroupData, error) {
 			autoLinkedChannels2,
 			color2 := statedb.UnmarshalToolData(r.ToolData)
 		kiroSID, kiroAt := statedb.ReadKiroSessionBindingFromToolData(r.ToolData)
-		codexBindingRevision := statedb.ReadCodexBindingRevisionFromToolData(r.ToolData)
+		codexSID, codexAt, codexBindingRevision, codexBindingConfirmed := statedb.ReadCodexSessionBindingFromToolData(r.ToolData)
 		sandboxCfg := decodeSandboxConfig(sandboxJSON)
 
 		instances[i] = &InstanceData{
@@ -1354,6 +1398,7 @@ func (s *Storage) LoadLite() ([]*InstanceData, []*GroupData, error) {
 			CodexSessionID:            codexSID,
 			CodexDetectedAt:           codexAt,
 			CodexBindingRevision:      codexBindingRevision,
+			CodexBindingConfirmed:     codexBindingConfirmed,
 			KiroSessionID:             kiroSID,
 			KiroDetectedAt:            kiroAt,
 			LatestPrompt:              latestPrompt,
@@ -1435,7 +1480,7 @@ func (s *Storage) LoadWithGroups() ([]*Instance, []*GroupData, error) {
 			geminiSID, geminiAt,
 			geminiYolo, geminiModel,
 			opencodeSID, opencodeAt,
-			codexSID, codexAt,
+			_, _,
 			latestPrompt, notes, loadedMCPs,
 			toolOpts,
 			sandboxJSON, sandboxContainer,
@@ -1449,7 +1494,7 @@ func (s *Storage) LoadWithGroups() ([]*Instance, []*GroupData, error) {
 			autoLinkedChannels,
 			color := statedb.UnmarshalToolData(r.ToolData)
 		kiroSID, kiroAt := statedb.ReadKiroSessionBindingFromToolData(r.ToolData)
-		codexBindingRevision := statedb.ReadCodexBindingRevisionFromToolData(r.ToolData)
+		codexSID, codexAt, codexBindingRevision, codexBindingConfirmed := statedb.ReadCodexSessionBindingFromToolData(r.ToolData)
 		sandboxCfg := decodeSandboxConfig(sandboxJSON)
 
 		data.Instances[i] = &InstanceData{
@@ -1489,6 +1534,7 @@ func (s *Storage) LoadWithGroups() ([]*Instance, []*GroupData, error) {
 			CodexSessionID:            codexSID,
 			CodexDetectedAt:           codexAt,
 			CodexBindingRevision:      codexBindingRevision,
+			CodexBindingConfirmed:     codexBindingConfirmed,
 			KiroSessionID:             kiroSID,
 			KiroDetectedAt:            kiroAt,
 			LatestPrompt:              latestPrompt,
@@ -1764,6 +1810,7 @@ func (s *Storage) convertToInstances(data *StorageData) ([]*Instance, []*GroupDa
 			CodexSessionID:               instData.CodexSessionID,
 			CodexDetectedAt:              instData.CodexDetectedAt,
 			CodexBindingRevision:         instData.CodexBindingRevision,
+			CodexBindingConfirmed:        instData.CodexBindingConfirmed && strings.TrimSpace(instData.CodexSessionID) != "",
 			KiroSessionID:                instData.KiroSessionID,
 			KiroDetectedAt:               instData.KiroDetectedAt,
 			ToolOptionsJSON:              instData.ToolOptionsJSON,

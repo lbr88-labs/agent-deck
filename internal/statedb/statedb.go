@@ -802,9 +802,9 @@ func (s *StateDB) saveInstanceOnce(inst *InstanceRow) error {
 		// generation and promotion provenance from the authoritative row only.
 		toolData = mergeToolDataExtrasWithoutCodexManaged(existingToolData, toolData)
 		toolData = reconcileCodexBindingToolData(existingToolData, toolData, inst.CodexBindingOverrideIntent)
-	} else if errors.Is(queryErr, sql.ErrNoRows) && inst.CodexBindingOverrideIntent {
-		toolData = reconcileCodexBindingToolData(json.RawMessage(`{}`), toolData, true)
-	} else if !errors.Is(queryErr, sql.ErrNoRows) {
+	} else if errors.Is(queryErr, sql.ErrNoRows) {
+		toolData = reconcileCodexBindingToolData(json.RawMessage(`{}`), toolData, inst.CodexBindingOverrideIntent)
+	} else {
 		return queryErr
 	}
 
@@ -1010,6 +1010,14 @@ func (s *StateDB) saveInstancesOnce(insts []*InstanceRow, sweep bool) error {
 		if _, err := tx.Exec(query, args...); err != nil {
 			return err
 		}
+	} else {
+		// Unlike the sweep's DELETE, preparing the INSERT does not acquire
+		// SQLite's writer slot. Reserve it before the authoritative read below
+		// to avoid a WAL read-to-write upgrade failing with SQLITE_BUSY.
+		// Empty upserts returned above, so the first instance is always present.
+		if _, err := tx.Exec("UPDATE instances SET tool_data = tool_data WHERE id = ?", insts[0].ID); err != nil {
+			return err
+		}
 	}
 
 	stmt, err := tx.Prepare(`
@@ -1051,9 +1059,9 @@ func (s *StateDB) saveInstancesOnce(insts []*InstanceRow, sweep bool) error {
 			authoritative := json.RawMessage(authoritativeToolData)
 			toolData = mergeToolDataExtrasWithoutCodexManaged(authoritative, toolData)
 			toolData = reconcileCodexBindingToolData(authoritative, toolData, inst.CodexBindingOverrideIntent)
-		} else if errors.Is(err, sql.ErrNoRows) && inst.CodexBindingOverrideIntent {
-			toolData = reconcileCodexBindingToolData(json.RawMessage(`{}`), toolData, true)
-		} else if !errors.Is(err, sql.ErrNoRows) {
+		} else if errors.Is(err, sql.ErrNoRows) {
+			toolData = reconcileCodexBindingToolData(json.RawMessage(`{}`), toolData, inst.CodexBindingOverrideIntent)
+		} else {
 			return err
 		}
 		finalToolData[idx] = toolData
@@ -1505,15 +1513,17 @@ func (s *StateDB) WriteClaudeSessionBinding(id, sessionID string, detectedAt tim
 }
 
 // WriteCodexSessionBinding is the Codex counterpart of
-// WriteClaudeSessionBinding: it atomically rewrites $.codex_session_id and
-// $.codex_detected_at, advances $.codex_binding_revision, and rotates away any
-// completed-promotion provenance without touching unrelated tool_data keys.
+// WriteClaudeSessionBinding: it atomically rewrites $.codex_session_id,
+// $.codex_detected_at and caller-validated $.codex_binding_confirmed, advances
+// $.codex_binding_revision, and rotates away completed-promotion provenance.
 // See WriteClaudeSessionBinding for the full rationale (PERSIST-12, json_set
 // vs. tool_data = ?, withBusyRetry).
 // This sibling exists because the Codex rebind path in
 // bindCodexSessionFromHook has the same in-memory-only mutation shape
 // that the Claude fix in #1140 addressed — tracked as #1139.
-func (s *StateDB) WriteCodexSessionBinding(id, sessionID string, detectedAt time.Time, expectedRevision int64) (int64, bool, error) {
+func (s *StateDB) WriteCodexSessionBinding(id, sessionID string, detectedAt time.Time, expectedRevision int64, confirmed bool) (int64, bool, error) {
+	sessionID = strings.ToLower(strings.TrimSpace(sessionID))
+	confirmedJSON := strconv.FormatBool(confirmed && sessionID != "")
 	var revision int64
 	matched := false
 	err := withBusyRetry(func() error {
@@ -1525,6 +1535,7 @@ func (s *StateDB) WriteCodexSessionBinding(id, sessionID string, detectedAt time
 			         COALESCE(tool_data, '{}'),
 			         '$.codex_session_id', ?,
 			         '$.codex_detected_at', ?,
+			         '$.codex_binding_confirmed', json(?),
 			         '$.codex_binding_revision',
 			         MAX(COALESCE(CAST(json_extract(tool_data, '$.codex_binding_revision') AS INTEGER), 0), 0) + 1),
 			         '$.codex_promotion_source_id',
@@ -1535,7 +1546,7 @@ func (s *StateDB) WriteCodexSessionBinding(id, sessionID string, detectedAt time
 			 WHERE id = ?
 			   AND MAX(COALESCE(CAST(json_extract(tool_data, '$.codex_binding_revision') AS INTEGER), 0), 0) = ?
 			 RETURNING COALESCE(CAST(json_extract(tool_data, '$.codex_binding_revision') AS INTEGER), 0)`,
-			sessionID, detectedAt.Unix(), id, max(expectedRevision, int64(0)),
+			sessionID, detectedAt.Unix(), confirmedJSON, id, max(expectedRevision, int64(0)),
 		).Scan(&revision)
 		if errors.Is(err, sql.ErrNoRows) {
 			revision = 0
@@ -1555,7 +1566,9 @@ func (s *StateDB) WriteCodexSessionBinding(id, sessionID string, detectedAt time
 // before killing the old pane even when its in-memory revision is stale; this
 // method linearizes that intent by advancing whatever revision is currently
 // committed while still touching only Codex's managed JSON keys.
-func (s *StateDB) WriteCodexSessionBindingOverride(id, sessionID string, detectedAt time.Time) (int64, bool, error) {
+func (s *StateDB) WriteCodexSessionBindingOverride(id, sessionID string, detectedAt time.Time, confirmed bool) (int64, bool, error) {
+	sessionID = strings.ToLower(strings.TrimSpace(sessionID))
+	confirmedJSON := strconv.FormatBool(confirmed && sessionID != "")
 	var revision int64
 	matched := false
 	err := withBusyRetry(func() error {
@@ -1567,6 +1580,7 @@ func (s *StateDB) WriteCodexSessionBindingOverride(id, sessionID string, detecte
 			         COALESCE(tool_data, '{}'),
 			         '$.codex_session_id', ?,
 			         '$.codex_detected_at', ?,
+			         '$.codex_binding_confirmed', json(?),
 			         '$.codex_binding_revision',
 			         MAX(COALESCE(CAST(json_extract(tool_data, '$.codex_binding_revision') AS INTEGER), 0), 0) + 1),
 			         '$.codex_promotion_source_id',
@@ -1576,7 +1590,7 @@ func (s *StateDB) WriteCodexSessionBindingOverride(id, sessionID string, detecte
 			         '$.codex_promotion_completed_at')
 			 WHERE id = ?
 			 RETURNING COALESCE(CAST(json_extract(tool_data, '$.codex_binding_revision') AS INTEGER), 0)`,
-			sessionID, detectedAt.Unix(), id,
+			sessionID, detectedAt.Unix(), confirmedJSON, id,
 		).Scan(&revision)
 		if errors.Is(err, sql.ErrNoRows) {
 			revision = 0
@@ -1602,7 +1616,10 @@ func (s *StateDB) WriteCodexSessionPromotion(
 	sourceID, oldRootID string,
 	startedAt, completedAt time.Time,
 	expectedRevision int64,
+	confirmed bool,
 ) (int64, bool, error) {
+	sessionID = strings.ToLower(strings.TrimSpace(sessionID))
+	confirmedJSON := strconv.FormatBool(confirmed && sessionID != "")
 	var revision int64
 	matched := false
 	err := withBusyRetry(func() error {
@@ -1614,6 +1631,7 @@ func (s *StateDB) WriteCodexSessionPromotion(
 			         COALESCE(tool_data, '{}'),
 			         '$.codex_session_id', ?,
 			         '$.codex_detected_at', ?,
+			         '$.codex_binding_confirmed', json(?),
 			         '$.codex_binding_revision',
 			         MAX(COALESCE(CAST(json_extract(tool_data, '$.codex_binding_revision') AS INTEGER), 0), 0) + 1,
 			         '$.codex_promotion_source_id', ?,
@@ -1624,7 +1642,7 @@ func (s *StateDB) WriteCodexSessionPromotion(
 			 WHERE id = ?
 			   AND MAX(COALESCE(CAST(json_extract(tool_data, '$.codex_binding_revision') AS INTEGER), 0), 0) = ?
 			 RETURNING COALESCE(CAST(json_extract(tool_data, '$.codex_binding_revision') AS INTEGER), 0)`,
-			sessionID, detectedAt.Unix(), sourceID, oldRootID, sessionID,
+			sessionID, detectedAt.Unix(), confirmedJSON, sourceID, oldRootID, sessionID,
 			startedAt.Unix(), completedAt.Unix(), id, max(expectedRevision, int64(0)),
 		).Scan(&revision)
 		if errors.Is(err, sql.ErrNoRows) {
@@ -1645,21 +1663,21 @@ func (s *StateDB) WriteCodexSessionPromotion(
 // notice when a peer process has promoted a legacy guardian/subagent binding
 // to a user-facing fork. Reading only the binding avoids reloading (and later
 // re-saving) a stale whole-row snapshot.
-func (s *StateDB) ReadCodexSessionBinding(id string) (string, time.Time, int64, error) {
+func (s *StateDB) ReadCodexSessionBinding(id string) (string, time.Time, int64, bool, error) {
 	var toolDataString string
 	err := s.db.QueryRow(
 		`SELECT tool_data FROM instances WHERE id = ?`,
 		id,
 	).Scan(&toolDataString)
 	if errors.Is(err, sql.ErrNoRows) {
-		return "", time.Time{}, 0, nil
+		return "", time.Time{}, 0, false, nil
 	}
 	if err != nil {
-		return "", time.Time{}, 0, err
+		return "", time.Time{}, 0, false, err
 	}
 
-	sessionID, detectedAt, revision := ReadCodexSessionBindingFromToolData(json.RawMessage(toolDataString))
-	return sessionID, detectedAt, revision, nil
+	sessionID, detectedAt, revision, confirmed := ReadCodexSessionBindingFromToolData(json.RawMessage(toolDataString))
+	return sessionID, detectedAt, revision, confirmed, nil
 }
 
 // WriteSessionTitle persists an agent-native title change without replacing

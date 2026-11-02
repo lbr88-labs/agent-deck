@@ -49,6 +49,14 @@ func (i *Instance) prepareCodexIdentity(restarting bool) error {
 	if !i.adoptPersistedCodexPromotion(true) {
 		i.adoptCompletedCodexMigrationTarget(true)
 	}
+	if err := i.requireCodexBindingConfirmation(); err != nil {
+		return err
+	}
+	if i.CodexSessionID == "" {
+		if err := i.validateCodexFreshWrapper(); err != nil {
+			return i.refuseCodexLaunch(err.Error())
+		}
+	}
 	if restarting || (i.CodexSessionID == "" && !i.codexFreshStart && !i.IsForkAwaitingStart) {
 		i.lastCodexProbeAt = time.Now()
 		probe := i.queryCodexSessionFromProcessFiles()
@@ -109,7 +117,97 @@ func (i *Instance) prepareCodexIdentity(restarting bool) error {
 	if !codexResumableInHome(i.CodexSessionID, i.getCodexHomeDir()) {
 		return i.refuseCodexLaunch(fmt.Sprintf("conversation %s cannot be verified in this Codex home; its binding is preserved. Restore the conversation/account or explicitly use session restart-fresh", i.CodexSessionID))
 	}
+	// A live-evidence acceptance may have adopted a newer same-ID revocation.
+	return i.requireCodexBindingConfirmation()
+}
+
+// A user/tool wrapper can replace the command entirely or append a resume
+// selector. Preserve the placeholder and allow only literal fresh arguments.
+// Built-in launch/exit-to-shell wrapping is handled separately and remains
+// supported; capture authority follows the Codex child, never that shell.
+func (i *Instance) validateCodexFreshWrapper() error {
+	wrapped, err := i.applyWrapper(wrapperPlaceholder)
+	if err != nil {
+		return err
+	}
+	if !codexWrapperPreservesFreshInvocation(strings.TrimSpace(wrapped)) {
+		return fmt.Errorf("the wrapper changes the verified fresh Codex invocation; use {command} with literal fresh options, or explicitly bind the intended native conversation. The existing pane, binding and history are preserved")
+	}
 	return nil
+}
+
+func codexWrapperPreservesFreshInvocation(wrapper string) bool {
+	if wrapper == wrapperPlaceholder {
+		return true
+	}
+	if !strings.HasPrefix(wrapper, wrapperPlaceholder+" ") && !strings.HasPrefix(wrapper, wrapperPlaceholder+"\t") {
+		return false
+	}
+	suffix := strings.TrimSpace(wrapper[len(wrapperPlaceholder):])
+	if !codexLiteralShellArguments(suffix) {
+		return false
+	}
+	var args []string
+	for suffix != "" {
+		word, rest, ok := nextShellWord(suffix)
+		if !ok {
+			return false
+		}
+		args = append(args, word)
+		suffix = strings.TrimSpace(rest)
+	}
+	command, remaining, ok := codexInteractiveArguments(args)
+	if !ok || command == "resume" || command == "r" || command == "fork" {
+		return false
+	}
+	trailingCommand, _, ok := codexInteractiveArguments(remaining)
+	return ok && trailingCommand == ""
+}
+
+// This deliberately accepts literal words, not arbitrary shell expressions.
+// Preserve quoted punctuation in prompts/options, but never certify expansions,
+// command substitution, redirections, globbing, or another command.
+func codexLiteralShellArguments(value string) bool {
+	var quote byte
+	for index := 0; index < len(value); index++ {
+		c := value[index]
+		if quote == '\'' {
+			if c == '\'' {
+				quote = 0
+			}
+			continue
+		}
+		if c == '\\' {
+			index++
+			if index >= len(value) || value[index] == '\n' || value[index] == '\r' ||
+				(quote == '"' && !strings.ContainsRune("\"\\$`", rune(value[index]))) {
+				return false
+			}
+			continue
+		}
+		if quote == '"' {
+			if c == '"' {
+				quote = 0
+			} else if c == '$' || c == '`' {
+				return false
+			}
+			continue
+		}
+		switch c {
+		case '\'', '"':
+			quote = c
+		case '$', '`', ';', '|', '&', '<', '>', '(', ')', '\n', '\r', '*', '?', '[', ']', '{', '}', '~', '#':
+			return false
+		}
+	}
+	return quote == 0
+}
+
+func (i *Instance) requireCodexBindingConfirmation() error {
+	if i.CodexSessionID == "" || i.CodexBindingConfirmed {
+		return nil
+	}
+	return i.refuseCodexLaunch(fmt.Sprintf("the legacy conversation binding is unconfirmed; verify the intended native conversation, then run `agent-deck session set %s codex-session-id <verified-uuid>` (the same UUID also confirms it). The existing pane, binding and history are preserved. Use session restart-fresh only to deliberately start a new conversation", i.ID))
 }
 
 func (i *Instance) refuseCodexLaunch(reason string) error {
@@ -192,9 +290,12 @@ func (i *Instance) validateCodexSandboxHome(command string) error {
 
 // A hook's AGENTDECK_INSTANCE_ID can be inherited by a shared Codex daemon.
 // Only an emitter in this pane's live process tree may introduce a new ID.
-// Existing-ID status updates need no new identity authority.
+// Same-ID status updates may reuse established proof, never confirm a legacy ID.
 func (i *Instance) codexHookOwnsCandidate(status *HookStatus) bool {
 	if status == nil || strings.TrimSpace(status.SessionID) == "" {
+		return false
+	}
+	if i.CodexSessionID != "" && !i.CodexBindingConfirmed {
 		return false
 	}
 	if strings.EqualFold(strings.TrimSpace(status.SessionID), strings.TrimSpace(i.CodexSessionID)) {
@@ -215,6 +316,10 @@ func (i *Instance) codexHookEmitterOwns(status *HookStatus) bool {
 		status.CodexEmitterIdentity == "" || status.CodexEmitterIdentity != CodexProcessIdentity(status.CodexEmitterPID) {
 		return false
 	}
+	return i.codexInteractiveProcessPID() == status.CodexEmitterPID
+}
+
+func (i *Instance) codexInteractiveProcessPID() int {
 	// Npm/shell launchers can be ancestors of the native TUI. Prefer the
 	// unique native process; a second interactive TUI in the same tree makes
 	// foreground ownership ambiguous, not permission to take either chat.
@@ -229,15 +334,18 @@ func (i *Instance) codexHookEmitterOwns(status *HookStatus) bool {
 			launcherPID, launchers = pid, launchers+1
 		default:
 			if nativePID != 0 {
-				return false
+				return 0
 			}
 			nativePID = pid
 		}
 	}
 	if nativePID != 0 {
-		return nativePID == status.CodexEmitterPID
+		return nativePID
 	}
-	return launchers == 1 && launcherPID == status.CodexEmitterPID
+	if launchers == 1 {
+		return launcherPID
+	}
+	return 0
 }
 
 var codexBootIdentity struct {
@@ -350,8 +458,15 @@ func codexProcessArguments(pid int) []string {
 }
 
 func isInteractiveCodexArgs(args []string) bool {
+	_, _, ok := codexInteractiveInvocation(args)
+	return ok
+}
+
+// Return the first positional argument and its operands without confusing
+// option values or a prompt following "--" with a native subcommand.
+func codexInteractiveInvocation(args []string) (string, []string, bool) {
 	if len(args) == 0 {
-		return false
+		return "", nil, false
 	}
 	executable := strings.ToLower(filepath.Base(args[0]))
 	switch executable {
@@ -359,7 +474,7 @@ func isInteractiveCodexArgs(args []string) bool {
 		// A directly-executed wrapper script is fine; a shell's -c payload
 		// merely mentioning Codex is not process identity evidence.
 		if len(args) < 2 || strings.HasPrefix(args[1], "-") {
-			return false
+			return "", nil, false
 		}
 		args = args[1:]
 		executable = strings.ToLower(filepath.Base(args[0]))
@@ -367,9 +482,13 @@ func isInteractiveCodexArgs(args []string) bool {
 	executable = strings.TrimSuffix(executable, ".exe")
 	if executable != "codex" && executable != "codex.js" &&
 		!strings.HasPrefix(executable, "codex-") && !strings.HasPrefix(executable, "codex_") {
-		return false
+		return "", nil, false
 	}
-	for index := 1; index < len(args); index++ {
+	return codexInteractiveArguments(args[1:])
+}
+
+func codexInteractiveArguments(args []string) (string, []string, bool) {
+	for index := 0; index < len(args); index++ {
 		arg := args[index]
 		option, _, inlineValue := strings.Cut(arg, "=")
 		switch option {
@@ -378,30 +497,30 @@ func isInteractiveCodexArgs(args []string) bool {
 			if !inlineValue {
 				index++
 				if index >= len(args) {
-					return false
+					return "", nil, false
 				}
 			}
 			continue
-		case "--oss", "--full-auto", "--dangerously-bypass-approvals-and-sandbox", "--yolo", "--search", "--no-alt-screen":
+		case "--oss", "--full-auto", "--dangerously-bypass-approvals-and-sandbox", "--yolo", "--search", "--no-alt-screen", "--no-daemon":
 			if inlineValue {
-				return false
+				return "", nil, false
 			}
 			continue
 		case "--":
-			return true
+			return "", nil, true
 		}
 		if strings.HasPrefix(arg, "-") {
-			return false
+			return "", nil, false
 		}
 		switch arg {
 		case "app-server", "exec", "e", "review", "mcp", "mcp-server", "cloud",
 			"login", "logout", "features", "debug", "apply", "completion", "sandbox", "proto":
-			return false
+			return "", nil, false
 		default:
-			return true
+			return arg, args[index+1:], true
 		}
 	}
-	return true
+	return "", nil, true
 }
 
 func codexProcFDWritable(path string) bool {

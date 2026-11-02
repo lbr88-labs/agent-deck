@@ -8,6 +8,7 @@ import (
 
 const (
 	codexBindingRevisionKey    = "codex_binding_revision"
+	codexBindingConfirmedKey   = "codex_binding_confirmed"
 	codexPromotionSourceKey    = "codex_promotion_source_id"
 	codexPromotionOldRootKey   = "codex_promotion_old_root_id"
 	codexPromotionTargetKey    = "codex_promotion_target_id"
@@ -36,50 +37,15 @@ func toolDataPositiveInt64(values map[string]any, key string) int64 {
 	return int64(value)
 }
 
-// ReadCodexBindingRevisionFromToolData extracts the durable generation used to
-// order concurrent Codex binding writers. Missing, malformed, and non-positive
-// revisions are treated as the legacy generation zero.
-func ReadCodexBindingRevisionFromToolData(data json.RawMessage) int64 {
-	var values map[string]any
-	if json.Unmarshal(data, &values) != nil {
-		return 0
-	}
-	return toolDataPositiveInt64(values, codexBindingRevisionKey)
-}
-
-// WriteCodexBindingRevisionToToolData returns data with the supplied durable
-// Codex binding generation. A non-positive revision removes the key so legacy
-// and newly-created rows remain compact generation-zero records.
-func WriteCodexBindingRevisionToToolData(data json.RawMessage, revision int64) json.RawMessage {
-	var values map[string]json.RawMessage
-	if len(data) == 0 {
-		values = make(map[string]json.RawMessage)
-	} else if json.Unmarshal(data, &values) != nil {
-		return data
-	}
-	if values == nil {
-		values = make(map[string]json.RawMessage)
-	}
-	if revision > 0 {
-		revisionJSON, err := json.Marshal(revision)
-		if err != nil {
-			return data
-		}
-		values[codexBindingRevisionKey] = revisionJSON
-	} else {
-		delete(values, codexBindingRevisionKey)
-	}
-	out, err := json.Marshal(values)
-	if err != nil {
-		return data
-	}
-	return out
+func toolDataCodexBindingConfirmed(values map[string]any) bool {
+	confirmed, _ := values[codexBindingConfirmedKey].(bool)
+	return confirmed && toolDataString(values, "codex_session_id") != ""
 }
 
 // WriteCodexSessionBindingToToolData overwrites the serialized Codex tuple with
 // a caller-captured snapshot. Storage uses this after instanceToRow so a
 // concurrent in-memory edit cannot leak partially into an older save payload.
-func WriteCodexSessionBindingToToolData(data json.RawMessage, sessionID string, detectedAt time.Time, revision int64) json.RawMessage {
+func WriteCodexSessionBindingToToolData(data json.RawMessage, sessionID string, detectedAt time.Time, revision int64, confirmed bool) json.RawMessage {
 	var values map[string]any
 	if len(data) == 0 {
 		values = make(map[string]any)
@@ -89,7 +55,9 @@ func WriteCodexSessionBindingToToolData(data json.RawMessage, sessionID string, 
 	if values == nil {
 		values = make(map[string]any)
 	}
-	values["codex_session_id"] = strings.ToLower(strings.TrimSpace(sessionID))
+	sessionID = strings.ToLower(strings.TrimSpace(sessionID))
+	values["codex_session_id"] = sessionID
+	values[codexBindingConfirmedKey] = confirmed && sessionID != ""
 	if detectedAt.IsZero() {
 		delete(values, "codex_detected_at")
 	} else {
@@ -110,10 +78,10 @@ func WriteCodexSessionBindingToToolData(data json.RawMessage, sessionID string, 
 // ReadCodexSessionBindingFromToolData extracts the complete durable Codex
 // binding tuple used by Storage after a whole-row save has been reconciled at
 // SQLite's write boundary.
-func ReadCodexSessionBindingFromToolData(data json.RawMessage) (string, time.Time, int64) {
+func ReadCodexSessionBindingFromToolData(data json.RawMessage) (string, time.Time, int64, bool) {
 	var values map[string]any
 	if json.Unmarshal(data, &values) != nil {
-		return "", time.Time{}, 0
+		return "", time.Time{}, 0, false
 	}
 
 	sessionID := toolDataString(values, "codex_session_id")
@@ -121,20 +89,22 @@ func ReadCodexSessionBindingFromToolData(data json.RawMessage) (string, time.Tim
 	if detectedAtUnix := toolDataPositiveInt64(values, "codex_detected_at"); detectedAtUnix > 0 {
 		detectedAt = time.Unix(detectedAtUnix, 0)
 	}
-	return sessionID, detectedAt, toolDataPositiveInt64(values, codexBindingRevisionKey)
+	return sessionID, detectedAt, toolDataPositiveInt64(values, codexBindingRevisionKey), toolDataCodexBindingConfirmed(values)
 }
 
-// stripCodexManagedExtras removes keys which MergeToolDataExtras would
-// otherwise mistake for user-managed unknown fields. These values have their
-// own concurrency semantics and are restored, when appropriate, only by
-// reconcileCodexBindingToolData using the authoritative row in the active
-// SQLite write transaction.
+// stripCodexManagedExtras prevents MergeToolDataExtras from copying Codex
+// identity fields individually as sticky or unknown keys. The entire tuple
+// and promotion provenance are reconciled against the authoritative row in
+// the active SQLite write transaction instead.
 func stripCodexManagedExtras(data json.RawMessage) json.RawMessage {
 	var values map[string]json.RawMessage
 	if json.Unmarshal(data, &values) != nil || values == nil {
 		return data
 	}
+	delete(values, "codex_session_id")
+	delete(values, "codex_detected_at")
 	delete(values, codexBindingRevisionKey)
+	delete(values, codexBindingConfirmedKey)
 	for _, key := range codexPromotionKeys {
 		delete(values, key)
 	}
@@ -175,6 +145,7 @@ func copyCodexBinding(authoritative, incoming map[string]any, revision int64) {
 			delete(incoming, key)
 		}
 	}
+	incoming[codexBindingConfirmedKey] = toolDataCodexBindingConfirmed(authoritative)
 	if revision > 0 {
 		incoming[codexBindingRevisionKey] = revision
 	} else {
@@ -201,7 +172,7 @@ func reconcileCodexBindingToolData(existing, incoming json.RawMessage, explicitO
 	if json.Unmarshal(existing, &oldValues) != nil || json.Unmarshal(incoming, &newValues) != nil {
 		return incoming
 	}
-	if oldValues == nil || newValues == nil {
+	if newValues == nil {
 		return incoming
 	}
 
@@ -213,6 +184,7 @@ func reconcileCodexBindingToolData(existing, incoming json.RawMessage, explicitO
 
 	existingID := toolDataString(oldValues, "codex_session_id")
 	incomingID := toolDataString(newValues, "codex_session_id")
+	_, incomingHasID := newValues["codex_session_id"]
 	existingRevision := toolDataPositiveInt64(oldValues, codexBindingRevisionKey)
 	incomingRevision := toolDataPositiveInt64(newValues, codexBindingRevisionKey)
 
@@ -221,10 +193,17 @@ func reconcileCodexBindingToolData(existing, incoming json.RawMessage, explicitO
 			incomingRevision = existingRevision
 		}
 		newValues[codexBindingRevisionKey] = incomingRevision + 1
+	} else if !incomingHasID && (existingID != "" || existingRevision > 0) {
+		// Omission still means an unaware writer, but preserve the whole
+		// binding rather than attaching the old ID to incoming proof.
+		copyCodexBinding(oldValues, newValues, existingRevision)
 	} else if existingRevision > incomingRevision ||
-		(existingRevision > 0 && existingRevision == incomingRevision && existingID != incomingID) {
-		// A lower generation is stale. Equal non-zero generations must describe
-		// the same binding; if they do not, SQLite's currently committed row wins.
+		(existingRevision == incomingRevision &&
+			((existingRevision > 0 && existingID != incomingID) ||
+				(existingID == incomingID && toolDataCodexBindingConfirmed(oldValues) != toolDataCodexBindingConfirmed(newValues)))) {
+		// A lower generation is stale. Equal committed generations cannot
+		// change ownership proof without an explicit override, even for a
+		// legacy generation-zero binding with the same ID.
 		copyCodexBinding(oldValues, newValues, existingRevision)
 	} else {
 		sourceID := toolDataString(oldValues, codexPromotionSourceKey)
@@ -238,6 +217,9 @@ func reconcileCodexBindingToolData(existing, incoming json.RawMessage, explicitO
 		}
 		// Otherwise the incoming generation/binding is newer (or this is a
 		// generation-zero ordinary save) and intentionally rotates provenance.
+	}
+	if _, ok := newValues[codexBindingConfirmedKey]; ok {
+		newValues[codexBindingConfirmedKey] = toolDataCodexBindingConfirmed(newValues)
 	}
 
 	merged, err := json.Marshal(newValues)

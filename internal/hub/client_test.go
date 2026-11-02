@@ -1493,6 +1493,81 @@ func TestLocalSessionSourceMarksForkableSessions(t *testing.T) {
 	}
 }
 
+func TestLocalSessionSourcePublishesCodexForkCapabilityFromConfirmedBinding(t *testing.T) {
+	isolateHubActionConfig(t)
+	t.Setenv("XDG_CACHE_HOME", filepath.Join(os.Getenv("HOME"), ".cache"))
+	codexHome := filepath.Join(os.Getenv("HOME"), ".codex")
+	t.Setenv("CODEX_HOME", codexHome)
+	const profile = "hub-codex-fork-proof"
+	projectPath := t.TempDir()
+	cases := []struct {
+		name      string
+		revision  int64
+		proofJSON string
+		wantFork  bool
+	}{
+		{name: "confirmed_zero_revision", proofJSON: `,"codex_binding_confirmed":true`, wantFork: true},
+		{name: "confirmed_versioned", revision: 7, proofJSON: `,"codex_binding_confirmed":true`, wantFork: true},
+		{name: "legacy_zero_revision"},
+		{name: "legacy_versioned", revision: 7},
+		{name: "explicitly_unconfirmed", revision: 7, proofJSON: `,"codex_binding_confirmed":false`},
+	}
+	storage, err := session.NewStorageWithProfile(profile)
+	if err != nil {
+		t.Fatalf("NewStorageWithProfile: %v", err)
+	}
+	defer storage.Close()
+	for index, tc := range cases {
+		nativeID := fmt.Sprintf("019f0000-0000-7000-8000-%012d", index+1)
+		writeHubCodexRollout(t, codexHome, nativeID, projectPath)
+		if err := storage.GetDB().SaveInstance(&statedb.InstanceRow{
+			ID:          tc.name,
+			Title:       tc.name,
+			ProjectPath: projectPath,
+			GroupPath:   session.DefaultGroupPath,
+			Tool:        "codex",
+			Command:     "codex",
+			Status:      string(session.StatusWaiting),
+			CreatedAt:   time.Now(),
+			ToolData: json.RawMessage(fmt.Sprintf(
+				`{"codex_session_id":%q,"codex_detected_at":1700000000,"codex_binding_revision":%d%s}`,
+				nativeID, tc.revision, tc.proofJSON)),
+		}); err != nil {
+			t.Fatalf("SaveInstance %s: %v", tc.name, err)
+		}
+	}
+
+	source := LocalSessionSource{
+		Profile:      profile,
+		webAvailable: func(context.Context) bool { return false },
+		substate:     func(context.Context, *statedb.InstanceRow) string { return "" },
+		windows:      func(context.Context, *statedb.InstanceRow) []WindowInfo { return nil },
+	}
+	client := &Client{source: source}
+	snapshot, err := client.buildSnapshot(context.Background())
+	if err != nil {
+		t.Fatalf("buildSnapshot: %v", err)
+	}
+	if len(snapshot.Sessions) != len(cases) {
+		t.Fatalf("published sessions = %d, want %d", len(snapshot.Sessions), len(cases))
+	}
+	published := make(map[string]SessionInfo, len(snapshot.Sessions))
+	for _, info := range snapshot.Sessions {
+		published[info.ID] = info
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			info, ok := published[tc.name]
+			if !ok {
+				t.Fatal("session missing from published snapshot")
+			}
+			if info.CanFork != tc.wantFork {
+				t.Fatalf("published CanFork = %v, want %v", info.CanFork, tc.wantFork)
+			}
+		})
+	}
+}
+
 func TestLocalSessionSourceMissingProfileDoesNotCreateStorage(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)

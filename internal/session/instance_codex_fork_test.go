@@ -33,6 +33,7 @@ func TestCanForkCodex(t *testing.T) {
 
 	inst := NewInstanceWithTool("cx", "/tmp/p", "codex")
 	inst.CodexSessionID = sid
+	inst.CodexBindingConfirmed = true
 	inst.CodexDetectedAt = time.Now()
 	if !inst.CanForkCodex() {
 		t.Fatal("codex session with an on-disk rollout must be forkable")
@@ -52,6 +53,7 @@ func TestCreateForkedCodexInstance_UsesWorktreeAndForkCommand(t *testing.T) {
 
 	parent := NewInstanceWithTool("cx parent", "/tmp/original", "codex")
 	parent.CodexSessionID = sid
+	parent.CodexBindingConfirmed = true
 	parent.CodexDetectedAt = time.Now()
 
 	opts := &ClaudeOptions{
@@ -78,6 +80,96 @@ func TestCreateForkedCodexInstance_UsesWorktreeAndForkCommand(t *testing.T) {
 	}
 }
 
+func TestCreateForkedCodexInstance_NativeIsolationArgv(t *testing.T) {
+	for _, client := range []struct {
+		name string
+		help string
+		flag string
+	}{
+		{"supported", "Options:\n  --no-daemon  Bypass an existing daemon\n", "--no-daemon\n"},
+		{"older", "Options:\n  --model <MODEL>\n", ""},
+	} {
+		t.Run(client.name, func(t *testing.T) {
+			home := t.TempDir()
+			t.Setenv("HOME", home)
+			isolateConfigHomeXDG(t)
+			t.Setenv("CODEX_HOME", filepath.Join(home, ".codex"))
+			binDir, logPath, _ := codexIsolationClient(t, client.help)
+			command := "CODEX_TEST_SCOPE=fork " + shellescape.Quote(filepath.Join(binDir, "codex"))
+			t.Cleanup(resetUserConfigCache(t, &UserConfig{Codex: CodexSettings{Command: command, YoloMode: true}}))
+			const parentID = "11111111-2222-4333-8444-555555555555"
+			seedCodexRollout(t, os.Getenv("CODEX_HOME"), parentID)
+			parent := NewInstanceWithTool("native parent", home, "codex")
+			parent.Command = "codex"
+			parent.CodexSessionID = parentID
+			parent.CodexBindingConfirmed = true
+			if err := parent.ApplyLaunchReasoningEffort("high"); err != nil {
+				t.Fatal(err)
+			}
+			forked, built, err := parent.CreateForkedCodexInstanceWithOptions("native fork", "", nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			want := client.flag + "--yolo\n--config\nmodel_reasoning_effort=high\nfork\n" + parentID
+			if got := runBuiltCommandCapturingArgv(t, built, binDir, logPath); got != want {
+				t.Fatalf("native fork argv = %q, want %q; command: %s", got, want, built)
+			}
+
+			// A restart goes through the shared normal builder and must resume
+			// the child's current native conversation, not replay the fork.
+			const childID = "66666666-7777-4888-8999-aaaaaaaaaaaa"
+			seedCodexRollout(t, os.Getenv("CODEX_HOME"), childID)
+			forked.CodexSessionID = childID
+			forked.CodexBindingConfirmed = true
+			built = forked.buildCodexCommand(forked.Command)
+			want = client.flag + "--yolo\n--config\nmodel_reasoning_effort=high\nresume\n" + childID
+			if got := runBuiltCommandCapturingArgv(t, built, binDir, logPath); got != want {
+				t.Fatalf("native fork restart argv = %q, want %q; command: %s", got, want, built)
+			}
+		})
+	}
+}
+
+func TestCreateForkedCodexInstance_ExactResumeParentRestartsChildNativeArgv(t *testing.T) {
+	for _, source := range []string{"explicit", "configured"} {
+		t.Run(source, func(t *testing.T) {
+			home := t.TempDir()
+			t.Setenv("HOME", home)
+			isolateConfigHomeXDG(t)
+			t.Setenv("CODEX_HOME", filepath.Join(home, ".codex"))
+			binDir, logPath, _ := codexIsolationClient(t, "Options:\n  --no-daemon\n")
+			const parentID = "11111111-2222-4333-8444-555555555555"
+			const childID = "66666666-7777-4888-8999-aaaaaaaaaaaa"
+			command := "CODEX_TEST_SCOPE=fork " + shellescape.Quote(filepath.Join(binDir, "codex")) + " resume " + parentID
+			cfg := &UserConfig{}
+			t.Cleanup(resetUserConfigCache(t, cfg))
+			seedCodexRollout(t, os.Getenv("CODEX_HOME"), parentID)
+			parent := NewInstanceWithTool("exact parent", home, "codex")
+			parent.Command = command
+			if source == "configured" {
+				cfg.Codex.Command = command
+				parent.Command = "codex"
+			}
+			parent.CodexSessionID = parentID
+			parent.CodexBindingConfirmed = true
+			forked, built, err := parent.CreateForkedCodexInstanceWithOptions("exact fork", "", nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := runBuiltCommandCapturingArgv(t, built, binDir, logPath); got != "--no-daemon\nfork\n"+parentID {
+				t.Fatalf("exact-parent fork argv = %q, want isolated fork of parent UUID", got)
+			}
+			seedCodexRollout(t, os.Getenv("CODEX_HOME"), childID)
+			forked.CodexSessionID = childID
+			forked.CodexBindingConfirmed = true
+			built = forked.buildCodexCommand(forked.Command)
+			if got := runBuiltCommandCapturingArgv(t, built, binDir, logPath); got != "--no-daemon\nresume\n"+childID {
+				t.Fatalf("fork restart argv = %q, want isolated resume of child UUID", got)
+			}
+		})
+	}
+}
+
 // TestCreateForkedCodexInstance_RejectsParentBindingDuringStartup reproduces
 // the live rename collision from pr-review-and-merge 3. While `codex fork`
 // initializes, the child process temporarily has the parent's rollout open.
@@ -92,6 +184,7 @@ func TestCreateForkedCodexInstance_RejectsParentBindingDuringStartup(t *testing.
 
 	parent := NewInstanceWithTool("parent", t.TempDir(), "codex")
 	parent.CodexSessionID = parentID
+	parent.CodexBindingConfirmed = true
 	parent.CodexDetectedAt = time.Now()
 	forked, _, err := parent.CreateForkedCodexInstanceWithOptions("fork", "", nil)
 	if err != nil {
@@ -120,12 +213,8 @@ func TestCodexBootstrapExcludesPersistedBindings(t *testing.T) {
 	oldID := "13131313-2222-4333-8444-555555555555"
 	newID := "14141414-2222-4333-8444-555555555555"
 	projectPath := t.TempDir()
-	seedCodexRollout(t, codexHome, oldID)
-	seedCodexRollout(t, codexHome, newID)
-
-	rolloutDir := filepath.Join(codexHome, "sessions", "2026", "06", "06")
-	oldPath := filepath.Join(rolloutDir, "rollout-20260606T000000-"+oldID+".jsonl")
-	newPath := filepath.Join(rolloutDir, "rollout-20260606T000000-"+newID+".jsonl")
+	oldPath := writeCodexRolloutWithSource(t, codexHome, oldID, projectPath, "cli")
+	newPath := writeCodexRolloutWithSource(t, codexHome, newID, projectPath, "cli")
 	now := time.Now()
 	if err := os.Chtimes(newPath, now.Add(-time.Second), now.Add(-time.Second)); err != nil {
 		t.Fatalf("age new rollout: %v", err)
@@ -149,9 +238,12 @@ func TestCodexBootstrapExcludesPersistedBindings(t *testing.T) {
 
 	created := NewInstanceWithTool("new", projectPath, "codex")
 	created.CodexStartedAt = now.Add(-time.Minute).UnixMilli()
-	if changed := created.acceptCodexSessionID(oldID, false, codexBindingProcess); changed {
-		t.Fatal("central binding gate accepted a Codex thread already owned by another Agent Deck row")
-	}
+	created.UpdateHookStatus(ownedCodexHook(t, created, &HookStatus{
+		Status:    "running",
+		SessionID: oldID,
+		Event:     "SessionStart",
+		UpdatedAt: time.Now(),
+	}))
 	if created.CodexSessionID != "" {
 		t.Fatalf("CodexSessionID = %q after owned candidate, want empty", created.CodexSessionID)
 	}
@@ -169,6 +261,7 @@ func TestCreateForkedCodexInstance_PreservesReasoningEffort(t *testing.T) {
 
 	parent := NewInstanceWithTool("cx parent", "/tmp/original", "codex")
 	parent.CodexSessionID = sid
+	parent.CodexBindingConfirmed = true
 	parent.CodexDetectedAt = time.Now()
 	if err := parent.ApplyLaunchReasoningEffort("high"); err != nil {
 		t.Fatalf("ApplyLaunchReasoningEffort: %v", err)
@@ -206,14 +299,15 @@ func TestCreateForkedCodexInstance_UsesConfiguredCodexHome(t *testing.T) {
 
 	parent := NewInstanceWithTool("cx parent", "/tmp/original", "codex")
 	parent.CodexSessionID = sid
+	parent.CodexBindingConfirmed = true
 	parent.CodexDetectedAt = time.Now()
 
 	_, cmd, err := parent.CreateForkedCodexInstanceWithOptions("cx parent (fork)", "", nil)
 	if err != nil {
 		t.Fatalf("CreateForkedCodexInstanceWithOptions: %v", err)
 	}
-	want := `CODEX_HOME="` + codexHome + `" codex fork ` + sid
-	if !strings.Contains(cmd, want) {
+	want := `CODEX_HOME="` + codexHome + `" codex `
+	if !strings.Contains(cmd, want) || !strings.HasSuffix(cmd, " fork "+sid) {
 		t.Fatalf("configured CODEX_HOME command must be preserved for fork; want %q in %q", want, cmd)
 	}
 }
@@ -238,6 +332,7 @@ func TestCreateForkedCodexInstance_QuotesConfiguredCodexConfigDir(t *testing.T) 
 
 	parent := NewInstanceWithTool("cx parent", "/tmp/original", "codex")
 	parent.CodexSessionID = sid
+	parent.CodexBindingConfirmed = true
 	parent.CodexDetectedAt = time.Now()
 
 	_, cmd, err := parent.CreateForkedCodexInstanceWithOptions("cx parent (fork)", "", nil)
@@ -278,6 +373,7 @@ func TestCreateForkedCodexInstance_PreservesCompatibleToolIdentity(t *testing.T)
 	parent := NewInstanceWithTool("cx parent", "/tmp/original", "my-codex")
 	parent.Command = "codex-wrapper"
 	parent.CodexSessionID = sid
+	parent.CodexBindingConfirmed = true
 	parent.CodexDetectedAt = time.Now()
 
 	forked, cmd, err := parent.CreateForkedCodexInstanceWithOptions("cx parent (fork)", "", nil)
@@ -290,7 +386,7 @@ func TestCreateForkedCodexInstance_PreservesCompatibleToolIdentity(t *testing.T)
 	if !strings.Contains(cmd, "AGENTDECK_TOOL=my-codex") {
 		t.Fatalf("fork command must preserve AGENTDECK_TOOL identity; got %q", cmd)
 	}
-	if !strings.Contains(cmd, "codex-wrapper fork "+sid) {
+	if !strings.Contains(cmd, "codex-wrapper ") || !strings.HasSuffix(cmd, " fork "+sid) {
 		t.Fatalf("fork command must use the compatible tool command; got %q", cmd)
 	}
 }
@@ -307,6 +403,7 @@ func TestCreateForkedCodexInstance_ShellQuotesEnvPrefix(t *testing.T) {
 
 	parent := NewInstanceWithTool("cx parent", "/tmp/original", "codex")
 	parent.CodexSessionID = sid
+	parent.CodexBindingConfirmed = true
 	parent.CodexDetectedAt = time.Now()
 
 	evil := "pwn $(touch /tmp/agentdeck-pwn)"

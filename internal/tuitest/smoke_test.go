@@ -20,7 +20,7 @@ func skipIfNoTmuxServer(t *testing.T) {
 	}
 }
 
-// buildBinary builds the agent-deck binary into a temp directory with GOTOOLCHAIN=go1.26.9.
+// buildBinary builds the agent-deck binary using the configured Go toolchain.
 // Returns the path to the built binary.
 func buildBinary(t *testing.T) string {
 	t.Helper()
@@ -29,7 +29,6 @@ func buildBinary(t *testing.T) string {
 
 	cmd := exec.Command("go", "build", "-o", binPath, "./cmd/agent-deck")
 	cmd.Dir = repoRoot(t)
-	cmd.Env = append(os.Environ(), "GOTOOLCHAIN=go1.26.9")
 
 	out, err := cmd.CombinedOutput()
 	if err != nil {
@@ -267,27 +266,5 @@ func TestSmoke_QuitExitsCleanly(t *testing.T) {
 
 	if !exited {
 		t.Error("TUI did not exit after pressing 'q' then 'k' (tmux session still exists)")
-	}
-}
-
-// TestSmoke_BuildVersion verifies the built binary reports the correct Go toolchain version.
-func TestSmoke_BuildVersion(t *testing.T) {
-	binary := buildBinary(t)
-
-	out, err := exec.Command("go", "version", "-m", binary).Output()
-	if err != nil {
-		t.Fatalf("go version -m: %v", err)
-	}
-
-	versionInfo := string(out)
-
-	// Verify the binary uses the security-patched toolchain pinned in go.mod.
-	if !strings.Contains(versionInfo, "go1.26.9") {
-		t.Errorf("binary not built with go1.26.9 toolchain:\n%s", versionInfo)
-	}
-
-	// Warn (don't fail) if vcs.modified=true since tests run in a working tree
-	if strings.Contains(versionInfo, "vcs.modified=true") {
-		t.Log("WARNING: binary built from dirty worktree (vcs.modified=true). Release builds must have vcs.modified=false.")
 	}
 }

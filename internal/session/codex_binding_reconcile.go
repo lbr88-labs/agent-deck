@@ -10,12 +10,10 @@ import (
 // peer Agent Deck process migrates its legacy guardian/subagent binding to a
 // user-facing Codex fork.
 //
-// The profile database is authoritative only for this one-way promotion. We
-// deliberately do not adopt the child's recorded old root: older builds could
-// write that root while the hidden child contained newer work, and resuming it
-// would strand that history. A promoted target must be a different, known
-// top-level rollout. This method never writes the database; doing so from the
-// stale snapshot would recreate the cross-process clobber it is meant to stop.
+// The CAS generation orders writers; the confirmation marker separately states
+// ownership. Always adopt them together. Generation-zero confirmed bindings may
+// be bootstrapped with a targeted write, but native existence or DB agreement
+// must never confirm a legacy association.
 func (i *Instance) adoptPersistedCodexPromotion(syncTmuxEnv bool) bool {
 	if i == nil {
 		return false
@@ -42,12 +40,12 @@ func (i *Instance) adoptPersistedCodexPromotionLocked(syncTmuxEnv bool) bool {
 	currentID := strings.ToLower(strings.TrimSpace(i.CodexSessionID))
 	db := i.metadataStateDB()
 	if db == nil {
-		if currentID != "" && IsCodexTopLevelSession(i.getCodexHomeDir(), currentID) && ReadHookSessionAnchor(i.ID) != currentID {
+		if i.CodexBindingConfirmed && currentID != "" && IsCodexTopLevelSession(i.getCodexHomeDir(), currentID) && ReadHookSessionAnchor(i.ID) != currentID {
 			WriteHookSessionAnchor(i.ID, currentID)
 		}
 		return false
 	}
-	persistedID, detectedAt, persistedRevision, err := db.ReadCodexSessionBinding(i.ID)
+	persistedID, detectedAt, persistedRevision, persistedConfirmed, err := db.ReadCodexSessionBinding(i.ID)
 	if err != nil {
 		sessionLog.Warn("codex_persisted_promotion_read_failed",
 			slog.String("instance_id", i.ID),
@@ -57,15 +55,13 @@ func (i *Instance) adoptPersistedCodexPromotionLocked(syncTmuxEnv bool) bool {
 	persistedID = strings.ToLower(strings.TrimSpace(persistedID))
 	if persistedID == currentID {
 		revisionAdvanced := persistedRevision > i.CodexBindingRevision
-		// One-time bootstrap for legacy/manual top-level bindings written before
-		// durable generations existed. A targeted write closes the generation-zero
-		// window without trusting a stale whole-row snapshot.
-		if persistedRevision == 0 && currentID != "" && IsCodexTopLevelSession(i.getCodexHomeDir(), currentID) {
+		// Ordering protection may be bootstrapped only without inventing proof.
+		if persistedConfirmed && persistedRevision == 0 && currentID != "" && IsCodexTopLevelSession(i.getCodexHomeDir(), currentID) {
 			if i.CodexDetectedAt.IsZero() {
 				i.CodexDetectedAt = time.Now()
 			}
 			detectedAt = i.CodexDetectedAt
-			revision, matched, writeErr := db.WriteCodexSessionBinding(i.ID, currentID, i.CodexDetectedAt, 0)
+			revision, matched, writeErr := db.WriteCodexSessionBinding(i.ID, currentID, i.CodexDetectedAt, 0, persistedConfirmed)
 			if writeErr != nil || !matched {
 				sessionLog.Warn("codex_binding_revision_bootstrap_failed",
 					slog.String("instance_id", i.ID),
@@ -77,6 +73,9 @@ func (i *Instance) adoptPersistedCodexPromotionLocked(syncTmuxEnv bool) bool {
 				revisionAdvanced = true
 			}
 		}
+		if persistedRevision >= i.CodexBindingRevision {
+			i.CodexBindingConfirmed = persistedConfirmed
+		}
 		if persistedRevision > i.CodexBindingRevision {
 			i.CodexBindingRevision = persistedRevision
 			i.CodexDetectedAt = detectedAt
@@ -86,14 +85,11 @@ func (i *Instance) adoptPersistedCodexPromotionLocked(syncTmuxEnv bool) bool {
 		}
 		if currentID == "" && persistedRevision > 0 {
 			ClearHookSessionAnchor(i.ID)
-		} else if currentID != "" && IsCodexTopLevelSession(i.getCodexHomeDir(), currentID) && ReadHookSessionAnchor(i.ID) != currentID {
+		} else if i.CodexBindingConfirmed && currentID != "" && IsCodexTopLevelSession(i.getCodexHomeDir(), currentID) && ReadHookSessionAnchor(i.ID) != currentID {
 			WriteHookSessionAnchor(i.ID, currentID)
 		}
 		if syncTmuxEnv && revisionAdvanced && persistedRevision > 0 && i.tmuxSession != nil && i.tmuxSession.Exists() {
-			envID := currentID
-			if IsCodexSubagentSession(i.getCodexHomeDir(), currentID) {
-				envID = ""
-			}
+			envID := i.codexTmuxSessionID()
 			if err := i.tmuxSession.SetEnvironment("CODEX_SESSION_ID", envID); err != nil {
 				sessionLog.Warn("codex_persisted_binding_env_sync_failed",
 					slog.String("instance_id", i.ID),
@@ -124,7 +120,7 @@ func (i *Instance) adoptPersistedCodexPromotionLocked(syncTmuxEnv bool) bool {
 	// still advance monotonically by immutable rollout creation time.
 	state, hasState := readCodexSubagentMigrationState(i.ID)
 	if !revisionAuthoritative {
-		if persistedID == "" {
+		if persistedID == "" || !persistedConfirmed {
 			return false
 		}
 		provenPromotion := hasState && !state.Completed.IsZero() && state.TargetID == persistedID &&
@@ -152,8 +148,9 @@ func (i *Instance) adoptPersistedCodexPromotionLocked(syncTmuxEnv bool) bool {
 	}
 	i.CodexDetectedAt = detectedAt
 	i.CodexBindingRevision = persistedRevision
-	if persistedRevision == 0 {
-		revision, matched, writeErr := db.WriteCodexSessionBinding(i.ID, persistedID, detectedAt, 0)
+	i.CodexBindingConfirmed = persistedConfirmed
+	if persistedRevision == 0 && persistedConfirmed {
+		revision, matched, writeErr := db.WriteCodexSessionBinding(i.ID, persistedID, detectedAt, 0, persistedConfirmed)
 		if writeErr != nil || !matched {
 			sessionLog.Warn("codex_adopted_binding_revision_bootstrap_failed",
 				slog.String("instance_id", i.ID),
@@ -187,12 +184,12 @@ func (i *Instance) adoptPersistedCodexPromotionLocked(syncTmuxEnv bool) bool {
 	}
 	if persistedID == "" {
 		ClearHookSessionAnchor(i.ID)
-	} else {
+	} else if persistedConfirmed {
 		WriteHookSessionAnchor(i.ID, persistedID)
 	}
 
 	if syncTmuxEnv && i.tmuxSession != nil && i.tmuxSession.Exists() {
-		if err := i.tmuxSession.SetEnvironment("CODEX_SESSION_ID", persistedID); err != nil {
+		if err := i.tmuxSession.SetEnvironment("CODEX_SESSION_ID", i.codexTmuxSessionID()); err != nil {
 			sessionLog.Warn("codex_persisted_promotion_env_sync_failed",
 				slog.String("instance_id", i.ID),
 				slog.String("session_id", persistedID),
@@ -243,7 +240,7 @@ func (i *Instance) adoptCompletedCodexMigrationTarget(syncTmuxEnv bool) bool {
 }
 
 func (i *Instance) adoptCompletedCodexMigrationTargetLocked(syncTmuxEnv bool) bool {
-	if i == nil || !IsCodexCompatible(i.Tool) || i.codexSessionBindingOverrideIntent {
+	if i == nil || !IsCodexCompatible(i.Tool) || i.codexSessionBindingOverrideIntent || !i.CodexBindingConfirmed {
 		return false
 	}
 
@@ -382,7 +379,7 @@ func (i *Instance) healRejectedCodexCandidate(candidateID, reason string) {
 
 func (i *Instance) healRejectedCodexCandidateLocked(candidateID, reason string) {
 	currentID := strings.ToLower(strings.TrimSpace(i.CodexSessionID))
-	if currentID != "" && IsCodexTopLevelSession(i.getCodexHomeDir(), currentID) {
+	if i.CodexBindingConfirmed && currentID != "" && IsCodexTopLevelSession(i.getCodexHomeDir(), currentID) {
 		WriteHookSessionAnchor(i.ID, currentID)
 	} else if currentID == "" {
 		ClearHookSessionAnchor(i.ID)
@@ -407,7 +404,7 @@ func (i *Instance) healRejectedCodexCandidateLocked(candidateID, reason string) 
 }
 
 func (i *Instance) codexTmuxSessionID() string {
-	if i == nil {
+	if i == nil || !i.CodexBindingConfirmed {
 		return ""
 	}
 	currentID := strings.ToLower(strings.TrimSpace(i.CodexSessionID))
