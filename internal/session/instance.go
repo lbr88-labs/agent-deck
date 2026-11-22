@@ -3693,13 +3693,15 @@ func isLikelyCodexProcessPID(pid int) bool {
 }
 
 type codexRolloutCandidate struct {
-	ID   string
-	Path string
+	queueHome string
+	ID        string
+	Path      string
 }
 
 // Empty evidence and conflicting live evidence have different authority:
 // hooks may supplement an absent FD, but must never override conflicting FDs.
 type codexProcessProbe struct {
+	queueHome         string
 	sessionID         string
 	ambiguous         bool
 	missingDependency string
@@ -3729,28 +3731,46 @@ func codexRolloutCandidateFromLsofLine(line string) (codexRolloutCandidate, bool
 }
 
 func selectCodexRolloutCandidate(candidates []codexRolloutCandidate) codexProcessProbe {
-	sessionID := ""
-	seen := make(map[string]bool, len(candidates))
+	var result codexProcessProbe
+	seen := make(map[codexRolloutCandidate]bool, len(candidates))
 	for _, candidate := range candidates {
-		if candidate.ID == "" || seen[candidate.ID] {
+		if candidate.ID == "" || seen[candidate] {
 			continue
 		}
-		seen[candidate.ID] = true
+		seen[candidate] = true
 		if readCodexRolloutThreadMetadata(candidate.Path).kind == codexThreadSubagent {
 			continue
 		}
 		// A pane can hold several top-level histories while forking or switching.
 		// File mtime cannot prove which one is the interactive conversation.
-		if sessionID != "" {
+		home := candidate.queueHome
+		if result.sessionID != "" && (result.sessionID != candidate.ID || result.queueHome != home) {
 			return codexProcessProbe{ambiguous: true}
 		}
-		sessionID = candidate.ID
+		result = codexProcessProbe{sessionID: candidate.ID, queueHome: home}
 	}
-	return codexProcessProbe{sessionID: sessionID}
+	return result
+}
+
+// Associate a native queue only with rollouts held by the same process.
+// A linked sessions directory alone does not establish database ownership.
+func associateCodexQueue(candidates []codexRolloutCandidate, homes map[string]bool) []codexRolloutCandidate {
+	if len(homes) == 1 {
+		for home := range homes {
+			for index := range candidates {
+				rel, err := filepath.Rel(filepath.Join(home, "sessions"), candidates[index].Path)
+				if err == nil && filepath.IsLocal(rel) {
+					candidates[index].queueHome = home
+				}
+			}
+		}
+	}
+	return candidates
 }
 
 func extractWritableCodexRolloutsFromLsof(output []byte) []codexRolloutCandidate {
 	var candidates []codexRolloutCandidate
+	homes := make(map[string]bool)
 	for line := range strings.Lines(string(output)) {
 		column, descriptor := 0, ""
 		for field := range strings.FieldsSeq(line) {
@@ -3763,11 +3783,14 @@ func extractWritableCodexRolloutsFromLsof(output []byte) []codexRolloutCandidate
 		if len(descriptor) < 2 || (descriptor[len(descriptor)-1] != 'w' && descriptor[len(descriptor)-1] != 'u') {
 			continue
 		}
+		if pos := strings.IndexByte(line, '/'); pos >= 0 && filepath.Base(strings.TrimSpace(line[pos:])) == "queue_1.sqlite" {
+			homes[filepath.Dir(strings.TrimSpace(line[pos:]))] = true
+		}
 		if candidate, ok := codexRolloutCandidateFromLsofLine(line); ok {
 			candidates = append(candidates, candidate)
 		}
 	}
-	return candidates
+	return associateCodexQueue(candidates, homes)
 }
 
 func extractCodexRolloutCandidatesFromProcFD(pid int) []codexRolloutCandidate {
@@ -3779,17 +3802,21 @@ func extractCodexRolloutCandidatesFromProcFD(pid int) []codexRolloutCandidate {
 	}
 
 	var candidates []codexRolloutCandidate
+	homes := make(map[string]bool)
 	for _, entry := range entries {
 		targetPath := filepath.Join(fdDir, entry.Name())
 		target, err := os.Readlink(targetPath)
 		if err != nil {
 			continue
 		}
+		if filepath.Base(target) == "queue_1.sqlite" && codexProcFDWritable(filepath.Join(procDir, "fdinfo", entry.Name())) {
+			homes[filepath.Dir(target)] = true
+		}
 		if candidate, ok := codexRolloutCandidateFromPath(target); ok && codexProcFDWritable(filepath.Join(procDir, "fdinfo", entry.Name())) {
 			candidates = append(candidates, candidate)
 		}
 	}
-	return candidates
+	return associateCodexQueue(candidates, homes)
 }
 
 func (i *Instance) queryCodexSessionFromHostProcFD() codexProcessProbe {

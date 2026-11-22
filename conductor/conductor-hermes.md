@@ -269,9 +269,11 @@ When you first start (or after a restart):
 
 ## Important Notes
 
+- For requests from the remote bridge, reply to system:operator with the original message ID using message send --reply-to. The bridge forwards the correlated reply to the requesting channel.
+
 - You cannot directly access other sessions' files. Use `session output` to read their latest response.
 - Prefer `launch ... -m "prompt"` over separate `add` + `session start` + `session send` when creating a new task session.
-- When a Codex child shows a numbered approval menu, use `session approve <id> <choice>`. A digit sent through `session send` is composer text plus Enter and can interrupt the resumed turn.
+- When a Codex child shows a numbered approval menu, use `session approve <id> <choice>`.
 - Keep state.json small (no large output dumps). Store summaries, not full text.
 - Your own session can be restarted by the bridge if it detects you're in an error state.
 - Hermes Kanban tasks assigned to a profile are auto-dispatched by the gateway's built-in dispatcher — you don't need to start them manually.

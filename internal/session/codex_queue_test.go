@@ -27,11 +27,12 @@ func TestCodexQueueRequiresMatchingLiveWriterBeforeCallingNativeCLI(t *testing.T
 	inst, home := newCodexGateInstance(t)
 	actual, other, receipt := uniqueSID(t), uniqueSID(t), uniqueSID(t)
 	path := writeCodexReviewRolloutAt(t, home, actual, inst.ProjectPath, time.Now())
-	startCodexReviewPane(t, inst, path)
+	startCodexReviewPaneWithQueue(t, inst, filepath.Join(home, "queue_1.sqlite"), path)
 	dir := t.TempDir()
 	log := filepath.Join(dir, "body")
 	exe := filepath.Join(dir, "codex")
 	script := "#!/bin/sh\nset -eu\n" +
+		"[ \"$CODEX_HOME\" = " + shellQuote(home) + " ] && [ \"$CODEX_SQLITE_HOME\" = \"$CODEX_HOME\" ] || exit 3\n" +
 		"[ \"$1\" = queue ] && [ \"$2\" = --thread ] && [ \"$3\" = " + shellQuote(actual) + " ] || exit 2\n" +
 		"printf %s \"$4\" > " + shellQuote(log) + "\n" +
 		"printf 'Queued message %s for thread %s.\\n' " + shellQuote(receipt) + " \"$3\"\n"
@@ -39,6 +40,8 @@ func TestCodexQueueRequiresMatchingLiveWriterBeforeCallingNativeCLI(t *testing.T
 		t.Fatal(err)
 	}
 	inst.Command = exe
+	t.Setenv("CODEX_HOME", t.TempDir())
+	t.Setenv("CODEX_SQLITE_HOME", t.TempDir())
 	for _, binding := range []struct {
 		id        string
 		confirmed bool
@@ -60,5 +63,16 @@ func TestCodexQueueRequiresMatchingLiveWriterBeforeCallingNativeCLI(t *testing.T
 	arg, err := os.ReadFile(log)
 	if err != nil || string(arg) != "--message="+body {
 		t.Fatalf("message argument changed: %v", err)
+	}
+}
+
+func TestNativeQueueRejectsSeparateRolloutAndQueueRoots(t *testing.T) {
+	inst, home := newCodexGateInstance(t)
+	id := uniqueSID(t)
+	path := writeCodexReviewRolloutAt(t, home, id, inst.ProjectPath, time.Now())
+	startCodexReviewPaneWithQueue(t, inst, filepath.Join(t.TempDir(), "queue_1.sqlite"), path)
+	inst.CodexSessionID, inst.CodexBindingConfirmed = id, true
+	if _, err := inst.QueueCodexMessage(context.Background(), "foreign home"); err == nil {
+		t.Fatal("accepted rollout outside the live queue home")
 	}
 }

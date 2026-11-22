@@ -212,8 +212,8 @@ When you first start (or after a restart):
 
 - You cannot directly access other sessions' files. Use `session output` to read their latest response.
 - Prefer `launch ... -m "prompt"` over separate `add` + `session start` + `session send` when creating a new task session.
-- When a Codex child shows a numbered approval menu, use `session approve <id> <choice>`. A digit sent through `session send` is composer text plus Enter and can interrupt the resumed turn.
-- The bridge sends with `session send --wait -q` and waits in a single CLI call. Reply promptly.
+- When a Codex child shows a numbered approval menu, use `session approve <id> <choice>`.
+- For requests from the remote bridge, reply to system:operator with the original message ID using message send --reply-to. The bridge forwards the correlated reply to the requesting channel.
 - Your own session can be restarted by the bridge if it detects you're in an error state.
 - Keep state.json small (no large output dumps). Store summaries, not full text.
 

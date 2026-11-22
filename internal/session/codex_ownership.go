@@ -381,7 +381,7 @@ func CodexProcessIdentity(pid int) string {
 		}
 		return codexBootIdentity.value + ":" + fields[19]
 	}
-	// #nosec G204 -- "ps" and flags are fixed; the only varying argument is
+	// #nosec G204 G702 -- "ps" and flags are fixed; the only varying argument is
 	// strconv.Itoa(int), passed as one argv element without shell evaluation.
 	out, err := exec.Command("ps", "-p", strconv.Itoa(pid), "-o", "lstart=").Output()
 	if err != nil {
@@ -438,7 +438,7 @@ func codexProcessArguments(pid int) []string {
 		}
 		return strings.Split(strings.TrimRight(string(data), "\x00"), "\x00")
 	}
-	// #nosec G204 -- "ps" and flags are fixed; the only varying argument is
+	// #nosec G204 G702 -- "ps" and flags are fixed; the only varying argument is
 	// strconv.Itoa(int), passed as one argv element without shell evaluation.
 	out, err := exec.Command("ps", "-p", strconv.Itoa(pid), "-o", "args=").Output()
 	if err != nil {

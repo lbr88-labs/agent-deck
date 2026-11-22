@@ -8,7 +8,6 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
-	"time"
 
 	"github.com/asheshgoplani/agent-deck/internal/session"
 )
@@ -40,12 +39,6 @@ func restartProjectSkillsSession(inst *session.Instance, jsonOutput, quietMode b
 	// and a restart nothing recorded is not routine.
 	if !jsonOutput {
 		outcome.warn(os.Stderr)
-	}
-	if session.IsClaudeCompatible(inst.Tool) {
-		time.Sleep(2 * time.Second)
-		if tmuxSess := inst.GetTmuxSession(); tmuxSess != nil {
-			_ = tmuxSess.SendKeysAndEnter("continue")
-		}
 	}
 	return outcome
 }
