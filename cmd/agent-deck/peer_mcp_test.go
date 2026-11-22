@@ -100,6 +100,16 @@ func TestPeerMCPWire(t *testing.T) {
 	require.Equal(t, "alice", messages[0].SenderID)
 	require.Equal(t, "hello\nworld", messages[0].Body)
 	require.True(t, tool("peer_ack", `{"id":"first"}`).Result.IsError)
+	deferred := tool("peer_send", `{"recipient_id":"bob","id":"await-ack","body":"check","wait_for_ack_ms":10}`)
+	require.True(t, deferred.Result.IsError)
+	require.False(t, tool("peer_send", `{"recipient_id":"bob","id":"await-ack","body":"check"}`).Result.IsError)
+	_, err = other.Ack(ctx, "bob", "await-ack")
+	require.NoError(t, err)
+	received := tool("peer_send", `{"recipient_id":"bob","id":"await-ack","body":"check","wait_for_ack_ms":1000}`)
+	require.False(t, received.Result.IsError)
+	var receipt peermsg.Message
+	require.NoError(t, json.Unmarshal(received.Result.Structured, &receipt))
+	require.NotNil(t, receipt.AcknowledgedAt)
 	_, err = other.Ack(ctx, "bob", "first")
 	require.NoError(t, err)
 	var awaiting peermsg.Response

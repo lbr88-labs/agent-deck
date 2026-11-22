@@ -621,3 +621,69 @@ func TestInjectClaudeHooks_UpdatesStaleAsync(t *testing.T) {
 		t.Errorf("Post-reinstall command = %q, want %q", postPR[0].Hooks[0].Command, agentDeckHookCommand)
 	}
 }
+
+func TestClaudePeerWakeHooksPreserveUserExecArguments(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "settings.json")
+	err := os.WriteFile(path, []byte(`{"hooks":{"Stop":[{"hooks":[{"type":"command","command":"custom-hook","args":["--stop"],"timeout":2.5}]}]}}`), 0600)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = InjectClaudeHooks(dir); err != nil {
+		t.Fatal(err)
+	}
+	readHooks := func() map[string]json.RawMessage {
+		t.Helper()
+		b, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var settings struct{ Hooks map[string]json.RawMessage }
+		if err = json.Unmarshal(b, &settings); err != nil {
+			t.Fatal(err)
+		}
+		return settings.Hooks
+	}
+	hooks := readHooks()
+	for _, event := range []string{"SessionStart", "Stop"} {
+		var matchers []claudeHookMatcher
+		if err = json.Unmarshal(hooks[event], &matchers); err != nil {
+			t.Fatal(err)
+		}
+		count := 0
+		for _, m := range matchers {
+			for _, h := range m.Hooks {
+				if h.Command != agentDeckPeerWakeCommand {
+					continue
+				}
+				count++
+				if h.Async || !h.AsyncRewake || h.Timeout != claudePeerWakeSeconds {
+					t.Fatalf("invalid %s hook: %+v", event, h)
+				}
+			}
+		}
+		if count != 1 {
+			t.Fatalf("got %d native wake hooks for %s", count, event)
+		}
+	}
+	if _, err = RemoveClaudeHooks(dir); err != nil {
+		t.Fatal(err)
+	}
+	var remaining []struct {
+		Hooks []struct {
+			Command string
+			Args    []string
+			Timeout float64
+		}
+	}
+	if err = json.Unmarshal(readHooks()["Stop"], &remaining); err != nil {
+		t.Fatal(err)
+	}
+	if len(remaining) != 1 || len(remaining[0].Hooks) != 1 {
+		t.Fatalf("unexpected remaining hooks %+v", remaining)
+	}
+	h := remaining[0].Hooks[0]
+	if h.Command != "custom-hook" || len(h.Args) != 1 || h.Args[0] != "--stop" || h.Timeout != 2.5 {
+		t.Fatalf("user hook changed: %+v", h)
+	}
+}

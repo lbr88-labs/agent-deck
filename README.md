@@ -98,7 +98,7 @@ agent-deck web                    # Start web UI on http://127.0.0.1:8420
 
 ### Peer messages
 
-Managed sessions in the same profile can exchange durable messages through the CLI or the stdio MCP server. Each caller uses its injected `AGENTDECK_INSTANCE_ID`. Use `agent-deck list --json` to find a recipient’s full session ID.
+Managed sessions in the same profile can exchange durable messages through the CLI or the stdio MCP server. Each caller uses its injected `AGENTDECK_INSTANCE_ID`. A Codex tool shell that retains only `CODEX_THREAD_ID` can recover its identity from a single confirmed binding in the selected profile. Use `agent-deck list --json` to find a recipient’s full session ID.
 
 ```bash
 # In the sender session
@@ -114,7 +114,15 @@ agent-deck message ack "$MESSAGE_ID"
 
 Reads return pending messages in sequence order until the recipient acknowledges them. Use `--after SEQUENCE` to page through a backlog, or `message wait` to poll for new arrivals for up to 30 seconds. A sender waiting with `--response-to` receives the original message and its correlated replies when an acknowledgment or reply arrives. Each reply page contains up to 200 replies. Use the last reply’s sequence with `--after` (MCP `after`) to get the next page. An acknowledgment records receipt. Add `--reply-only` to continue waiting for a reply after acknowledgment. Use `--id` with a stable, unique ID when retrying a send after an uncertain result.
 
-For MCP, configure the stdio command `agent-deck` with arguments `["message", "mcp"]` in a managed session. The CLI and MCP share the same profile database. An idle or unsupported harness can read the pending inbox on its next turn.
+For MCP, configure the stdio command `agent-deck` with arguments `["message", "mcp"]` in a managed session. The CLI and MCP share the same profile database. To confirm delivery in one call, use `agent-deck message send --id "$MESSAGE_ID" --wait-for-ack 20s "$RECIPIENT_ID" "Please review"` or set `wait_for_ack_ms` on MCP `peer_send`. The receiver acknowledges the same durable ID. A timeout leaves the message pending. Reuse the same ID and body when retrying.
+
+| Managed local recipient | What happens when mail arrives at idle |
+| --- | --- |
+| Claude Code | Agent Deck arms Claude’s native background wake hook for up to 21 days at session start and after each turn. Run `agent-deck hooks install` and resume the session to activate updated hooks. |
+| Codex | Agent Deck verifies the live interactive process, thread and native queue, then queues an inbox notice. The notice leaves the composer available for the operator. |
+| OMP | The managed interactive root extension watches its profile inbox and schedules a native turn. Resume with the updated extension to activate it. |
+| Cursor | A message remains queued for the next turn. An already-idle ordinary Cursor TUI has no supported external wake in this integration. |
+| Stopped or offline | Messages stay durable until the recipient resumes and reads them. |
 
 ### TUI controls
 

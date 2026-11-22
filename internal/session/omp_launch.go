@@ -44,6 +44,11 @@ func (i *Instance) ompIdentityLaunchSetup(ackRequired bool) string {
 		Title string `json:"title"`
 	}{i.GetTitleThreadSafe()})
 	quote := shellescape.Quote
+	// An SSH or sandbox process cannot assume a controller-local profile path.
+	peerDir := ""
+	if !i.IsSSH() && !i.IsSandboxed() {
+		peerDir, _ = GetProfileDir(sessionProfileEnvValue())
+	}
 	return fmt.Sprintf(ompLaunchMetaPrefix+`%s_%s`+ompLaunchMetaSuffix+`session_dir=%s; managed_root=${session_dir%%/*}; omp_root=${managed_root%%/*}; `+
 		`if [ -L "$omp_root" ] || { [ -e "$omp_root" ] && [ ! -d "$omp_root" ]; }; then echo 'Invalid OMP data root; history preserved' >&2; exit 1; fi; `+
 		`if [ -L "$managed_root" ] || { [ -e "$managed_root" ] && [ ! -d "$managed_root" ]; }; then echo 'Invalid OMP managed session root; history preserved' >&2; exit 1; fi; `+
@@ -65,8 +70,8 @@ func (i *Instance) ompIdentityLaunchSetup(ackRequired bool) string {
 		`( umask 077; printf '%%s' %s > "$session_dir/.agent-deck-identity.mjs.$$" && mv -f "$session_dir/.agent-deck-identity.mjs.$$" "$session_dir/.agent-deck-identity.mjs" && `+
 		`printf '%%s' %s > "$session_dir/.agent-deck-title.json.$$" && mv -f "$session_dir/.agent-deck-title.json.$$" "$session_dir/.agent-deck-title.json" && `+
 		`printf '%%s\n' %s > "$session_dir/.agent-deck-launch-generation.$$" && mv -f "$session_dir/.agent-deck-launch-generation.$$" "$session_dir/.agent-deck-launch-generation" ) || { echo 'Failed to install OMP identity tracking; history preserved' >&2; exit 1; }; `+
-		`export AGENTDECK_OMP_DIR="$session_dir" AGENTDECK_OMP_LAUNCH_ID=%s AGENTDECK_OMP_SOURCE_BINDING="$source_binding" AGENTDECK_OMP_SOURCE_ERROR="$source_error"; `,
-		generation, "1", ompAgentDeckSessionDirExpr(i.ID), generation, quote(ompIdentityExtension), quote(string(title)), quote(generation), quote(generation))
+		`export AGENTDECK_OMP_PEER_DIR=%s AGENTDECK_OMP_DIR="$session_dir" AGENTDECK_OMP_LAUNCH_ID=%s AGENTDECK_OMP_SOURCE_BINDING="$source_binding" AGENTDECK_OMP_SOURCE_ERROR="$source_error"; `,
+		generation, "1", ompAgentDeckSessionDirExpr(i.ID), generation, quote(ompIdentityExtension), quote(string(title)), quote(generation), quote(peerDir), quote(generation))
 }
 
 func (i *Instance) ompIdentityAckRequired() bool {

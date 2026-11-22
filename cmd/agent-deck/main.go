@@ -470,6 +470,8 @@ func runAgentDeckMain() {
 		case "migrate-paths":
 			handleMigratePaths(args[1:])
 			return
+		case "peer-wake-hook":
+			os.Exit(handlePeerWakeHook(os.Stdin, os.Stderr))
 		case "hook-handler":
 			handleHookHandler()
 			return
@@ -1102,7 +1104,7 @@ var globalFlagSubcommands = map[string]bool{
 	"group": true, "try": true, "launch": true, "conductor": true,
 	"telegram-doctor": true, "watcher": true, "openclaw": true, "oc": true,
 	"remote": true, "worktree": true, "wt": true, "costs": true, "web": true,
-	"uninstall": true, "migrate-paths": true, "hook-handler": true,
+	"uninstall": true, "migrate-paths": true, "hook-handler": true, "peer-wake-hook": true,
 	"codex-notify": true, "agent-context": true, "hooks": true, "codex-hooks": true, "gemini-hooks": true,
 	"hermes-hooks": true, "cursor-hooks": true, "kiro-hooks": true, "opencode-hooks": true, "deepseek": true, "notify-daemon": true,
 	"run-task": true, "inbox": true, "message": true, "feedback": true, "creds-refresh": true,

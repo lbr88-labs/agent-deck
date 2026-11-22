@@ -1471,6 +1471,10 @@ func (s *Storage) LoadWithGroups() ([]*Instance, []*GroupData, error) {
 		return nil, nil, fmt.Errorf("failed to load groups: %w", err)
 	}
 
+	return s.convertStoredRows(dbRows, dbGroups)
+}
+
+func (s *Storage) convertStoredRows(dbRows []*statedb.InstanceRow, dbGroups []*statedb.GroupRow) ([]*Instance, []*GroupData, error) {
 	// Convert to InstanceData for the existing convertToInstances pipeline
 	data := &StorageData{
 		Instances: make([]*InstanceData, len(dbRows)),

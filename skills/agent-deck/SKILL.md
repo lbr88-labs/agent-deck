@@ -878,7 +878,7 @@ Friction points discovered during real usage. Work around them per the patterns 
 
 ### Sending work to another agent
 
-Resolve the recipient's full session ID using `agent-deck list --json`. Send through the profile inbox and retain the returned ID. A busy or stopped receiver can read the message later. If the send outcome is uncertain, reuse the same ID and identical body with `message send --id`.
+Resolve the recipient's full session ID using `agent-deck list --json`. Send through the profile inbox and retain the returned ID. A busy or stopped receiver can read the message later. For a verified receipt in one call, use `message send --wait-for-ack 20s --id "$MESSAGE_ID"` or MCP `peer_send` with `wait_for_ack_ms`. If the wait times out, the accepted message stays in the inbox. Reuse the same ID and identical body for retries.
 
 ```bash
 agent-deck -p "$PROFILE" message send --json "$RECIPIENT_ID" "Please review the patch"

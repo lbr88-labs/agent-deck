@@ -14,6 +14,7 @@ import (
 
 	"github.com/asheshgoplani/agent-deck/internal/peermsg"
 	"github.com/asheshgoplani/agent-deck/internal/session"
+	"github.com/asheshgoplani/agent-deck/internal/statedb"
 )
 
 type peerService struct {
@@ -27,18 +28,71 @@ func openPeerService(profile string) (*peerService, error) {
 	if strings.HasPrefix(self, "system:") {
 		return nil, errors.New("managed session identity cannot use the system namespace")
 	}
-	if self == "" {
-		return nil, errors.New("peer messaging requires a managed session with AGENTDECK_INSTANCE_ID")
+	thread := strings.TrimSpace(os.Getenv("CODEX_THREAD_ID"))
+	if self == "" && thread == "" {
+		return nil, errors.New("peer messaging requires a managed session identity")
 	}
 	service, err := openPeerMailbox(profile, self)
 	if err != nil {
 		return nil, err
 	}
-	if err := service.validateRecipient(self); err != nil {
+	if self == "" {
+		service.self, err = service.codexPeerIdentity(thread)
+	} else if thread != "" {
+		err = service.validatePeerThread(self, thread)
+	} else {
+		err = service.validateRecipient(self)
+	}
+	if err != nil {
 		_ = service.Close()
 		return nil, fmt.Errorf("caller identity: %w", err)
 	}
 	return service, nil
+}
+
+// An inherited instance ID can outlive its Codex conversation. Check both
+// identity signals against the same row when the shell supplies both.
+func (s *peerService) validatePeerThread(id, thread string) error {
+	row, err := s.sessions.GetDB().LoadInstanceByID(id)
+	if err != nil {
+		return err
+	}
+	if row == nil {
+		return fmt.Errorf("unknown session ID %q in profile %q", id, s.sessions.Profile())
+	}
+	if session.IsCodexCompatible(row.Tool) {
+		bound, _, _, confirmed := statedb.ReadCodexSessionBindingFromToolData(row.ToolData)
+		if confirmed && bound != thread {
+			return fmt.Errorf("Codex thread conflicts with the confirmed binding for session %q", id)
+		}
+	}
+	return nil
+}
+
+// Codex tool shells may retain only the native thread ID. Use the selected
+// profile's durable, confirmed binding without probing an unrelated tmux pane.
+func (s *peerService) codexPeerIdentity(thread string) (string, error) {
+	rows, _, err := s.sessions.LoadLite()
+	if err != nil {
+		return "", err
+	}
+	var id string
+	for _, row := range rows {
+		if row.CodexSessionID != thread || !row.CodexBindingConfirmed || !session.IsCodexCompatible(row.Tool) {
+			continue
+		}
+		if id != "" {
+			return "", fmt.Errorf("multiple sessions bound to Codex thread in profile %q", s.sessions.Profile())
+		}
+		if row.ID == "" || strings.HasPrefix(row.ID, "system:") {
+			return "", errors.New("invalid managed session identity for Codex thread")
+		}
+		id = row.ID
+	}
+	if id == "" {
+		return "", fmt.Errorf("no confirmed session bound to Codex thread in profile %q", s.sessions.Profile())
+	}
+	return id, nil
 }
 
 func openProducerMailbox(profile, producer string) (*peerService, error) {
@@ -74,6 +128,25 @@ func openPeerMailbox(profile, self string) (*peerService, error) {
 		return nil, err
 	}
 	return service, nil
+}
+
+func (s *peerService) send(ctx context.Context, req peermsg.SendRequest, ackTimeout time.Duration) (peermsg.Message, error) {
+	if ackTimeout < 0 || ackTimeout > peermsg.MaxWait {
+		return peermsg.Message{}, fmt.Errorf("acknowledgment wait must be between zero and %s", peermsg.MaxWait)
+	}
+	message, err := s.store.Send(ctx, req)
+	if err != nil || message.AcknowledgedAt != nil {
+		return message, err
+	}
+	wakeErr := s.sessions.WakeCodexPeer(ctx, s.store, message)
+	if ackTimeout == 0 {
+		return message, wakeErr
+	}
+	receipt, err := s.store.WaitForAck(ctx, message, ackTimeout)
+	if err != nil {
+		return receipt, errors.Join(err, wakeErr)
+	}
+	return receipt, nil
 }
 
 func (s *peerService) validateRecipient(id string) error {
@@ -119,7 +192,7 @@ func (s *peerService) Close() error { return errors.Join(s.store.Close(), s.sess
 
 const peerUsage = `Usage: agent-deck [-p PROFILE] message <command> [flags]
 
-  send [--id ID] [--reply-to ID] RECIPIENT_ID BODY   Enqueue a message
+  send [--id ID] [--reply-to ID] [--wait-for-ack 20s] RECIPIENT_ID BODY   Enqueue a message
   notify --producer NAME [--id ID] RECIPIENT BODY   Enqueue a system notification
   read [--after SEQUENCE] [--limit N]               List your pending messages
   ack MESSAGE_ID                                    Acknowledge receipt
@@ -162,7 +235,7 @@ func runPeerCommand(ctx context.Context, profile string, args []string, in io.Re
 	var id, replyTo, responseTo, producer string
 	var after int64
 	var limit int
-	var timeout time.Duration
+	var timeout, waitForAck time.Duration
 	if op != "mcp" {
 		fs.BoolVar(&asJSON, "json", false, "JSON output")
 	}
@@ -171,6 +244,7 @@ func runPeerCommand(ctx context.Context, profile string, args []string, in io.Re
 		fs.StringVar(&producer, "producer", "", "system producer name")
 		fs.StringVar(&id, "id", "", "stable message ID")
 	case "send":
+		fs.DurationVar(&waitForAck, "wait-for-ack", 0, "require recipient acknowledgment within this duration")
 		fs.StringVar(&id, "id", "", "stable message ID")
 		fs.StringVar(&replyTo, "reply-to", "", "original message ID")
 	case "wait", "read":
@@ -232,7 +306,7 @@ func runPeerCommand(ctx context.Context, profile string, args []string, in io.Re
 		if err != nil {
 			return err
 		}
-		result, err = svc.store.Send(ctx, peermsg.SendRequest{ID: id, SenderID: svc.self, RecipientID: recipient, Body: positional[1], ReplyTo: replyTo})
+		result, err = svc.send(ctx, peermsg.SendRequest{ID: id, SenderID: svc.self, RecipientID: recipient, Body: positional[1], ReplyTo: replyTo}, waitForAck)
 	case "ack":
 		result, err = svc.store.Ack(ctx, svc.self, positional[0])
 	case "read":

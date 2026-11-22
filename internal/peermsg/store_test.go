@@ -246,3 +246,34 @@ func TestCorrelatedRepliesBeyondFirstPage(t *testing.T) {
 		t.Fatalf("last page %v, err %v", last, err)
 	}
 }
+
+func TestReceiverAckWait(t *testing.T) {
+	dir := t.TempDir()
+	sender := openTest(t, dir)
+	receiver := openTest(t, dir)
+	ctx := context.Background()
+	message, err := sender.Send(ctx, SendRequest{ID: "stable", RecipientID: "worker", SenderID: "coordinator", Body: "review"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	seq, err := PendingSequence(ctx, dir, "worker")
+	if err != nil || seq != message.Sequence {
+		t.Fatalf("pending sequence %d: %v", seq, err)
+	}
+	_, err = receiver.Send(ctx, SendRequest{RecipientID: "coordinator", SenderID: "worker", Body: "progress", ReplyTo: message.ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	pending, err := sender.WaitForAck(ctx, message, 10*time.Millisecond)
+	if err == nil || pending.ID != message.ID || pending.AcknowledgedAt != nil {
+		t.Fatalf("premature acknowledgment: %+v, %v", pending, err)
+	}
+	_, err = receiver.Ack(ctx, "worker", message.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := sender.WaitForAck(ctx, message, time.Second)
+	if err != nil || got.AcknowledgedAt == nil || got.Sequence != seq {
+		t.Fatalf("receipt: %+v, %v", got, err)
+	}
+}

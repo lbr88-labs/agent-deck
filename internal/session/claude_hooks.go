@@ -13,13 +13,56 @@ import (
 
 // agentDeckHookCommand is the marker command used to identify agent-deck hooks in settings.json.
 const agentDeckHookCommand = "agent-deck hook-handler"
+const agentDeckPeerWakeCommand = "agent-deck peer-wake-hook"
+
+// Claude enforces the hook timeout with a millisecond timer. Keep it below
+// the signed 32-bit timer limit. Each Stop renews the idle interval.
+const claudePeerWakeSeconds = 21 * 24 * 60 * 60
+
 const agentDeckContextHookCommand = agentDeckJSONContextHookCommand
 
 // claudeHookEntry represents a single hook entry in Claude Code settings.
 type claudeHookEntry struct {
-	Type    string `json:"type"`
-	Command string `json:"command"`
-	Async   bool   `json:"async,omitempty"`
+	Type        string  `json:"type"`
+	Command     string  `json:"command,omitempty"`
+	Async       bool    `json:"async,omitempty"`
+	AsyncRewake bool    `json:"asyncRewake,omitempty"`
+	Timeout     float64 `json:"timeout,omitempty"`
+	extra       map[string]json.RawMessage
+}
+
+// A settings upgrade touches every managed event. Keep user hook fields
+// such as args, prompt, url, and statusMessage when merging or uninstalling.
+func (h *claudeHookEntry) UnmarshalJSON(data []byte) error {
+	type known claudeHookEntry
+	var entry known
+	if err := json.Unmarshal(data, &entry); err != nil {
+		return err
+	}
+	*h = claudeHookEntry(entry)
+	if err := json.Unmarshal(data, &h.extra); err != nil {
+		return err
+	}
+	for _, key := range []string{"type", "command", "async", "asyncRewake", "timeout"} {
+		delete(h.extra, key)
+	}
+	return nil
+}
+
+func (h claudeHookEntry) MarshalJSON() ([]byte, error) {
+	type known claudeHookEntry
+	b, err := json.Marshal(known(h))
+	if err != nil || len(h.extra) == 0 {
+		return b, err
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(b, &fields); err != nil {
+		return nil, err
+	}
+	for k, v := range h.extra {
+		fields[k] = v
+	}
+	return json.Marshal(fields)
 }
 
 // claudeHookMatcher represents a matcher block (with optional matcher pattern) in settings.
@@ -29,6 +72,9 @@ type claudeHookMatcher struct {
 }
 
 func claudeHook(command string, async bool) claudeHookEntry {
+	if command == agentDeckPeerWakeCommand {
+		return claudeHookEntry{Type: "command", Command: command, AsyncRewake: true, Timeout: claudePeerWakeSeconds}
+	}
 	return claudeHookEntry{
 		Type:    "command",
 		Command: command,
@@ -117,6 +163,10 @@ func InjectClaudeHooks(configDir string) (bool, error) {
 	}
 	for _, cfg := range claudeContextHookEventConfigs {
 		existingHooks[cfg.Event] = mergeHookEventWithCommand(existingHooks[cfg.Event], cfg.Matcher, agentDeckContextHookCommand, cfg.Async)
+	}
+
+	for _, event := range []string{"SessionStart", "Stop"} {
+		existingHooks[event] = mergeHookEventWithCommand(existingHooks[event], "", agentDeckPeerWakeCommand, false)
 	}
 
 	// Marshal hooks back into raw settings
@@ -268,6 +318,11 @@ func hooksAlreadyInstalled(hooks map[string]json.RawMessage) bool {
 			return false
 		}
 	}
+	for _, event := range []string{"SessionStart", "Stop"} {
+		if !eventHasClaudeCommandMatchingConfig(hooks[event], "", agentDeckPeerWakeCommand, false) {
+			return false
+		}
+	}
 	return true
 }
 
@@ -289,7 +344,8 @@ func eventHasClaudeCommandMatchingConfig(raw json.RawMessage, expectedMatcher, c
 		}
 		for _, h := range m.Hooks {
 			if claudeCommandMatches(h.Command, command) {
-				return h.Async == expectedAsync
+				want := claudeHook(command, expectedAsync)
+				return h.Type == want.Type && h.Async == want.Async && h.AsyncRewake == want.AsyncRewake && h.Timeout == want.Timeout
 			}
 		}
 	}
@@ -462,5 +518,5 @@ func removeAgentDeckFromEvent(raw json.RawMessage) (json.RawMessage, bool) {
 
 func isClaudeAgentDeckOwnedHook(command string) bool {
 	return claudeCommandMatches(command, agentDeckHookCommand) ||
-		claudeCommandMatches(command, agentDeckContextHookCommand)
+		claudeCommandMatches(command, agentDeckContextHookCommand) || claudeCommandMatches(command, agentDeckPeerWakeCommand)
 }

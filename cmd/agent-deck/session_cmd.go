@@ -3298,7 +3298,7 @@ func handleSessionSend(profile string, args []string) {
 	receipt, sendErr := enqueue(ctx, profile, message)
 	messageID, sentAt := receipt.ID, receipt.SubmittedAt
 	sendRes := sendDeliveryResult{delivery: "queued", messageID: messageID}
-	if sendErr != nil {
+	if sendErr != nil && messageID == "" {
 		sendRes.delivery = "unconfirmed"
 		extra := sendRes.jsonFields()
 		extra["session_id"] = inst.ID
@@ -3322,6 +3322,10 @@ func handleSessionSend(profile string, args []string) {
 		"success": true, "session_id": inst.ID, "session_title": inst.Title, "message": message, "transport": transport,
 	}
 	data["wait_cursor"] = responseCursor(inst.ID, sentAt)
+	if sendErr != nil {
+		data["wake_error"] = sendErr.Error()
+		fmt.Fprintln(os.Stderr, sendErr)
+	}
 	for k, v := range sendRes.jsonFields() {
 		data[k] = v
 	}
