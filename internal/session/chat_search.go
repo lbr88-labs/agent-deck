@@ -183,62 +183,9 @@ func searchLocalChat(ctx context.Context, binding ChatSearchBinding, needle stri
 	}
 	switch {
 	case inst.Tool == "omp":
-		if inst.resolvedOmpOptions().NoSession {
-			return "", false, errChatSearchNotSaved
-		}
-		if !validHookSessionAnchorInstanceID(inst.ID) {
-			return "", false, errChatSearchIdentity
-		}
-		home, err := os.UserHomeDir()
+		active, err := verifiedOmpTranscript(ctx, inst)
 		if err != nil {
-			return "", false, err
-		}
-		dir := filepath.Join(home, ".omp", "agent-deck", inst.ID)
-		active, generation, tracked, err := readOmpActiveBindingSelectionContext(ctx, dir)
-		if err != nil {
-			return "", false, errChatSearchIdentity
-		}
-		if active == nil {
-			return "", false, errChatSearchIdentity
-		}
-		if tracked {
-			if err := ctx.Err(); err != nil {
-				return "", true, err
-			}
-			// Reconciliation failures retain the previous active binding. Only
-			// the provider's matching positive ACK authorizes reading it.
-			data, statusErr := readOmpHealthFile(filepath.Join(dir, ".agent-deck-omp-status."+generation+".json"))
-			if err := ctx.Err(); err != nil {
-				return "", true, err
-			}
-			var status ompIdentityStatus
-			if statusErr != nil || json.Unmarshal(data, &status) != nil || !status.IdentityReady ||
-				status.InstanceID != inst.ID || status.LaunchID != generation ||
-				status.SessionID != active.SessionID || status.SessionFile != active.File {
-				return "", false, errChatSearchIdentity
-			}
-			// A title-only Error does not revoke a valid identity ACK. As in
-			// binding selection, reject a launch that changed during the read.
-			_, currentGeneration, currentTracked, generationErr := ompCurrentBindingPath(dir)
-			if err := ctx.Err(); err != nil {
-				return "", true, err
-			}
-			if generationErr != nil || !currentTracked || currentGeneration != generation {
-				return "", false, errChatSearchIdentity
-			}
-		}
-		// A failed fresh start deliberately supersedes the previous binding.
-		marker := filepath.Join(dir, ".agent-deck-fresh-pending")
-		if tracked {
-			marker += "." + generation
-		}
-		if pending, exists, markerErr := readOmpControlLine(marker, "fresh-conversation boundary"); markerErr != nil || (exists && (!ompSafeGeneration(pending) || pending != active.Generation)) {
-			return "", false, errChatSearchIdentity
-		}
-		if active.State == "pending" {
-			if _, err := os.Lstat(active.File); os.IsNotExist(err) {
-				return "", false, errChatSearchNotSaved
-			}
+			return "", ctx.Err() != nil, err
 		}
 		return chatSearchJSONL(ctx, active.File, "omp", active.SessionID, needle)
 	case IsCodexCompatible(inst.Tool):
@@ -306,6 +253,67 @@ func searchLocalChat(ctx context.Context, binding ChatSearchBinding, needle stri
 	default:
 		return "", false, errChatSearchFormat
 	}
+}
+
+func verifiedOmpTranscript(ctx context.Context, inst *Instance) (*ompActiveBinding, error) {
+	if inst.resolvedOmpOptions().NoSession {
+		return nil, errChatSearchNotSaved
+	}
+	if !validHookSessionAnchorInstanceID(inst.ID) {
+		return nil, errChatSearchIdentity
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return nil, err
+	}
+	dir := filepath.Join(home, ".omp", "agent-deck", inst.ID)
+	active, generation, tracked, err := readOmpActiveBindingSelectionContext(ctx, dir)
+	if err != nil {
+		return nil, errChatSearchIdentity
+	}
+	if active == nil {
+		return nil, errChatSearchIdentity
+	}
+	if tracked {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		// Reconciliation failures retain the previous active binding. Only
+		// the provider's matching positive ACK authorizes reading it.
+		data, statusErr := readOmpHealthFile(filepath.Join(dir, ".agent-deck-omp-status."+generation+".json"))
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		var status ompIdentityStatus
+		if statusErr != nil || json.Unmarshal(data, &status) != nil || !status.IdentityReady ||
+			status.InstanceID != inst.ID || status.LaunchID != generation ||
+			status.SessionID != active.SessionID || status.SessionFile != active.File {
+			return nil, errChatSearchIdentity
+		}
+		// A title-only Error does not revoke a valid identity ACK. As in
+		// binding selection, reject a launch that changed during the read.
+		_, currentGeneration, currentTracked, generationErr := ompCurrentBindingPath(dir)
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		if generationErr != nil || !currentTracked || currentGeneration != generation {
+			return nil, errChatSearchIdentity
+		}
+	}
+	// A failed fresh start deliberately supersedes the previous binding.
+	marker := filepath.Join(dir, ".agent-deck-fresh-pending")
+	if tracked {
+		marker += "." + generation
+	}
+	if pending, exists, markerErr := readOmpControlLine(marker, "fresh-conversation boundary"); markerErr != nil || (exists && (!ompSafeGeneration(pending) || pending != active.Generation)) {
+		return nil, errChatSearchIdentity
+	}
+	if active.State == "pending" {
+		if _, err := os.Lstat(active.File); os.IsNotExist(err) {
+			return nil, errChatSearchNotSaved
+		}
+	}
+	return active, nil
 }
 
 // chatSearchWalk reads directory entries in batches instead of Glob/WalkDir's

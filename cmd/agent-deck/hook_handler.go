@@ -215,6 +215,17 @@ func handleHookHandler() {
 		return
 	}
 
+	// Cursor provides the assistant text on a separate, observational event.
+	if normalizeHookEventKey(payload.HookEventName) == "afteragentresponse" {
+		var response struct{ Text string }
+		if json.Unmarshal(data, &response) == nil && payload.ConversationID != "" {
+			if err := session.SaveCursorWaitResponse(instanceID, payload.ConversationID, response.Text); err != nil {
+				logCostDebug("persist Cursor response: %v", err)
+			}
+		}
+		return
+	}
+
 	// Map event to status
 	status := mapEventToStatus(payload.HookEventName)
 

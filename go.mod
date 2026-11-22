@@ -1,6 +1,6 @@
 module github.com/asheshgoplani/agent-deck
 
-go 1.26.10
+go 1.26.11
 
 require (
 	al.essio.dev/pkg/shellescape v1.6.0
@@ -17,7 +17,7 @@ require (
 	github.com/fsnotify/fsnotify v1.10.1
 	github.com/google/uuid v1.6.0
 	github.com/gorilla/websocket v1.5.3
-	github.com/klauspost/compress v1.19.2
+	github.com/klauspost/compress v1.20.2
 	github.com/mattn/go-runewidth v0.0.27
 	github.com/muesli/termenv v0.16.0
 	github.com/rivo/uniseg v0.4.7
