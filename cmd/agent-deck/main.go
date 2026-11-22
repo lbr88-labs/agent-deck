@@ -319,6 +319,12 @@ func runAgentDeckMain() {
 		_ = os.Setenv("AGENTDECK_PROFILE", profile)
 	}
 
+	// Peer mail carries arbitrary literal bodies and needs no tmux setup.
+	if len(args) > 0 && args[0] == "message" {
+		handlePeerMessage(profile, args[1:])
+		return
+	}
+
 	// Extract global --allow-repo-scripts before subcommand dispatch (mirrors
 	// -p/--profile above). One-shot, non-persisted bypass of the worktree
 	// script consent gate for non-interactive callers (CI) that can't answer
@@ -1099,7 +1105,7 @@ var globalFlagSubcommands = map[string]bool{
 	"uninstall": true, "migrate-paths": true, "hook-handler": true,
 	"codex-notify": true, "agent-context": true, "hooks": true, "codex-hooks": true, "gemini-hooks": true,
 	"hermes-hooks": true, "cursor-hooks": true, "kiro-hooks": true, "opencode-hooks": true, "deepseek": true, "notify-daemon": true,
-	"run-task": true, "inbox": true, "feedback": true, "creds-refresh": true,
+	"run-task": true, "inbox": true, "message": true, "feedback": true, "creds-refresh": true,
 	"debug-dump": true, "version": true, "help": true,
 }
 
@@ -3726,6 +3732,7 @@ func printHelp() {
 	fmt.Println("  remove, rm       Remove a session")
 	fmt.Println("  rename, mv       Rename a session")
 	fmt.Println("  status           Show session status summary")
+	fmt.Println("  message          Send, read, acknowledge, or wait for durable peer messages")
 	fmt.Println("  session          Manage session lifecycle")
 	fmt.Println("  fleet            Detect and recover from a fleet-wide session death")
 	fmt.Println("  mcp              Manage MCP servers")

@@ -57,6 +57,9 @@ func handleAgentContext(args []string) {
 		return
 	}
 	contextText := buildAgentHubContext(config)
+	if notice := peerInboxHookNotice(os.Getenv("AGENTDECK_INSTANCE_ID")); notice != "" {
+		contextText = strings.TrimSpace(contextText + "\n" + notice)
+	}
 	if strings.TrimSpace(contextText) == "" {
 		return
 	}

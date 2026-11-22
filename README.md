@@ -9,7 +9,7 @@
 
 [![GitHub Stars](https://img.shields.io/github/stars/asheshgoplani/agent-deck?style=for-the-badge&logo=github&color=yellow&labelColor=1a1b26)](https://github.com/asheshgoplani/agent-deck/stargazers)
 [![Downloads](https://img.shields.io/github/downloads/asheshgoplani/agent-deck/total?style=for-the-badge&logo=github&color=bb9af7&labelColor=1a1b26)](https://github.com/asheshgoplani/agent-deck/releases)
-[![Go Version](https://img.shields.io/badge/Go-1.26.10-00ADD8?style=for-the-badge&logo=go&labelColor=1a1b26)](https://go.dev)
+[![Go Version](https://img.shields.io/badge/Go-1.26.11-00ADD8?style=for-the-badge&logo=go&labelColor=1a1b26)](https://go.dev)
 [![License](https://img.shields.io/badge/License-MIT-9ece6a?style=for-the-badge&labelColor=1a1b26)](LICENSE)
 [![Platform](https://img.shields.io/badge/Platform-macOS%20%7C%20Linux%20%7C%20WSL-7aa2f7?style=for-the-badge&labelColor=1a1b26)](https://github.com/asheshgoplani/agent-deck)
 [![Latest Release](https://img.shields.io/github/v/release/asheshgoplani/agent-deck?style=for-the-badge&color=e0af68&labelColor=1a1b26)](https://github.com/asheshgoplani/agent-deck/releases)
@@ -95,6 +95,26 @@ agent-deck web                    # Start web UI on http://127.0.0.1:8420
 ```
 
 > **⚠️ Changed in v1.9.55:** in the new-session dialog (`n`), **Enter advances to the next field** on the Name and Branch inputs instead of submitting — typing a name and hitting Enter no longer creates a session with all defaults. **Ctrl+S creates the session from any field.** The dialog also remembers your last-used tool. Restore the old behavior with `[ui].new_session_enter_advances = false`.
+
+### Peer messages
+
+Managed sessions in the same profile can exchange durable messages through the CLI or the stdio MCP server. Each caller uses its injected `AGENTDECK_INSTANCE_ID`. Use `agent-deck list --json` to find a recipient’s full session ID.
+
+```bash
+# In the sender session
+agent-deck message send --json "$RECIPIENT_ID" 'Please review the patch'
+# Copy the returned id into MESSAGE_ID
+agent-deck message wait --json --response-to "$MESSAGE_ID" --timeout 20s
+
+# In the recipient session
+agent-deck message read --json
+agent-deck message send --reply-to "$MESSAGE_ID" "$SENDER_ID" 'Reviewed'
+agent-deck message ack "$MESSAGE_ID"
+```
+
+Reads return pending messages in sequence order until the recipient acknowledges them. Use `--after SEQUENCE` to page through a backlog, or `message wait` to poll for new arrivals for up to 30 seconds. A sender waiting with `--response-to` receives the original message and its correlated replies when an acknowledgment or reply arrives. An acknowledgment records receipt. Add `--reply-only` to continue waiting for a reply after acknowledgment. Use `--id` with a stable, unique ID when retrying a send after an uncertain result.
+
+For MCP, configure the stdio command `agent-deck` with arguments `["message", "mcp"]` in a managed session. The CLI and MCP share the same profile database. An idle or unsupported harness can read the pending inbox on its next turn.
 
 ### TUI controls
 
@@ -769,7 +789,7 @@ Safety notes:
 - Events are deduplicated in SQLite by `(watcher_name, event_id)`, so retries from the sender do not double-fire the conductor.
 - Watchers keep per-adapter health in `<effective watcher data dir>/<name>/state.json`; the TUI watcher panel (press `w`) surfaces this in real time.
 
-**Doorbell rule:** watchers are triggers, not launchers. They forward a short event string to the conductor and let the conductor decide what to do. A watcher should never call `agent-deck launch` or `agent-deck add` directly — those calls run outside any conductor's process and have no `$AGENTDECK_INSTANCE_ID`, so the spawned session becomes an orphan whose status events never route back. Use `agent-deck session send <conductor> "[event] hint"` from the watcher and let the conductor fan out from there.
+**Doorbell rule:** watchers are triggers, not launchers. They forward a short event string to the conductor and let the conductor decide what to do. A watcher should never call `agent-deck launch` or `agent-deck add` directly — those calls run outside any conductor's process and have no `$AGENTDECK_INSTANCE_ID`, so the spawned session becomes an orphan whose status events never route back. Use `agent-deck message notify --producer watchdog <conductor> "[event] hint"` from the watcher and let the conductor fan out from there.
 
 #### See also
 
