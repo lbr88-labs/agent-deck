@@ -46,6 +46,15 @@ func TestPeerCLIProfileRoundTrip(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
+	if err := run("first", "send", "--id", "ack-proof", "--wait-for-ack", "10ms", "second", "verify receipt"); err == nil || !strings.Contains(err.Error(), "ack-proof") {
+		t.Fatalf("want durable ID on acknowledgment timeout, got %v", err)
+	}
+	must("second", "ack", "ack-proof")
+	must("first", "send", "--id", "ack-proof", "--wait-for-ack", "500ms", "--json", "second", "verify receipt")
+	var verified peermsg.Message
+	if err := json.Unmarshal(out.Bytes(), &verified); err != nil || verified.AcknowledgedAt == nil {
+		t.Fatalf("retry did not return recipient receipt: %s", out.String())
+	}
 	t.Setenv("AGENT_DECK_SESSION_ID", "")
 	t.Setenv("TMUX", "")
 	if err := run("first", "notify", "--producer", "watchdog", "reader", "event"); err == nil {

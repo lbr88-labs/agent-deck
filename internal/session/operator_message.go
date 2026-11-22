@@ -42,7 +42,13 @@ func queueInboxMessage(ctx context.Context, profile, sender, recipient, body str
 	if err != nil {
 		return DispatchReceipt{}, err
 	}
-	return DispatchReceipt{ID: m.ID, SubmittedAt: m.AcceptedAt}, nil
+	receipt := DispatchReceipt{ID: m.ID, SubmittedAt: m.AcceptedAt}
+	sessions, err := NewStorageWithProfile(profile)
+	if err != nil {
+		return receipt, fmt.Errorf("message %q accepted, opening profile for inbox wake: %w", m.ID, err)
+	}
+	defer func() { _ = sessions.Close() }()
+	return receipt, sessions.WakeCodexPeer(ctx, store, m)
 }
 
 // WaitOperatorReply waits for a reply explicitly linked to the operator's request.

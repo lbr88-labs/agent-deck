@@ -11,10 +11,11 @@ import (
 )
 
 type peerSendInput struct {
-	RecipientID string `json:"recipient_id" jsonschema:"Exact Agent Deck session ID of the recipient"`
-	Body        string `json:"body" jsonschema:"Message text"`
-	ID          string `json:"id,omitempty" jsonschema:"Stable message ID for retrying the same send"`
-	ReplyTo     string `json:"reply_to,omitempty" jsonschema:"ID of the message being answered"`
+	WaitForAckMS int    `json:"wait_for_ack_ms,omitempty" jsonschema:"Require receiver acknowledgment within this interval in milliseconds (0 to enqueue only; maximum 30000)"`
+	RecipientID  string `json:"recipient_id" jsonschema:"Exact Agent Deck session ID of the recipient"`
+	Body         string `json:"body" jsonschema:"Message text"`
+	ID           string `json:"id,omitempty" jsonschema:"Stable message ID for retrying the same send"`
+	ReplyTo      string `json:"reply_to,omitempty" jsonschema:"ID of the message being answered"`
 }
 
 type peerReadInput struct {
@@ -59,7 +60,11 @@ func newPeerMCP(service *peerService) *mcp.Server {
 		if err := service.validatePeerDestination(in.RecipientID, in.ReplyTo); err != nil {
 			return nil, peermsg.Message{}, err
 		}
-		message, err := service.store.Send(ctx, peermsg.SendRequest{ID: in.ID, SenderID: service.self, RecipientID: in.RecipientID, Body: in.Body, ReplyTo: in.ReplyTo})
+		timeout, err := peerTimeout(&in.WaitForAckMS)
+		if err != nil {
+			return nil, peermsg.Message{}, err
+		}
+		message, err := service.send(ctx, peermsg.SendRequest{ID: in.ID, SenderID: service.self, RecipientID: in.RecipientID, Body: in.Body, ReplyTo: in.ReplyTo}, timeout)
 		return nil, message, err
 	})
 	mcp.AddTool(server, &mcp.Tool{Name: "peer_read", Description: "Read this session's pending messages in sequence order. Messages stay pending until acknowledged."}, func(ctx context.Context, _ *mcp.CallToolRequest, in peerReadInput) (*mcp.CallToolResult, peerPage, error) {

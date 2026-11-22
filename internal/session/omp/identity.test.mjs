@@ -17,7 +17,7 @@ import test from "node:test";
 
 import identityExtension from "./identity.mjs";
 
-const ENV_KEYS = ["AGENTDECK_INSTANCE_ID", "AGENTDECK_OMP_DIR", "AGENTDECK_OMP_LAUNCH_ID"];
+const ENV_KEYS = ["AGENTDECK_INSTANCE_ID", "AGENTDECK_OMP_DIR", "AGENTDECK_OMP_LAUNCH_ID", "AGENTDECK_OMP_PEER_DIR"];
 
 async function makeHarness(t, options = {}) {
 	const base = await import("node:fs/promises").then(fs => fs.mkdtemp(path.join(os.tmpdir(), "agent-deck-omp-")));
@@ -26,6 +26,8 @@ async function makeHarness(t, options = {}) {
 	await mkdir(ompDir, { recursive: true });
 
 	const previousEnv = Object.fromEntries(ENV_KEYS.map(key => [key, process.env[key]]));
+	if (options.peerInbox) process.env.AGENTDECK_OMP_PEER_DIR = base;
+	else delete process.env.AGENTDECK_OMP_PEER_DIR;
 	process.env.AGENTDECK_INSTANCE_ID = options.instanceId ?? "entry-a";
 	process.env.AGENTDECK_OMP_DIR = ompDir;
 	process.env.AGENTDECK_OMP_LAUNCH_ID = options.launchId ?? "launch-123";
@@ -63,6 +65,7 @@ async function makeHarness(t, options = {}) {
 		},
 	};
 	const pi = {
+		sendMessage: options.sendMessage,
 		on(event, callback) {
 			assert.equal(handlers.has(event), false, `duplicate ${event} handler`);
 			handlers.set(event, callback);
@@ -629,4 +632,45 @@ test("same pid can reuse the generation owner on extension reload", async t => {
 	await h2.emit("session_start");
 	assert.notEqual(await readBinding(h.ompDir), first);
 	assert.equal(await readFile(path.join(h.ompDir, ".agent-deck-root-launch-123.pid"), "utf8"), `${process.pid}\n`);
+});
+
+test("local OMP wakes once per addressed arrival and releases its watcher", { skip: !process.versions.bun }, async t => {
+	const { Database } = await import("bun:sqlite");
+	const sent = [];
+	const h = await makeHarness(t, { peerInbox: true, sendMessage: (...args) => sent.push(args) });
+	await h.emit("session_start");
+	await Bun.sleep(220);
+	const dbPath = path.join(h.base, "peer-messages.db");
+	assert.equal(existsSync(dbPath), false);
+	const db = new Database(dbPath, { create: true });
+	t.after(() => db.close());
+	db.exec("CREATE TABLE messages(seq INTEGER PRIMARY KEY,recipient TEXT,body TEXT,acknowledged INTEGER)");
+	const add = id => db.query("INSERT INTO messages(recipient, body) VALUES (?, 'private test payload')").run(id);
+	add("someone-else");
+	await Bun.sleep(220);
+	assert.equal(sent.length, 0);
+	add("entry-a");
+	await waitForCount(1);
+	assert.deepEqual(sent[0][1], { deliverAs: "nextTurn", triggerTurn: true });
+	assert.match(sent[0][0].content, /agent-deck message read/);
+	assert.doesNotMatch(sent[0][0].content, /private test payload/);
+	add("someone-else");
+	await Bun.sleep(220);
+	assert.equal(sent.length, 1);
+	add("entry-a");
+	await waitForCount(2);
+	await writeFile(path.join(h.ompDir, ".agent-deck-launch-generation"), "replacement\n");
+	add("entry-a");
+	await Bun.sleep(220);
+	assert.equal(sent.length, 2);
+	await h.emit("session_shutdown");
+	await writeFile(path.join(h.ompDir, ".agent-deck-launch-generation"), "launch-123\n");
+	add("entry-a");
+	await Bun.sleep(220);
+	assert.equal(sent.length, 2);
+
+	async function waitForCount(n) {
+		for (let i=0; i<50 && sent.length<n; i++) await Bun.sleep(40);
+		assert.equal(sent.length,n);
+	}
 });

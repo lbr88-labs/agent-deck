@@ -158,6 +158,30 @@ func (s *Store) Send(ctx context.Context, r SendRequest) (Message, error) {
 	}
 	return m, tx.Commit()
 }
+
+// WaitForAck verifies receipt of an already accepted message. Timing out
+// leaves it pending so that a retry with the same ID remains idempotent.
+func (s *Store) WaitForAck(ctx context.Context, message Message, timeout time.Duration) (Message, error) {
+	if message.AcknowledgedAt != nil {
+		return message, nil
+	}
+	timedOut, err := poll(ctx, timeout, func(check context.Context) (bool, error) {
+		current, err := s.Get(check, message.ID)
+		if err != nil {
+			return false, err
+		}
+		message = current
+		return current.AcknowledgedAt != nil, nil
+	})
+	if err != nil {
+		return message, fmt.Errorf("message %q accepted, checking recipient acknowledgment: %w", message.ID, err)
+	}
+	if timedOut || message.AcknowledgedAt == nil {
+		return message, fmt.Errorf("message %q accepted, recipient acknowledgment still pending after %s", message.ID, timeout)
+	}
+	return message, nil
+}
+
 func (s *Store) Get(ctx context.Context, id string) (Message, error) {
 	return read(s.db.QueryRowContext(ctx, "SELECT "+columns+" FROM messages WHERE id=?", id))
 }
@@ -252,25 +276,32 @@ func (s *Store) WaitResponse(ctx context.Context, sender, id string, opts Respon
 
 // HasPending checks for inbox notices without creating or initializing the store.
 func HasPending(ctx context.Context, profileDir, recipient string) (bool, error) {
+	seq, err := PendingSequence(ctx, profileDir, recipient)
+	return seq != 0, err
+}
+
+// PendingSequence returns the newest pending sequence, or zero for an empty
+// inbox. Hook observers must not create a database just to check for mail.
+func PendingSequence(ctx context.Context, profileDir, recipient string) (int64, error) {
 	if profileDir == "" || recipient == "" {
-		return false, errors.New("profile directory and recipient are required")
+		return 0, errors.New("profile directory and recipient are required")
 	}
 	path, err := filepath.Abs(filepath.Join(profileDir, DatabaseName))
 	if err != nil {
-		return false, err
+		return 0, err
 	}
 	if _, err = os.Stat(path); errors.Is(err, os.ErrNotExist) {
-		return false, nil
+		return 0, nil
 	} else if err != nil {
-		return false, err
+		return 0, err
 	}
 	addr := url.URL{Scheme: "file", Path: path, RawQuery: "mode=ro&_pragma=busy_timeout(100)"}
 	db, err := sql.Open("sqlite", addr.String())
 	if err != nil {
-		return false, err
+		return 0, err
 	}
 	defer func() { _ = db.Close() }()
-	var pending bool
-	err = db.QueryRowContext(ctx, "SELECT EXISTS(SELECT 1 FROM messages WHERE recipient=? AND acknowledged IS NULL)", recipient).Scan(&pending)
+	var pending int64
+	err = db.QueryRowContext(ctx, "SELECT COALESCE(MAX(seq),0) FROM messages WHERE recipient=? AND acknowledged IS NULL", recipient).Scan(&pending)
 	return pending, err
 }

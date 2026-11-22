@@ -15,6 +15,12 @@ import (
 // QueueCodexMessage submits an operator command through the native durable queue.
 // Native queue acceptance is distinct from starting or completing a model turn.
 func (i *Instance) QueueCodexMessage(ctx context.Context, body string) (DispatchReceipt, error) {
+	return i.QueueCodexMessageIf(ctx, body, nil)
+}
+
+// QueueCodexMessageIf claims a wake after verifying its live receiver and before
+// invoking the native queue. A declined claim returns an empty receipt.
+func (i *Instance) QueueCodexMessageIf(ctx context.Context, body string, claim func() (bool, error)) (DispatchReceipt, error) {
 	i.mu.RLock()
 	id, confirmed, command := i.CodexSessionID, i.CodexBindingConfirmed, i.Command
 	i.mu.RUnlock()
@@ -33,6 +39,12 @@ func (i *Instance) QueueCodexMessage(ctx context.Context, body string) (Dispatch
 	cmd := exec.CommandContext(ctx, executable, "queue", "--thread", id, "--message="+body)
 	cmd.Env = replaceEnv(childenv.ForLaunch(""), "CODEX_HOME", probe.queueHome)
 	cmd.Env = replaceEnv(cmd.Env, "CODEX_SQLITE_HOME", probe.queueHome)
+	if claim != nil {
+		claimed, err := claim()
+		if err != nil || !claimed {
+			return DispatchReceipt{}, err
+		}
+	}
 	submitted := time.Now()
 	out, err := cmd.Output()
 	if err != nil {

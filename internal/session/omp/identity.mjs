@@ -12,6 +12,7 @@ import {
 	renameSync,
 	unlinkSync,
 	writeFileSync,
+	watch,
 } from "node:fs";
 import path from "node:path";
 
@@ -442,12 +443,106 @@ function readTitleIntent(config) {
 	return { contents, title: parsed.title };
 }
 
+// Observe committed inbox state. Filesystem events are hints; only the indexed
+// recipient query can trigger a wake. The existing lifecycle timer also catches
+// lost events and reattaches a failed directory watch.
+function watchPeerInbox(pi, config, ctx, Database) {
+	const dir = process.env.AGENTDECK_OMP_PEER_DIR;
+	if (!dir || !path.isAbsolute(dir)) return;
+	const name = "peer-messages.db";
+	const dbPath = path.join(dir, name);
+	let watcher;
+	let debounce;
+	let busy = false;
+	let disposed = false;
+	let delivered = 0;
+	let nextCheck = 0;
+	function dispose() {
+		disposed = true;
+		clearTimeout(debounce);
+		watcher?.close();
+	}
+	async function check() {
+		if (disposed || busy) return;
+		busy = true;
+		try {
+			try {
+				assertAuthorized(config);
+			} catch {
+				dispose();
+				return;
+			}
+			const live = currentIdentity(ctx);
+			const bound = readOwnBinding(config);
+			if (bound?.generation !== config.launchId || bound.id !== live.id || bound.file !== live.file) return;
+			const stat = lstatSync(dbPath);
+			if (!stat.isFile()) return;
+			const db = new Database(dbPath, { readonly: true });
+			let sequence;
+			try {
+				db.run("PRAGMA busy_timeout=100");
+				sequence = db.query("SELECT COALESCE(MAX(seq),0) AS sequence FROM messages WHERE recipient=? AND acknowledged IS NULL").get(config.instanceId).sequence;
+			} finally {
+				db.close();
+			}
+			if (sequence <= delivered) return;
+			await pi.sendMessage({
+				customType: "agent-deck-inbox", display: true, attribution: "agent",
+				content: "Agent Deck has pending peer mail. Run agent-deck message read --json, handle the pending messages, and acknowledge each with agent-deck message ack ID.",
+			}, { deliverAs: "nextTurn", triggerTurn: true });
+			delivered = sequence;
+			// Further arrivals may have been coalesced while this turn started.
+			schedule();
+		} catch {
+			// A missing, rotating or busy database is retried on events and ticks.
+		} finally {
+			busy = false;
+		}
+	}
+	function schedule() {
+		if (disposed || debounce) return;
+		debounce = setTimeout(() => { debounce = undefined; void check(); }, 100);
+		debounce.unref?.();
+	}
+	function tick() {
+		if (disposed || Date.now() < nextCheck) return;
+		nextCheck = Date.now() + 60_000;
+		if (!watcher) {
+			try {
+				watcher = watch(dir, { persistent: false }, (_event, filename) => {
+					if (!filename || filename === name || filename.startsWith(name + "-")) schedule();
+				});
+				watcher.on("error", () => { watcher?.close(); watcher = undefined; });
+			} catch { /* Re-arm when the profile directory is available. */ }
+		}
+		schedule();
+	}
+	tick();
+	return {
+		tick, dispose,
+		updateContext(current) { ctx = current; },
+	};
+}
+
 export default function identityExtension(pi) {
 	let config;
 	let rootClaimed = false;
 	let timerRegistered = false;
 	let appliedTitleContents;
 	let lastNotification;
+	let inbox, inboxLoading, activeContext, shutdown = false, lifecycleEpoch = 0;
+
+	async function armInbox(ctx) {
+		if (shutdown || inbox || inboxLoading || !process.env.AGENTDECK_OMP_PEER_DIR || !process.versions.bun) return;
+		const epoch = lifecycleEpoch;
+		inboxLoading = true;
+		try {
+			const { Database } = await import("bun:sqlite");
+			if (epoch === lifecycleEpoch && !shutdown) inbox = watchPeerInbox(pi, config, ctx, Database);
+		} finally {
+			inboxLoading = false;
+		}
+	}
 
 	function notify(ctx, message, type = "error") {
 		if (message === lastNotification) return;
@@ -524,12 +619,25 @@ export default function identityExtension(pi) {
 				return;
 			}
 		}
+		activeContext = ctx;
+		shutdown = false;
 		const identity = await reconcile(ctx, true);
+		if (identity) {
+			await armInbox(ctx);
+			inbox?.updateContext(ctx);
+		}
 		if (!timerRegistered) {
 			try {
 				ctx.setInterval(async () => {
+					const ctx = activeContext;
 					if (!isTuiRootContext(ctx)) return;
-					await reconcile(ctx);
+					if (await reconcile(ctx)) {
+						await armInbox(ctx);
+						inbox?.tick();
+					} else if (inbox) {
+						inbox.dispose();
+						inbox = undefined;
+					}
 				}, 1000);
 				timerRegistered = true;
 			} catch (error) {
@@ -540,12 +648,14 @@ export default function identityExtension(pi) {
 
 	async function lifecycle(_event, ctx) {
 		if (!isTuiRootContext(ctx)) return;
-		await reconcile(ctx);
+		activeContext = ctx;
+		if (await reconcile(ctx)) inbox?.updateContext(ctx);
 	}
 
 	async function switched(_event, ctx) {
 		if (!isTuiRootContext(ctx)) return;
-		await reconcile(ctx, true);
+		activeContext = ctx;
+		if (await reconcile(ctx, true)) inbox?.updateContext(ctx);
 	}
 
 	async function beforeSwitch(event, ctx) {
@@ -595,5 +705,12 @@ export default function identityExtension(pi) {
 	pi.on("session_switch", switched);
 	pi.on("session_branch", lifecycle);
 	pi.on("agent_end", lifecycle);
-	pi.on("session_shutdown", lifecycle);
+	pi.on("session_shutdown", async (event, ctx) => {
+		if (!isTuiRootContext(ctx)) return;
+		shutdown = true;
+		lifecycleEpoch++;
+		inbox?.dispose();
+		inbox = undefined;
+		await lifecycle(event, ctx);
+	});
 }
