@@ -2045,3 +2045,21 @@ func TestTakeMeta(t *testing.T) {
 		t.Fatalf("GetMeta after take = (%q, %v), want (\"\", nil)", got, err)
 	}
 }
+
+func TestRecordWaitDispatchKeepsNewestSend(t *testing.T) {
+	db := newTestDB(t)
+	start := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	for _, d := range []time.Duration{time.Nanosecond, time.Second, 10 * time.Millisecond} {
+		if err := db.RecordWaitDispatch("target", start.Add(d)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	raw, err := db.GetMeta("session-wait-dispatch:target")
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := time.Parse(time.RFC3339Nano, raw)
+	if err != nil || !got.Equal(start.Add(time.Second)) {
+		t.Fatalf("newest dispatch = %s (%v)", raw, err)
+	}
+}

@@ -93,6 +93,8 @@ func handleSession(profile string, args []string) {
 		handleSessionSwitchAccount(profile, args[1:])
 	case "move", "mv":
 		handleSessionMove(profile, args[1:])
+	case "wait":
+		os.Exit(runSessionWait(profile, args[1:]))
 	case "send":
 		handleSessionSend(profile, args[1:])
 	case "approve":
@@ -145,6 +147,7 @@ func printSessionHelp() {
 	fmt.Println("  switch-account <id> <account>  Switch Claude account and migrate the conversation")
 	fmt.Println("  move <id> <path>        Move session to a new path (migrates Claude history)")
 	fmt.Println("  send <id> <message>     Send a message to a running session")
+	fmt.Println("  wait <id>               Wait for already-dispatched work (see wait --help)")
 	fmt.Println("  approve <id> [choice]   Resolve a visible Codex approval prompt")
 	fmt.Println("  output <id>             Get the last response from a session")
 	fmt.Println("  children [id]           List sub-sessions with status + last completion")
@@ -3088,6 +3091,7 @@ func handleSessionSend(profile string, args []string) {
 		fmt.Println("Examples:")
 		fmt.Println("  agent-deck session send my-project \"Summarize recent changes\"")
 		fmt.Println("  agent-deck session send my-project \"run tests\" --wait")
+		fmt.Println("  agent-deck session send my-project \"run tests\" --json   # wait_cursor can be used later with session wait")
 		fmt.Println("  agent-deck session send my-project \"quick ping\" --no-wait")
 		fmt.Println("  agent-deck session send my-project \"trace progress\" --stream")
 		fmt.Println("  agent-deck session send my-project \"cwd: /path/to/dir\" --draft")
@@ -3135,7 +3139,7 @@ func handleSessionSend(profile string, args []string) {
 	}
 
 	// Load sessions
-	_, instances, _, err := loadSessionData(profile)
+	storage, instances, _, err := loadSessionData(profile)
 	if err != nil {
 		out.Error(err.Error(), ErrCodeNotFound)
 		os.Exit(1)
@@ -3236,10 +3240,6 @@ func handleSessionSend(profile string, args []string) {
 		}
 	}
 
-	// Record send time before the actual send so we can verify output freshness.
-	// Captured early to avoid false negatives from clock skew.
-	sentAt := time.Now()
-
 	// --draft: type text into the prompt without pressing Enter, letting the
 	// user review and submit manually.
 	if *draft {
@@ -3292,13 +3292,15 @@ func handleSessionSend(profile string, args []string) {
 		os.Exit(1)
 	}
 
+	sentAt := sendRes.submittedAt
 	// Self-heal Stage 1: stamp the "we talked to it" clock. A delivered send is
 	// exactly the event the idle_at_empty_prompt dwell is measured from — a
 	// session is only stuck at an empty prompt if WE sent it something and
 	// nothing happened. Targeted single-column write (never SaveInstances);
 	// best-effort, never blocks or fails the send.
-	if db := statedb.GetGlobal(); db != nil {
+	if db := storage.GetDB(); db != nil {
 		_ = db.WriteLastSentAt(inst.ID, sentAt.Unix())
+		_ = db.RecordWaitDispatch(inst.ID, sentAt)
 	}
 
 	// Delivery succeeded, but if an operator draft was cleared and could not
@@ -3319,6 +3321,7 @@ func handleSessionSend(profile string, args []string) {
 			"session_title": inst.Title,
 			"message":       message,
 		}
+		data["wait_cursor"] = responseCursor(inst.ID, sentAt)
 		for k, v := range sendRes.jsonFields() {
 			data[k] = v
 		}
@@ -3468,6 +3471,7 @@ const (
 
 // sendDeliveryResult is the prompt-state-aware outcome of executeSend.
 type sendDeliveryResult struct {
+	submittedAt time.Time
 	// delivery is one of the delivery* constants above.
 	delivery string
 	// held is how long the composer guard waited/worked before the send
@@ -3612,6 +3616,7 @@ func executeSend(target sendRetryTarget, tool, message string, noWait bool, tun 
 		tun.retry.composerPasteFreeBeforeSend = guard.ComposerPasteMarkerFree
 	}
 
+	tun.retry.submittedAt = &res.submittedAt
 	delivery, err := sendWithRetryTarget(target, message, skipClaudeDeliveryVerify(tool), tun.retry)
 	res.delivery = delivery
 
@@ -3741,6 +3746,7 @@ type sendRetryTarget interface {
 }
 
 type sendRetryOptions struct {
+	submittedAt    *time.Time // populated immediately before submission, after composer preflight
 	maxRetries     int
 	checkDelay     time.Duration
 	maxFullResends int // >0 overrides default (3); <0 disables Ctrl+C-then-resend; 0 uses default
@@ -3806,6 +3812,9 @@ func sendWithRetryTarget(target sendRetryTarget, message string, skipVerify bool
 		arrivalBaseline = captureArrivalBaseline(target, message)
 	}
 
+	if opts.submittedAt != nil {
+		*opts.submittedAt = time.Now()
+	}
 	if err := target.SendKeysAndEnter(message); err != nil {
 		// A refused over-long line is a distinct, actionable outcome: the
 		// transport typed nothing, so the composer is untouched and the

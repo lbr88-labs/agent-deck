@@ -2189,6 +2189,18 @@ func (s *StateDB) SetMeta(key, value string) error {
 	return err
 }
 
+// RecordWaitDispatch keeps the newest dispatch cursor when concurrent sends
+// finish their delivery checks in a different order. Fixed fractional precision
+// makes UTC timestamp strings sort chronologically.
+func (s *StateDB) RecordWaitDispatch(id string, dispatch time.Time) error {
+	return withBusyRetry(func() error {
+		_, err := s.db.Exec(`INSERT INTO metadata(key,value) VALUES (?,?)
+			ON CONFLICT(key) DO UPDATE SET value=excluded.value WHERE excluded.value > metadata.value`,
+			"session-wait-dispatch:"+id, dispatch.UTC().Format("2006-01-02T15:04:05.000000000Z"))
+		return err
+	})
+}
+
 // GetMeta gets a value from the metadata table. Returns "" if not found.
 func (s *StateDB) GetMeta(key string) (string, error) {
 	var value string

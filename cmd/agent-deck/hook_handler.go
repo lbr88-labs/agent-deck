@@ -33,6 +33,7 @@ type hookPayload struct {
 	HookEventName  string          `json:"hook_event_name"`
 	SessionID      string          `json:"session_id"`
 	ConversationID string          `json:"conversation_id"`
+	GenerationID   string          `json:"generation_id"`
 	Source         string          `json:"source"`
 	Matcher        json.RawMessage `json:"matcher,omitempty"`
 	// Cwd is the session's working directory (PROJECT_DIR) as reported by
@@ -212,6 +213,23 @@ func handleHookHandler() {
 	// suggests `agent-deck session move`, then soft-skip this invocation.
 	if projectDirMissing(payload.Cwd) {
 		warnProjectDirMissingOnce(instanceID, payload.Cwd)
+		return
+	}
+
+	// Cursor runs the prompt hook before dispatch. The reply hook must match
+	// that launch, conversation and generation before it may publish text.
+	switch normalizeHookEventKey(payload.HookEventName) {
+	case "beforesubmitprompt":
+		if err := session.ObserveCursorWaitTurn(instanceID, payload.ConversationID, payload.GenerationID, ""); err != nil {
+			logCostDebug("observe Cursor prompt: %v", err)
+		}
+	case "afteragentresponse":
+		var response struct{ Text string }
+		if json.Unmarshal(data, &response) == nil && strings.TrimSpace(response.Text) != "" {
+			if err := session.ObserveCursorWaitTurn(instanceID, payload.ConversationID, payload.GenerationID, response.Text); err != nil {
+				logCostDebug("observe Cursor reply: %v", err)
+			}
+		}
 		return
 	}
 

@@ -28,6 +28,7 @@ var cursorHookEventNames = []string{
 	"sessionStart",
 	"sessionEnd",
 	"beforeSubmitPrompt",
+	"afterAgentResponse",
 	"preToolUse",
 	"postToolUse",
 	"stop",

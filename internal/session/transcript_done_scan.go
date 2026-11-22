@@ -2,7 +2,6 @@ package session
 
 import (
 	"encoding/json"
-	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -148,13 +147,17 @@ func TranscriptTailLines(path string, n int) ([]string, error) {
 	}
 	defer f.Close()
 
+	return transcriptTailLinesFromFile(f, n)
+}
+
+func transcriptTailLinesFromFile(f *os.File, n int) ([]string, error) {
 	stat, err := f.Stat()
 	if err != nil {
 		return nil, err
 	}
 	size := stat.Size()
 	if size == 0 {
-		return nil, fmt.Errorf("empty file")
+		return nil, nil
 	}
 
 	const maxTailBytes = int64(512 * 1024)
