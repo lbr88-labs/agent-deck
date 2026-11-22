@@ -137,7 +137,7 @@ Dedupe is SQL-level: `INSERT OR IGNORE INTO watcher_events (watcher_name, event_
 
 ## Custom external watchers
 
-The in-repo framework covers HTTP-receivable sources. For sources that require polling — IMAP inboxes, calendar APIs, a CI that only exposes a status page, a custom SaaS — the cleanest pattern today is an **external polling script** that forwards triggers via `agent-deck session send`.
+The in-repo framework covers HTTP-receivable sources. For sources that require polling — IMAP inboxes, calendar APIs, a CI that only exposes a status page, a custom SaaS — the cleanest pattern today is an **external polling script** that forwards triggers via `agent-deck message notify --producer watchdog`.
 
 The pattern:
 
@@ -145,9 +145,9 @@ The pattern:
 2. **Dedupe locally.** Track "last seen" in a state file (`~/.agent-deck/events/<name>.last`, a SQLite file, whatever). Do not rely on the conductor to filter duplicates — that is context pressure you can avoid.
 3. **Forward lean.** Emit the bell, not the package:
    ```bash
-   agent-deck session send <conductor-name> "[gmail:new:label=agent-deck] 3 unread" --no-wait
+   agent-deck message notify --producer watchdog <conductor-name> "[gmail:new:label=agent-deck] 3 unread"
    ```
-   `--no-wait` matters: if the conductor is unreachable, you want the script to log-and-move-on rather than block until timeout.
+   Save the receipt and advance the poll cursor after acceptance.
 4. **Test the silent-failure path.** A watcher that cannot reach its conductor is worse than useless, because nobody notices. Emit a metric or log line on every successful send, and page yourself if the send count drops to zero.
 
 Two informal examples of this pattern, both maintainer-side rather than in this repo:
@@ -175,7 +175,7 @@ Any change under `internal/watcher/**`, `cmd/agent-deck/watcher_cmd*.go`, `inter
 
 - **Forwarding verbose content.** Breaks the doorbell model. Every extra kilobyte costs tokens on every conductor turn until the context compacts. If your trigger is >200 chars you are probably smuggling data.
 - **No local dedupe in a polling script.** Some sources re-deliver on retry (IMAP on reconnect, cron re-runs, flaky networks). Without a state file you will fire the same trigger again and again, and the conductor will eventually start ignoring you — or, worse, act on stale signals.
-- **Forgetting `--no-wait` in a polling script.** `session send` blocks until the session acknowledges. A wedged conductor then wedges every watcher that forwards to it. Use `--no-wait` unless you genuinely need the ack.
+- **Retrying an uncertain notification.** Use a stable `--id` for each source event so a retry returns the same receipt.
 - **Leaking host-private topic names into shared configs.** `ntfy` topic secrecy is your only auth. Do not commit topic names into tracked files; keep them in `~/.agent-deck/watcher/<name>/watcher.toml`.
 - **Standing up a new adapter without updating embedded skills.** `TestSkillDriftCheck_WatcherCreator` will fail the build. Fix the assets alongside the code.
 - **Assuming the event log is for debugging only.** It is the dedupe source of truth. Hand-editing `events.log` or deleting SQLite rows can cause the next real event to fire twice.

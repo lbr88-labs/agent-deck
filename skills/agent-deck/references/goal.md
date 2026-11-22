@@ -313,7 +313,7 @@ Full bundle: ~/.agent-deck/goals/{id}.json
 Worker output: agent-deck session output {worker_session_title} -q
 
 Options:
-  - Resume: agent-deck session send {worker_session_title} "<your hint>"
+  - Resume: agent-deck message send {worker_session_id} "<your hint>"
   - Kill:   agent-deck goal cancel {id}
   - Take over manually
 ```
@@ -364,7 +364,7 @@ Done-conditions must be:
 |---|---|
 | `agent-deck launch -m "<prompt>"` | Spawn the worker with the goal contract baked in |
 | `ScheduleWakeup(delaySeconds=N)` | Worker self-schedules between cycles |
-| `agent-deck session send <id> "<msg>" --no-wait` | Manager sends nudges (non-blocking, doesn't compete with worker cycles) |
+| `agent-deck message send <worker-session-id> "<msg>"` | Manager sends nudges (non-blocking, doesn't compete with worker cycles) |
 | `agent-deck session output <id> -q` | Manager can fetch transcript snippets for the escalation bundle |
 | `agent-deck session stop <id>` + `rm <id>` | Manager finalizes goal, cleans up worker session |
 | Conductor's CLAUDE.md Behavior Rule #10 | Goal *implements* this rule — "after 3 unchanged NEEDs change tactic" becomes "after `escalate_after_stuck_nudges` nudges, escalate to user with bundle" |
@@ -473,7 +473,7 @@ Goal: each completed/failed goal produces a data point that the self-improvement
 |---|---|---|
 | Buggy done-condition completes goal spuriously | High | Dry-run mode that prints `done_cmd` output at creation; user reviews before launching |
 | Worker ignores the contract (LLMs being LLMs) | Medium | Manager doesn't trust the worker anyway; verifier is the source of truth |
-| Nudge floods the worker context | Medium | Hard cap on nudges before escalation; nudges are short; `--no-wait` means they don't block the worker |
+| Nudge floods the worker context | Medium | Hard cap on nudges before escalation; nudges are short; nudges queue in the worker's inbox |
 | Manager misses receipts due to task-log.md format drift | Medium | Rigid receipt format; parser is strict; mismatch → no-receipt = nudge fires anyway |
 | Goal accumulates indefinitely | Low | `max_cycles` hard cap; auto-cleanup of goals in `done` / `failed` after N days |
 | Telegram bot rate-limited during burst escalation | Low | Manager exponential-backoffs on Telegram errors; falls back to local log file |

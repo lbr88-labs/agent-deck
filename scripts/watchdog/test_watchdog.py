@@ -219,14 +219,14 @@ class TestContinuityMessage(unittest.TestCase):
         self.assertTrue(ok)
         rc.assert_not_called()
 
-    def test_live_mode_invokes_send_no_wait(self):
+    def test_live_mode_queues_notification(self):
         with mock.patch.object(wd_mod, "run_cmd", return_value=(0, "", "")) as rc:
             ok = wd_mod.send_continuity_message("c-1", "personal", dry_run=False)
         self.assertTrue(ok)
         args = rc.call_args[0][0]
-        self.assertIn("session", args)
-        self.assertIn("send", args)
-        self.assertIn("--no-wait", args)
+        self.assertIn("message", args)
+        self.assertIn("notify", args)
+        self.assertIn("watchdog", args)
         self.assertIn("c-1", args)
 
 
@@ -729,7 +729,7 @@ class TestWaitingTooLong(unittest.TestCase):
         self.assertEqual(nudged, ["child-8"])
         call_args = [c[0][0] for c in rc.call_args_list]
         found_send = any(
-            "session" in args and "send" in args and "child-8" in args
+            "notify" in args and "watchdog" in args and "child-8" in args
             and wd_mod.WAITING_PATROL_NUDGE_TEXT in args
             for args in call_args
         )

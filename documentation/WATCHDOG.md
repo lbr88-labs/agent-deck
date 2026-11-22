@@ -57,7 +57,7 @@ This catches the "deaf conductor" failure: tmux is alive, Claude is alive, you c
 
 ### Capability 3: waiting-too-long patrol (v1.7.63)
 
-For every child session (one with `parent_session_id` set), the watchdog takes a SHA-256 hash of its tmux pane output every safety-poll tick. If the session sits in `status=waiting` with an unchanged pane hash for longer than 10 minutes, the watchdog injects a gentle `report status?` nudge via `agent-deck session send --no-wait`. Dedupe: one nudge per hour per session.
+For every child session (one with `parent_session_id` set), the watchdog takes a SHA-256 hash of its tmux pane output every safety-poll tick. If the session sits in `status=waiting` with an unchanged pane hash for longer than 10 minutes, the watchdog injects a gentle `report status?` nudge via `agent-deck message notify --producer watchdog`. Dedupe: one nudge per hour per session.
 
 Pane change resets the timer. A status change (e.g. `waiting` → `running`) evicts the tracker entry entirely.
 

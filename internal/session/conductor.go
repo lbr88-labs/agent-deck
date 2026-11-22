@@ -1304,7 +1304,7 @@ $RULES"
 fi
 
 if [ "$STATUS" = "idle" ] || [ "$STATUS" = "waiting" ]; then
-    agent-deck -p "$PROFILE" session send "$SESSION" "$MSG" --no-wait -q
+    agent-deck -p "$PROFILE" message notify --producer heartbeat "$SESSION" "$MSG"
 fi
 `
 

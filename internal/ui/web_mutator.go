@@ -1524,15 +1524,10 @@ func (m *WebMutator) SendSessionPrompt(id, message string) error {
 			return err
 		}
 	}
-	tmuxName := ts.Name
-	go func() {
-		if err := deliverToConductorPane(ts, message); err != nil {
-			uiLog.Warn("web_prompt_send_failed",
-				slog.String("tmux_session", tmuxName),
-				slog.String("error", err.Error()))
-		}
-	}()
-	return nil
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	_, err = inst.QueueOperatorMessage(ctx, m.h.profile, message)
+	return err
 }
 
 // SendSessionOutput mirrors the TUI `x` workflow: capture the source session's

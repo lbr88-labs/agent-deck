@@ -65,7 +65,7 @@ agent-deck add -t "Project" -c claude /path/to/project
 agent-deck session start "Project"
 
 # Send message and get output
-agent-deck session send "Project" "Analyze this codebase"
+agent-deck message send --json "$RECIPIENT_ID" "Analyze this codebase"
 agent-deck session output "Project"
 ```
 
@@ -118,7 +118,7 @@ The table above is what *agent-deck* does. This one is what the *CLI inside a se
 
 **Choosing the `-c` tool for a child:** default to **claude** — only it has in-session multi-agent fan-out (Agent + Workflow tools) *and* pool skills, so it can own a whole task end-to-end and orchestrate its own sub-work. Reach for **codex** for a fast non-interactive second opinion or code review (`codex review`) and sandboxed exec; **gemini** for a third opinion or large-context reads. For codex/gemini, parallelism comes from launching multiple agent-deck *peers*, not from inside the session.
 
-**agent-deck powers every child also has** (independent of CLI): `agent-deck mcp attach/detach` then `session restart`; `launch` further child or peer sessions (`-no-parent` for peers); load pool skills on demand; `session send` to talk to sibling sessions. See [Sub-Agent Launch](#sub-agent-launch), [Peer (Root) Sessions vs Sub-Agents](#peer-root-sessions-vs-sub-agents), [MCP Management](#mcp-management).
+**agent-deck powers every child also has** (independent of CLI): `agent-deck mcp attach/detach` then `session restart`; `launch` further child or peer sessions (`-no-parent` for peers); load pool skills on demand; `message send` to talk to sibling sessions. See [Sub-Agent Launch](#sub-agent-launch), [Peer (Root) Sessions vs Sub-Agents](#peer-root-sessions-vs-sub-agents), [MCP Management](#mcp-management).
 
 **When to go inline vs Agent tool vs Workflow** (for claude children) is owned by the shared conductor template's *Delegation* section (`~/.agent-deck/conductor/conductor-claude.md`) and is not duplicated here: 1 task = inline; a few independent subtasks = Agent tool; a sweep / audit / matrix = Workflow — and always adversarially verify findings with a second agent told to refute.
 
@@ -129,8 +129,8 @@ The table above is what *agent-deck* does. This one is what the *CLI inside a se
 | `agent-deck` | Launch interactive TUI |
 | `agent-deck add -t "Name" -c claude /path` | Create session |
 | `agent-deck session start/stop/restart <name>` | Control session |
-| `agent-deck session send <name> "message"` | Send message |
-| `agent-deck session send <name> --message-file <file>` | Send message from file (`-` = stdin); no shell quoting. Also on `launch`/`session start` |
+| `agent-deck message send --json <full-session-id> "message"` | Send a durable peer message and retain its ID |
+| `agent-deck message wait --response-to <message-id> --reply-only --json` | Read a reply correlated to your message |
 | `agent-deck session output <name>` | Get last response |
 | `agent-deck session children --json` | Child sessions' live status + asserted completions (non-blocking, read-only) |
 | `agent-deck session current [-q\|--json]` | Auto-detect current session |
@@ -876,22 +876,16 @@ agent-deck manages **interactive agent sessions**. It is not a supervisor for al
 
 Friction points discovered during real usage. Work around them per the patterns below.
 
-### `session send --no-wait` can leave prompts typed-but-not-submitted
+### Sending work to another agent
 
-On a freshly-launched Claude session, `agent-deck session send --no-wait <id> "..."` may paste the message into the input buffer before Claude is fully ready, leaving it TYPED but not SUBMITTED. Classic race.
+Resolve the recipient's full session ID using `agent-deck list --json`. Send through the profile inbox and retain the returned ID. A busy or stopped receiver can read the message later. If the send outcome is uncertain, reuse the same ID and identical body with `message send --id`.
 
-**Workaround (always safe):**
 ```bash
-agent-deck -p <profile> session send <id> "..." --no-wait -q
-sleep 3
-# Get the tmux session name and send Enter to submit
-TMUX=$(agent-deck -p <profile> session show --json <id> | jq -r .tmux_session)
-tmux send-keys -t "$TMUX" Enter
+agent-deck -p "$PROFILE" message send --json "$RECIPIENT_ID" "Please review the patch"
+agent-deck -p "$PROFILE" message wait --reply-only --response-to "$MESSAGE_ID" --json
 ```
 
-The Enter is idempotent — if already submitted, it's just a no-op newline. Use this pattern every time you `session send --no-wait` to a freshly-launched session.
-
-**Alternative:** omit `--no-wait` so the built-in 60s readiness wait kicks in before submitting.
+Read your inbox using `message read --json`, acknowledge each ID with `message ack`, and reply with `message send --reply-to "$MESSAGE_ID" "$SENDER_ID" "reply"`. Reserve `session send --draft` for an operator reviewing text in the terminal.
 
 ### Replacing the binary while agent-deck is running (`text file busy`)
 
@@ -1014,7 +1008,6 @@ These were surfaced by mining real conductor transcripts (see [Self-Improvement]
 | Symptom | Workaround | Issue |
 |---|---|---|
 | `agent-deck rm` driven by `xargs -P N` reports `✓ Removed` but rows persist | Sequential `while read id; do agent-deck rm "$id"; done` — never `xargs -P` for agent-deck mutations | [#961](https://github.com/asheshgoplani/agent-deck/issues/961) |
-| `session send --wait --timeout 300s` still times out at 80s if recipient is busy | Poll until ready: `until [ "$(agent-deck session show --json $id \| jq -r .status)" = "waiting" ]; do sleep 10; done` | [#957](https://github.com/asheshgoplani/agent-deck/issues/957) |
 | Conductor restart wipes Claude history when `claude_session_id` is empty / `"none"` | Use `tool: claude` not `tool: shell` for conductors so JSONL-resume applies | [#956](https://github.com/asheshgoplani/agent-deck/issues/956) |
 | Transition-notifier replays events for *removed* sessions out of `~/.agent-deck/inboxes/<id>.jsonl` | Truncate the inbox file by hand after `rm` | [#962](https://github.com/asheshgoplani/agent-deck/issues/962) |
 | Feedback dialog never shows for users with `feedback_enabled:false` (single boolean gates everything) | Manual flip in `feedback-state.json` to reopt-in | [#967](https://github.com/asheshgoplani/agent-deck/issues/967) |
@@ -1022,7 +1015,6 @@ These were surfaced by mining real conductor transcripts (see [Self-Improvement]
 | Parallel `agent-deck launch` cascade → swap thrash → workers + conductor die | Sequential launches; cap parallelism; don't reach for `vm.overcommit_memory=2` (worsens it) | [#964](https://github.com/asheshgoplani/agent-deck/issues/964) |
 | Orphaned context7 MCP procs (PPID=1) accumulating; `pkill -f context7-mcp` from inside the conductor self-immolates | Guard with `$$` check: `grep -q $$ <(pgrep -f "<pat>") \|\| pkill -f "<pat>"` | [#965](https://github.com/asheshgoplani/agent-deck/issues/965) |
 | `launch-subagent.sh` puts children in parent's `conductor` group instead of project group | Always pass `-g <project-group>` explicitly | [#972](https://github.com/asheshgoplani/agent-deck/issues/972) |
-| Bare slash commands sent via `session send` ignored on a freshly restarted child | Wrap conversationally: `"Please run /cmd …"` | [#966](https://github.com/asheshgoplani/agent-deck/issues/966) |
 | `.mcp.json` plugin version pins go stale after plugin upgrade | After `/mcp` reload, rewrite `.mcp.json` from current plugin spec | [#960](https://github.com/asheshgoplani/agent-deck/issues/960) |
 | Cron heartbeat `NEED:` lines repeat unchanged for 12-21h with no auto-retire | After 3 repeats, change tactic — escalate explicitly or spawn a different worker | [#971](https://github.com/asheshgoplani/agent-deck/issues/971) |
 | `agent-deck launch -m "<rich text>"` short-flag parser misroutes — text after `-m` becomes positional `[path]` | Use long-form flags: `--message`, `--title`, `--group`, `--parent` | (filed in batch) |

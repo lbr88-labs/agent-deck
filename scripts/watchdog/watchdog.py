@@ -8,7 +8,7 @@ See DESIGN.md for architecture. Changes in v2:
   - Cascade: when 5+ criticals are simultaneously in error, wait 30s for
     system to stabilize, then fire all restarts in parallel (atomic-ish revive)
   - After each successful restart, send a continuity message via
-    `agent-deck session send <id> "..." --no-wait`
+    `agent-deck message notify --producer watchdog <id> "..."`
   - Telegram escalation to a fixed chat_id for rate-limit breaches
 
 Usage:
@@ -258,7 +258,7 @@ def send_continuity_message(instance_id, profile, dry_run=False):
     args = [AGENT_DECK_BIN]
     if profile:
         args += ["-p", profile]
-    args += ["session", "send", instance_id, msg, "--no-wait"]
+    args += ["message", "notify", "--producer", "watchdog", instance_id, msg]
     rc, out, err = run_cmd(args, timeout=15)
     if rc != 0:
         log.warning("continuity send failed %s rc=%d err=%s", instance_id, rc, err.strip())
@@ -420,7 +420,7 @@ def compute_pane_hash(sid, profile):
 
 
 def send_status_query(sid, profile, dry_run=False):
-    """Inject the 'report status?' nudge via `agent-deck session send --no-wait`.
+    """Inject the 'report status?' nudge via `agent-deck message notify --producer watchdog`.
     Non-blocking on the receiver so a truly stuck agent doesn't stall this tick."""
     if dry_run:
         log.info("[DRY] status-query→ %s", sid)
@@ -428,7 +428,7 @@ def send_status_query(sid, profile, dry_run=False):
     args = [AGENT_DECK_BIN]
     if profile:
         args += ["-p", profile]
-    args += ["session", "send", sid, WAITING_PATROL_NUDGE_TEXT, "--no-wait"]
+    args += ["message", "notify", "--producer", "watchdog", sid, WAITING_PATROL_NUDGE_TEXT]
     rc, _, err = run_cmd(args, timeout=15)
     if rc != 0:
         log.warning("status query send failed %s rc=%d err=%s", sid, rc, err.strip()[:200])
@@ -1260,7 +1260,7 @@ class Watchdog:
     def check_waiting_too_long(self, now=None):
         """For each child session (parent_session_id set) in status=waiting,
         check whether its pane has been unchanged for >WAITING_PATROL_THRESHOLD_S.
-        If so, inject a 'report status?' nudge via `agent-deck session send`.
+        If so, inject a 'report status?' nudge via `agent-deck message notify --producer watchdog`.
         Dedup at most one nudge per session per WAITING_PATROL_NUDGE_DEDUP_S.
 
         Returns the list of session IDs that were nudged this tick."""

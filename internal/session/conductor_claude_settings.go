@@ -56,7 +56,7 @@ var conductorAutoAllowCommands = []string{
 var conductorAskCommands = []string{
 	"Bash(agent-deck session start *)",
 	"Bash(agent-deck session stop *)",
-	"Bash(agent-deck session send *)",
+	"Bash(agent-deck message send *)",
 	"Bash(agent-deck launch *)",
 	"Bash(agent-deck add *)",
 	"Bash(agent-deck mcp attach *)",

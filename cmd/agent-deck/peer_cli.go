@@ -42,18 +42,18 @@ func openPeerService(profile string) (*peerService, error) {
 }
 
 func openProducerMailbox(profile, producer string) (*peerService, error) {
-	if strings.TrimSpace(os.Getenv("AGENTDECK_INSTANCE_ID")) != "" || strings.TrimSpace(os.Getenv("AGENT_DECK_SESSION_ID")) != "" || GetCurrentSessionID() != "" {
+	if sessionSendFromAgent() {
 		return nil, errors.New("system notifications require a caller outside a managed session")
 	}
 	if !validProducer(producer) {
-		return nil, errors.New("--producer must be operator, heartbeat, watchdog, or completion-wake")
+		return nil, errors.New("--producer must be operator, heartbeat, watchdog, goal-manager, or completion-wake")
 	}
 	return openPeerMailbox(profile, "system:"+producer)
 }
 
 func validProducer(name string) bool {
 	switch name {
-	case "operator", "heartbeat", "watchdog", "completion-wake":
+	case "operator", "heartbeat", "watchdog", "goal-manager", "completion-wake":
 		return true
 	}
 	return false
@@ -127,7 +127,7 @@ const peerUsage = `Usage: agent-deck [-p PROFILE] message <command> [flags]
   wait --response-to ID [--after SEQUENCE] [--limit N] [--reply-only] [--producer NAME] [--timeout 10s]              Wait for an ack or reply
   mcp                                               Serve MCP over stdio
 
-System producers (operator, heartbeat, watchdog, completion-wake) run outside managed sessions.
+System producers (operator, heartbeat, watchdog, goal-manager, completion-wake) run outside managed sessions.
 Use a full recipient ID or an unambiguous session reference with notify.
 Use --json with notify, send, read, ack, or wait. Read is repeatable until ack.
 Use the full recipient session ID. A stable --id makes a send retry idempotent.

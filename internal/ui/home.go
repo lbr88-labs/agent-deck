@@ -8816,11 +8816,7 @@ func (h *Home) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 			})
 		}
 
-		// #1410: deliver a one-line prompt to the highlighted session without
-		// attaching, reusing the prompt-state-aware send path (the #1409/#1432
-		// composer-draft guard) so the prompt never merges with a half-typed
-		// operator draft and delivery is verified. Dispatch in a goroutine —
-		// the guard holds briefly and the verify loop polls the pane.
+		// Prompt the highlighted session without changing its composer.
 		h.instancesMu.RLock()
 		inst := h.instanceByID[msg.instanceID]
 		h.instancesMu.RUnlock()
@@ -8842,13 +8838,12 @@ func (h *Home) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 			h.setError(err)
 			return h, nil
 		}
-		text := msg.text
-		tmuxName := ts.Name
+		text, profile := msg.text, h.profile
 		go func() {
-			if err := deliverToConductorPane(ts, text); err != nil {
-				uiLog.Warn("list_prompt_send_failed",
-					slog.String("tmux_session", tmuxName),
-					slog.String("error", err.Error()))
+			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			defer cancel()
+			if _, err := inst.QueueOperatorMessage(ctx, profile, text); err != nil {
+				uiLog.Warn("list_prompt_send_failed", slog.String("session_id", inst.ID), slog.String("error", err.Error()))
 			}
 		}()
 		return h, nil
@@ -13695,10 +13690,7 @@ func formatWatcherDispatchMsg(evt watcher.Event) string {
 	return fmt.Sprintf("[%s] %s: %s", evt.Source, evt.Sender, text)
 }
 
-// dispatchWatcherEvent sends a routed watcher event into the conductor's tmux pane.
-// Skipped for triage and unrouted events (RoutedTo empty or "triage") since those have no
-// concrete delivery target yet. Mirrors dispatchHealthAlert: looks up the conductor session
-// by title and uses tmux send-keys (T-16-08) to deliver the formatted line.
+// dispatchWatcherEvent queues routed events in the conductor's durable inbox.
 func (h *Home) dispatchWatcherEvent(evt watcher.Event) {
 	if evt.RoutedTo == "" || evt.RoutedTo == "triage" || strings.HasPrefix(evt.RoutedTo, "triage-") {
 		return
@@ -13712,65 +13704,19 @@ func (h *Home) dispatchWatcherEvent(evt watcher.Event) {
 		if inst.Title != sessionTitle {
 			continue
 		}
-		ts := inst.GetTmuxSession()
-		if ts == nil || ts.Name == "" {
-			return
-		}
-		tmuxName := ts.Name
-		go func() {
-			if err := deliverToConductorPane(ts, msg); err != nil {
-				uiLog.Warn("dispatch_watcher_event_send_failed",
-					slog.String("tmux_session", tmuxName),
-					slog.String("error", err.Error()))
-			}
-		}()
+		h.notifyWatcher(inst.ID, msg)
 		return
 	}
 }
 
-// deliverToConductorPane sends msg into a conductor's tmux pane and verifies it
-// was actually submitted, then returns. A raw single
-// `send-keys <msg> Enter` races the inner agent's input handler: tmux 3.2+ wraps the
-// literal text in bracketed-paste markers (\e[200~…\e[201~) and the trailing
-// Enter lands in the same PTY buffer as the paste-end marker, so async TUIs
-// (Ink/Node.js, curses, ratatui) can swallow it — the message is typed into the composer but never sent. That
-// is exactly how routed messages get silently dropped once this native
-// send-keys path is the sole delivery route (no external bridge).
-//
-// Two layers, agent-agnostic where possible:
-//   - SendKeysAndEnter separates the literal text from a delayed Enter, which
-//     fixes the paste/Enter race for any bracketed-paste TUI.
-//   - A verify loop confirms submission. The tool-agnostic signal is the
-//     session status flipping to "active" (the status detector handles both
-//     claude and codex), proving the agent accepted the input and began work.
-//     For an introspectable composer (claude's prompt marker) it additionally
-//     re-presses Enter while the message is still shown unsent and treats a
-//     cleared composer as submitted; agents without composer introspection get
-//     a small bounded number of fallback Enters in case the delayed Enter was
-//     dropped.
-//
-// Best-effort: returns an error only when no submission signal is seen within
-// the budget, so the caller can log the drop instead of failing silently.
-// Intended to run inside a goroutine.
-//
-// Issue #1409: delivery is composer-guarded — a pane whose composer holds a
-// half-typed operator draft is held briefly, then the draft is saved, cleared
-// and restored around the automated send so it cannot merge with it.
-func deliverToConductorPane(p guardableConductorPane, msg string) error {
-	return deliverToConductorPaneGuarded(p, msg, conductorComposerGuardOptions(), 40, 250*time.Millisecond)
-}
-
-// conductorComposerGuardOptions are the production bounds of the watcher/
-// health-alert composer guard. Dispatch runs in a goroutine, so a generous
-// 5s hold costs nothing on the UI thread; the guard is a single pane capture
-// when the composer is empty.
-func conductorComposerGuardOptions() send.ComposerGuardOptions {
-	return send.ComposerGuardOptions{
-		HoldWait:     5 * time.Second,
-		PollInterval: 250 * time.Millisecond,
-		ClearWait:    time.Second,
-		Strip:        tmux.StripANSI,
-	}
+// notifyWatcher leaves the UI responsive while the service persists the event.
+func (h *Home) notifyWatcher(id, body string) {
+	profile := h.profile
+	go func() {
+		if err := session.NotifyWatcher(profile, id, body); err != nil {
+			uiLog.Warn("watcher_message_failed", slog.String("session_id", id), slog.String("error", err.Error()))
+		}
+	}()
 }
 
 // deliverToConductorPaneGuarded wraps deliverToConductorPaneTuned with the
@@ -13941,24 +13887,14 @@ func (h *Home) dispatchHealthAlert(state watcher.HealthState) {
 	alertMsg := fmt.Sprintf("[WATCHER HEALTH ALERT] Watcher %q transitioned to %s: %s. Suggested action: check watcher configuration and source connectivity.",
 		state.WatcherName, state.Status, state.Message)
 
-	// Find the conductor session by title and deliver via tmux send-keys (T-16-08).
+	// Deliver health alerts even when the target has no live terminal.
 	sessionTitle := session.ConductorSessionTitle(conductorName)
 	h.instancesMu.RLock()
 	instances := h.instances
 	h.instancesMu.RUnlock()
 	for _, inst := range instances {
 		if inst.Title == sessionTitle {
-			ts := inst.GetTmuxSession()
-			if ts != nil && ts.Name != "" {
-				tmuxName := ts.Name
-				go func() {
-					if err := deliverToConductorPane(ts, alertMsg); err != nil {
-						uiLog.Warn("dispatch_health_alert_send_failed",
-							slog.String("tmux_session", tmuxName),
-							slog.String("error", err.Error()))
-					}
-				}()
-			}
+			h.notifyWatcher(inst.ID, alertMsg)
 			break
 		}
 	}

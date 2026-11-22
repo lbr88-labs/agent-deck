@@ -3,7 +3,6 @@ package session
 import (
 	"context"
 	"log/slog"
-	"os/exec"
 	"time"
 )
 
@@ -96,12 +95,8 @@ func (n *TransitionNotifier) fireWakeNudge(parent *Instance, event TransitionNot
 	}
 }
 
-// parentIsNudgeableIdle reports whether parent is safe to wake with a send-keys
-// nudge: it must be a conductor (only conductors drain an inbox on Stop, so a
-// nudge to a non-conductor leaf would be pure noise) AND currently idle/waiting,
-// NOT mid-turn. A send-keys into a RUNNING pane only queues the keystroke
-// (issue #36326) — the exact failure the pull model was built to avoid — so a
-// busy conductor is left to drain at its own turn boundary.
+// parentIsNudgeableIdle limits reminder traffic to idle conductors. Busy
+// conductors already drain their completion inbox at the turn boundary.
 //
 // parent.Status is read directly (not re-probed): the conductor branch of
 // resolveParentNotificationTarget freshly UpdateStatus()'d this same instance
@@ -119,11 +114,7 @@ func parentIsNudgeableIdle(parent *Instance) bool {
 	}
 }
 
-// sendWakeNudge fires one best-effort wake into the parent conductor's pane and
-// returns immediately. The actual `session send --no-wait` runs detached so a
-// slow/stuck send never blocks the producer commit path; the gate that this is
-// only reached for an IDLE pane means the send won't sit in tmux's busy-queue.
-// A failed send is harmless (the record still drains on the next turn).
+// sendWakeNudge schedules an inbox reminder off the producer commit path.
 func sendWakeNudge(parent *Instance, profile string) error {
 	if parent == nil {
 		return nil
@@ -137,33 +128,12 @@ func sendWakeNudge(parent *Instance, profile string) error {
 	return nil
 }
 
-// wakeNudgeSendTimeout bounds the detached wake-nudge subprocess. --no-wait
-// already returns fast, so 5s is generous; the bound exists purely so a wedged
-// agent-deck binary (e.g. stuck on SQLite/tmux) is reaped instead of leaking the
-// dispatch goroutine indefinitely (PR #1230 audit). A timed-out send is harmless
-// like any dropped nudge — the record still drains on the next turn/heartbeat.
+// Bound the detached write so a stalled inbox cannot accumulate wake goroutines.
 const wakeNudgeSendTimeout = 5 * time.Second
 
-// wakeNudgeExec runs the resolved command under ctx. It is a package var so a
-// test can substitute a spy and assert the deadline/args without spawning a real
-// process; production runs the real bounded subprocess.
-var wakeNudgeExec = func(ctx context.Context, bin string, args ...string) error {
-	return exec.CommandContext(ctx, bin, args...).Run()
-}
-
-// sendWakeNudgeNoWait shells out to `agent-deck [-p profile] session send <ref>
-// <msg> --no-wait -q`. --no-wait keeps it fire-and-forget: it neither blocks for
-// the agent's ready state nor waits for a reply, so it returns fast even if the
-// pane is wedged. The context deadline is a belt-and-suspenders backstop for the
-// case where even the subprocess itself hangs.
-func sendWakeNudgeNoWait(profile, ref string) error {
+func sendWakeNudgeNoWait(profile, recipient string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), wakeNudgeSendTimeout)
 	defer cancel()
-	bin := agentDeckBinaryPath()
-	args := []string{}
-	if profile != "" {
-		args = append(args, "-p", profile)
-	}
-	args = append(args, "session", "send", ref, wakeNudgeMessage, "--no-wait", "-q")
-	return wakeNudgeExec(ctx, bin, args...)
+	_, err := queueInboxMessage(ctx, profile, "system:completion-wake", recipient, wakeNudgeMessage)
+	return err
 }

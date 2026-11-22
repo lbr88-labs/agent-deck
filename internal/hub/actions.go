@@ -21,9 +21,7 @@ import (
 	"github.com/asheshgoplani/agent-deck/internal/agentpaths"
 	"github.com/asheshgoplani/agent-deck/internal/git"
 	"github.com/asheshgoplani/agent-deck/internal/jujutsu"
-	"github.com/asheshgoplani/agent-deck/internal/send"
 	"github.com/asheshgoplani/agent-deck/internal/session"
-	"github.com/asheshgoplani/agent-deck/internal/tmux"
 	"github.com/asheshgoplani/agent-deck/internal/vcs"
 	"github.com/asheshgoplani/agent-deck/internal/vcsbackend"
 )
@@ -1372,30 +1370,22 @@ func (b LocalActionBackend) ProxyWeb(ctx context.Context, req WebProxyRequest) (
 }
 
 func (b LocalActionBackend) Send(ctx context.Context, sessionID, message string) error {
-	inst, closeStorage, err := b.loadInstance(sessionID)
+	storage, _, _, inst, err := b.loadSessionData(sessionID)
 	if err != nil {
 		return err
 	}
-	defer closeStorage()
+	defer storage.Close()
 	if !inst.Exists() {
 		return fmt.Errorf("session %q is not running", inst.Title)
 	}
-	if inst.Tool == "omp" {
-		if err := inst.PromptDeliveryError(); err != nil {
-			return err
-		}
-	}
-	tmuxSess := inst.GetTmuxSession()
-	if tmuxSess == nil {
-		return fmt.Errorf("session %q has no tmux session", inst.Title)
-	}
-	if err := waitForLocalActionReady(ctx, tmuxSess, inst.Tool); err != nil {
+	if err := inst.PromptDeliveryError(); err != nil {
 		return err
 	}
-	if err := tmuxSess.SendKeysAndEnter(message); err != nil {
-		return fmt.Errorf("send message: %w", err)
+	if ctx == nil {
+		ctx = context.Background()
 	}
-	return nil
+	_, err = inst.QueueOperatorMessage(ctx, storage.Profile(), message)
+	return err
 }
 
 func (b LocalActionBackend) Start(ctx context.Context, sessionID string) error {
@@ -3438,26 +3428,6 @@ func orderFieldChangesForUpdate(changes []SessionFieldChange) []SessionFieldChan
 		}
 	}
 	return ordered
-}
-
-func waitForLocalActionReady(ctx context.Context, tmuxSess *tmux.Session, tool string) error {
-	if ctx == nil {
-		ctx = context.Background()
-	}
-	timeout := 10 * time.Minute
-	if deadline, ok := ctx.Deadline(); ok {
-		timeout = time.Until(deadline)
-	}
-	if timeout <= 0 {
-		return ctx.Err()
-	}
-	if err := send.WaitForAgentReady(tmuxSess, tool, timeout, send.PromptGates{
-		ClaudeComposer: session.IsClaudeCompatible(tool),
-		CodexPrompt:    session.IsCodexCompatible(tool),
-	}); err != nil {
-		return fmt.Errorf("wait for agent ready: %w", err)
-	}
-	return ctx.Err()
 }
 
 func ctxErr(ctx context.Context) error {

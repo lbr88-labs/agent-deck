@@ -449,6 +449,34 @@ def _is_still_running_timeout(stderr: str) -> bool:
     return "timeout waiting for completion" in s or "still running" in s
 
 
+def send_heartbeat(session: str, message: str, profile: str) -> tuple[bool, str]:
+    """Wait only for a reply correlated to this heartbeat's durable ID."""
+    sent = run_cli("message", "notify", "--producer", "heartbeat", "--json",
+                   "--", session, message, profile=profile, timeout=30)
+    if sent.returncode:
+        log.error("Heartbeat enqueue failed: %s", sent.stderr.strip())
+        return False, ""
+    try:
+        message_id = json.loads(sent.stdout)["id"]
+        deadline = time.monotonic() + RESPONSE_TIMEOUT
+        while (left := deadline - time.monotonic()) > 0:
+            seconds = min(left, 30)
+            result = run_cli("message", "wait", "--producer", "heartbeat",
+                             "--response-to", message_id, "--reply-only", "--json",
+                             "--timeout", f"{seconds:.3f}s", profile=profile,
+                             timeout=seconds + 5)
+            if result.returncode:
+                log.error("Waiting for heartbeat %s failed: %s", message_id, result.stderr.strip())
+                return False, ""
+            replies = json.loads(result.stdout)["replies"]
+            if replies:
+                return True, replies[0]["body"]
+    except (ValueError, KeyError, TypeError) as exc:
+        log.error("Invalid heartbeat receipt: %s", exc)
+        return False, ""
+    return False, ""
+
+
 def send_to_conductor(
     session: str,
     message: str,
@@ -498,24 +526,11 @@ def send_to_conductor(
         )
         if result.returncode != 0:
             stderr = result.stderr.strip()
-            # If the conductor became busy between the status check and the send,
-            # queue instead of dropping.
-            if "timeout" in stderr.lower() or "not ready" in stderr.lower():
-                log.info(
-                    "Conductor %s became busy during send, queueing message",
-                    session,
-                )
-                _enqueue_message(session, message, profile, reply_callback)
-                return True, "", False
             log.error("Failed to send to conductor: %s", stderr)
             return False, "", False
         return True, "", False
 
-    # wait_for_reply=True: single-call flow used by heartbeats and the idle
-    # user-message path. `--wait` blocks until the assistant's reply is flushed;
-    # we then re-fetch the clean reply via get_session_output (`session output
-    # --json` -> content), rather than parsing the raw `--wait` pane capture.
-    # This mirrors the deployed bridge's reply-capture (issue #926).
+    # Quiet mode prints the correlated reply body for the requesting channel.
     result = run_cli(
         "session", "send", session, message,
         "--wait", "--timeout", f"{response_timeout}s", "-q",
@@ -536,7 +551,7 @@ def send_to_conductor(
             return False, "", True
         log.error("Failed to send to conductor: %s", stderr)
         return False, "", False
-    return True, get_session_output(session, profile=profile), False
+    return True, result.stdout.strip(), False
 
 
 # ---------------------------------------------------------------------------
@@ -693,35 +708,22 @@ async def _drain_queue() -> None:
                     session, remaining,
                 )
                 if reply_callback is not None:
-                    # Re-fetch the clean reply via get_session_output (consistent
-                    # with send_to_conductor's wait path) rather than the raw
-                    # `--wait` stdout. Off-loop to avoid blocking the drain.
-                    output = await loop.run_in_executor(
-                        None,
-                        functools.partial(get_session_output, session, profile=profile),
-                    )
+                    output = result.stdout
                     text = output.strip() or "[No output from conductor.]"
                     loop.create_task(_fire_callback(reply_callback, text))
             else:
                 stderr = result.stderr.strip()
-                if "timeout" in stderr.lower() or "not ready" in stderr.lower():
-                    log.info(
-                        "Conductor %s busy again during drain, will retry",
-                        session,
-                    )
-                else:
-                    log.error(
-                        "Failed to deliver queued message to %s: %s — dropping",
-                        session, stderr,
-                    )
-                    items.popleft()
-                    if not items:
-                        _message_queue.pop(session, None)
-                    if reply_callback is not None:
-                        loop.create_task(_fire_callback(
-                            reply_callback,
-                            f"[Queued message could not be delivered — send failed: {stderr[:100]}]",
-                        ))
+                # Once dispatched, a timeout can follow durable acceptance.
+                # Retrying here could enqueue a second copy of the same request.
+                log.error("Queued send to %s ended without a reply: %s", session, stderr)
+                items.popleft()
+                if not items:
+                    _message_queue.pop(session, None)
+                if reply_callback is not None:
+                    loop.create_task(_fire_callback(
+                        reply_callback,
+                        f"[Queued send ended without a confirmed reply: {stderr[:200]}]",
+                    ))
 
         # Exit check AFTER the session loop — avoids missing items enqueued during drain
         if not _message_queue:
@@ -2893,16 +2895,8 @@ async def heartbeat_loop(
 
                 # Send heartbeat to conductor (wrapped in executor — blocks up to
                 # RESPONSE_TIMEOUT seconds and must not freeze the event loop)
-                ok, response, _ = await loop.run_in_executor(
-                    None,
-                    functools.partial(
-                        send_to_conductor,
-                        session_title,
-                        heartbeat_msg,
-                        profile=profile,
-                        wait_for_reply=True,
-                        response_timeout=RESPONSE_TIMEOUT,
-                    ),
+                ok, response = await loop.run_in_executor(
+                    None, functools.partial(send_heartbeat, session_title, heartbeat_msg, profile),
                 )
                 if not ok:
                     log.error(
@@ -2911,7 +2905,7 @@ async def heartbeat_loop(
                     )
                     continue
 
-                # Response is captured via get_session_output (see send_to_conductor).
+                # Escalate only the response explicitly linked to this heartbeat.
                 log.info(
                     "Heartbeat [%s] response: %s",
                     name, response[:200],

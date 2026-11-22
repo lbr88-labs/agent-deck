@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+	"unicode"
 
 	"al.essio.dev/pkg/shellescape"
 
@@ -453,6 +454,7 @@ func handleSessionStart(profile string, args []string) {
 	quietShort := fs.Bool("q", false, "Minimal output (short)")
 	message := fs.String("message", "", "Initial message to send once agent is ready")
 	messageShort := fs.String("m", "", "Initial message to send once agent is ready (short)")
+	messageID := fs.String("message-id", "", "Stable ID for retrying a managed agent's initial task")
 	messageFile := fs.String("message-file", "", "Read the initial message from a file ('-' for stdin); avoids shell quoting of long prompts")
 	yoloMode := fs.Bool("yolo", false, "Enable YOLO mode when starting Gemini or Codex sessions")
 	attach := fs.Bool("attach", false, "Attach to the session after starting (requires an interactive terminal)")
@@ -488,6 +490,15 @@ func handleSessionStart(profile string, args []string) {
 		os.Exit(1)
 	}
 
+	bootstrap, err := preparePeerBootstrap(profile, initialMessage, *messageID)
+	if err != nil {
+		out.Error(err.Error(), ErrCodeInvalidOperation)
+		os.Exit(1)
+	}
+	if bootstrap != nil {
+		defer func() { _ = bootstrap.service.Close() }()
+	}
+
 	// Load sessions
 	storage, instances, groups, err := loadSessionData(profile)
 	if err != nil {
@@ -517,6 +528,12 @@ func handleSessionStart(profile string, args []string) {
 		os.Exit(1)
 	}
 
+	launchMessage, err := bootstrap.terminalBody(inst, initialMessage)
+	if err != nil {
+		out.Error(err.Error(), ErrCodeDeliveryFailed)
+		os.Exit(1)
+	}
+
 	// v1.9.1 group concurrency cap: if the target group is at its
 	// max_concurrent cap, mark this session queued instead of starting.
 	// The queue drains in handleSessionStop. Groups with max_concurrent<=0
@@ -526,32 +543,24 @@ func handleSessionStart(profile string, args []string) {
 	if session.ShouldQueue(instances, inst.GroupPath, max) {
 		inst.Status = session.StatusQueued
 		if err := saveSessionData(storage, instances, groups); err != nil {
-			out.Error(fmt.Sprintf("failed to save queued state: %v", err), ErrCodeInvalidOperation)
+			bootstrap.reportError(out, "failed to save queued state", err)
 			os.Exit(1)
 		}
-		out.Success(
-			fmt.Sprintf("Queued session: %s (group at cap %d)", inst.Title, max),
-			map[string]interface{}{
-				"success":        true,
-				"id":             inst.ID,
-				"title":          inst.Title,
-				"status":         "queued",
-				"group":          inst.GroupPath,
-				"max_concurrent": max,
-			},
-		)
+		data := map[string]interface{}{"success": true, "id": inst.ID, "title": inst.Title, "status": "queued", "group": inst.GroupPath, "max_concurrent": max}
+		bootstrap.addReceipt(data)
+		out.Success(fmt.Sprintf("Queued session: %s (group at cap %d)", inst.Title, max), data)
 		return
 	}
 
 	// Start the session (with or without initial message)
-	if initialMessage != "" {
-		if err := inst.StartWithMessage(initialMessage); err != nil {
-			out.Error(fmt.Sprintf("failed to start session: %v", err), ErrCodeInvalidOperation)
+	if launchMessage != "" {
+		if err := inst.StartWithMessage(launchMessage); err != nil {
+			bootstrap.reportError(out, "failed to start session", err)
 			os.Exit(1)
 		}
 	} else {
 		if err := inst.Start(); err != nil {
-			out.Error(fmt.Sprintf("failed to start session: %v", err), ErrCodeInvalidOperation)
+			bootstrap.reportError(out, "failed to start session", err)
 			os.Exit(1)
 		}
 	}
@@ -562,7 +571,7 @@ func handleSessionStart(profile string, args []string) {
 
 	// Save updated state
 	if err := saveSessionData(storage, instances, groups); err != nil {
-		out.Error(fmt.Sprintf("failed to save session state: %v", err), ErrCodeInvalidOperation)
+		bootstrap.reportError(out, "failed to save session state", err)
 		os.Exit(1)
 	}
 
@@ -602,6 +611,11 @@ func handleSessionStart(profile string, args []string) {
 	if initialMessage != "" {
 		jsonData["message"] = initialMessage
 		jsonData["message_pending"] = false
+		bootstrap.addReceipt(jsonData)
+		if bootstrap != nil && bootstrap.recipient != "" {
+			out.Success(fmt.Sprintf("Started session: %s (task queued: %s)", inst.Title, bootstrap.requestID), jsonData)
+			return
+		}
 		out.Success(fmt.Sprintf("Started session: %s (message sent)", inst.Title), jsonData)
 	} else {
 		out.Success(fmt.Sprintf("Started session: %s", inst.Title), jsonData)
@@ -3061,8 +3075,21 @@ func fetchHookDrivenStatus(profile, sessionRef string) (string, error) {
 	return StatusString(inst.Status), nil
 }
 
-// handleSessionSend sends a message to a running session
-// Waits for the agent to be ready before sending (Claude, Gemini, etc.)
+// sessionSendFromAgent identifies managed agents and harness tool shells.
+func sessionSendFromAgent() bool {
+	if _, err := resolveSelfSessionID(); err == nil {
+		return true
+	}
+	// Some harnesses strip tmux and Agent Deck identity from tool shells.
+	for _, name := range []string{"CODEX_THREAD_ID", "CLAUDECODE", "CURSOR_AGENT", "OMP_SESSION_ID"} {
+		if strings.TrimSpace(os.Getenv(name)) != "" {
+			return true
+		}
+	}
+	return false
+}
+
+// handleSessionSend queues an explicit operator instruction or pre-fills a draft.
 func handleSessionSend(profile string, args []string) {
 	fs := flag.NewFlagSet("session send", flag.ExitOnError)
 	fs.SetOutput(os.Stdout)
@@ -3070,20 +3097,24 @@ func handleSessionSend(profile string, args []string) {
 	quiet := fs.Bool("q", false, "Quiet mode")
 	noWait := fs.Bool("no-wait", false, "Don't wait for agent to be ready (send immediately)")
 	wait := fs.Bool("wait", false, "Block until agent finishes processing, then print output")
-	stream := fs.Bool("stream", false, "Stream JSONL events (Claude only) to stdout instead of returning a snapshot")
-	draft := fs.Bool("draft", false, "Pre-fill the prompt without submitting (incompatible with --wait/--stream/--no-wait)")
+	stream := fs.Bool("stream", false, "Emit JSONL start, correlated reply text and stop events")
+	draft := fs.Bool("draft", false, "Pre-fill a single-line prompt without submitting (incompatible with --wait/--stream/--no-wait)")
 	messageFile := fs.String("message-file", "", "Read the message from a file ('-' for stdin) instead of a positional argument; avoids shell quoting of long prompts")
 	deferIfBusy := fs.Bool("defer-if-busy", false, "Hold delivery until the target is idle (turn-finished, hook-driven) instead of interrupting a mid-generation turn (incompatible with --no-wait)")
 	deferTimeout := fs.Duration("defer-timeout", 30*time.Minute, "Max time --defer-if-busy holds a busy target before dropping the message with a non-zero exit")
 	timeout := fs.Duration("timeout", 10*time.Minute, "Max time to wait for the agent to become ready and (with --wait) to finish processing")
 	streamIdle := fs.Duration("stream-idle", 10*time.Second, "Max idle time before --stream aborts with error")
 	streamCharBudget := fs.Int("stream-char-budget", 4000, "Char budget for text flush in --stream mode")
-	streamToolBudget := fs.Int("stream-tool-budget", 3, "Tool-event budget for text flush in --stream mode")
+	fs.Int("stream-tool-budget", 3, "Legacy compatibility flag (inbox replies contain text)")
 
 	fs.Usage = func() {
 		fmt.Println("Usage: agent-deck session send <id|title> <message> [options]")
 		fmt.Println()
-		fmt.Println("Send a message to a running session.")
+		fmt.Println("Queue an operator instruction for a running session. Codex uses its native queue.")
+		fmt.Println("Other agents receive an inbox message. --wait and --stream use the inbox for all agents.")
+		fmt.Println("Both require the receiver to reply to the request ID before the timeout.")
+		fmt.Println("Use --draft to review a terminal command before submitting it yourself.")
+		fmt.Println("For peer messages, use agent-deck message send.")
 		fmt.Println()
 		fmt.Println("Options:")
 		fs.PrintDefaults()
@@ -3119,6 +3150,11 @@ func handleSessionSend(profile string, args []string) {
 		os.Exit(1)
 	}
 
+	if *timeout <= 0 {
+		out.Error("--timeout must be positive", ErrCodeInvalidOperation)
+		os.Exit(1)
+	}
+
 	if *draft && (*wait || *stream || *noWait) {
 		out.Error("--draft is incompatible with --wait, --stream, and --no-wait", ErrCodeInvalidOperation)
 		os.Exit(1)
@@ -3128,6 +3164,13 @@ func handleSessionSend(profile string, args []string) {
 	// --no-wait fires immediately. They are opposites.
 	if *deferIfBusy && *noWait {
 		out.Error("--defer-if-busy is incompatible with --no-wait", ErrCodeInvalidOperation)
+		os.Exit(1)
+	}
+
+	// Agent-originated sends belong in the durable inbox. Reject before reading
+	// the body or touching a recipient, including for --draft and --no-wait.
+	if sessionSendFromAgent() {
+		out.Error("for peer messages use agent-deck message send", ErrCodeInvalidOperation)
 		os.Exit(1)
 	}
 
@@ -3154,15 +3197,6 @@ func handleSessionSend(profile string, args []string) {
 		}
 		os.Exit(1)
 		return // unreachable, satisfies staticcheck SA5011
-	}
-
-	// --stream is Claude-only in Phase 1. Non-Claude tools error cleanly
-	// with a stable message so the CLI contract stays legible.
-	if *stream {
-		if msg := streamPreconditionError(inst.Tool); msg != "" {
-			out.Error(msg, ErrCodeInvalidOperation)
-			os.Exit(1)
-		}
 	}
 
 	// Check if session is running
@@ -3213,11 +3247,8 @@ func handleSessionSend(profile string, args []string) {
 		}
 	}
 
-	// Wait for agent to be ready (unless --no-wait is specified).
-	// Issue #957: honor --timeout for the readiness phase too, not just the
-	// post-ready completion wait. Otherwise --timeout 5m against a busy
-	// recipient silently fails at ~80s.
-	if !*noWait {
+	// Only manual draft entry needs a ready composer.
+	if *draft {
 		if err := send.WaitForAgentReady(tmuxSess, inst.Tool, *timeout, send.PromptGates{
 			ClaudeComposer: session.IsClaudeCompatible(inst.Tool),
 			CodexPrompt:    session.IsCodexCompatible(inst.Tool),
@@ -3256,43 +3287,27 @@ func handleSessionSend(profile string, args []string) {
 		return
 	}
 
-	// Send message atomically (text + Enter in single tmux invocation).
-	// --no-wait: skip full readiness waiting, but run a capped preflight
-	// barrier + extended verification loop to avoid the #616 race where
-	// Claude's composer renders after the loop has already returned
-	// success on startup "active" status, leaving the message unsubmitted.
-	// default mode: full retry budget after readiness check.
-	//
-	// Both modes run the composer-draft guard (issue #1409) and submit
-	// verification with a machine-checkable delivery status (issue #1413).
-	tun := defaultSendTuning()
-	if *noWait {
-		tun = noWaitSendTuning()
+	ctx, cancel := context.WithTimeout(context.Background(), *timeout)
+	defer cancel()
+	transport := "inbox"
+	enqueue := inst.QueueOperatorRequest
+	if session.IsCodexCompatible(inst.Tool) && !*wait && !*stream {
+		transport = "codex_queue"
+		enqueue = inst.QueueOperatorMessage
 	}
-	sendRes, sendErr := executeSend(tmuxSess, inst.Tool, message, *noWait, tun)
+	sentAt := time.Now()
+	messageID, sendErr := enqueue(ctx, profile, message)
+	sendRes := sendDeliveryResult{delivery: "queued", messageID: messageID}
 	if sendErr != nil {
+		sendRes.delivery = "unconfirmed"
 		extra := sendRes.jsonFields()
 		extra["session_id"] = inst.ID
 		extra["session_title"] = inst.Title
-		switch sendRes.delivery {
-		case deliveryTypedNotSubmitted:
-			out.ErrorWithData(fmt.Sprintf("message typed but not submitted to '%s': %v", inst.Title, sendErr), ErrCodeDeliveryFailed, extra)
-		case deliveryLineTooLong:
-			// Nothing was typed, so the composer is exactly as the operator
-			// left it. Retrying the same body is pointless; the actionable
-			// advice is to break the line or send a file reference.
-			out.ErrorWithData(fmt.Sprintf("message too long for '%s' to receive as one line: %v", inst.Title, sendErr), ErrCodeDeliveryFailed, extra)
-		case deliveryTyped:
-			out.ErrorWithData(fmt.Sprintf("message reached '%s' but was never confirmed submitted: %v", inst.Title, sendErr), ErrCodeDeliveryFailed, extra)
-		case deliveryNoEvidence:
-			out.ErrorWithData(fmt.Sprintf("message not delivered to '%s': %v", inst.Title, sendErr), ErrCodeDeliveryFailed, extra)
-		default:
-			out.ErrorWithData(fmt.Sprintf("failed to send message: %v", sendErr), ErrCodeInvalidOperation, extra)
-		}
+		extra["transport"] = transport
+		out.ErrorWithData(sendErr.Error(), ErrCodeDeliveryFailed, extra)
 		os.Exit(1)
 	}
 
-	sentAt := sendRes.submittedAt
 	// Self-heal Stage 1: stamp the "we talked to it" clock. A delivered send is
 	// exactly the event the idle_at_empty_prompt dwell is measured from — a
 	// session is only stuck at an empty prompt if WE sent it something and
@@ -3303,91 +3318,42 @@ func handleSessionSend(profile string, args []string) {
 		_ = db.RecordWaitDispatch(inst.ID, sentAt)
 	}
 
-	// Delivery succeeded, but if an operator draft was cleared and could not
-	// be typed back, it's no longer on screen — surface it on stderr (it's
-	// also in saved_draft in --json) so the operator can recover it rather
-	// than discovering a silent loss. draft_restore_failed never blocks the
-	// send: the automated message did go through.
-	if sendRes.draftSaved != "" && sendRes.draftRestoreFailed {
-		fmt.Fprintf(os.Stderr,
-			"Warning: cleared the operator draft to deliver this message but could not restore it. Recover it from: %s\n",
-			sendRes.draftSaved)
+	data := map[string]interface{}{
+		"success": true, "session_id": inst.ID, "session_title": inst.Title, "message": message, "transport": transport,
 	}
-
-	if !*stream {
-		data := map[string]interface{}{
-			"success":       true,
-			"session_id":    inst.ID,
-			"session_title": inst.Title,
-			"message":       message,
-		}
-		data["wait_cursor"] = responseCursor(inst.ID, sentAt)
-		for k, v := range sendRes.jsonFields() {
-			data[k] = v
-		}
-		out.Success(fmt.Sprintf("Sent message to '%s'", inst.Title), data)
+	data["wait_cursor"] = responseCursor(inst.ID, sentAt)
+	for k, v := range sendRes.jsonFields() {
+		data[k] = v
 	}
-
-	// --stream: tail the Claude transcript and pipe JSONL events to
-	// stdout until end_turn, idle timeout, or error. Issue #689.
 	if *stream {
-		if err := streamSessionSend(inst, sessionRef, profile, sentAt, streamOptions{
-			idle:       *streamIdle,
-			charBudget: *streamCharBudget,
-			toolBudget: *streamToolBudget,
-			timeout:    *timeout,
-		}); err != nil {
-			// Error already serialized as a stream event; exit 1.
+		cfg := session.StreamConfig{IdleTimeout: *streamIdle, CharBudget: *streamCharBudget}.WithDefaults()
+		streamCtx, cancelStream := context.WithTimeout(ctx, cfg.IdleTimeout)
+		defer cancelStream()
+		if err := streamOperatorReply(streamCtx, os.Stdout, inst.ID, profile, messageID, cfg.CharBudget); err != nil {
 			os.Exit(1)
 		}
 		return
 	}
 
-	// If --wait, block until the agent finishes processing, then print output
-	if *wait {
-		finalStatus, err := waitForCompletion(tmuxSess, *timeout)
-		if err != nil {
-			out.Error(fmt.Sprintf("timeout waiting for completion: %v", err), ErrCodeInvalidOperation)
-			os.Exit(1)
+	if !*wait {
+		out.Success(fmt.Sprintf("Queued message %s for '%s'", messageID, inst.Title), data)
+		return
+	}
+	reply, err := session.WaitOperatorReply(ctx, profile, messageID)
+	if err != nil {
+		data["status"] = "error"
+		if errors.Is(err, context.DeadlineExceeded) {
+			data["status"] = "timeout"
 		}
-
-		// Refresh session ID: the instance was loaded before sending the message,
-		// so the ClaudeSessionID may be stale (e.g., PostStartSync timed out,
-		// TUI updated it during the wait, or /clear created a new session).
-		// First try tmux env (fast), then fall back to reloading from DB.
-		if session.IsClaudeCompatible(inst.Tool) {
-			if freshID := inst.GetSessionIDFromTmux(); freshID != "" {
-				inst.ClaudeSessionID = freshID
-				// #1815: own pane env — weak vouch (see
-				// NoteClaudeSessionIDFromOwnPane).
-				session.NoteClaudeSessionIDFromOwnPane(inst)
-				inst.ClaudeDetectedAt = time.Now()
-			}
-		}
-
-		// Wait for the JSONL to contain a response newer than sentAt.
-		// The status check (waitForCompletion) detects the UI prompt reappearing,
-		// but the JSONL file may not be flushed yet — poll until it is.
-		response, err := waitForFreshOutput(inst, sentAt, instances)
-		if err != nil {
-			// Fallback: reload session from DB in case tmux env was also stale
-			// (e.g., /clear created a new session that TUI or hooks detected)
-			if _, freshInstances, _, loadErr := loadSessionData(profile); loadErr == nil {
-				if freshInst, _, _ := ResolveSession(sessionRef, freshInstances); freshInst != nil {
-					response, err = waitForFreshOutput(freshInst, sentAt, freshInstances)
-				}
-			}
-		}
-		if err != nil {
-			out.Error(fmt.Sprintf("failed to get response: %v", err), ErrCodeInvalidOperation)
-			os.Exit(1)
-		}
-		fmt.Println(response.Content)
-
-		// Exit 1 for error/inactive status
-		if finalStatus == "inactive" || finalStatus == "error" {
-			os.Exit(1)
-		}
+		out.ErrorWithData(fmt.Sprintf("waiting for reply to accepted message %s: %v", messageID, err), ErrCodeInvalidOperation, data)
+		os.Exit(1)
+	}
+	if *jsonOutput && !*quiet {
+		data["output"], data["reply_id"], data["status"] = reply.Body, reply.ID, "completed"
+		data["delivery"] = "replied"
+		out.Success("", data)
+	} else {
+		fmt.Println(reply.Body)
 	}
 }
 
@@ -3471,6 +3437,7 @@ const (
 
 // sendDeliveryResult is the prompt-state-aware outcome of executeSend.
 type sendDeliveryResult struct {
+	messageID   string
 	submittedAt time.Time
 	// delivery is one of the delivery* constants above.
 	delivery string
@@ -3497,6 +3464,10 @@ type sendDeliveryResult struct {
 // contract; #1409 draft-guard observability).
 func (r sendDeliveryResult) jsonFields() map[string]interface{} {
 	fields := map[string]interface{}{}
+	if r.messageID != "" {
+		fields["message_id"] = r.messageID
+		fields["accepted"] = true
+	}
 	if r.delivery != "" {
 		fields["delivery"] = r.delivery
 		// Explicit, machine-checkable: a caller must not have to know which
@@ -3652,6 +3623,11 @@ type draftSender interface {
 
 // executeDraft pre-fills the prompt without pressing Enter.
 func executeDraft(target draftSender, message string) error {
+	// With bracketed paste disabled a raw newline or carriage return can
+	// submit an existing draft even without an explicit Enter keystroke.
+	if strings.IndexFunc(message, unicode.IsControl) >= 0 {
+		return errors.New("manual drafts require one line of printable text; queue multiline input with --message-file")
+	}
 	return target.SendKeysChunked(message)
 }
 
@@ -4569,110 +4545,29 @@ func waitForFreshOutput(inst *session.Instance, sentAt time.Time, peers []*sessi
 	return nil, lastErr
 }
 
-// streamPreconditionError returns a non-empty error message when the given
-// tool is not supported by --stream. Phase 1 is Claude-only (issue #689);
-// non-Claude tools error cleanly here rather than silently producing empty
-// output.
-func streamPreconditionError(tool string) string {
-	if session.IsClaudeCompatible(tool) {
-		return ""
+// streamOperatorReply emits only text explicitly correlated to this request.
+func streamOperatorReply(ctx context.Context, w io.Writer, sessionID, profile, messageID string, charBudget int) error {
+	enc := json.NewEncoder(w)
+	emit := func(ev session.StreamEvent) error {
+		ev.Timestamp = time.Now().UTC().Format(time.RFC3339Nano)
+		return enc.Encode(ev)
 	}
-	return fmt.Sprintf("--stream is not supported for tool %q (Phase 1 supports Claude-compatible tools only)", tool)
-}
-
-// streamOptions carries caller-tunable knobs for --stream.
-type streamOptions struct {
-	idle       time.Duration
-	charBudget int
-	toolBudget int
-	timeout    time.Duration
-}
-
-// streamSessionSend tails the Claude session JSONL for a freshly sent
-// message and writes structured stream events as JSONL to stdout until
-// the assistant reaches end_turn, idle-times out, or ctx is cancelled.
-//
-// Overall budget: streamOptions.timeout bounds the entire stream (not just
-// idle gaps), matching the semantics of --wait's --timeout.
-func streamSessionSend(inst *session.Instance, sessionRef, profile string, sentAt time.Time, opts streamOptions) error {
-	// Resolve JSONL path. Claude writes the file after the first
-	// assistant chunk, so we poll briefly for its existence.
-	resolvedInst := inst
-	if session.IsClaudeCompatible(inst.Tool) {
-		if fresh := inst.GetSessionIDFromTmux(); fresh != "" {
-			inst.ClaudeSessionID = fresh
-			// #1815: own pane env — weak vouch.
-			session.NoteClaudeSessionIDFromOwnPane(inst)
-			inst.ClaudeDetectedAt = time.Now()
-		}
+	if err := emit(session.StreamEvent{Type: "start", SchemaVersion: session.StreamSchemaVersion, SessionID: sessionID, MessageID: messageID}); err != nil {
+		return err
 	}
-
-	// A remote session's transcript is on the remote host, so the poll below can
-	// only ever time out. Say why now instead of after the full timeout with
-	// "transcript not found", which reads as "not written yet" and sends the
-	// user looking on the wrong machine (#1851).
-	if !resolvedInst.TranscriptIsResolvableLocally() {
-		errEv := map[string]interface{}{
-			"type":    "error",
-			"message": fmt.Sprintf("session runs on %s; its Claude transcript is not on this machine, so there is nothing to stream", resolvedInst.SSHHost),
-			"ts":      time.Now().UTC().Format(time.RFC3339Nano),
-		}
-		b, _ := json.Marshal(errEv)
-		fmt.Println(string(b))
-		return fmt.Errorf("session runs on %s; its Claude transcript is not on this machine", resolvedInst.SSHHost)
+	reply, err := session.WaitOperatorReply(ctx, profile, messageID)
+	if err != nil {
+		_ = emit(session.StreamEvent{Type: "error", Message: err.Error(), MessageID: messageID})
+		return err
 	}
-
-	var jsonlPath string
-	// peers carries the latest profile snapshot so the resolve can refuse a
-	// transcript path that collides with another live instance's session id
-	// (issue #1349 defense-in-depth #2): streaming the wrong transcript is one
-	// of the corruption symptoms the rebind bug caused.
-	var peers []*session.Instance
-	if _, initial, _, loadErr := loadSessionData(profile); loadErr == nil {
-		peers = initial
+	for remaining := []rune(reply.Body); len(remaining) > 0; {
+		size := min(charBudget, len(remaining))
+		if err := emit(session.StreamEvent{Type: "text", MessageID: reply.ID, Delta: string(remaining[:size])}); err != nil {
+			return err
+		}
+		remaining = remaining[size:]
 	}
-	deadline := time.Now().Add(opts.timeout)
-	for time.Now().Before(deadline) {
-		p, resolveErr := resolvedInst.GetJSONLPathChecked(peers)
-		if resolveErr != nil {
-			return fmt.Errorf("refusing to stream a colliding transcript: %w", resolveErr)
-		}
-		jsonlPath = p
-		if jsonlPath != "" {
-			break
-		}
-		// Refresh from DB in case the session was just created.
-		if _, freshInstances, _, loadErr := loadSessionData(profile); loadErr == nil {
-			peers = freshInstances
-			if fi, _, _ := ResolveSession(sessionRef, freshInstances); fi != nil {
-				resolvedInst = fi
-			}
-		}
-		time.Sleep(200 * time.Millisecond)
-	}
-
-	if jsonlPath == "" {
-		// Emit a single error event to stdout so --stream consumers
-		// always get a parseable response. Matches the schema so they
-		// don't need a separate error channel.
-		errEv := map[string]interface{}{
-			"type":    "error",
-			"message": fmt.Sprintf("session transcript not found within %s (session id=%s)", opts.timeout, resolvedInst.ClaudeSessionID),
-			"ts":      time.Now().UTC().Format(time.RFC3339Nano),
-		}
-		b, _ := json.Marshal(errEv)
-		fmt.Println(string(b))
-		return fmt.Errorf("no transcript")
-	}
-
-	ctx, cancel := context.WithTimeout(context.Background(), opts.timeout)
-	defer cancel()
-
-	return session.StreamTranscript(ctx, jsonlPath, resolvedInst.ClaudeSessionID, sentAt, os.Stdout, session.StreamConfig{
-		IdleTimeout: opts.idle,
-		CharBudget:  opts.charBudget,
-		ToolBudget:  opts.toolBudget,
-	})
+	return emit(session.StreamEvent{Type: "stop", Reason: "end_turn", MessageID: reply.ID})
 }
 
 // handleSessionOutput gets the last response from a session
