@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -91,8 +92,46 @@ func runSessionWait(profile string, args []string) int {
 	if err != nil {
 		return emit("invalid", err.Error(), 1)
 	}
-	pane := inst.GetTmuxSession()
+	id := inst.ID
+	bound := waitBindingID(inst)
+	// data_version must be sampled on a single SQLite connection. Skip full
+	// fleet loads while the profile has not changed.
+	ctx, cancel := context.WithTimeout(context.Background(), *timeout)
+	defer cancel()
+	conn, err := storage.GetDB().DB().Conn(ctx)
+	if err != nil {
+		return emit("error", err.Error(), 1)
+	}
+	defer conn.Close()
+	var lastVersion int64 = -1
 	status := func() (string, error) {
+		var version int64
+		if err := conn.QueryRowContext(ctx, "PRAGMA data_version").Scan(&version); err != nil {
+			return "", err
+		}
+		if version != lastVersion {
+			peers, err = storage.Load()
+			if err != nil {
+				return "", err
+			}
+			inst = nil
+			for _, candidate := range peers {
+				if candidate.ID == id {
+					inst = candidate
+					break
+				}
+			}
+			if inst == nil {
+				return "missing", nil
+			}
+			current := waitBindingID(inst)
+			if bound != "" && bound != current {
+				return "", errors.New("session conversation changed while waiting")
+			}
+			bound = current
+			lastVersion = version
+		}
+		pane := inst.GetTmuxSession()
 		if pane == nil {
 			return "inactive", nil
 		}
@@ -104,12 +143,31 @@ func runSessionWait(profile string, args []string) int {
 	return emit(outcome, msg, exitCode)
 }
 
+func waitBindingID(inst *session.Instance) string {
+	switch {
+	case session.IsCodexCompatible(inst.Tool) && inst.CodexBindingConfirmed:
+		return inst.CodexSessionID
+	case session.IsClaudeCompatible(inst.Tool):
+		return inst.ClaudeSessionID
+	case inst.Tool == "gemini":
+		return inst.GeminiSessionID
+	default:
+		return ""
+	}
+}
+
 func waitForSavedReply(since time.Time, timeout, interval time.Duration, getStatus func() (string, error), read func() (*session.ResponseOutput, error)) (string, string, int) {
 	deadline := time.Now().Add(timeout)
 	for {
 		status, err := getStatus()
+		if errors.Is(err, context.DeadlineExceeded) {
+			return "timeout", "Timed out waiting for fresh output", 4
+		}
 		if err != nil {
 			return "error", err.Error(), 1
+		}
+		if status == "missing" {
+			return "missing", "Session no longer exists", 2
 		}
 		if status != "active" {
 			r, err := read()

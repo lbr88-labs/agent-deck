@@ -1,9 +1,10 @@
 package main
 
 import (
-	"github.com/asheshgoplani/agent-deck/internal/session"
 	"testing"
 	"time"
+
+	"github.com/asheshgoplani/agent-deck/internal/session"
 )
 
 func TestStandaloneWaitFresh(t *testing.T) {
@@ -53,5 +54,29 @@ func TestWaitForSavedReplyOutcomes(t *testing.T) {
 				t.Fatalf("got %s (%d), want %s (%d)", got, code, tc.want, tc.code)
 			}
 		})
+	}
+}
+
+type waitCaptureTarget struct {
+	mockSendRetryTarget
+	lastCapture time.Time
+}
+
+func (t *waitCaptureTarget) CapturePaneFresh() (string, error) {
+	if t.sendKeysCalls == 0 {
+		t.lastCapture = time.Now()
+	}
+	return t.mockSendRetryTarget.CapturePaneFresh()
+}
+
+func TestWaitCursorAfterComposerPreflight(t *testing.T) {
+	target := &waitCaptureTarget{mockSendRetryTarget: mockSendRetryTarget{panes: []string{claudeComposer("")}, statuses: []string{"active"}}}
+	tun := testGuardTuning(sendRetryOptions{maxRetries: 1, verifyDelivery: true})
+	res, err := executeSend(target, "claude", "test", false, tun)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if target.lastCapture.IsZero() || res.submittedAt.Before(target.lastCapture) {
+		t.Fatalf("cursor %s predates preflight %s", res.submittedAt, target.lastCapture)
 	}
 }

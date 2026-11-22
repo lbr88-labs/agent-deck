@@ -3240,11 +3240,6 @@ func handleSessionSend(profile string, args []string) {
 		}
 	}
 
-	// Record send time before the actual send so we can verify output freshness.
-	// Captured early to avoid false negatives from clock skew.
-	sentAt := time.Now()
-	waitCursor := responseCursor(inst.ID, sentAt)
-
 	// --draft: type text into the prompt without pressing Enter, letting the
 	// user review and submit manually.
 	if *draft {
@@ -3297,6 +3292,7 @@ func handleSessionSend(profile string, args []string) {
 		os.Exit(1)
 	}
 
+	sentAt := sendRes.submittedAt
 	// Self-heal Stage 1: stamp the "we talked to it" clock. A delivered send is
 	// exactly the event the idle_at_empty_prompt dwell is measured from — a
 	// session is only stuck at an empty prompt if WE sent it something and
@@ -3325,7 +3321,7 @@ func handleSessionSend(profile string, args []string) {
 			"session_title": inst.Title,
 			"message":       message,
 		}
-		data["wait_cursor"] = waitCursor
+		data["wait_cursor"] = responseCursor(inst.ID, sentAt)
 		for k, v := range sendRes.jsonFields() {
 			data[k] = v
 		}
@@ -3475,6 +3471,7 @@ const (
 
 // sendDeliveryResult is the prompt-state-aware outcome of executeSend.
 type sendDeliveryResult struct {
+	submittedAt time.Time
 	// delivery is one of the delivery* constants above.
 	delivery string
 	// held is how long the composer guard waited/worked before the send
@@ -3619,6 +3616,7 @@ func executeSend(target sendRetryTarget, tool, message string, noWait bool, tun 
 		tun.retry.composerPasteFreeBeforeSend = guard.ComposerPasteMarkerFree
 	}
 
+	tun.retry.submittedAt = &res.submittedAt
 	delivery, err := sendWithRetryTarget(target, message, skipClaudeDeliveryVerify(tool), tun.retry)
 	res.delivery = delivery
 
@@ -3748,6 +3746,7 @@ type sendRetryTarget interface {
 }
 
 type sendRetryOptions struct {
+	submittedAt    *time.Time // populated immediately before submission, after composer preflight
 	maxRetries     int
 	checkDelay     time.Duration
 	maxFullResends int // >0 overrides default (3); <0 disables Ctrl+C-then-resend; 0 uses default
@@ -3813,6 +3812,9 @@ func sendWithRetryTarget(target sendRetryTarget, message string, skipVerify bool
 		arrivalBaseline = captureArrivalBaseline(target, message)
 	}
 
+	if opts.submittedAt != nil {
+		*opts.submittedAt = time.Now()
+	}
 	if err := target.SendKeysAndEnter(message); err != nil {
 		// A refused over-long line is a distinct, actionable outcome: the
 		// transport typed nothing, so the composer is untouched and the

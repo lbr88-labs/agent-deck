@@ -1,6 +1,7 @@
 package session
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -34,7 +35,19 @@ func TestCursorWaitResponseRejectsOldGeneration(t *testing.T) {
 	t.Setenv("AGENT_DECK_HOME", "")
 	t.Setenv("AGENTDECK_HOOK_GENERATION", "")
 	const id = "wait-cursor-fixture"
-	if err := SaveCursorWaitResponse(id, "conversation", "finished"); err != nil {
+	if err := ObserveCursorWaitTurn(id, "conversation", "old", ""); err != nil {
+		t.Fatal(err)
+	}
+	if err := ObserveCursorWaitTurn(id, "conversation", "new", ""); err != nil {
+		t.Fatal(err)
+	}
+	if err := ObserveCursorWaitTurn(id, "conversation", "old", "late"); !errors.Is(err, errChatSearchIdentity) {
+		t.Fatalf("accepted previous turn: %v", err)
+	}
+	if err := ObserveCursorWaitTurn(id, "other", "new", "foreign"); !errors.Is(err, errChatSearchIdentity) {
+		t.Fatalf("accepted another conversation: %v", err)
+	}
+	if err := ObserveCursorWaitTurn(id, "conversation", "new", "finished"); err != nil {
 		t.Fatal(err)
 	}
 	r, err := readCursorWaitResponse(id)
@@ -46,5 +59,37 @@ func TestCursorWaitResponseRejectsOldGeneration(t *testing.T) {
 	}
 	if _, err := readCursorWaitResponse(id); !os.IsNotExist(err) {
 		t.Fatalf("stale generation accepted: %v", err)
+	}
+}
+
+func TestWaitTranscriptHeader(t *testing.T) {
+	for _, tc := range []struct {
+		name, body string
+		codex      bool
+		want       error
+	}{
+		{"codex match", `{"type":"session_meta","payload":{"id":"mine"}}` + "\n", true, nil},
+		{"codex replaced", `{"type":"session_meta","payload":{"id":"other"}}` + "\n", true, errChatSearchIdentity},
+		{"omp match", `{"type":"session","id":"mine"}` + "\n", false, nil},
+		{"omp replaced", `{"type":"session","id":"other"}` + "\n", false, errChatSearchIdentity},
+		{"new empty", "", true, os.ErrNotExist},
+		{"incomplete header", `{"type":"ses`, true, os.ErrNotExist},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f, err := os.CreateTemp(t.TempDir(), "transcript")
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer f.Close()
+			if _, err = f.WriteString(tc.body); err != nil {
+				t.Fatal(err)
+			}
+			if _, err = f.Seek(0, 0); err != nil {
+				t.Fatal(err)
+			}
+			if err = verifyWaitTranscriptHeader(f, "mine", tc.codex); !errors.Is(err, tc.want) {
+				t.Fatalf("got %v, want %v", err, tc.want)
+			}
+		})
 	}
 }
