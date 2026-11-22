@@ -1484,7 +1484,8 @@ func (i *Instance) buildClaudeCommandWithMessage(baseCommand, message string) st
 }
 
 // buildBashExportPrefix builds the export prefix used in bash -c commands.
-// Always exports AGENTDECK_INSTANCE_ID. CLAUDE_CONFIG_DIR is exported only
+// Exports the managed instance, profile and tool to Claude and its hooks.
+// CLAUDE_CONFIG_DIR is exported only
 // when the user has an explicit config_dir resolved for this instance AND
 // skipConfigDirForCustomCommand is false; when that gate is open, a
 // prepared WorkerScratchConfigDir overrides the resolved value — same
@@ -1502,7 +1503,7 @@ func (i *Instance) buildClaudeCommandWithMessage(baseCommand, message string) st
 // (GetClaudeCommandForInstance never sees those — see its doc comment) —
 // in both cases there is no alias downstream to defer to.
 func (i *Instance) buildBashExportPrefix(skipConfigDirForCustomCommand bool) string {
-	prefix := fmt.Sprintf("export AGENTDECK_INSTANCE_ID=%s; export AGENTDECK_PROFILE=%s; ", i.ID, shellescape.Quote(sessionProfileEnvValue()))
+	prefix := fmt.Sprintf("export AGENTDECK_INSTANCE_ID=%s; export AGENTDECK_PROFILE=%s; export AGENTDECK_TOOL=%s; ", i.ID, shellescape.Quote(sessionProfileEnvValue()), shellescape.Quote(i.Tool))
 	if IsClaudeConfigDirExplicitForInstance(i) && !skipConfigDirForCustomCommand {
 		// Issue #922 (reporter @bautrey): see applyWorkerScratchOverride.
 		configDir := i.applyWorkerScratchOverride(GetClaudeConfigDirForInstance(i))

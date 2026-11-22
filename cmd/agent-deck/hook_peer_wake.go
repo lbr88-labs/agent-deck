@@ -199,7 +199,10 @@ func (w peerWake) wait(ctx context.Context) bool {
 
 func handlePeerWakeHook(input io.Reader, output io.Writer) int {
 	instance := os.Getenv("AGENTDECK_INSTANCE_ID")
-	if !validInstanceID.MatchString(instance) || strings.Contains(instance, "..") || !session.IsClaudeCompatible(os.Getenv("AGENTDECK_TOOL")) {
+	// Older managed Claude launches exported the instance and profile only.
+	// The stored row and native pane/UUID/process proof below remain mandatory.
+	tool := os.Getenv("AGENTDECK_TOOL")
+	if !validInstanceID.MatchString(instance) || strings.Contains(instance, "..") || (tool != "" && !session.IsClaudeCompatible(tool)) {
 		return 0
 	}
 	var p hookPayload

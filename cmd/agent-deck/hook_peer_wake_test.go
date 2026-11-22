@@ -162,3 +162,85 @@ func TestPeerWakeLockWaitHonorsDeadline(t *testing.T) {
 		t.Fatal("second lock acquired")
 	}
 }
+
+func TestPeerWakeWithoutToolHintRequiresRegisteredClaudePane(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("AGENT_DECK_HOME", root)
+	t.Setenv("AGENTDECK_PROFILE", "_test_legacy_wake")
+	t.Setenv("AGENTDECK_TOOL", "")
+	t.Setenv("CLAUDE_CONFIG_DIR", filepath.Join(root, "claude"))
+	store, err := session.NewStorageWithProfile("_test_legacy_wake")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	owner := session.NewInstance("legacy", root)
+	owner.Tool = "claude"
+	other := session.NewInstance("other", root)
+	other.Tool = "codex"
+	if err := store.Save([]*session.Instance{owner, other}); err != nil {
+		t.Fatal(err)
+	}
+	if !hasClaudePeerWake(owner.ID) || hasClaudePeerWake(other.ID) || hasClaudePeerWake("missing") {
+		t.Fatal("tool hint fallback must require a managed Claude row")
+	}
+
+	t.Setenv("AGENTDECK_INSTANCE_ID", owner.ID)
+	sid := "e5e12033-1edc-44b9-905c-28af73165037"
+	pid := os.Getppid()
+	regDir := filepath.Join(os.Getenv("CLAUDE_CONFIG_DIR"), "sessions")
+	if err := os.MkdirAll(regDir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	reg, err := json.Marshal(map[string]any{"pid": pid, "sessionId": sid, "kind": "interactive"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(regDir, strconv.Itoa(pid)+".json"), reg, 0600); err != nil {
+		t.Fatal(err)
+	}
+	bin := t.TempDir()
+	// Report the fixture's native parent only for the expected pane target.
+	target := "=" + owner.GetTmuxSession().Name + ":0.0"
+	if err := os.WriteFile(filepath.Join(bin, "tmux"), []byte("#!/bin/sh\nfor a do [ \"$a\" != "+strconv.Quote(target)+" ] || { echo "+strconv.Itoa(pid)+"; exit 0; }; done\nexit 1\n"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin+":"+os.Getenv("PATH"))
+	dir, err := session.GetProfileDir("_test_legacy_wake")
+	if err != nil {
+		t.Fatal(err)
+	}
+	inbox, err := peermsg.Open(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer inbox.Close()
+	if _, err := inbox.Send(context.Background(), peermsg.SendRequest{SenderID: "sender", RecipientID: owner.ID, Body: "private"}); err != nil {
+		t.Fatal(err)
+	}
+	// Synchronous Stop hooks can survive an old or partial installation. A
+	// nested Claude inherits the hint; its UUID must not wake the outer row.
+	t.Setenv("AGENTDECK_TOOL", "claude")
+	active := false
+	stop := hookPayload{HookEventName: "Stop", StopHookActive: &active, SessionID: "other-native-session"}
+	dec := session.StopHookDecision{Decision: "block", Reason: "child finished"}
+	if got := withPeerStopNotice(dec, stop, owner.ID); got != dec {
+		t.Fatalf("foreign Stop exposed inbox: %+v", got)
+	}
+	stop.SessionID = sid
+	if got := withPeerStopNotice(dec, stop, owner.ID); got.Decision != "block" || got.Reason != dec.Reason+"\n"+pendingPeerNotice {
+		t.Fatalf("verified Stop lost notice: %+v", got)
+	}
+	if got := withPeerStopNotice(dec, stop, owner.ID); got != dec {
+		t.Fatalf("repeated Stop notice: %+v", got)
+	}
+	t.Setenv("AGENTDECK_TOOL", "")
+	if _, err := inbox.Send(context.Background(), peermsg.SendRequest{SenderID: "sender", RecipientID: owner.ID, Body: "next"}); err != nil {
+		t.Fatal(err)
+	}
+	var output bytes.Buffer
+	code := handlePeerWakeHook(strings.NewReader(`{"hook_event_name":"SessionStart","session_id":"`+sid+`"}`), &output)
+	if code != 2 || strings.TrimSpace(output.String()) != pendingPeerNotice {
+		t.Fatalf("verified no-hint hook = %d %q", code, output.String())
+	}
+}
