@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"path/filepath"
-	"strings"
 	"testing"
 
 	"github.com/asheshgoplani/agent-deck/internal/peermsg"
@@ -38,8 +37,8 @@ func TestPeerHookNoticeIsAddressedAndStopContinuationIsBounded(t *testing.T) {
 	active := false
 	payload := hookPayload{HookEventName: "Stop", StopHookActive: &active}
 	got := withPeerStopNotice(dec, payload, "b")
-	if got.Decision != "block" || got.Reason != dec.Reason+"\n"+pendingPeerNotice || strings.Contains(got.Reason, msg.Body) {
-		t.Fatalf("unexpected combined response: %#v", got)
+	if got != dec {
+		t.Fatalf("unverified Stop received a peer notice: %#v", got)
 	}
 	active = true
 	if got := withPeerStopNotice(dec, payload, "b"); got != dec {

@@ -15,10 +15,27 @@ const pendingPeerNotice = "You have pending Agent Deck peer messages. Read your 
 func peerInboxHookNotice(instanceID string) string {
 	// On SessionStart, the native hook must be able to start a new turn for
 	// mail that was queued while the harness was stopped.
-	if session.IsClaudeCompatible(os.Getenv("AGENTDECK_TOOL")) && session.CheckClaudeHooksInstalled(getClaudeConfigDirForHooks()) {
+	if hasClaudePeerWake(instanceID) && session.CheckClaudeHooksInstalled(getClaudeConfigDirForHooks()) {
 		return ""
 	}
 	return pendingPeerHookNotice(instanceID)
+}
+
+// Legacy managed launches can lack the tool hint. Suppress their generic
+// SessionStart notice only when the stored row routes to the native Claude hook.
+func hasClaudePeerWake(instanceID string) bool {
+	if tool := os.Getenv("AGENTDECK_TOOL"); tool != "" {
+		return session.IsClaudeCompatible(tool)
+	}
+	if !validInstanceID.MatchString(instanceID) || strings.Contains(instanceID, "..") {
+		return false
+	}
+	profile, err := session.ResolveProfileForStorage("")
+	if err != nil {
+		return false
+	}
+	_, err = peerWakeSource(profile, instanceID, "")
+	return err == nil
 }
 
 func pendingPeerHookNotice(instanceID string) string {
@@ -45,18 +62,17 @@ func pendingPeerHookNotice(instanceID string) string {
 // into its single native response. Only an explicitly fresh Claude Stop may
 // wake the agent for mail, even if messages remain unacknowledged.
 func withPeerStopNotice(dec session.StopHookDecision, payload hookPayload, instanceID string) session.StopHookDecision {
-	if payload.HookEventName != "Stop" || resolveStopHookActive(payload) || !session.IsClaudeCompatible(os.Getenv("AGENTDECK_TOOL")) {
+	tool := os.Getenv("AGENTDECK_TOOL")
+	if payload.HookEventName != "Stop" || resolveStopHookActive(payload) || (tool != "" && !session.IsClaudeCompatible(tool)) {
 		return dec
 	}
-	var notice string
-	if session.CheckClaudeHooksInstalled(getClaudeConfigDirForHooks()) {
-		if !validInstanceID.MatchString(instanceID) || strings.Contains(instanceID, "..") || payload.SessionID == "" {
-			return dec
-		}
-		notice = peerLegacyStopNotice(instanceID, payload.SessionID)
-	} else {
-		notice = pendingPeerHookNotice(instanceID)
+	// The subprocess can inherit the Deck identity from a different parent.
+	// Every Stop notice needs native ownership proof, including old snapshots
+	// that lack the background wake hook in their settings.
+	if !validInstanceID.MatchString(instanceID) || strings.Contains(instanceID, "..") || payload.SessionID == "" {
+		return dec
 	}
+	notice := peerLegacyStopNotice(instanceID, payload.SessionID)
 	if notice != "" {
 		dec.Decision = "block"
 		dec.Reason = strings.TrimSpace(dec.Reason + "\n" + notice)
