@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"os/exec"
+	"slices"
 	"strings"
 	"time"
 
@@ -21,7 +22,7 @@ func (i *Instance) QueueCodexMessage(ctx context.Context, body string) (Dispatch
 		return DispatchReceipt{}, errors.New("Codex session binding must be confirmed before queueing")
 	}
 	probe := i.queryCodexSessionFromProcessFiles()
-	if probe.ambiguous || probe.sessionID != id || probe.queueHome == "" {
+	if probe.ambiguous || probe.sessionID != id || !probe.queueOwnedBy(i.codexInteractiveProcessPID()) {
 		return DispatchReceipt{}, errors.New("cannot verify the live Codex thread for this pane")
 	}
 	executable, ok := codexExecutableFromCommand(i.resolveCodexCommand(command))
@@ -42,6 +43,18 @@ func (i *Instance) QueueCodexMessage(ctx context.Context, body string) (Dispatch
 		return DispatchReceipt{}, err
 	}
 	return DispatchReceipt{ID: messageID, SubmittedAt: submitted}, nil
+}
+
+// Queue ownership belongs to the interactive process, even if another Codex
+// launcher in the pane opened a matching rollout and queue.
+func (probe codexProcessProbe) queueOwnedBy(pid int) bool {
+	if pid <= 0 || probe.queueHome == "" {
+		return false
+	}
+	return slices.ContainsFunc(probe.rollouts, func(candidate codexRolloutCandidate) bool {
+		return candidate.PID == pid && candidate.ID == probe.sessionID && candidate.queueHome == probe.queueHome &&
+			readCodexRolloutThreadMetadata(candidate.Path).kind != codexThreadSubagent
+	})
 }
 
 func parseQueueReceipt(output, thread string) (string, error) {

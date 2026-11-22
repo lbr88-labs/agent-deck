@@ -3693,9 +3693,10 @@ func isLikelyCodexProcessPID(pid int) bool {
 }
 
 type codexRolloutCandidate struct {
-	queueHome string
 	ID        string
 	Path      string
+	PID       int
+	queueHome string
 }
 
 // Empty evidence and conflicting live evidence have different authority:
@@ -3705,6 +3706,7 @@ type codexProcessProbe struct {
 	sessionID         string
 	ambiguous         bool
 	missingDependency string
+	rollouts          []codexRolloutCandidate
 }
 
 func codexRolloutCandidateFromPath(path string) (codexRolloutCandidate, bool) {
@@ -3745,10 +3747,11 @@ func selectCodexRolloutCandidate(candidates []codexRolloutCandidate) codexProces
 		// File mtime cannot prove which one is the interactive conversation.
 		home := candidate.queueHome
 		if result.sessionID != "" && (result.sessionID != candidate.ID || result.queueHome != home) {
-			return codexProcessProbe{ambiguous: true}
+			return codexProcessProbe{ambiguous: true, rollouts: candidates}
 		}
 		result = codexProcessProbe{sessionID: candidate.ID, queueHome: home}
 	}
+	result.rollouts = candidates
 	return result
 }
 
@@ -3813,6 +3816,7 @@ func extractCodexRolloutCandidatesFromProcFD(pid int) []codexRolloutCandidate {
 			homes[filepath.Dir(target)] = true
 		}
 		if candidate, ok := codexRolloutCandidateFromPath(target); ok && codexProcFDWritable(filepath.Join(procDir, "fdinfo", entry.Name())) {
+			candidate.PID = pid
 			candidates = append(candidates, candidate)
 		}
 	}
@@ -3856,7 +3860,11 @@ func (i *Instance) queryCodexSessionFromHostLsof() codexProcessProbe {
 			continue
 		}
 
-		candidates = append(candidates, extractWritableCodexRolloutsFromLsof(out)...)
+		rollouts := extractWritableCodexRolloutsFromLsof(out)
+		for index := range rollouts {
+			rollouts[index].PID = pid
+		}
+		candidates = append(candidates, rollouts...)
 	}
 
 	return selectCodexRolloutCandidate(candidates)
