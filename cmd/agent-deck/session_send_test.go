@@ -960,6 +960,15 @@ func TestExecuteDraft_PropagatesError(t *testing.T) {
 	}
 }
 
+func TestExecuteDraftRefusesControlCharactersBeforeTyping(t *testing.T) {
+	for _, value := range []string{"two\nlines", "return\r", "escape\x1b", "tab\t"} {
+		target := &mockDraftSender{}
+		if err := executeDraft(target, value); err == nil || target.calledWith != "" {
+			t.Fatalf("draft %q: err=%v, typed=%q", value, err, target.calledWith)
+		}
+	}
+}
+
 type mockDraftSender struct {
 	calledWith string
 	err        error

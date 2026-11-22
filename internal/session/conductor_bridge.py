@@ -28,7 +28,6 @@ import signal
 import subprocess
 import sys
 import time
-from collections import deque
 from pathlib import Path
 from typing import Any, Callable, Coroutine
 
@@ -411,181 +410,70 @@ def get_session_status(session: str, profile: str | None = None) -> str:
         return "unknown"
 
 
-def get_session_output(session: str, profile: str | None = None) -> str:
-    """Get the last response from a session.
-
-    Uses --json mode so we get the structured 'content' field (the actual
-    assistant reply) instead of the raw pane capture (which includes the
-    cosmetic frame / statusline at the top and can be mistaken for a reply).
-    """
-    result = run_cli(
-        "session", "output", session, "--json", profile=profile, timeout=30
-    )
-    if result.returncode != 0:
-        return f"[Error getting output: {result.stderr.strip()}]"
-    try:
-        data = json.loads(result.stdout)
-        return (data.get("content") or "").strip()
-    except json.JSONDecodeError:
-        # Fallback: stdout might be the legacy raw-text format.
-        return result.stdout.strip()
-
-
 # Async callable type for reply notifications: (response_text: str) -> None
 ReplyCallback = Callable[[str], Coroutine[Any, Any, None]]
 
 
-def _is_still_running_timeout(stderr: str) -> bool:
-    """True when a blocking `--wait` failed *only* because the turn outran the
-    timeout while the agent keeps working — the message WAS delivered.
-
-    The CLI reports this with stderr like:
-        "timeout waiting for completion: agent still running after 5m0s"
-
-    Distinguishing this benign case from a genuine send failure lets callers
-    deliver the reply asynchronously instead of reporting a false failure.
-    """
-    s = stderr.lower()
-    return "timeout waiting for completion" in s or "still running" in s
+async def _run_blocking(func, *args, **kwargs):
+    return await asyncio.get_running_loop().run_in_executor(None, functools.partial(func, *args, **kwargs))
 
 
-def send_to_conductor(
-    session: str,
-    message: str,
-    profile: str | None = None,
-    wait_for_reply: bool = False,
-    response_timeout: int = RESPONSE_TIMEOUT,
-    reply_callback: ReplyCallback | None = None,
-    force_queue: bool = False,
-) -> tuple[bool, str, bool]:
-    """Send a message to the conductor session.
+def _enqueue_notification(session, body, profile, producer, request_id=None):
+    key = ("--id", request_id) if request_id else ()
+    result = run_cli("message", "notify", "--producer", producer, "--json",
+                     *key, "--", session, body, profile=profile, timeout=30)
+    if result.returncode == 0:
+        try:
+            receipt = json.loads(result.stdout)["id"]
+            if isinstance(receipt, str) and receipt:
+                return receipt
+        except (ValueError, KeyError, TypeError):
+            pass
+    log.error("Unconfirmed %s delivery for %s: %s", producer, request_id, result.stderr.strip())
+    return None
 
-    Returns (success, response_text, still_running). When wait_for_reply=False,
-    response_text is "". still_running is True only on the wait path when the
-    blocking `--wait` timed out because the agent is still working (the message
-    was delivered and the reply should be awaited asynchronously); it is False
-    in every other case.
 
-    When wait_for_reply=False and the conductor is busy (running/active/starting),
-    the message is queued in-memory and delivered automatically once the conductor
-    returns to idle/waiting state (see _drain_queue). reply_callback, if provided,
-    is an async callable(response_text: str) invoked after drain delivery.
+def _wait_for_reply(receipt, profile, producer, timeout):
+    deadline = time.monotonic() + timeout
+    while (left := deadline - time.monotonic()) > 0:
+        seconds = min(left, 30)
+        result = run_cli("message", "wait", "--producer", producer,
+                         "--response-to", receipt, "--reply-only", "--json",
+                         "--timeout", f"{seconds:.3f}s", profile=profile, timeout=seconds + 5)
+        if result.returncode:
+            log.warning("Could not read reply to %s: %s", receipt, result.stderr.strip())
+            return None
+        try:
+            data = json.loads(result.stdout)
+            if data.get("replies"):
+                body = data["replies"][0]["body"]
+                if isinstance(body, str) and body:
+                    return body
+            if not data.get("timed_out"):
+                break
+        except (ValueError, KeyError, TypeError, AttributeError):
+            break
+    return None
 
-    force_queue=True skips the internal status check and enqueues immediately.
-    Use this when the caller already knows the conductor is busy to avoid a
-    redundant blocking subprocess call.
-    """
+
+def send_heartbeat(session: str, message: str, profile: str) -> tuple[bool, str]:
+    receipt = _enqueue_notification(session, message, profile, "heartbeat")
+    reply = _wait_for_reply(receipt, profile, "heartbeat", RESPONSE_TIMEOUT) if receipt else None
+    return bool(reply), reply or ""
+
+
+def send_to_conductor(session, message, profile=None, wait_for_reply=False,
+                      response_timeout=RESPONSE_TIMEOUT, request_id=None):
+    """Return success, correlated reply, and the durable request ID if still pending."""
+    receipt = _enqueue_notification(session, message, profile, "operator", request_id)
+    if not receipt:
+        return False, "", None
     if not wait_for_reply:
-        # force_queue: caller already confirmed conductor is busy — skip status check.
-        if force_queue:
-            log.info("Conductor %s: force-queueing message", session)
-            _enqueue_message(session, message, profile, reply_callback)
-            return True, "", False
-
-        # For non-blocking sends (user messages), check if conductor is busy
-        # and queue instead of dropping.
-        status = get_session_status(session, profile=profile)
-        if status in ("running", "active", "starting"):
-            log.info(
-                "Conductor %s is busy (%s), queueing message", session, status,
-            )
-            _enqueue_message(session, message, profile, reply_callback)
-            return True, "", False  # queued, not failed
-
-        result = run_cli(
-            "session", "send", session, message, "--no-wait",
-            profile=profile, timeout=30,
-        )
-        if result.returncode != 0:
-            stderr = result.stderr.strip()
-            # If the conductor became busy between the status check and the send,
-            # queue instead of dropping.
-            if "timeout" in stderr.lower() or "not ready" in stderr.lower():
-                log.info(
-                    "Conductor %s became busy during send, queueing message",
-                    session,
-                )
-                _enqueue_message(session, message, profile, reply_callback)
-                return True, "", False
-            log.error("Failed to send to conductor: %s", stderr)
-            return False, "", False
-        return True, "", False
-
-    # wait_for_reply=True: single-call flow used by heartbeats and the idle
-    # user-message path. `--wait` blocks until the assistant's reply is flushed;
-    # we then re-fetch the clean reply via get_session_output (`session output
-    # --json` -> content), rather than parsing the raw `--wait` pane capture.
-    # This mirrors the deployed bridge's reply-capture (issue #926).
-    result = run_cli(
-        "session", "send", session, message,
-        "--wait", "--timeout", f"{response_timeout}s", "-q",
-        profile=profile,
-        timeout=max(response_timeout + 30, 60),
-    )
-    if result.returncode != 0:
-        stderr = result.stderr.strip()
-        # The turn outran --timeout but the message was delivered and the agent
-        # is still working. Signal still_running so the caller can await the
-        # reply asynchronously rather than reporting a false failure.
-        if _is_still_running_timeout(stderr):
-            log.info(
-                "Conductor %s: --wait timed out but agent still running "
-                "(message delivered, reply pending): %s",
-                session, stderr,
-            )
-            return False, "", True
-        log.error("Failed to send to conductor: %s", stderr)
-        return False, "", False
-    return True, get_session_output(session, profile=profile), False
-
-
-# ---------------------------------------------------------------------------
-# Message queue for busy conductors
-# ---------------------------------------------------------------------------
-
-# Per-session max depth — prevents unbounded memory growth when conductor is stuck.
-MAX_QUEUE_DEPTH = 20
-
-# In-memory queue: {session_title: deque[(message, profile, reply_callback), ...]}
-# reply_callback is an optional ReplyCallback that notifies the originating user
-# when the queued message is eventually delivered.
-_message_queue: dict[str, deque[tuple[str, str | None, ReplyCallback | None]]] = {}
-_drain_task: asyncio.Task | None = None
-
-
-def _enqueue_message(
-    session: str,
-    message: str,
-    profile: str | None,
-    reply_callback: ReplyCallback | None = None,
-) -> None:
-    """Add a message to the in-memory queue for a busy conductor.
-
-    Enforces MAX_QUEUE_DEPTH by dropping the oldest item when full.
-    Fires the dropped item's callback to notify the user.
-    reply_callback, if provided, is invoked once the message is delivered.
-    """
-    if session not in _message_queue:
-        _message_queue[session] = deque()
-    queue = _message_queue[session]
-    if len(queue) >= MAX_QUEUE_DEPTH:
-        log.warning(
-            "Queue full for %s (depth=%d), dropping oldest message",
-            session, MAX_QUEUE_DEPTH,
-        )
-        _msg, _prof, dropped_cb = queue.popleft()
-        if dropped_cb is not None:
-            try:
-                loop = asyncio.get_running_loop()
-                loop.create_task(_fire_callback(
-                    dropped_cb,
-                    "[Message dropped — conductor queue overflow.]",
-                ))
-            except RuntimeError:
-                pass  # no event loop available, can't fire async callback
-    queue.append((message, profile, reply_callback))
-    log.info("Queued message for %s (queue depth: %d)", session, len(queue))
-    _ensure_drain_task()
+        return True, "", receipt
+    reply = _wait_for_reply(receipt, profile, "operator", response_timeout)
+    if reply is None:
+        return False, "", receipt
+    return True, reply, None
 
 
 async def _fire_callback(cb: ReplyCallback, text: str) -> None:
@@ -596,215 +484,23 @@ async def _fire_callback(cb: ReplyCallback, text: str) -> None:
         log.error("reply_callback error: %s", e)
 
 
-def _ensure_drain_task() -> None:
-    """Start the background drain task if it's not already running.
-
-    Safe to call from sync context — silently skips if no event loop is running.
-    """
-    global _drain_task
-    if _drain_task is not None and _drain_task.done() and not _drain_task.cancelled():
-        exc = _drain_task.exception()
-        if exc:
-            log.error("Drain task crashed: %s", exc, exc_info=exc)
-    if _drain_task is None or _drain_task.done():
-        try:
-            loop = asyncio.get_running_loop()
-        except RuntimeError:
-            log.warning("No running event loop — drain task deferred to next async call")
-            return
-        _drain_task = loop.create_task(_drain_queue_supervised())
-
-
-async def _drain_queue_supervised() -> None:
-    """Supervisor wrapper: restarts _drain_queue on unexpected crash."""
-    while True:
-        try:
-            await _drain_queue()
-            return  # normal exit: queue is empty
-        except asyncio.CancelledError:
-            raise  # propagate shutdown cancellation
-        except Exception:
-            log.exception("Drain task crashed unexpectedly, restarting in 5s")
-            await asyncio.sleep(5)
-
-
-async def _drain_queue() -> None:
-    """Background loop that delivers queued messages once conductors are ready.
-
-    Polls every 5s. For each conductor with queued messages, checks its
-    status and delivers the oldest message when it becomes idle/waiting.
-    Stops when the queue is empty.
-    """
-    log.info("Queue drain task started")
-    while True:
-        await asyncio.sleep(5)
-
-        # Snapshot keys to avoid mutation during iteration
-        sessions = list(_message_queue.keys())
-        for session in sessions:
-            items = _message_queue.get(session)
-            if not items:
-                _message_queue.pop(session, None)
-                continue
-
-            message, profile, reply_callback = items[0]
-            loop = asyncio.get_running_loop()
-            status = await loop.run_in_executor(
-                None,
-                functools.partial(get_session_status, session, profile=profile),
-            )
-
-            # Still busy or transient CLI failure — retry next cycle
-            if status in ("running", "active", "starting", "unknown"):
-                continue
-
-            if status == "error":
-                log.error(
-                    "Conductor %s in error state, dropping %d queued message(s)",
-                    session, len(items),
-                )
-                dropped = _message_queue.pop(session, deque())
-                for _msg, _prof, cb in dropped:
-                    if cb is not None:
-                        loop.create_task(_fire_callback(
-                            cb,
-                            "[Queued message could not be delivered — conductor is in error state.]",
-                        ))
-                continue
-
-            # Conductor is ready — deliver the message and wait for the response
-            result = await loop.run_in_executor(
-                None,
-                functools.partial(
-                    run_cli,
-                    "session", "send", session, message,
-                    "--wait", "--timeout", f"{RESPONSE_TIMEOUT}s", "-q",
-                    profile=profile,
-                    timeout=max(RESPONSE_TIMEOUT + 30, 60),
-                ),
-            )
-            if result.returncode == 0:
-                items.popleft()
-                remaining = len(items)
-                if not remaining:
-                    _message_queue.pop(session, None)
-                log.info(
-                    "Conductor %s delivered queued message (%d remaining)",
-                    session, remaining,
-                )
-                if reply_callback is not None:
-                    # Re-fetch the clean reply via get_session_output (consistent
-                    # with send_to_conductor's wait path) rather than the raw
-                    # `--wait` stdout. Off-loop to avoid blocking the drain.
-                    output = await loop.run_in_executor(
-                        None,
-                        functools.partial(get_session_output, session, profile=profile),
-                    )
-                    text = output.strip() or "[No output from conductor.]"
-                    loop.create_task(_fire_callback(reply_callback, text))
-            else:
-                stderr = result.stderr.strip()
-                if "timeout" in stderr.lower() or "not ready" in stderr.lower():
-                    log.info(
-                        "Conductor %s busy again during drain, will retry",
-                        session,
-                    )
-                else:
-                    log.error(
-                        "Failed to deliver queued message to %s: %s — dropping",
-                        session, stderr,
-                    )
-                    items.popleft()
-                    if not items:
-                        _message_queue.pop(session, None)
-                    if reply_callback is not None:
-                        loop.create_task(_fire_callback(
-                            reply_callback,
-                            f"[Queued message could not be delivered — send failed: {stderr[:100]}]",
-                        ))
-
-        # Exit check AFTER the session loop — avoids missing items enqueued during drain
-        if not _message_queue:
-            log.info("Queue drain task finished (queue empty)")
-            return
-
-
-# ---------------------------------------------------------------------------
-# Pending reply watchers for in-flight turns
-# ---------------------------------------------------------------------------
-#
-# When the conductor is IDLE on arrival the handler delivers the message with a
-# blocking `session send --wait --timeout {RESPONSE_TIMEOUT}s`. If that single
-# turn outruns the timeout the message is already delivered and the agent keeps
-# working — only the synchronous reply is lost. send_to_conductor flags this
-# (still_running=True); the handler then registers a reply-only watcher here.
-#
-# Unlike _drain_queue this NEVER sends a message — the message is already
-# in-flight, so re-sending would double-process it. The watcher only polls
-# until the turn finishes and delivers the captured output via reply_callback.
-
-# Generous ceiling: the whole point is the turn already outran RESPONSE_TIMEOUT,
-# so wait well beyond it before giving up.
-PENDING_REPLY_MAX_WAIT = 3600  # seconds
-PENDING_REPLY_POLL_INTERVAL = 5  # seconds
-
-# Keeps watcher tasks referenced so the event loop doesn't GC them mid-flight.
+PENDING_REPLY_MAX_WAIT = 3600
 _pending_reply_tasks: set[asyncio.Task] = set()
 
 
-async def _watch_pending_reply(
-    session: str,
-    profile: str | None,
-    reply_callback: ReplyCallback,
-) -> None:
-    """Wait for an in-flight conductor turn to finish, then deliver its output.
-
-    Used when a blocking `--wait` send timed out because the agent is still
-    running (not a send failure). The message was already delivered, so this
-    does NOT re-send — it polls until the conductor leaves the busy state and
-    then fires reply_callback exactly once with the captured output.
-
-    Mirrors _drain_queue's polling/backoff but never sends a message. Caps the
-    total wait at PENDING_REPLY_MAX_WAIT and logs if it gives up.
-    """
-    loop = asyncio.get_running_loop()
-    max_polls = max(1, PENDING_REPLY_MAX_WAIT // PENDING_REPLY_POLL_INTERVAL)
-    for _ in range(max_polls):
-        status = await loop.run_in_executor(
-            None, functools.partial(get_session_status, session, profile=profile),
-        )
-        # Still working, or a transient CLI failure — keep waiting. This also
-        # naturally handles the race where the conductor finishes between the
-        # timeout and this first poll: a non-busy status falls straight through
-        # to fetching the output below.
-        if status in ("running", "active", "starting", "unknown"):
-            await asyncio.sleep(PENDING_REPLY_POLL_INTERVAL)
-            continue
-        # The turn is no longer running (idle/waiting/error/...) — fetch whatever
-        # output is available and deliver it once.
-        output = await loop.run_in_executor(
-            None, functools.partial(get_session_output, session, profile=profile),
-        )
-        text = output.strip() or "[No output from conductor.]"
-        await _fire_callback(reply_callback, text)
-        log.info(
-            "Pending reply for %s delivered after in-flight turn finished", session,
-        )
-        return
-
-    log.warning(
-        "Pending reply watcher for %s gave up after %ds — turn still running",
-        session, PENDING_REPLY_MAX_WAIT,
-    )
-    await _fire_callback(
-        reply_callback,
-        "[Conductor is still working after a long time — reply not captured. "
-        "Check the session directly.]",
-    )
+async def _watch_pending_reply(receipt, profile, reply_callback):
+    deadline = time.monotonic() + PENDING_REPLY_MAX_WAIT
+    while (left := deadline - time.monotonic()) > 0:
+        reply = await _run_blocking(_wait_for_reply, receipt, profile, "operator", min(left, 30))
+        if reply is not None:
+            await _fire_callback(reply_callback, reply)
+            return
+        await asyncio.sleep(min(2, max(0, deadline - time.monotonic())))
+    await _fire_callback(reply_callback, f"[Still waiting for reply to request {receipt}.]")
 
 
 def _register_pending_reply(
-    session: str,
+    receipt: str,
     profile: str | None,
     reply_callback: ReplyCallback,
 ) -> None:
@@ -816,9 +512,9 @@ def _register_pending_reply(
     try:
         loop = asyncio.get_running_loop()
     except RuntimeError:
-        log.warning("No running event loop — cannot watch for pending reply on %s", session)
+        log.warning("No running event loop — cannot watch for pending reply on %s", receipt)
         return
-    task = loop.create_task(_watch_pending_reply(session, profile, reply_callback))
+    task = loop.create_task(_watch_pending_reply(receipt, profile, reply_callback))
     _pending_reply_tasks.add(task)
     task.add_done_callback(_pending_reply_tasks.discard)
 
@@ -1705,28 +1401,29 @@ def create_telegram_bot(config: dict):
                 for chunk in split_message(html):
                     await tg_bot.send_message(tg_chat_id, chunk, parse_mode="HTML")
 
-            ok, _, _ = send_to_conductor(
+            ok, _, receipt = await _run_blocking(
+                send_to_conductor,
                 session_title,
                 cleaned_msg,
                 profile=target_profile,
                 wait_for_reply=False,
-                reply_callback=_tg_reply,
-                force_queue=True,
+                request_id=f"telegram:{message.chat.id}:{message.message_id}",
             )
             if not ok:
                 await message.answer(
-                    f"[Failed to send message to conductor [{target_profile}].]"
+                    f"[Could not confirm delivery to conductor [{target_profile}].]"
                 )
                 return
+            _register_pending_reply(receipt, target_profile, _tg_reply)
             await message.answer(
-                f"{profile_tag}\u23f3 Conductor busy \u2014 message queued, will reply here when done."
+                f"{profile_tag}\u23f3 Conductor busy \u2014 request {receipt} queued. I’ll reply here when it finishes."
             )
             return
 
         # Conductor is free — send and wait for reply (non-blocking via executor)
         await message.answer(f"{profile_tag}\u23f3")  # typing indicator before blocking
         wait_started_at = time.monotonic()
-        ok, response, still_running = await loop.run_in_executor(
+        ok, response, pending_id = await loop.run_in_executor(
             None,
             functools.partial(
                 send_to_conductor,
@@ -1734,11 +1431,11 @@ def create_telegram_bot(config: dict):
                 cleaned_msg,
                 profile=target_profile,
                 wait_for_reply=True,
-                response_timeout=RESPONSE_TIMEOUT,
+                response_timeout=RESPONSE_TIMEOUT, request_id=f"telegram:{message.chat.id}:{message.message_id}",
             ),
         )
         if not ok:
-            if still_running:
+            if pending_id:
                 # The message WAS delivered; the single turn just outran the
                 # blocking wait. Don't report a false failure and don't re-send
                 # (that would double-process) — watch for the reply async-ly.
@@ -1758,13 +1455,13 @@ def create_telegram_bot(config: dict):
                     for chunk in split_message(html):
                         await tg_bot.send_message(tg_chat_id, chunk, parse_mode="HTML")
 
-                _register_pending_reply(session_title, target_profile, _tg_late_reply)
+                _register_pending_reply(pending_id, target_profile, _tg_late_reply)
                 await message.answer(
-                    f"{profile_tag}⏳ Still working — will reply here when done."
+                    f"{profile_tag}⏳ Waiting for the reply to request {pending_id}."
                 )
                 return
             await message.answer(
-                f"[Failed to send message to conductor [{target_profile}].]"
+                f"[Could not confirm delivery to conductor [{target_profile}].]"
             )
             return
 
@@ -1966,7 +1663,7 @@ def create_slack_app(config: dict):
 
     async def _handle_slack_text(
         text: str, say, thread_ts: str = None,
-        user_id: str = None, event_channel: str = None,
+        user_id: str = None, event_channel: str = None, request_id: str = None,
     ):
         """Shared handler for Slack messages and mentions."""
         conductor_names = get_conductor_names()
@@ -2050,37 +1747,38 @@ def create_slack_app(config: dict):
                     text = f"{header}{chunk}" if i == 0 else chunk
                     await _safe_say(say, text=text, thread_ts=thread_ts)
 
-            ok, _, _ = send_to_conductor(
+            ok, _, receipt = await _run_blocking(
+                send_to_conductor,
                 session_title, cleaned_msg, profile=profile,
-                wait_for_reply=False, reply_callback=_slack_reply,
-                force_queue=True,
+                wait_for_reply=False, request_id=request_id,
             )
             if not ok:
                 await _safe_say(
                     say,
-                    text=f"[Failed to send message to conductor {target['name']}.]",
+                    text=f"[Could not confirm delivery to conductor {target['name']}.]",
                     thread_ts=thread_ts,
                 )
                 return
+            _register_pending_reply(receipt, profile, _slack_reply)
             await _safe_say(
                 say,
-                text=f"{name_tag}\u23f3 Conductor busy \u2014 message queued, will reply here when done.",
+                text=f"{name_tag}\u23f3 Conductor busy \u2014 request {receipt} queued. I’ll reply here when it finishes.",
                 thread_ts=thread_ts,
             )
             return
 
         await _safe_say(say, text=f"{name_tag}\u23f3", thread_ts=thread_ts)  # before blocking
         wait_started_at = time.monotonic()
-        ok, response, still_running = await loop.run_in_executor(
+        ok, response, pending_id = await loop.run_in_executor(
             None,
             functools.partial(
                 send_to_conductor,
                 session_title, cleaned_msg, profile=profile,
-                wait_for_reply=True, response_timeout=RESPONSE_TIMEOUT,
+                wait_for_reply=True, response_timeout=RESPONSE_TIMEOUT, request_id=request_id,
             ),
         )
         if not ok:
-            if still_running:
+            if pending_id:
                 # The message WAS delivered; the single turn just outran the
                 # blocking wait. Don't report a false failure and don't re-send
                 # (that would double-process) \u2014 watch for the reply async-ly.
@@ -2099,16 +1797,16 @@ def create_slack_app(config: dict):
                         text = f"{header}{chunk}" if i == 0 else chunk
                         await _safe_say(say, text=text, thread_ts=thread_ts)
 
-                _register_pending_reply(session_title, profile, _slack_late_reply)
+                _register_pending_reply(pending_id, profile, _slack_late_reply)
                 await _safe_say(
                     say,
-                    text=f"{name_tag}\u23f3 Still working \u2014 will reply here when done.",
+                    text=f"{name_tag}\u23f3 Waiting for the reply to request {pending_id}.",
                     thread_ts=thread_ts,
                 )
                 return
             await _safe_say(
                 say,
-                text=f"[Failed to send message to conductor {target['name']}.]",
+                text=f"[Could not confirm delivery to conductor {target['name']}.]",
                 thread_ts=thread_ts,
             )
             return
@@ -2146,6 +1844,7 @@ def create_slack_app(config: dict):
             text, say,
             thread_ts=event.get("thread_ts") or event.get("ts"),
             user_id=user_id, event_channel=event.get("channel"),
+            request_id=f"slack:{event.get('channel')}:{event['ts']}",
         )
 
     @app.event("app_mention")
@@ -2167,6 +1866,7 @@ def create_slack_app(config: dict):
             text, say,
             thread_ts=thread_ts,
             user_id=user_id, event_channel=event.get("channel"),
+            request_id=f"slack:{event.get('channel')}:{event['ts']}",
         )
 
     @app.command("/ad-status")
@@ -2662,18 +2362,18 @@ def create_discord_bot(config: dict):
         )
         async with message.channel.typing():
             loop = asyncio.get_event_loop()
-            ok, response, still_running = await loop.run_in_executor(
+            ok, response, pending_id = await loop.run_in_executor(
                 None,
                 lambda: send_to_conductor(
                     session_title,
                     cleaned_msg,
                     profile=profile,
                     wait_for_reply=True,
-                    response_timeout=RESPONSE_TIMEOUT,
+                    response_timeout=RESPONSE_TIMEOUT, request_id=f"discord:{message.id}",
                 ),
             )
         if not ok:
-            if still_running:
+            if pending_id:
                 # The message WAS delivered; the single turn just outran the
                 # blocking wait. Don't report a false failure and don't re-send
                 # (that would double-process) — watch for the reply async-ly.
@@ -2688,13 +2388,13 @@ def create_discord_bot(config: dict):
                         dc_channel, response_text, name_tag=dc_name_tag,
                     )
 
-                _register_pending_reply(session_title, profile, _dc_late_reply)
+                _register_pending_reply(pending_id, profile, _dc_late_reply)
                 await message.channel.send(
-                    "⏳ Still working — will reply here when done.",
+                    f"⏳ Waiting for the reply to request {pending_id}.",
                 )
                 return
             await message.channel.send(
-                f"[Failed to send message to conductor {target['name']}.]",
+                f"[Could not confirm delivery to conductor {target['name']}.]",
             )
             return
 
@@ -2893,16 +2593,8 @@ async def heartbeat_loop(
 
                 # Send heartbeat to conductor (wrapped in executor — blocks up to
                 # RESPONSE_TIMEOUT seconds and must not freeze the event loop)
-                ok, response, _ = await loop.run_in_executor(
-                    None,
-                    functools.partial(
-                        send_to_conductor,
-                        session_title,
-                        heartbeat_msg,
-                        profile=profile,
-                        wait_for_reply=True,
-                        response_timeout=RESPONSE_TIMEOUT,
-                    ),
+                ok, response = await loop.run_in_executor(
+                    None, functools.partial(send_heartbeat, session_title, heartbeat_msg, profile),
                 )
                 if not ok:
                     log.error(
@@ -2911,7 +2603,7 @@ async def heartbeat_loop(
                     )
                     continue
 
-                # Response is captured via get_session_output (see send_to_conductor).
+                # Escalate only the response explicitly linked to this heartbeat.
                 log.info(
                     "Heartbeat [%s] response: %s",
                     name, response[:200],

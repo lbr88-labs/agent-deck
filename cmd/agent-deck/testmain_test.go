@@ -36,6 +36,11 @@ func runTestMain(m *testing.M) int {
 		// Isolate HOME+XDG so agent-deck path resolution lands in a temp dir,
 		// never the real ~/.agent-deck (2026-06-04 data-loss incident, S5).
 		// Must run before anything resolves a path. See internal/testutil/homeenv.go.
+		// Unit tests opt into a sender identity when exercising managed calls.
+		// Agent shells running the suite must not impersonate fixture sessions.
+		for _, key := range []string{"AGENTDECK_INSTANCE_ID", "AGENT_DECK_SESSION_ID", "CODEX_THREAD_ID", "CLAUDECODE", "CURSOR_AGENT", "OMP_SESSION_ID"} {
+			_ = os.Unsetenv(key)
+		}
 		cleanupHome := testutil.IsolateHome()
 		defer cleanupHome()
 	}

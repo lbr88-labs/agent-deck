@@ -1,10 +1,8 @@
 """Tests for the bridge.py hook system."""
 
 import json
-import os
 import shutil
 import stat
-import tempfile
 from pathlib import Path
 from unittest import mock
 
@@ -134,22 +132,14 @@ class TestRunHook:
         assert parsed["profile"] == "work"
         assert parsed["waiting"] == 3
 
-    def test_env_vars_set(self):
+    def test_env_vars_set(self, tmp_path):
         """Verify CONDUCTOR_PROFILE and CONDUCTOR_DIR env vars are set."""
-        # Create a temp hook that prints env vars
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".sh", delete=False) as f:
-            f.write("#!/bin/sh\necho $CONDUCTOR_PROFILE:$CONDUCTOR_DIR\n")
-            f.flush()
-            os.chmod(f.name, 0o755)
-            try:
-                exit_code, stdout, stderr = run_hook(
-                    Path(f.name), {"profile": "test-profile"}
-                )
-                assert exit_code == 0
-                parts = stdout.strip().split(":")
-                assert parts[0] == "test-profile"
-            finally:
-                os.unlink(f.name)
+        hook = tmp_path / "env.sh"
+        hook.write_text("#!/bin/sh\necho $CONDUCTOR_PROFILE:$CONDUCTOR_DIR\n")
+        hook.chmod(0o755)
+        exit_code, stdout, stderr = run_hook(hook, {"profile": "test-profile"})
+        assert exit_code == 0, stderr
+        assert stdout.strip().split(":")[0] == "test-profile"
 
 
 # ---------------------------------------------------------------------------

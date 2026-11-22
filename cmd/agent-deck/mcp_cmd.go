@@ -6,7 +6,6 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"time"
 
 	"github.com/asheshgoplani/agent-deck/internal/session"
 )
@@ -479,12 +478,6 @@ func handleMCPAttach(profile string, args []string) {
 			}
 		} else {
 			restarted = true
-			// Auto-continue: wait for the agent to initialize, then send continue message.
-			time.Sleep(2 * time.Second)
-			if tmuxSess := inst.GetTmuxSession(); tmuxSess != nil && inst.Tool != "cursor" {
-				// Cursor restart already resumes the agent session.
-				_ = tmuxSess.SendKeysAndEnter("continue")
-			}
 		}
 	}
 
@@ -652,12 +645,6 @@ func handleMCPDetach(profile string, args []string) {
 			}
 		} else {
 			restarted = true
-			// Auto-continue: wait for the agent to initialize, then send continue message.
-			time.Sleep(2 * time.Second)
-			if tmuxSess := inst.GetTmuxSession(); tmuxSess != nil && inst.Tool != "cursor" {
-				// Cursor restart already resumes the agent session.
-				_ = tmuxSess.SendKeysAndEnter("continue")
-			}
 		}
 	}
 

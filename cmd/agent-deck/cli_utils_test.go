@@ -242,6 +242,11 @@ func TestReorderArgsForFlagParsing_CmdAndGroup(t *testing.T) {
 			expected: []string{"-c=claude", "-g", "work", "."},
 		},
 		{
+			name:     "initial message ID does not consume the following json option",
+			args:     []string{".", "-m", "do it", "--message-id", "task-1", "--json"},
+			expected: []string{"-m", "do it", "--message-id", "task-1", "--json", "."},
+		},
+		{
 			name:     "model flag keeps its value",
 			args:     []string{"-c", "codex", "--model", "gpt-5.5", "."},
 			expected: []string{"-c", "codex", "--model", "gpt-5.5", "."},

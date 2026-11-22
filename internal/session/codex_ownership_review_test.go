@@ -33,6 +33,10 @@ func writeCodexReviewRolloutAt(t *testing.T, home, sessionID, cwd string, create
 // The emitter is the pane's initial process, not a reader in the test process or
 // a second Codex child. Wait for its writable descriptors before using evidence.
 func startCodexReviewPane(t *testing.T, inst *Instance, paths ...string) *HookStatus {
+	return startCodexReviewPaneWithQueue(t, inst, "", paths...)
+}
+
+func startCodexReviewPaneWithQueue(t *testing.T, inst *Instance, queue string, paths ...string) *HookStatus {
 	t.Helper()
 	if runtime.GOOS != "linux" {
 		t.Skip("requires Linux /proc writable-descriptor inspection")
@@ -40,6 +44,9 @@ func startCodexReviewPane(t *testing.T, inst *Instance, paths ...string) *HookSt
 	skipIfNoTmuxBinary(t)
 	var script strings.Builder
 	script.WriteString(codexReviewScriptHeader)
+	if queue != "" {
+		fmt.Fprintf(&script, "exec 9>> %s\n", shellQuote(queue))
+	}
 	for index, path := range paths {
 		fmt.Fprintf(&script, "exec %d>> %s\n", index+3, shellQuote(path))
 	}

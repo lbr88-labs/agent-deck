@@ -102,32 +102,33 @@ fi
 agent-deck -p "$PROFILE" session start "$WORKER_TITLE" >&2 || true
 sleep 2
 
-# Look up the resolved session id
-SESSION_ID="$(agent-deck -p "$PROFILE" list --json 2>/dev/null \
-    | python3 -c "import sys,json; print(next((s['id'] for s in json.load(sys.stdin) if s.get('title')=='$WORKER_TITLE'), ''))")"
-
+# The resolver fails on ambiguous titles. Persist the exact worker ID.
+SESSION_ID="$(agent-deck -p "$PROFILE" session show "$WORKER_TITLE" --json | python3 -c 'import json,sys; print(json.load(sys.stdin)["id"])')"
 if [[ -z "$SESSION_ID" ]]; then
     echo "[goal] could not resolve worker session id for title '$WORKER_TITLE'" >&2
     exit 1
 fi
 
-# Send the contract prompt (long, so write to a file and reference)
-PROMPT_FILE="$(mktemp -t goal-prompt-XXXXXX.md)"
-printf '%s\n' "$PROMPT" > "$PROMPT_FILE"
-agent-deck -p "$PROFILE" session send "$WORKER_TITLE" "$(cat "$PROMPT_FILE")" --no-wait -q >&2 || {
-    echo "[goal] failed to send contract prompt — worker session $SESSION_ID exists but is not yet driving" >&2
+if [[ -n "${AGENTDECK_INSTANCE_ID:-}" ]]; then
+    send_cmd=(message send)
+else
+    send_cmd=(message notify --producer goal-manager)
+fi
+agent-deck -p "$PROFILE" "${send_cmd[@]}" --id "goal-$ID-contract" -- "$SESSION_ID" "$PROMPT" >&2 || {
+    echo "[goal] failed to queue the contract for worker $SESSION_ID" >&2
+    exit 1
 }
-rm -f "$PROMPT_FILE"
 
 # Write the goal JSON
 python3 - "$GOAL_PATH" "$ID" "$GOAL" "$DONE_CMD" "$WORKER_TITLE" "$SESSION_ID" "$WORKDIR" "$CONDUCTOR" \
-        "$CHECK_INTERVAL_SECONDS" "$MAX_IDLE_SECONDS" "$MAX_CYCLES" "$ESCALATE_AFTER" "$NOW" <<'PYEOF'
+        "$CHECK_INTERVAL_SECONDS" "$MAX_IDLE_SECONDS" "$MAX_CYCLES" "$ESCALATE_AFTER" "$NOW" "$PROFILE" <<'PYEOF'
 import json
 import sys
 
 path = sys.argv[1]
 data = {
     "id": sys.argv[2],
+    "profile": sys.argv[14],
     "goal": sys.argv[3],
     "done_cmd": sys.argv[4],
     "worker_session_title": sys.argv[5],

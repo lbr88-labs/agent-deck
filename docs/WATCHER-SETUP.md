@@ -86,7 +86,7 @@ delivers events:
 | Flavour | When to use it | Where it runs |
 |---|---|---|
 | **First-class adapter** (HTTP / push) | Source can webhook to you, or you can subscribe to a push stream | Inside agent-deck's engine; managed by `agent-deck watcher` |
-| **External polling script** | Source needs polling (IMAP, calendar API, status page) | Anywhere — small script, calls `agent-deck session send` |
+| **External polling script** | Source needs polling (IMAP, calendar API, status page) | Anywhere — small script, calls `agent-deck message notify --producer watchdog` |
 
 Both produce the same kind of trigger. The conductor cannot tell them
 apart. Pick whichever the source forces on you.
@@ -207,7 +207,7 @@ limit. Each rule is independent.
 
 For sources that don't push (IMAP inboxes, calendar APIs, third-party
 SaaS dashboards), the cleanest pattern is a **small external script**
-that polls and forwards triggers via `agent-deck session send`.
+that polls and forwards triggers via `agent-deck message notify --producer watchdog`.
 
 ### The pattern in one minimal example
 
@@ -225,15 +225,13 @@ NEW_UIDS=$(your-imap-cli --label "agent-deck" --since-uid "$LAST_SEEN_UID")
 
 for uid in $NEW_UIDS; do
   # Lean trigger — no payload, just an identifier the conductor can fetch later.
-  agent-deck session send "conductor-$CONDUCTOR" \
-    "[gmail:new:label=agent-deck:uid=$uid]" \
-    --no-wait
+  agent-deck message notify --producer watchdog "conductor-$CONDUCTOR" \
+    "[gmail:new:label=agent-deck:uid=$uid]"
   echo "$uid" > "$STATE"
 done
 ```
 
-Run it under `cron`, `systemd-timer`, `launchd`, or even an agent-deck
-session of its own (`agent-deck add` + a custom `command`). Whatever.
+Run an external producer under cron, systemd or launchd. Watchers running inside a managed agent use `agent-deck message send` with the conductor's full session ID.
 
 Four things matter, in order:
 
@@ -241,9 +239,7 @@ Four things matter, in order:
    prevents the same event firing twice when the source re-delivers.
 2. **Forward lean.** ≤200 chars, no payload, just an identifier. The
    conductor will fetch the body if it cares.
-3. **Use `--no-wait`.** `session send` blocks until the session ACKs by
-   default. A wedged conductor will then wedge every poller that forwards
-   to it. `--no-wait` makes the script fire-and-forget.
+3. **Record acceptance.** Advance the source cursor after the durable inbox accepts the event. Reuse a stable message ID with `--id` when retrying the same event.
 4. **Page yourself on silence.** A watcher that cannot reach its
    conductor is worse than useless — nobody notices. Log every successful
    send, alert if the send count drops to zero for an hour.
@@ -305,9 +301,7 @@ under `~/.agent-deck/events/` works; so does a plain `.last` file.
 
 ### 3. "Polling script silently blocks when the conductor is down"
 
-You forgot `--no-wait`. `agent-deck session send` waits for an ACK by
-default; if the conductor is wedged, every poller forwarding to it
-wedges too. Cascading failure. Always use `--no-wait` in a polling loop.
+Use `agent-deck message notify --producer watchdog` to enqueue an event. Its receipt confirms storage even while the conductor is offline.
 
 ### 4. "ntfy topic leaked into a public config"
 
@@ -352,7 +346,7 @@ agent-deck watcher test <name>           # synthetic event end-to-end
 agent-deck watcher install-skill watcher-creator
 
 # Polling-script forward
-agent-deck session send conductor-<name> "[src:type:id] hint" --no-wait
+agent-deck message notify --producer watchdog conductor-<name> "[src:type:id] hint"
 
 # Stop / teardown
 agent-deck watcher stop <name>

@@ -606,20 +606,14 @@ func TestBridgeTemplate_HeartbeatScopesToConductorGroups(t *testing.T) {
 	}
 }
 
-func TestBridgeTemplate_SendToConductorSupportsSingleCallWait(t *testing.T) {
-	template := conductorBridgePy
-	waitPattern := `"--wait", "--timeout", f"{response_timeout}s", "-q",`
-	noWaitPattern := `"session", "send", session, message, "--no-wait",`
-	oldPattern := `"session", "send", session, message, profile=profile, timeout=120`
-
-	if !strings.Contains(template, waitPattern) {
-		t.Fatalf("template should include --wait send path: %q", waitPattern)
+func TestBridgeTemplate_UsesCorrelatedInbox(t *testing.T) {
+	for _, pattern := range []string{`"message", "notify", "--producer"`, `"--response-to", receipt, "--reply-only"`} {
+		if !strings.Contains(conductorBridgePy, pattern) {
+			t.Fatalf("missing bridge inbox path: %s", pattern)
+		}
 	}
-	if !strings.Contains(template, noWaitPattern) {
-		t.Fatalf("template should retain --no-wait send path: %q", noWaitPattern)
-	}
-	if strings.Contains(template, oldPattern) {
-		t.Fatalf("template should not contain blocking send pattern: %q", oldPattern)
+	if strings.Contains(conductorBridgePy, `"session", "send", session, message`) {
+		t.Fatal("bridge bypasses durable inbox")
 	}
 }
 
@@ -627,11 +621,8 @@ func TestConductorHeartbeatScript_StatusParsingHandlesWhitespace(t *testing.T) {
 	if !strings.Contains(conductorHeartbeatScript, `"status"`) {
 		t.Fatal("heartbeat status parser should extract status field")
 	}
-	if !strings.Contains(conductorHeartbeatScript, `session send "$SESSION"`) {
+	if !strings.Contains(conductorHeartbeatScript, `message notify --producer heartbeat "$SESSION"`) {
 		t.Fatal("heartbeat script should send heartbeat messages")
-	}
-	if !strings.Contains(conductorHeartbeatScript, "--no-wait -q") {
-		t.Fatal("heartbeat script should use non-blocking quiet send")
 	}
 }
 

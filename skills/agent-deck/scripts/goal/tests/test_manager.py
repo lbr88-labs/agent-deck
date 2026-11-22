@@ -474,6 +474,10 @@ class TestScheduleWakeup_RetryOn5xx_LogsAndBackoffs_RegressionFor976(unittest.Te
 
         self.assertTrue(result, "third attempt succeeded; agent_deck_send must return True")
         self.assertEqual(mock_run.call_count, 3, "should retry until success (max 3 attempts)")
+        commands = [call.args[0] for call in mock_run.call_args_list]
+        self.assertTrue(all(cmd == commands[0] for cmd in commands))
+        self.assertIn("--id", commands[0])
+        self.assertIn("message", commands[0])
         # Backoff before retries — two sleeps total (after attempt 1 and after attempt 2)
         self.assertEqual(
             self._sleeps,

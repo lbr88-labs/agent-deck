@@ -116,7 +116,7 @@ config_dir = "~/.claude-team"      # Optional override for profile "work"
 | `allow_dangerous_mode` | bool | `false` | Adds `--allow-dangerously-skip-permissions`. Unlocks bypass as an option without activating it. Ignored when `dangerous_mode` or `auto_mode` is true. |
 | `use_chrome` | bool | `false` | Adds `--chrome` to Claude sessions and is remembered from the New Session dialog. |
 | `use_teammate_mode` | bool | `false` | Adds `--teammate-mode tmux` to Claude sessions and is remembered from the New Session dialog. |
-| `vim_mode` | bool | `false` | Set when the inner Claude Code prompt uses vim keybindings (`"editorMode": "vim"`). Each `session send` then prepends an Escape + `i` insert-mode guarantee so a message sent while the prompt is in vim NORMAL mode actually submits instead of being typed-but-unsent (issue #1264). Only affects Claude-compatible tools. |
+| `vim_mode` | bool | `false` | Set when the inner Claude Code prompt uses vim keybindings (`"editorMode": "vim"`). This applies to explicit terminal key operations. Inbox delivery is independent of the current editor mode. Only affects Claude-compatible tools. |
 | `extra_args` | array of strings | `[]` | Extra Claude CLI flags remembered from the New Session dialog and appended to new/restarted Claude sessions. Do not store secrets here. |
 | `env_file` | string | `""` | A .env file sourced for Claude sessions only. Sourced after global `[shell].env_files`. See [Path Resolution](#path-resolution). |
 | `hooks_enabled` | bool | `true` | Enables Claude Code lifecycle hooks for real-time status detection. Set `false` to opt out of hook-based detection and the TUI install prompt. |
@@ -511,7 +511,7 @@ Run shell commands on a wall-clock interval while the TUI is running,
 independent of session activity — a general-purpose "cron inside the TUI."
 Each hook is a named table under `[interval_hooks]`. The command runs via
 `bash -lc`. Typical uses: a periodic sync, a health probe, or a poll that
-dispatches work to sessions with `agent-deck session send` / `session start`.
+dispatches work to sessions with `agent-deck message send` / `session start`.
 
 ```toml
 [interval_hooks.heartbeat]

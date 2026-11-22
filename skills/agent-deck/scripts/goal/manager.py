@@ -9,7 +9,7 @@ goal JSON in ~/.agent-deck/goals/ and advances its state by one tick:
     2. Else read task-log.md tail; look for receipts newer than what we've
        already seen. If found → reset nudge counter, record cycle.
     3. Else, if idle for max_idle seconds → send a context-rich nudge to
-       the worker via `agent-deck session send`.
+       the worker via its Agent Deck inbox.
     4. If nudges_sent >= escalate_after → write a stuck bundle, log loudly.
     5. If cycles_completed >= max_cycles → finalize as failed.
 
@@ -33,6 +33,7 @@ import shlex
 import subprocess
 import sys
 import time
+import uuid
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -142,14 +143,21 @@ def newer_than(ts_a: str, ts_b: str | None) -> bool:
     return ts_a > ts_b
 
 
-def agent_deck_send(session_id_or_title: str, message: str, dry_run: bool, verbose: bool) -> bool:
+def agent_deck_send(session_id_or_title: str, message: str, dry_run: bool, verbose: bool, profile: str = "") -> bool:
     """Send a nudge to a worker. Returns True on success.
 
     Retries on transient failures with exponential backoff (BACKOFF_SECONDS).
     Logs every attempt with the reason so a stalled autonomous loop is
     observable instead of silent. Regression fix for issue #976.
     """
-    cmd = ["agent-deck", "session", "send", session_id_or_title, message, "--no-wait", "-q"]
+    cmd = ["agent-deck"]
+    if profile:
+        cmd += ["-p", profile]
+    if os.environ.get("AGENTDECK_INSTANCE_ID"):
+        cmd += ["message", "send"]
+    else:
+        cmd += ["message", "notify", "--producer", "goal-manager"]
+    cmd += ["--id", str(uuid.uuid4()), "--", session_id_or_title, message]
     vlog(verbose, "nudge cmd: " + " ".join(shlex.quote(c) for c in cmd))
     if dry_run:
         return True
@@ -237,7 +245,7 @@ def write_escalation_bundle(goal: dict, idle_minutes: int) -> Path:
         f"{recent_str}\n"
         f"\n"
         f"## Options\n"
-        f"- Hint and resume: `agent-deck session send {goal.get('worker_session_title')} \"<your hint>\"`\n"
+        f"- Hint and resume: `agent-deck message send {goal.get('worker_session_id')} \"<your hint>\"`\n"
         f"- Inspect worker:  `agent-deck session output {goal.get('worker_session_title')} -q`\n"
         f"- Cancel:          mark this goal `stopped_by_user` in `{GOALS_DIR}/{goal['id']}.json`\n"
     )
@@ -340,9 +348,9 @@ def walk_goal(path: Path, dry_run: bool, verbose: bool) -> None:
         vlog(verbose, f"idle={int(idle_seconds)}s, max_idle={schedule['max_idle_seconds']}s")
 
         if idle_seconds > schedule["max_idle_seconds"]:
-            target = goal.get("worker_session_title") or goal["worker_session_id"]
+            target = goal.get("worker_session_id") or goal["worker_session_title"]
             nudge_text = build_nudge(goal, int(idle_seconds // 60))
-            sent_ok = agent_deck_send(target, nudge_text, dry_run, verbose)
+            sent_ok = agent_deck_send(target, nudge_text, dry_run, verbose, goal.get("profile", ""))
             # Count attempts, not just successes: N failed nudges = N signals
             # that something is wrong, and the user deserves to be paged.
             state["nudges_sent"] = state.get("nudges_sent", 0) + 1

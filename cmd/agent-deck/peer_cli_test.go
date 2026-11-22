@@ -57,6 +57,14 @@ func TestPeerCLIProfileRoundTrip(t *testing.T) {
 	if err := run("", "notify", "--producer", "watchdog", "duplicate", "event"); err == nil {
 		t.Fatal("ambiguous notification recipient accepted")
 	}
+	t.Run("stripped native agent cannot notify as a producer", func(t *testing.T) {
+		t.Setenv("CODEX_THREAD_ID", "agent-thread")
+		if err := run("", "notify", "--producer", "operator", "reader", "event"); err == nil {
+			t.Fatal("native agent could send as operator")
+		}
+	})
+	must("", "notify", "--producer", "goal-manager", "--id", "manager-tick", "first", "update")
+	must("first", "ack", "manager-tick")
 	must("", "notify", "--json", "--id", "tick", "--producer", "heartbeat", "reader", "event")
 	var notice peermsg.Message
 	if err := json.Unmarshal(out.Bytes(), &notice); err != nil || notice.SenderID != "system:heartbeat" || notice.RecipientID != "second" {

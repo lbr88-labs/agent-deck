@@ -148,8 +148,7 @@ const cliRestartOldTmuxName = "agentdeck_clirestart_deadbeef"
 func newCLIRestartFixture(t *testing.T, profile string) (*session.Storage, *session.Instance) {
 	t.Helper()
 
-	// A codex session is restart-eligible for skills (ShouldRestartProjectSkills)
-	// and, unlike claude, skips the two-second "continue" nudge.
+	// A Codex session is restart-eligible for project skills.
 	stubDir := t.TempDir()
 	stub := filepath.Join(stubDir, "codex")
 	if err := os.WriteFile(stub, []byte("#!/bin/sh\nsleep 30\n"), 0o755); err != nil {

@@ -376,25 +376,26 @@ agent-deck session set <id|title> <field> <value>
 
 Setting `account` auto-migrates the Claude conversation into the target account's config dir (same migration as `session switch-account`, but without the automatic stop/restart).
 
+### Messaging
+
+Managed agents use one durable inbox for Claude, Codex, Cursor and OMP. Each send returns the message ID. Use a full recipient ID and keep the ID when a reply is needed.
+
+```bash
+agent-deck message send --json "$RECIPIENT_ID" "Please review the patch"
+agent-deck message wait --response-to "$MESSAGE_ID" --reply-only --json
+agent-deck message read --json
+agent-deck message ack "$MESSAGE_ID"
+agent-deck message send --reply-to "$MESSAGE_ID" "$SENDER_ID" "Reviewed"
+```
+
 ### session send
 
-```bash
-agent-deck session send <id|title> "message" [--wait|--stream|--no-wait] [-q] [--json]
-agent-deck session send <id|title> --message-file <file|-> [--wait|--stream|--no-wait] [-q] [--json]
-```
-
-Use `--message-file` for long or multiline messages, or `--message-file -` for stdin. Do not combine it with an inline message.
+Operators can queue an instruction from outside an agent. Codex uses its native thread queue and other harnesses read the profile inbox. `--draft` pre-fills the terminal for manual review and submission.
 
 ```bash
-git diff | agent-deck session send my-project --message-file -
 agent-deck session send my-project --message-file task.md --wait
+agent-deck session send my-project "text for review" --draft
 ```
-
-Default behavior:
-- Waits for agent readiness before sending.
-- Verifies processing starts after send.
-- If Claude leaves a pasted prompt unsent (`[Pasted text ...]`), retries `Enter` automatically.
-- Avoids unnecessary retry `Enter` presses when session is already `waiting`/`idle`.
 
 ### session approve
 
@@ -698,7 +699,7 @@ agent-deck conductor list [--profile <name>]
 - `setup` creates `~/.agent-deck/conductor/<name>/` plus `meta.json` and registers `conductor-<name>` session in the selected profile.
 - `setup` also installs shared `~/.agent-deck/conductor/CLAUDE.md` (or symlink via `--shared-claude-md`).
 - Heartbeat timers run per conductor (default every 15 minutes) and can be disabled with `--no-heartbeat`.
-- Heartbeat sends use non-blocking `session send --no-wait -q` to avoid timeout churn when sessions are busy.
+- Scheduled heartbeats use `message notify --producer heartbeat` to persist the request in a busy conductor’s inbox.
 - Bridge daemon is installed only when Telegram and/or Slack is configured in `[conductor]`.
 - Transition notifier daemon (`agent-deck notify-daemon`) is installed by setup and sends event nudges on `running -> waiting|error|idle` transitions (parent first, then conductor fallback).
 

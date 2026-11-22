@@ -44,6 +44,7 @@ func handleLaunch(profile string, args []string) {
 	wrapper := fs.String("wrapper", "", "Wrapper command (use {command} to include tool command; auto-generated when --cmd includes extra flags; a known claude/codex subcommand in --cmd runs as-is with no wrapper instead)")
 	message := fs.String("message", "", "Initial message to send once agent is ready")
 	messageShort := fs.String("m", "", "Initial message to send (short)")
+	messageID := fs.String("message-id", "", "Stable ID for retrying a managed agent's initial task")
 	messageFile := fs.String("message-file", "", "Read the initial message from a file ('-' for stdin); avoids shell quoting of long prompts")
 	noWait := fs.Bool("no-wait", false, "Don't wait for agent to be ready before sending message")
 	assertDone := fs.Bool("assert-done", false, "Append a completion-sentinel instruction to the message (default on for -c claude)")
@@ -222,6 +223,15 @@ func handleLaunch(profile string, args []string) {
 		assertDoneOn = false
 	}
 	initialMessage = applyAssertDone(initialMessage, assertDoneOn)
+
+	bootstrap, err := preparePeerBootstrap(profile, initialMessage, *messageID)
+	if err != nil {
+		out.Error(err.Error(), ErrCodeInvalidOperation)
+		os.Exit(1)
+	}
+	if bootstrap != nil {
+		defer func() { _ = bootstrap.service.Close() }()
+	}
 
 	// Resolve worktree flags
 	wtBranch := *worktreeBranch
@@ -591,6 +601,12 @@ func handleLaunch(profile string, args []string) {
 		}
 	}
 
+	launchMessage, err := bootstrap.terminalBody(newInstance, initialMessage)
+	if err != nil {
+		out.Error(err.Error(), ErrCodeDeliveryFailed)
+		os.Exit(1)
+	}
+
 	// v1.9.1 group concurrency cap: if the target group is at its
 	// max_concurrent cap, mark this session queued instead of starting.
 	// Groups with max_concurrent<=0 (legacy default) skip this check.
@@ -603,7 +619,7 @@ func handleLaunch(profile string, args []string) {
 		// the load-modify-write rewrite that loses sibling launches'
 		// rows under concurrency.
 		if err := storage.InsertSessionAndVerify(newInstance, tree); err != nil {
-			out.Error(fmt.Sprintf("failed to save queued state: %v", err), ErrCodeInvalidOperation)
+			bootstrap.reportError(out, "failed to save queued state", err)
 			os.Exit(1)
 		}
 		queuedJSON := map[string]interface{}{
@@ -614,6 +630,7 @@ func handleLaunch(profile string, args []string) {
 			"group":          newInstance.GroupPath,
 			"max_concurrent": maxC,
 		}
+		bootstrap.addReceipt(queuedJSON)
 		addModelInfoJSON(queuedJSON, newInstance.LaunchModelInfo())
 		out.Success(fmt.Sprintf("Queued session: %s (group at cap %d)", newInstance.Title, maxC), queuedJSON)
 		return
@@ -657,16 +674,16 @@ func handleLaunch(profile string, args []string) {
 	// outright. Embed it instead. There is nothing to wait for in that case
 	// either: the process is already answering by the time it exists, so
 	// --no-wait loses nothing.
-	promptRidesArgv := initialMessage != "" && newInstance.PromptRidesCommandLine()
+	promptRidesArgv := launchMessage != "" && newInstance.PromptRidesCommandLine()
 
-	if initialMessage != "" && (!*noWait || promptRidesArgv) {
-		if err := newInstance.StartWithMessage(initialMessage); err != nil {
-			out.Error(fmt.Sprintf("failed to start session: %v", err), ErrCodeInvalidOperation)
+	if launchMessage != "" && (!*noWait || promptRidesArgv) {
+		if err := newInstance.StartWithMessage(launchMessage); err != nil {
+			bootstrap.reportError(out, "failed to start session", err)
 			os.Exit(1)
 		}
 	} else {
 		if err := newInstance.Start(); err != nil {
-			out.Error(fmt.Sprintf("failed to start session: %v", err), ErrCodeInvalidOperation)
+			bootstrap.reportError(out, "failed to start session", err)
 			os.Exit(1)
 		}
 	}
@@ -688,7 +705,7 @@ func handleLaunch(profile string, args []string) {
 		postStartTree.CreateGroupPath(newInstance.GroupPath)
 	}
 	if err := storage.InsertSessionAndVerify(newInstance, postStartTree); err != nil {
-		out.Error(fmt.Sprintf("failed to save session state: %v", err), ErrCodeInvalidOperation)
+		bootstrap.reportError(out, "failed to save session state", err)
 		os.Exit(1)
 	}
 
@@ -701,7 +718,7 @@ func handleLaunch(profile string, args []string) {
 	// sendWithRetryTarget pass, run verifyPromptConsumedAfterLaunch to catch
 	// the welcome-screen race where claude eats the first Enter. 10s budget
 	// per window + single retry + stderr warning on persistent no-op.
-	if initialMessage != "" && *noWait && !promptRidesArgv {
+	if launchMessage != "" && *noWait && !promptRidesArgv {
 		tmuxSess := newInstance.GetTmuxSession()
 		if tmuxSess != nil {
 			// #1777 provenance probe: a freshly launched session has an
@@ -714,7 +731,7 @@ func handleLaunch(profile string, args []string) {
 			// delivered form (#1855), so the recovery retry needs the same
 			// provenance or its attribution gate withholds it forever.
 			pasteFreeBeforeSend := composerPasteFree(tmuxSess)
-			if _, err := sendWithRetryTarget(tmuxSess, initialMessage, skipClaudeDeliveryVerify(newInstance.Tool), sendRetryOptions{
+			if _, err := sendWithRetryTarget(tmuxSess, launchMessage, skipClaudeDeliveryVerify(newInstance.Tool), sendRetryOptions{
 				maxRetries:                  8,
 				checkDelay:                  150 * time.Millisecond,
 				composerPasteFreeBeforeSend: pasteFreeBeforeSend,
@@ -723,7 +740,7 @@ func handleLaunch(profile string, args []string) {
 				os.Exit(1)
 			}
 			verifyPromptConsumedAfterLaunchAttributed(
-				tmuxSess, initialMessage, pasteFreeBeforeSend,
+				tmuxSess, launchMessage, pasteFreeBeforeSend,
 				10*time.Second, 250*time.Millisecond,
 				os.Stderr,
 			)
@@ -772,9 +789,12 @@ func handleLaunch(profile string, args []string) {
 	}
 	addModelInfoJSON(jsonData, newInstance.LaunchModelInfo())
 
+	bootstrap.addReceipt(jsonData)
 	msg := fmt.Sprintf("Launched session: %s", newInstance.Title)
 	if initialMessage != "" {
-		if *noWait {
+		if bootstrap != nil && bootstrap.recipient != "" {
+			msg += " (task queued: " + bootstrap.requestID + ")"
+		} else if *noWait {
 			msg += " (message sent with --no-wait)"
 		} else {
 			msg += " (message sent)"

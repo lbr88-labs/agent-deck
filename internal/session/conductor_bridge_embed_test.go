@@ -56,7 +56,7 @@ func TestEmbeddedBridgeParsesAsPython(t *testing.T) {
 // #1386 env-var secret resolution (one half of the union). It imports the
 // embedded bytes as a module and checks _resolve_secret("$VAR") reads os.environ
 // — the behavior that lets config.toml reference $TELEGRAM_BOT_TOKEN etc. — and
-// that the #452 _drain_queue ships in the SAME file (both halves of the union).
+// that the #452 _watch_pending_reply ships in the SAME file (both halves of the union).
 func TestEmbeddedBridgeResolvesSecret(t *testing.T) {
 	py := findPython3()
 	if py == "" {
@@ -79,7 +79,7 @@ assert bridge._resolve_secret("$AD_TEST_SECRET") == "sentinel-value", "env $VAR 
 assert bridge._resolve_secret("${AD_TEST_SECRET}") == "sentinel-value", "env ${VAR} not resolved"
 assert bridge._resolve_secret("plain") == "plain", "plain value should pass through"
 # The #452 union half must also be present in the SAME deployed file.
-assert hasattr(bridge, "_drain_queue"), "embedded bridge missing _drain_queue (#452)"
+assert hasattr(bridge, "_watch_pending_reply"), "embedded bridge missing _watch_pending_reply (#452)"
 print("OK")
 `
 	cmd := exec.Command(py, "-c", script, dir)
