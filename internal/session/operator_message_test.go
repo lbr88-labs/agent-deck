@@ -30,16 +30,16 @@ func TestOperatorInboxCorrelatesRepliesAcrossHarnesses(t *testing.T) {
 				t.Fatal(err)
 			}
 			second, err := inst.QueueOperatorMessage(ctx, "test", "second")
-			if err != nil || first == second {
-				t.Fatalf("second receipt %q: %v", second, err)
+			if err != nil || first.ID == second.ID || first.SubmittedAt.IsZero() {
+				t.Fatalf("second receipt %+v: %v", second, err)
 			}
-			for _, request := range []struct{ id, body string }{{second, "unrelated"}, {first, "matching"}} {
+			for _, request := range []struct{ id, body string }{{second.ID, "unrelated"}, {first.ID, "matching"}} {
 				_, err := store.Send(ctx, peermsg.SendRequest{SenderID: inst.ID, RecipientID: "system:operator", ReplyTo: request.id, Body: request.body})
 				if err != nil {
 					t.Fatal(err)
 				}
 			}
-			reply, err := WaitOperatorReply(ctx, "test", first)
+			reply, err := WaitOperatorReply(ctx, "test", first.ID)
 			if err != nil || reply.Body != "matching" {
 				t.Fatalf("reply %+v: %v", reply, err)
 			}

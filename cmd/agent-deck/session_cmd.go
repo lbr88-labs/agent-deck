@@ -3295,8 +3295,8 @@ func handleSessionSend(profile string, args []string) {
 		transport = "codex_queue"
 		enqueue = inst.QueueOperatorMessage
 	}
-	sentAt := time.Now()
-	messageID, sendErr := enqueue(ctx, profile, message)
+	receipt, sendErr := enqueue(ctx, profile, message)
+	messageID, sentAt := receipt.ID, receipt.SubmittedAt
 	sendRes := sendDeliveryResult{delivery: "queued", messageID: messageID}
 	if sendErr != nil {
 		sendRes.delivery = "unconfirmed"

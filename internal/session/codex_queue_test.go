@@ -57,8 +57,8 @@ func TestCodexQueueRequiresMatchingLiveWriterBeforeCallingNativeCLI(t *testing.T
 	inst.CodexSessionID, inst.CodexBindingConfirmed = actual, true
 	body := "-option-like first line\n" + strings.Repeat("a long line\n", 500)
 	got, err := inst.QueueCodexMessage(context.Background(), body)
-	if err != nil || got != receipt {
-		t.Fatalf("got receipt %q, error %v", got, err)
+	if err != nil || got.ID != receipt || got.SubmittedAt.IsZero() {
+		t.Fatalf("got receipt %+v, error %v", got, err)
 	}
 	arg, err := os.ReadFile(log)
 	if err != nil || string(arg) != "--message="+body {

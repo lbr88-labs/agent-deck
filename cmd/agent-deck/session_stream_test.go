@@ -17,10 +17,11 @@ func TestStreamOperatorReplyCorrelatesBodyAndPreservesUnicode(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
 	inst := session.Instance{ID: "target", Tool: "codex"}
-	id, err := inst.QueueOperatorRequest(ctx, "test", "what happened?")
+	receipt, err := inst.QueueOperatorRequest(ctx, "test", "what happened?")
 	if err != nil {
 		t.Fatal(err)
 	}
+	id := receipt.ID
 	dir, err := session.GetProfileDir("test")
 	if err != nil {
 		t.Fatal(err)
