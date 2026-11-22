@@ -124,7 +124,7 @@ const peerUsage = `Usage: agent-deck [-p PROFILE] message <command> [flags]
   read [--after SEQUENCE] [--limit N]               List your pending messages
   ack MESSAGE_ID                                    Acknowledge receipt
   wait [--timeout 10s] [--after SEQUENCE] [--limit N]  Wait for incoming messages
-  wait --response-to ID [--reply-only] [--producer NAME] [--timeout 10s]              Wait for an ack or reply
+  wait --response-to ID [--after SEQUENCE] [--limit N] [--reply-only] [--producer NAME] [--timeout 10s]              Wait for an ack or reply
   mcp                                               Serve MCP over stdio
 
 System producers (operator, heartbeat, watchdog, completion-wake) run outside managed sessions.
@@ -204,9 +204,6 @@ func runPeerCommand(ctx context.Context, profile string, args []string, in io.Re
 	if len(positional) != want {
 		return fmt.Errorf("message %s expects %d positional arguments (see message --help)", op, want)
 	}
-	if responseTo != "" && (after != 0 || limit != 0) {
-		return errors.New("--after and --limit apply only when waiting for incoming messages")
-	}
 	var svc *peerService
 	var err error
 	if op == "wait" && responseTo == "" && (replyOnly || producer != "") {
@@ -241,10 +238,10 @@ func runPeerCommand(ctx context.Context, profile string, args []string, in io.Re
 	case "read":
 		result, err = svc.store.Pending(ctx, svc.self, after, limit)
 	case "wait":
-		if replyOnly {
-			result, err = svc.store.WaitReply(ctx, svc.self, responseTo, timeout)
-		} else if responseTo != "" {
-			result, err = svc.store.WaitResponse(ctx, svc.self, responseTo, timeout)
+		if responseTo != "" {
+			result, err = svc.store.WaitResponse(ctx, svc.self, responseTo, peermsg.ResponseOptions{
+				After: after, Limit: limit, Timeout: timeout, ReplyOnly: replyOnly,
+			})
 		} else {
 			result, err = svc.store.Wait(ctx, svc.self, after, limit, timeout)
 		}
@@ -265,7 +262,7 @@ func printPeerResult(out io.Writer, result any) error {
 		if v.AcknowledgedAt != nil {
 			status = "acknowledged"
 		}
-		_, err := fmt.Fprintf(out, "%s %s (#%d) %s -> %s  %q\n", v.ID, status, v.Sequence, v.SenderID, v.RecipientID, v.Body)
+		_, err := fmt.Fprintf(out, "%q %s (#%d) %q -> %q  %q\n", v.ID, status, v.Sequence, v.SenderID, v.RecipientID, v.Body)
 		return err
 	case []peermsg.Message:
 		if len(v) == 0 {

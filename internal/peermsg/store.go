@@ -215,31 +215,38 @@ func (s *Store) Wait(ctx context.Context, recipient string, after int64, limit i
 	})
 	return result, err
 }
-func (s *Store) WaitResponse(ctx context.Context, sender, id string, timeout time.Duration) (Response, error) {
-	return s.waitResponse(ctx, sender, id, timeout, false)
+
+// ResponseOptions controls which correlated replies to return and when to stop waiting.
+type ResponseOptions struct {
+	After     int64
+	Limit     int
+	Timeout   time.Duration
+	ReplyOnly bool
 }
 
-func (s *Store) WaitReply(ctx context.Context, sender, id string, timeout time.Duration) (Response, error) {
-	return s.waitResponse(ctx, sender, id, timeout, true)
-}
-
-func (s *Store) waitResponse(ctx context.Context, sender, id string, timeout time.Duration, replyOnly bool) (Response, error) {
+func (s *Store) WaitResponse(ctx context.Context, sender, id string, opts ResponseOptions) (Response, error) {
+	if opts.Limit == 0 {
+		opts.Limit = MaxLimit
+	}
+	if opts.After < 0 || opts.Limit < 1 || opts.Limit > MaxLimit {
+		return Response{}, errors.New("invalid reply cursor or limit")
+	}
 	var result Response
 	var ready bool
-	timedOut, err := poll(ctx, timeout, func(check context.Context) (bool, error) {
+	timedOut, err := poll(ctx, opts.Timeout, func(check context.Context) (bool, error) {
 		m, err := read(s.db.QueryRowContext(check, "SELECT "+columns+" FROM messages WHERE id=? AND sender=?", id, sender))
 		if err != nil {
 			return false, err
 		}
-		replies, err := readAll(s.db.QueryContext(check, "SELECT "+columns+" FROM messages WHERE reply_to=? AND reply_to<>'' ORDER BY seq LIMIT ?", id, MaxLimit))
+		replies, err := readAll(s.db.QueryContext(check, "SELECT "+columns+" FROM messages WHERE reply_to=? AND reply_to<>'' AND seq>? ORDER BY seq LIMIT ?", id, opts.After, opts.Limit))
 		if err != nil {
 			return false, err
 		}
 		result = Response{Message: m, Replies: replies}
-		ready = (!replyOnly && m.AcknowledgedAt != nil) || len(replies) > 0
+		ready = (!opts.ReplyOnly && m.AcknowledgedAt != nil) || len(replies) > 0
 		return ready, nil
 	})
-	result.TimedOut = timedOut || (timeout == 0 && !ready)
+	result.TimedOut = timedOut || (opts.Timeout == 0 && !ready)
 	return result, err
 }
 

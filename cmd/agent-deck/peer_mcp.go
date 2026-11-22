@@ -36,6 +36,8 @@ type peerAckInput struct {
 }
 
 type peerWaitResponseInput struct {
+	After     int64  `json:"after,omitempty" jsonschema:"Return replies with sequence greater than this cursor"`
+	Limit     int    `json:"limit,omitempty" jsonschema:"Maximum reply page size (default and maximum 200)"`
 	ReplyOnly bool   `json:"reply_only,omitempty" jsonschema:"Wait for a correlated reply even when receipt is acknowledged"`
 	ID        string `json:"id" jsonschema:"ID of a message sent by this session"`
 	TimeoutMS *int   `json:"timeout_ms,omitempty" jsonschema:"Time to wait in milliseconds (default 30000; zero to poll)"`
@@ -81,11 +83,9 @@ func newPeerMCP(service *peerService) *mcp.Server {
 		if err != nil {
 			return nil, peermsg.Response{}, err
 		}
-		wait := service.store.WaitResponse
-		if in.ReplyOnly {
-			wait = service.store.WaitReply
-		}
-		response, err := wait(ctx, service.self, in.ID, timeout)
+		response, err := service.store.WaitResponse(ctx, service.self, in.ID, peermsg.ResponseOptions{
+			After: in.After, Limit: in.Limit, Timeout: timeout, ReplyOnly: in.ReplyOnly,
+		})
 		return nil, response, err
 	})
 	return server

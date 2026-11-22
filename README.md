@@ -112,7 +112,7 @@ agent-deck message send --reply-to "$MESSAGE_ID" "$SENDER_ID" 'Reviewed'
 agent-deck message ack "$MESSAGE_ID"
 ```
 
-Reads return pending messages in sequence order until the recipient acknowledges them. Use `--after SEQUENCE` to page through a backlog, or `message wait` to poll for new arrivals for up to 30 seconds. A sender waiting with `--response-to` receives the original message and its correlated replies when an acknowledgment or reply arrives. An acknowledgment records receipt. Add `--reply-only` to continue waiting for a reply after acknowledgment. Use `--id` with a stable, unique ID when retrying a send after an uncertain result.
+Reads return pending messages in sequence order until the recipient acknowledges them. Use `--after SEQUENCE` to page through a backlog, or `message wait` to poll for new arrivals for up to 30 seconds. A sender waiting with `--response-to` receives the original message and its correlated replies when an acknowledgment or reply arrives. Each reply page contains up to 200 replies. Use the last reply’s sequence with `--after` (MCP `after`) to get the next page. An acknowledgment records receipt. Add `--reply-only` to continue waiting for a reply after acknowledgment. Use `--id` with a stable, unique ID when retrying a send after an uncertain result.
 
 For MCP, configure the stdio command `agent-deck` with arguments `["message", "mcp"]` in a managed session. The CLI and MCP share the same profile database. An idle or unsupported harness can read the pending inbox on its next turn.
 

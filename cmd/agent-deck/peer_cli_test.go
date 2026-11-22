@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"io"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -81,6 +82,11 @@ func TestPeerCLIProfileRoundTrip(t *testing.T) {
 	if err := json.Unmarshal(out.Bytes(), &hb); err != nil || hb.TimedOut || len(hb.Replies) != 1 {
 		t.Fatalf("missing heartbeat reply: %s", out.Bytes())
 	}
+	must("second", "send", "--reply-to", "tick", "system:heartbeat", "another reply")
+	must("", "wait", "--producer", "heartbeat", "--response-to", "tick", "--reply-only", "--after", strconv.FormatInt(hb.Replies[0].Sequence, 10), "--limit", "1", "--timeout=0s", "--json")
+	if err := json.Unmarshal(out.Bytes(), &hb); err != nil || len(hb.Replies) != 1 || hb.Replies[0].Body != "another reply" {
+		t.Fatalf("next correlated page %s, err %v", out.Bytes(), err)
+	}
 	must("", "notify", "--id", "op", "--producer", "operator", "first", "hello")
 	must("first", "ack", "op")
 	if err := run("first", "send", "reader", "mail"); err == nil {
@@ -109,5 +115,17 @@ func TestPeerCLIProfileRoundTrip(t *testing.T) {
 	must("second", "read", "--json")
 	if strings.TrimSpace(out.String()) != "[]" {
 		t.Fatalf("pending after ack %s", out.Bytes())
+	}
+}
+
+func TestPeerHumanOutputEscapesIdentityAndBody(t *testing.T) {
+	var out bytes.Buffer
+	message := peermsg.Message{SendRequest: peermsg.SendRequest{ID: "first\nline", SenderID: "alice\x1b[2J", RecipientID: "bob\r", Body: "answer\nnext"}}
+	if err := printPeerResult(&out, message); err != nil {
+		t.Fatal(err)
+	}
+	want := `"first\nline" accepted (#0) "alice\x1b[2J" -> "bob\r"  "answer\nnext"` + "\n"
+	if out.String() != want {
+		t.Fatalf("output %q; want %q", out.String(), want)
 	}
 }

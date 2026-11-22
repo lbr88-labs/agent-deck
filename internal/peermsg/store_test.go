@@ -124,7 +124,7 @@ func TestWaitAndCorrelation(t *testing.T) {
 	if err := <-done; err != nil {
 		t.Fatal(err)
 	}
-	r, err := b.WaitResponse(ctx, "coordinator", "task", 5*time.Millisecond)
+	r, err := b.WaitResponse(ctx, "coordinator", "task", ResponseOptions{Timeout: 5 * time.Millisecond})
 	if err != nil || !r.TimedOut {
 		t.Fatalf("empty response: %v %v", r, err)
 	}
@@ -136,7 +136,7 @@ func TestWaitAndCorrelation(t *testing.T) {
 	if _, err := a.Send(ctx, reply); err != nil {
 		t.Fatal(err)
 	}
-	r, err = b.WaitResponse(ctx, "coordinator", "task", time.Second)
+	r, err = b.WaitResponse(ctx, "coordinator", "task", ResponseOptions{Timeout: time.Second})
 	if err != nil || r.TimedOut || len(r.Replies) != 1 || r.Message.AcknowledgedAt != nil {
 		t.Fatalf("reply response: %v %v", r, err)
 	}
@@ -222,5 +222,27 @@ func TestConcurrentProcesses(t *testing.T) {
 	}
 	if count != 30 {
 		t.Fatalf("received %d of 30 process writes", count)
+	}
+}
+
+func TestCorrelatedRepliesBeyondFirstPage(t *testing.T) {
+	s := openTest(t, t.TempDir())
+	ctx := t.Context()
+	parent, err := s.Send(ctx, SendRequest{SenderID: "system:heartbeat", RecipientID: "worker", Body: "status"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i <= MaxLimit; i++ {
+		if _, err = s.Send(ctx, SendRequest{SenderID: "worker", RecipientID: parent.SenderID, ReplyTo: parent.ID, Body: fmt.Sprint(i)}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	first, err := s.WaitResponse(ctx, parent.SenderID, parent.ID, ResponseOptions{})
+	if err != nil || len(first.Replies) != MaxLimit {
+		t.Fatalf("first page length %d, err %v", len(first.Replies), err)
+	}
+	last, err := s.WaitResponse(ctx, parent.SenderID, parent.ID, ResponseOptions{After: first.Replies[MaxLimit-1].Sequence, ReplyOnly: true})
+	if err != nil || len(last.Replies) != 1 || last.Replies[0].Body != fmt.Sprint(MaxLimit) {
+		t.Fatalf("last page %v, err %v", last, err)
 	}
 }
