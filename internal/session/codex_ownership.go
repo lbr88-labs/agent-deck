@@ -480,6 +480,11 @@ func codexInteractiveInvocation(args []string) (string, []string, bool) {
 		executable = strings.ToLower(filepath.Base(args[0]))
 	}
 	executable = strings.TrimSuffix(executable, ".exe")
+	// The TUI starts this native tool host as a child. Counting it as another
+	// interactive Codex process would invalidate its parent's queue ownership.
+	if executable == "codex-code-mode-host" {
+		return "", nil, false
+	}
 	if executable != "codex" && executable != "codex.js" &&
 		!strings.HasPrefix(executable, "codex-") && !strings.HasPrefix(executable, "codex_") {
 		return "", nil, false
