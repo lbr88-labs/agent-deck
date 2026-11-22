@@ -307,7 +307,9 @@ func handleHookHandler() {
 	// the maintainer note in the PR. Emitting here is harmless under the legacy
 	// async install (Claude ignores stdout) and activates once sync lands.
 	if isStopHookEvent(payload.HookEventName) {
-		if dec, blocked, derr := session.DrainForStopHook(instanceID, resolveStopHookActive(payload)); derr == nil && blocked {
+		dec, _, _ := session.DrainForStopHook(instanceID, resolveStopHookActive(payload))
+		dec = withPeerStopNotice(dec, payload, instanceID)
+		if dec.Decision == "block" {
 			if out, mErr := json.Marshal(dec); mErr == nil {
 				fmt.Println(string(out))
 			}
